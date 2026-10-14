@@ -1,5 +1,6 @@
 import type { AssetId, DocumentId, ProjectId } from './ids';
 import type { Timestamp } from './project';
+import type { Sketch } from './sketch';
 
 export type DocumentKind = 'component' | 'assembly' | 'imported';
 export const documentKinds: readonly DocumentKind[] = ['component', 'assembly', 'imported'];
@@ -31,13 +32,8 @@ export interface Parameter {
   readonly comment?: string;
 }
 
-/** Sketches and features. Their concrete shapes arrive with the Sketcher and Part modeling phases. */
-export interface TimelineItem {
-  readonly id: string;
-  readonly type: string;
-  readonly name: string;
-  readonly suppressed: boolean;
-}
+/** Items of a component's parametric history. Features join sketches in the Part modeling phase. */
+export type TimelineItem = Sketch;
 
 export interface ComponentDocument extends DocumentBase {
   readonly kind: 'component';

@@ -12,6 +12,7 @@ export type Layer =
   | 'contracts'
   | 'composition'
   | 'worker'
+  | 'platform'
   | 'host';
 
 export interface Element {
@@ -22,7 +23,7 @@ export interface Element {
 
 /** Layers each layer may call besides itself. Calls inside one component are always allowed. */
 const allowedTargets: Readonly<Record<Layer, readonly Layer[]>> = {
-  client: ['client', 'manager', 'contracts', 'utility', 'composition'],
+  client: ['client', 'manager', 'contracts', 'utility', 'composition', 'platform'],
   manager: ['engine', 'access', 'contracts', 'utility'],
   engine: ['access', 'contracts', 'utility'],
   access: ['contracts', 'utility'],
@@ -30,7 +31,9 @@ const allowedTargets: Readonly<Record<Layer, readonly Layer[]>> = {
   contracts: [],
   composition: ['manager', 'engine', 'access', 'utility', 'contracts'],
   worker: ['engine', 'access', 'utility', 'contracts', 'composition'],
-  host: ['client', 'manager', 'engine', 'access', 'utility', 'contracts', 'composition', 'worker'],
+  /** Host adapters outside the core (e.g. Tauri): they implement access and utility ports. */
+  platform: ['access', 'utility', 'contracts'],
+  host: ['client', 'manager', 'engine', 'access', 'utility', 'contracts', 'composition', 'worker', 'platform'],
 };
 
 /** Packages the framework-free core must never depend on. */
@@ -45,6 +48,7 @@ const componentLayers: Readonly<Record<string, Layer>> = {
 };
 
 export function classify(path: string): Element | null {
+  if (path.startsWith('src/app/platform/')) return { layer: 'platform', component: 'platform' };
   if (path.startsWith('src/app/')) return { layer: 'client', component: 'app' };
   if (path.startsWith('src/workers/')) return { layer: 'worker', component: 'workers' };
   const core = /^src\/core\/([^/]+)\/(?:([^/]+)\/)?/.exec(path);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { findProfiles } from './profiles';
-import { SketchBuilder } from './testing/sketch-builder';
+import { SketchBuilder } from '@core/contracts/testing/sketch-builder';
 
 const areas = (b: SketchBuilder) =>
   findProfiles(b.build())

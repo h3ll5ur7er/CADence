@@ -27,10 +27,18 @@
               {
                 "glob": "**/*",
                 "input": "public"
+              },
+              {
+                "glob": "planegcs.wasm",
+                "input": "node_modules/@salusoft89/planegcs/dist/planegcs_dist",
+                "output": "wasm"
               }
             ],
             "styles": [
               "src/styles.scss"
+            ],
+            "externalDependencies": [
+              "node:module"
             ]
           },
           "configurations": {

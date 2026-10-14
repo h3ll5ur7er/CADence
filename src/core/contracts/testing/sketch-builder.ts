@@ -1,4 +1,4 @@
-import type { Sketch, SketchConstraint, SketchEntity } from '@core/contracts';
+import type { Sketch, SketchConstraint, SketchEntity } from '../sketch';
 
 /** Terse sketch construction for tests. */
 export class SketchBuilder {

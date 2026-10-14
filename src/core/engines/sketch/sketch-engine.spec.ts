@@ -1,7 +1,7 @@
 import { type Sketch, type SketchPoint, sketchOriginId } from '@core/contracts';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createSketchEngine, type SketchEngine, type SketchSolution } from './index';
-import { SketchBuilder } from './testing/sketch-builder';
+import { SketchBuilder } from '@core/contracts/testing/sketch-builder';
 
 let engine: SketchEngine;
 beforeAll(() => {
@@ -88,7 +88,8 @@ describe('SketchEngine.solve', () => {
     b.constrain({ id: 'm', kind: 'midpoint', point: mid, line: l1 });
     b.constrain({ id: 'len', kind: 'distance', points: ['p1', 'p2'], expression: '10' });
     const solution = await engine.solve(b.build(), values({ len: 10 }));
-    const [a, c, d, e, f, g] = ['p1', 'p2', 'p4', 'p5', 'p7', 'p8'].map((id) => point(solution, id)) as [number, number][];
+    type P = [number, number];
+    const [a, c, d, e, f, g] = ['p1', 'p2', 'p4', 'p5', 'p7', 'p8'].map((id) => point(solution, id)) as [P, P, P, P, P, P];
     expect(c[1] - a[1]).toBeCloseTo(0); // horizontal
     expect(e[1] - d[1]).toBeCloseTo(0); // parallel to a horizontal line
     expect(Math.abs(e[0] - d[0])).toBeCloseTo(10); // equal length

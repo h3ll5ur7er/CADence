@@ -103,8 +103,9 @@ class Translator {
   }
 
   private pushConstraint(c: SketchConstraint): void {
-    const add = (type: string, fields: Record<string, unknown>, suffix = '') =>
+    const add = (type: string, fields: Record<string, unknown>, suffix = ''): void => {
       this.primitives.push({ id: suffix ? `${c.id}#${suffix}` : c.id, type, ...fields });
+    };
     switch (c.kind) {
       case 'coincident':
         return add('p2p_coincident', { p1_id: c.points[0], p2_id: c.points[1] });

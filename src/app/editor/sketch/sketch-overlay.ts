@@ -192,3 +192,49 @@ export function dimensionLabels(sketch: Sketch, values: ReadonlyMap<string, numb
     }
   });
 }
+
+export interface SketchHit {
+  readonly id: string;
+  readonly kind: 'point' | 'curve';
+}
+
+function segmentDistance(p: Vec2, a: Vec2, b: Vec2): number {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy || 1)));
+  return Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy));
+}
+
+/**
+ * The point or curve nearest to `at` within `tolerance` (sketch units); points win over curves.
+ * Geometric hit testing: SVG stroke hit areas are unreliable under the plane transform.
+ */
+export function hitTest(sketch: Sketch, at: Vec2, tolerance: number): SketchHit | undefined {
+  const points = pointsOf(sketch);
+  let best: { hit: SketchHit; d: number } | undefined;
+  for (const [id, p] of points) {
+    const d = Math.hypot(p[0] - at[0], p[1] - at[1]);
+    if (d <= tolerance && (!best || d < best.d)) best = { hit: { id, kind: 'point' }, d };
+  }
+  if (best) return best.hit;
+  const point = (id: string): Vec2 => points.get(id) ?? [0, 0];
+  for (const e of sketch.entities) {
+    let d: number;
+    if (e.kind === 'point') continue;
+    if (e.kind === 'line') {
+      d = segmentDistance(at, point(e.start), point(e.end));
+    } else if (e.kind === 'circle') {
+      const c = point(e.center);
+      d = Math.abs(Math.hypot(at[0] - c[0], at[1] - c[1]) - e.radius);
+    } else {
+      const [c, s, t] = [point(e.center), point(e.start), point(e.end)];
+      const r = Math.hypot(s[0] - c[0], s[1] - c[1]);
+      const angle = (v: Vec2) => Math.atan2(v[1] - c[1], v[0] - c[0]);
+      const sweep = (angle(t) - angle(s) + 4 * Math.PI) % (2 * Math.PI) || 2 * Math.PI;
+      const offset = (angle(at) - angle(s) + 4 * Math.PI) % (2 * Math.PI);
+      d = offset <= sweep ? Math.abs(Math.hypot(at[0] - c[0], at[1] - c[1]) - r) : Math.min(Math.hypot(at[0] - s[0], at[1] - s[1]), Math.hypot(at[0] - t[0], at[1] - t[1]));
+    }
+    if (d <= tolerance && (!best || d < best.d)) best = { hit: { id: e.id, kind: 'curve' }, d };
+  }
+  return best?.hit;
+}

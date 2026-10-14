@@ -1,45 +1,33 @@
+import type { BodyMesh, PlaneFrame } from '@core/contracts';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import type { SketchPlane } from '@core/contracts';
 import {
-  BufferGeometry,
   Color,
   DirectionalLight,
   DoubleSide,
-  Float32BufferAttribute,
   Group,
   HemisphereLight,
-  LineBasicMaterial,
   LineSegments,
   type Matrix4,
   Mesh,
   MeshBasicMaterial,
+  type Object3D,
   PerspectiveCamera,
-  Matrix4 as Matrix,
   PlaneGeometry,
-  Path,
-  Shape,
-  ShapeGeometry,
   Quaternion,
+  Raycaster,
   Scene,
+  Vector2,
   Vector3,
   WebGPURenderer,
 } from 'three/webgpu';
+import { type Pick, pickAt, type PickKind, pickKey } from './picking';
+import { createBody, createPlane, createSketch, edgeHighlight, faceHighlight, lines, type ViewportTheme } from './scene-content';
 import type { SketchDisplay } from './sketch-display';
-import { type Affine, planeBasis, planeView } from './sketch-planes';
+import type { Affine } from './sketch-planes';
 
+export type { ViewportTheme } from './scene-content';
 export type StandardView = 'front' | 'back' | 'top' | 'bottom' | 'left' | 'right' | 'home';
 export type RendererBackend = 'WebGPU' | 'WebGL 2';
-
-/** Colours resolved from the CSS design tokens, so the 3D scene follows the app theme. */
-export interface ViewportTheme {
-  readonly grid: string;
-  readonly gridMajor: string;
-  readonly axisX: string;
-  readonly axisY: string;
-  readonly axisZ: string;
-  readonly sketch: string;
-  readonly construction: string;
-}
 
 /** Direction from the target to the camera, Z up. Polar views are nudged off the pole for the orbit controls. */
 const viewDirections: Readonly<Record<StandardView, Vector3>> = {
@@ -59,38 +47,51 @@ const planeSize = 60;
 const homeDistance = 340;
 const homeTarget = new Vector3(20, 20, 10);
 const transitionMs = 350;
+const worldUp = new Vector3(0, 0, 1);
+const clickTolerance = 4; // px between press and release
 
 /**
- * The three.js scene behind a viewport: WebGPU renderer (WebGL 2 fallback), Z-up camera,
- * orbit navigation, grid and origin. Renders on demand only.
+ * The three.js scene behind a viewport: WebGPU renderer (WebGL 2 fallback), Z-up camera, orbit
+ * navigation, grid, origin, bodies, sketches and construction planes, with picking. Renders on demand.
  */
 export class ViewportScene {
   /** Called with the camera's view matrix whenever the camera moves (drives the view cube). */
   onCameraChange: ((view: Matrix4) => void) | undefined;
   /** While a sketch plane is edited: called with the plane-to-pixel map whenever the camera moves. */
   onPlaneMatrix: ((matrix: Affine | undefined) => void) | undefined;
+  /** Called when something pickable is clicked. */
+  onPick: ((pick: Pick) => void) | undefined;
 
   private readonly scene = new Scene();
   private readonly camera = new PerspectiveCamera(35, 1, 0.5, 20_000);
   private readonly renderer: WebGPURenderer;
   private readonly controls: OrbitControls;
   private readonly origin: Group;
+  private readonly bodies = new Group();
   private readonly sketches = new Group();
-  private editedPlane: SketchPlane | undefined;
+  private readonly planes = new Group();
+  private readonly highlights = new Group();
+  private readonly raycaster = new Raycaster();
+  private meshes: readonly BodyMesh[] = [];
+  private pickable: ReadonlySet<PickKind> = new Set();
+  private selection: readonly Pick[] = [];
+  private hovered: Pick | undefined;
+  private editedFrame: PlaneFrame | undefined;
   private size = { width: 1, height: 1 };
   private frame = 0;
   private transition: { from: Quaternion; to: Quaternion; start: number; distance: number } | undefined;
   private initialized = false;
+  private pressed: { x: number; y: number } | undefined;
 
   /** `eventTarget` wraps the canvas and its overlays, so overlay events not handled there reach the navigation. */
   constructor(
     canvas: HTMLCanvasElement,
-    eventTarget: HTMLElement,
+    private readonly eventTarget: HTMLElement,
     private readonly theme: ViewportTheme,
     options: { forceWebGL?: boolean } = {},
   ) {
     this.renderer = new WebGPURenderer({ canvas, antialias: true, alpha: true, forceWebGL: options.forceWebGL ?? false });
-    this.camera.up.set(0, 0, 1);
+    this.camera.up.copy(worldUp);
     this.controls = new OrbitControls(this.camera, eventTarget);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.15;
@@ -103,9 +104,13 @@ export class ViewportScene {
     this.scene.add(sun);
     this.scene.add(createGrid(theme));
     this.origin = createOrigin(theme);
-    this.scene.add(this.origin, this.sketches);
+    this.scene.add(this.origin, this.bodies, this.sketches, this.planes, this.highlights);
     this.controls.target.copy(homeTarget);
     this.placeCamera(viewDirections.home, homeDistance);
+
+    eventTarget.addEventListener('pointermove', this.hover);
+    eventTarget.addEventListener('pointerdown', this.press);
+    eventTarget.addEventListener('pointerup', this.release);
   }
 
   async init(): Promise<RendererBackend> {
@@ -129,39 +134,133 @@ export class ViewportScene {
     this.requestRender();
   }
 
-  /** Replaces the sketches drawn in 3D. */
   setSketches(displays: readonly SketchDisplay[]): void {
-    disposeTree(this.sketches);
-    this.sketches.clear();
-    for (const display of displays) this.sketches.add(createSketch(display, this.theme));
-    this.requestRender();
+    this.replace(this.sketches, displays.map((d) => createSketch(d, this.theme)));
   }
 
-  /** Looks straight at a sketch plane and locks rotation while it is edited; `undefined` ends editing. */
-  editPlane(plane: SketchPlane | undefined): void {
-    this.editedPlane = plane;
-    this.controls.enableRotate = plane === undefined;
-    if (plane) this.showView(planeView[plane]);
-    else this.onPlaneMatrix?.(undefined);
+  setBodies(meshes: readonly BodyMesh[]): void {
+    this.meshes = meshes;
+    this.replace(this.bodies, meshes.map((m) => createBody(m, this.theme)));
+    this.updateHighlights();
+  }
+
+  setPlanes(frames: readonly PlaneFrame[]): void {
+    this.replace(this.planes, frames.map((f) => createPlane(f, this.theme.construction)));
+  }
+
+  /** What clicks may pick; nothing while a sketch is edited. */
+  setPickable(kinds: ReadonlySet<PickKind>): void {
+    this.pickable = kinds;
+    if (this.hovered && !kinds.has(this.hovered.kind)) this.hovered = undefined;
+    this.updateHighlights();
+  }
+
+  setSelection(picks: readonly Pick[]): void {
+    this.selection = picks;
+    this.updateHighlights();
+  }
+
+  /** Looks straight at a plane (u right, v up) and locks rotation while it is edited; `undefined` ends editing. */
+  editPlane(frame: PlaneFrame | undefined): void {
+    const same = frame && this.editedFrame && JSON.stringify(frame) === JSON.stringify(this.editedFrame);
+    if (same) return;
+    this.editedFrame = frame;
+    this.controls.enableRotate = frame === undefined;
+    if (frame) {
+      const normal = new Vector3(...frame.u).cross(new Vector3(...frame.v)).normalize();
+      this.camera.up.set(...frame.v);
+      this.controls.target.set(...frame.origin);
+      this.turnTo(normal, this.camera.position.distanceTo(this.controls.target));
+    } else {
+      this.camera.up.copy(worldUp);
+      this.onPlaneMatrix?.(undefined);
+    }
     this.requestRender();
   }
 
   /** Turns the camera to a standard view around the current target, keeping the distance. */
   showView(view: StandardView): void {
-    const offset = this.camera.position.clone().sub(this.controls.target);
-    const distance = view === 'home' ? homeDistance : offset.length();
+    const distance = view === 'home' ? homeDistance : this.camera.position.distanceTo(this.controls.target);
     if (view === 'home') this.controls.target.copy(homeTarget);
-    const from = new Quaternion().setFromUnitVectors(new Vector3(0, 0, 1), offset.normalize());
-    const to = new Quaternion().setFromUnitVectors(new Vector3(0, 0, 1), viewDirections[view]);
-    this.transition = { from, to, start: performance.now(), distance };
-    this.requestRender();
+    this.turnTo(viewDirections[view], distance);
   }
 
   dispose(): void {
     cancelAnimationFrame(this.frame);
+    this.eventTarget.removeEventListener('pointermove', this.hover);
+    this.eventTarget.removeEventListener('pointerdown', this.press);
+    this.eventTarget.removeEventListener('pointerup', this.release);
     this.controls.dispose();
     disposeTree(this.scene);
     this.renderer.dispose();
+  }
+
+  // ---- picking ------------------------------------------------------------------------------
+
+  private readonly hover = (event: PointerEvent): void => {
+    if (this.pickable.size === 0 || event.buttons !== 0) return;
+    const pick = this.pickUnder(event);
+    if (pick?.kind === this.hovered?.kind && pick && this.hovered && pickKey(pick) === pickKey(this.hovered)) return;
+    this.hovered = pick;
+    this.eventTarget.style.cursor = pick ? 'pointer' : '';
+    this.updateHighlights();
+  };
+
+  private readonly press = (event: PointerEvent): void => {
+    this.pressed = event.button === 0 ? { x: event.clientX, y: event.clientY } : undefined;
+  };
+
+  private readonly release = (event: PointerEvent): void => {
+    const pressed = this.pressed;
+    this.pressed = undefined;
+    if (!pressed || Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) > clickTolerance) return;
+    const pick = this.pickUnder(event);
+    if (pick) this.onPick?.(pick);
+  };
+
+  private pickUnder(event: PointerEvent): Pick | undefined {
+    const rect = this.eventTarget.getBoundingClientRect();
+    const ndc = new Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    // Edges are picked within a few pixels of the cursor.
+    const distance = this.camera.position.distanceTo(this.controls.target);
+    const worldPerPixel = (2 * distance * Math.tan((this.camera.fov * Math.PI) / 360)) / Math.max(rect.height, 1);
+    this.raycaster.params.Line = { threshold: worldPerPixel * 5 };
+    return pickAt(this.raycaster, [this.bodies, this.sketches], this.pickable);
+  }
+
+  private updateHighlights(): void {
+    disposeTree(this.highlights);
+    this.highlights.clear();
+    const add = (pick: Pick, color: string) => {
+      if (pick.kind === 'profile') {
+        const fill = this.sketches.getObjectByName(`sketch-${pick.sketch}`)?.children.find(
+          (c) => (c.userData as { pick?: Pick }).pick?.kind === 'profile' && ((c.userData as { pick: Pick }).pick as { profile: string }).profile === pick.profile,
+        ) as Mesh | undefined;
+        if (!fill) return;
+        const copy = new Mesh(fill.geometry.clone(), new MeshBasicMaterial({ color: new Color(color), transparent: true, opacity: 0.4, side: DoubleSide, depthWrite: false }));
+        copy.matrixAutoUpdate = false;
+        copy.matrix.copy((fill.parent as Group).matrix);
+        copy.renderOrder = 2;
+        this.highlights.add(copy);
+        return;
+      }
+      const mesh = this.meshes.find((m) => m.body === pick.body);
+      const highlight = mesh && (pick.kind === 'face' ? faceHighlight(mesh, pick.name, color) : edgeHighlight(mesh, pick.name, color));
+      if (highlight) this.highlights.add(highlight);
+    };
+    for (const pick of this.selection) add(pick, this.theme.selection);
+    if (this.hovered && !this.selection.some((s) => pickKey(s) === pickKey(this.hovered as Pick))) add(this.hovered, this.theme.hover);
+    this.requestRender();
+  }
+
+  // ---- rendering and camera -----------------------------------------------------------------
+
+  private replace(group: Group, children: readonly Object3D[]): void {
+    disposeTree(group);
+    group.clear();
+    if (children.length) group.add(...children);
+    this.requestRender();
   }
 
   private requestRender(): void {
@@ -175,8 +274,16 @@ export class ViewportScene {
     const moving = this.controls.update();
     this.renderer.render(this.scene, this.camera);
     this.onCameraChange?.(this.camera.matrixWorldInverse);
-    if (this.editedPlane) this.onPlaneMatrix?.(this.planeMatrix(this.editedPlane));
+    if (this.editedFrame) this.onPlaneMatrix?.(this.planeMatrix(this.editedFrame));
     if (animating || moving) this.requestRender();
+  }
+
+  private turnTo(direction: Vector3, distance: number): void {
+    const offset = this.camera.position.clone().sub(this.controls.target).normalize();
+    const from = new Quaternion().setFromUnitVectors(new Vector3(0, 0, 1), offset);
+    const to = new Quaternion().setFromUnitVectors(new Vector3(0, 0, 1), direction.clone().normalize());
+    this.transition = { from, to, start: performance.now(), distance };
+    this.requestRender();
   }
 
   /** Advances a running view transition; true while it still runs. */
@@ -191,32 +298,34 @@ export class ViewportScene {
     return t < 1;
   }
 
-  /** Projects the plane's origin and axes; exact while the camera looks straight at the plane. */
-  private planeMatrix(plane: SketchPlane): Affine {
-    const { u, v } = planeBasis[plane];
-    const project = (x: number, y: number, z: number): [number, number] => {
-      const p = new Vector3(x, y, z).project(this.camera);
-      return [((p.x + 1) / 2) * this.size.width, ((1 - p.y) / 2) * this.size.height];
-    };
-    const unit = 100;
-    const [ox, oy] = project(0, 0, 0);
-    const [ux, uy] = project(u[0] * unit, u[1] * unit, u[2] * unit);
-    const [vx, vy] = project(v[0] * unit, v[1] * unit, v[2] * unit);
-    return { a: (ux - ox) / unit, b: (uy - oy) / unit, c: (vx - ox) / unit, d: (vy - oy) / unit, e: ox, f: oy };
-  }
-
   private placeCamera(direction: Vector3, distance: number): void {
     this.camera.position.copy(this.controls.target).addScaledVector(direction, distance);
     this.camera.lookAt(this.controls.target);
     this.camera.updateMatrixWorld();
   }
+
+  /** Projects the plane's origin and axes; exact while the camera looks straight at the plane. */
+  private planeMatrix(frame: PlaneFrame): Affine {
+    const project = (p: Vector3): [number, number] => {
+      const ndc = p.clone().project(this.camera);
+      return [((ndc.x + 1) / 2) * this.size.width, ((1 - ndc.y) / 2) * this.size.height];
+    };
+    const unit = 100;
+    const origin = new Vector3(...frame.origin);
+    const [ox, oy] = project(origin);
+    const [ux, uy] = project(origin.clone().addScaledVector(new Vector3(...frame.u), unit));
+    const [vx, vy] = project(origin.clone().addScaledVector(new Vector3(...frame.v), unit));
+    return { a: (ux - ox) / unit, b: (uy - oy) / unit, c: (vx - ox) / unit, d: (vy - oy) / unit, e: ox, f: oy };
+  }
 }
 
-function lines(points: number[], color: string, opacity = 1): LineSegments {
-  const geometry = new BufferGeometry();
-  geometry.setAttribute('position', new Float32BufferAttribute(points, 3));
-  const material = new LineBasicMaterial({ color: new Color(color), transparent: opacity < 1, opacity });
-  return new LineSegments(geometry, material);
+function disposeTree(root: Object3D): void {
+  root.traverse((object) => {
+    if (object instanceof Mesh || object instanceof LineSegments) {
+      object.geometry.dispose();
+      (object.material as { dispose(): void }).dispose();
+    }
+  });
 }
 
 /** Grid on the XY plane (the "ground" in a Z-up world): minor lines every 10 mm, major every 50 mm. */
@@ -268,50 +377,4 @@ function createOrigin(theme: ViewportTheme): Group {
     }
   }
   return origin;
-}
-
-function disposeTree(root: Group | Scene): void {
-  root.traverse((object) => {
-    if (object instanceof Mesh || object instanceof LineSegments) {
-      object.geometry.dispose();
-      (object.material as { dispose(): void }).dispose();
-    }
-  });
-}
-
-/** Polylines as line-segment pairs. */
-function segments(polylines: readonly (readonly (readonly [number, number])[])[]): number[] {
-  return polylines.flatMap((line) => line.slice(1).flatMap((p, i) => {
-    const q = line[i] as readonly [number, number];
-    return [q[0], q[1], 0, p[0], p[1], 0];
-  }));
-}
-
-function shapePath<T extends Path>(target: T, polygon: readonly (readonly [number, number])[]): T {
-  polygon.forEach(([x, y], i) => (i === 0 ? target.moveTo(x, y) : target.lineTo(x, y)));
-  target.closePath();
-  return target;
-}
-
-/** A sketch in its plane: curves, faint construction lines and lightly shaded profiles. */
-function createSketch(display: SketchDisplay, theme: ViewportTheme): Group {
-  const group = new Group();
-  group.name = `sketch-${display.id}`;
-  const { u, v } = planeBasis[display.plane];
-  const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
-  group.matrixAutoUpdate = false;
-  group.matrix.copy(new Matrix().set(u[0], v[0], n[0] as number, 0, u[1], v[1], n[1] as number, 0, u[2], v[2], n[2] as number, 0, 0, 0, 0, 1));
-  if (display.curves.length) group.add(lines(segments(display.curves), theme.sketch));
-  if (display.construction.length) group.add(lines(segments(display.construction), theme.construction, 0.6));
-  for (const profile of display.profiles) {
-    const shape = shapePath(new Shape(), profile.outer.polygon);
-    shape.holes = profile.holes.map((hole) => shapePath(new Path(), hole.polygon));
-    const fill = new Mesh(
-      new ShapeGeometry(shape),
-      new MeshBasicMaterial({ color: new Color(theme.sketch), transparent: true, opacity: 0.12, side: DoubleSide, depthWrite: false }),
-    );
-    fill.renderOrder = 1;
-    group.add(fill);
-  }
-  return group;
 }

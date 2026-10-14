@@ -86,35 +86,57 @@ interface Sketch {
 - **Dimensions** store an **expression**, not a number: distance, horizontal and vertical distance, point-to-line distance, radius, diameter, angle. `"2 * 20 mm"` and `"1 in"` are valid values. Signs and orientation (which side, which of the supplementary angles) follow the current geometry, so a dimension never flips the sketch over.
 - **Points store their last solved positions.** The solver needs a starting guess, and the document opens exactly as last seen, even before solving.
 
-```ts
-interface Feature {
-  id: FeatureId; type: FeatureType; name: string; suppressed: boolean;
-  inputs: Record<string, TopologyRef | TopologyRef[] | ProfileRef[]>;
-  params: Record<string, Expression | string | boolean>;
-  operation?: 'new-body' | 'join' | 'cut' | 'intersect';
-}
-```
+### Features
 
-Feature types start with `extrude`, `revolve`, `fillet`, `chamfer`, `shell`, `linear-pattern`, `circular-pattern`, `mirror`, `construction-plane`, and grow to `sweep`, `loft`, `draft` and more. Every feature type is one module in the Modeling Engine's feature registry plus one dialog in the client, so adding a feature never touches the manager.
+Each feature type is its own interface in [[src/core/contracts/feature.ts]]. All numbers are expressions.
+
+| Type | Inputs | Values |
+| --- | --- | --- |
+| `extrude` | sketch, profile ids | distance; direction (normal, reverse, symmetric); operation |
+| `revolve` | sketch, profile ids, axis (origin axis, sketch construction line or edge) | angle; operation |
+| `fillet`, `chamfer` | edges (`TopologyRef`) | radius / distance |
+| `shell` | faces to open | wall thickness (inward) |
+| `plane` | base plane (origin plane, construction plane or flat face) | offset |
+| `linear-pattern`, `circular-pattern` | extrudes/revolves to repeat, direction / axis | count, spacing / angle (360° spreads evenly) |
+| `mirror` | extrudes/revolves to mirror, plane | |
+
+The **operation** of extrude and revolve is `new-body`, `join` (into the bodies the tool touches; a new body when it touches none), `cut` or `intersect` (every touched body). Bodies are identified by the feature that created them.
+
+**Patterns and mirrors repeat a feature's tool**, the solid an extrude or revolve made, with that feature's operation. So a pattern of a cut repeats the hole, and a pattern of a boss repeats the boss.
+
+Sketches lie on a `PlaneRef`: `'XY' | 'XZ' | 'YZ'`, `{ face: TopologyRef }` (a flat face, which moves with it) or `{ plane: featureId }` (a construction plane). Planes on faces orient like the origin planes: on horizontal faces u follows world X, on other faces v points up.
 
 ## Persistent references
 
 > [!IMPORTANT]
 > The "topological naming problem" decides whether parametric edits survive. References must never store kernel indices such as "face #7".
 
-A `TopologyRef` is a **semantic descriptor** built from how the topology was created:
+A `TopologyRef` stores a **generated name**, never an index ([[src/core/contracts/feature.ts]]):
 
 ```ts
 interface TopologyRef {
-  feature: FeatureId;                 // the feature that generated the element
-  role: string;                       // e.g. 'side', 'start-cap', 'end-cap', 'fillet-face'
-  source?: SketchEntityId | TopologyRef;  // generating sketch segment or parent element
-  kind: 'face' | 'edge' | 'vertex';
-  hint?: GeometricFingerprint;        // centroid/normal/area for disambiguation and repair
+  kind: 'face' | 'edge';
+  body: string;      // the body: the id of the feature that created it
+  name: string;      // e.g. "f:extrude1:side:line7" or "e:f:extrude1:end|f:extrude1:side:line7"
+  hint?: Vec3;       // where it was when picked; tells split pieces apart
 }
 ```
 
-The Modeling Engine names topology after each feature, using OCCT's construction history (`Generated` / `Modified` of the make-shape algorithms). It resolves references by matching the descriptor first and the fingerprint as a fallback. A reference that cannot be resolved surfaces as a feature error the user can repair. It is never silently re-bound to a different face.
+The Modeling Engine names every face after each feature (*generative naming*, [[src/core/engines/modeling/naming.ts]]):
+
+| Face | Name |
+| --- | --- |
+| Extrude cap | `f:<feature>:start` / `f:<feature>:end` |
+| Extrude or revolve side | `f:<feature>:side:<sketch curve id>`, recognised because the curve sweeps exactly that surface (a plane for a line, a cylinder, cone, sphere or torus for others) |
+| Fillet or chamfer face | `f:<feature>:round:<edge name>` / `f:<feature>:bevel:<edge name>` |
+| Shell inner face | `f:<feature>:inner` |
+| Pattern or mirror copy | the original's name plus `@<feature>.<n>` |
+| Anything else new | `f:<feature>:new:<n>`, in order of position |
+
+- **Inherited names.** A face that lies on the same exact surface as a face of the feature's inputs keeps that face's name, however it was trimmed. This is why changing an upstream dimension keeps downstream references valid: the names follow the design intent, not the kernel's numbering.
+- **Edges** are named after the faces they separate: `e:<face A>|<face B>`.
+- **Repeated names.** When a name occurs more than once (a face split in two), `~1`, `~2` … are appended in order of position.
+- **Resolution.** A reference resolves by exact name, then among the split pieces of that name (nearest to the hint). A reference that cannot be resolved makes its feature fail with "… no longer exists. Pick it again". It is never silently re-bound to a different face.
 
 ## Assemblies
 

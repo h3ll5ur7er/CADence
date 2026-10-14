@@ -1,8 +1,10 @@
 import { computed, DestroyRef, inject, Injectable, signal } from '@angular/core';
-import type { DocumentId, SketchPlane } from '@core/contracts';
-import type { DesignCommand, DesignSession, DesignState, DrawingFormat, SketchView } from '@core/managers/design';
+import { type DocumentId, type Feature, type FeatureType, isSketch, type Parameter, type PlaneRef } from '@core/contracts';
+import type { DesignCommand, DesignSession, DesignState, DrawingFormat, SketchView, SolidFormat } from '@core/managers/design';
 import { newId } from '@core/utilities/identity';
 import { DESIGN_MANAGER } from '../../core.providers';
+import type { Pick, PickKind } from '../../viewport/picking';
+import { applyPick, defaultFeature, type FeatureDraft, type PickTarget, pickableFor, selectionOf } from '../modeling/feature-drafts';
 import type { Tool } from './sketch-tools';
 
 /**
@@ -23,6 +25,19 @@ export class DesignStore {
   readonly selection = signal<readonly string[]>([]);
   /** A solved drag that is not committed yet. */
   readonly preview = signal<SketchView | undefined>(undefined);
+  /** The feature being created or edited. */
+  readonly draft = signal<FeatureDraft | undefined>(undefined);
+  /** A face picked in the 3D view outside dialogs (for sketching on it). */
+  readonly pickedFace = signal<Extract<Pick, { kind: 'face' }> | undefined>(undefined);
+  readonly parametersOpen = signal(false);
+
+  readonly pickable = computed((): ReadonlySet<PickKind> => (this.editing() ? new Set() : pickableFor(this.draft())));
+  readonly picks = computed((): readonly Pick[] => {
+    const draft = this.draft();
+    if (draft) return selectionOf(draft);
+    const face = this.pickedFace();
+    return face ? [face] : [];
+  });
 
   readonly editedView = computed(() => {
     const id = this.editing();
@@ -59,9 +74,71 @@ export class DesignStore {
     return result.ok;
   }
 
-  async createSketch(plane: SketchPlane): Promise<void> {
+  async createSketch(plane: PlaneRef): Promise<void> {
     const id = newId();
+    this.cancelDraft();
     if (await this.run({ type: 'create-sketch', id, plane })) this.edit(id, 'line');
+  }
+
+  /** A click in the 3D view: feeds the open dialog, or picks a face to sketch on. */
+  pick(pick: Pick): void {
+    if (this.editing()) return;
+    const draft = this.draft();
+    if (draft) {
+      this.draft.set(applyPick(draft, pick));
+      return;
+    }
+    if (pick.kind !== 'face') return;
+    const current = this.pickedFace();
+    this.pickedFace.set(current?.name === pick.name && current.body === pick.body ? undefined : pick);
+  }
+
+  startFeature(type: FeatureType): void {
+    const state = this.state();
+    if (!state) return;
+    this.finishEditing();
+    this.parametersOpen.set(false);
+    this.pickedFace.set(undefined);
+    this.draft.set({ mode: 'create', feature: defaultFeature(type, newId(), state) });
+  }
+
+  editFeature(id: string): void {
+    const feature = this.state()?.document.timeline.find((item): item is Feature => item.id === id && !isSketch(item));
+    if (!feature) return;
+    this.finishEditing();
+    this.parametersOpen.set(false);
+    this.draft.set({ mode: 'edit', feature });
+  }
+
+  updateDraft(feature: Feature, target?: PickTarget): void {
+    const draft = this.draft();
+    if (draft) this.draft.set(target ? { mode: draft.mode, feature, target } : { mode: draft.mode, feature });
+  }
+
+  /** Applies the dialog; it stays open with the reason when the feature fails. */
+  async commitDraft(): Promise<void> {
+    const draft = this.draft();
+    if (!draft) return;
+    const ok = await this.run(draft.mode === 'create' ? { type: 'add-feature', feature: draft.feature } : { type: 'edit-feature', feature: draft.feature });
+    if (ok) this.draft.set(undefined);
+  }
+
+  cancelDraft(): void {
+    this.draft.set(undefined);
+    this.error.set(undefined);
+  }
+
+  async setParameter(parameter: Parameter, isNew: boolean): Promise<boolean> {
+    return this.run(isNew ? { type: 'add-parameter', parameter } : { type: 'set-parameter', parameter });
+  }
+
+  async exportBodies(format: SolidFormat): Promise<void> {
+    const result = await this.session?.exportBodies(format);
+    if (result && !result.ok) this.error.set(result.error.message);
+  }
+
+  volumes(): Promise<Record<string, number>> {
+    return this.session?.volumes() ?? Promise.resolve({});
   }
 
   /** New sketches start drawing; existing ones start selecting. */

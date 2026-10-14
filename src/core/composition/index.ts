@@ -16,10 +16,9 @@ import {
   InMemoryProjectAccess,
   type ProjectAccess,
 } from '@core/access/project';
-import { createShapeAccess } from '@core/access/shape';
 import type { DomainEvents } from '@core/contracts';
-import { createInterchangeEngine, type InterchangeEngine } from '@core/engines/interchange';
-import { createModelingEngine, type ModelingEngine } from '@core/engines/modeling';
+import type { InterchangeEngine } from '@core/engines/interchange';
+import type { ModelingEngine } from '@core/engines/modeling';
 import { createParameterEngine } from '@core/engines/parameter';
 import { createSketchEngine } from '@core/engines/sketch';
 import { createDesignManager, type DesignManager } from '@core/managers/design';
@@ -61,10 +60,31 @@ interface Geometry {
   readonly interchange: InterchangeEngine;
 }
 
-/** The kernel-bound engines, sharing one shape store (docs/Architecture.md#deployment-and-threads). */
+/**
+ * The kernel-bound engines in this thread (Node, tests), sharing one shape store. Loaded on first use,
+ * so browser bundles, which use the worker, never include the kernel.
+ */
 function localGeometry(): Geometry {
-  const shapes = createShapeAccess();
-  return { modeling: createModelingEngine(shapes), interchange: createInterchangeEngine(shapes) };
+  const engines = (async (): Promise<Geometry> => {
+    const [{ createShapeAccess }, { createModelingEngine }, { createInterchangeEngine }] = await Promise.all([
+      import('@core/access/shape'),
+      import('@core/engines/modeling'),
+      import('@core/engines/interchange'),
+    ]);
+    const shapes = createShapeAccess();
+    return { modeling: createModelingEngine(shapes), interchange: createInterchangeEngine(shapes) };
+  })();
+  return { modeling: deferred(engines, 'modeling'), interchange: deferred(engines, 'interchange') };
+}
+
+/** An engine whose (async) methods wait for it to load. */
+function deferred<K extends keyof Geometry>(engines: Promise<Geometry>, key: K): Geometry[K] {
+  return new Proxy({} as Geometry[K], {
+    get: (_target, method) => async (...args: unknown[]) => {
+      const engine = (await engines)[key] as unknown as Record<string | symbol, (...a: unknown[]) => unknown>;
+      return (engine[method] as (...a: unknown[]) => unknown).apply(engine, args);
+    },
+  });
 }
 
 export function createCore(host: Host): Core {

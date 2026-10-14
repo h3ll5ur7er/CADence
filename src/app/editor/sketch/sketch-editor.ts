@@ -15,7 +15,7 @@ import { pointsOf } from '../../viewport/sketch-display';
 import { type Affine, affineScale, applyAffine, invertAffine } from '../../viewport/sketch-planes';
 import { Autofocus } from '../../shared/autofocus';
 import { DesignStore } from './design-store';
-import { curvePath, dimensionLabels, glyphs, profilePath } from './sketch-overlay';
+import { curvePath, dimensionLabels, glyphs, hitTest, profilePath } from './sketch-overlay';
 import {
   arcCommand,
   circleCommand,
@@ -27,6 +27,7 @@ import {
 } from './sketch-tools';
 
 const snapPixels = 10;
+const hitPixels = 7;
 const dragThreshold = 3;
 
 interface DragState {
@@ -337,11 +338,15 @@ export class SketchEditor {
     return best ? { id: best.id, at: best.at } : { at };
   }
 
-  private targetOf(event: Event): { id: string; kind: string } | undefined {
+  /** Labels and badges are hit by the DOM; points and curves geometrically, within a few pixels. */
+  private targetOf(event: PointerEvent): { id: string; kind: string } | undefined {
     const element = (event.target as Element | null)?.closest('[data-id]');
     const id = element?.getAttribute('data-id');
     const kind = element?.getAttribute('data-kind');
-    return id && kind ? { id, kind } : undefined;
+    if (id && kind) return { id, kind };
+    const at = this.toPlane(event);
+    const m = this.matrix();
+    return at && m ? hitTest(this.sketch(), at, hitPixels / affineScale(m)) : undefined;
   }
 
   private preview(): string | undefined {

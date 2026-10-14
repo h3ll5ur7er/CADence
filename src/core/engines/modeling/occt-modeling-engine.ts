@@ -40,11 +40,14 @@ export class OcctModelingEngine implements ModelingEngine {
       if (face.geomType !== 'PLANE') return fail({ code: 'not-planar', message: 'Sketches and planes need a flat face.' });
       const origin = face.center.toTuple() as Vec3;
       const normal = normalize3(face.normalAt(face.center).toTuple() as Vec3);
-      // In-plane axes: the world axis least aligned with the normal, made perpendicular.
-      const seed: Vec3 = Math.abs(normal[2]) > 0.9 ? [1, 0, 0] : [0, 0, 1];
-      const v = normalize3(sub3(seed, scale3(normal, dot3(seed, normal))));
-      const u = normalize3(cross3(v, normal));
-      return ok({ origin, u, v });
+      // In-plane axes like the origin planes': on horizontal faces u follows world X; on others v points up.
+      const flat = (axis: Vec3) => normalize3(sub3(axis, scale3(normal, dot3(axis, normal))));
+      if (Math.abs(normal[2]) > 0.9) {
+        const u = flat([1, 0, 0]);
+        return ok({ origin, u, v: normalize3(cross3(normal, u)) });
+      }
+      const v = flat([0, 0, 1]);
+      return ok({ origin, u: normalize3(cross3(v, normal)), v });
     } catch (error) {
       return fail({ code: 'lost-reference', message: describe(error) });
     }

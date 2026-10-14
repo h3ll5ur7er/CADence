@@ -20,7 +20,7 @@ test('projects, documents and the three editor modes', async ({ page }) => {
   await page.getByRole('button', { name: 'Create project' }).click();
   await expect(page).toHaveURL(/\/projects\/[^/]+\/documents\/[^/]+$/);
   await expect(page.getByTestId('mode')).toHaveText('Component');
-  await expect(page.getByLabel('Model browser')).toContainText('XY plane');
+  await expect(page.getByLabel('Model browser')).toContainText('Timeline');
   await waitForViewport(page);
   await evidence(page, '02-component-mode');
 

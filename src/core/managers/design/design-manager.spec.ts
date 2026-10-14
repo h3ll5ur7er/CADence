@@ -104,7 +104,7 @@ describe('DesignManager', () => {
   it('creates numbered sketches on origin planes and saves them', async () => {
     unwrap(await session.execute({ type: 'create-sketch', id: 's1', plane: 'XY' }));
     unwrap(await session.execute({ type: 'create-sketch', id: 's2', plane: 'XZ' }));
-    expect(session.state().document.timeline.map((i) => [i.name, i.plane])).toEqual([
+    expect(session.state().document.timeline.map((i) => [i.name, 'plane' in i ? i.plane : undefined])).toEqual([
       ['Sketch 1', 'XY'],
       ['Sketch 2', 'XZ'],
     ]);

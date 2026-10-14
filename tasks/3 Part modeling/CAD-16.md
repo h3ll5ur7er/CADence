@@ -2,10 +2,11 @@
 id: CAD-16
 title: Fillet, chamfer, shell and construction planes
 type: feature
-status: todo
+status: done
 priority: medium
 ---
 
-- [ ] Fillet and chamfer on edge references
-- [ ] Shell with face removal
-- [ ] Construction planes: offset, angle, midplane, through points
+- [x] Fillet and chamfer on picked edges
+- [x] Shell with face removal (inward walls; impossible thicknesses reported)
+- [x] Construction planes offset from origin planes, faces or other construction planes; sketches on them
+- [ ] ~~Angle, midplane and through-points planes~~: moved to [[CAD-30]]

@@ -7,7 +7,10 @@ import { type Line, sameLine, samePlaneIgnoringSide, type Surface } from './surf
 import { profilesDrawing } from './geometry';
 
 /** The surface a profile edge sweeps out, to recognise which tool face it made. */
-type Expected = { readonly source: string; readonly matches: (surface: Surface) => boolean };
+interface Expected {
+  readonly source: string;
+  readonly matches: (surface: Surface) => boolean;
+}
 
 const near = (a: number, b: number) => Math.abs(a - b) <= 1e-5 * Math.max(1, Math.abs(a), Math.abs(b));
 const distanceToLine = (p: Vec3, line: Line) => length3(cross3(sub3(p, line.point), line.direction));

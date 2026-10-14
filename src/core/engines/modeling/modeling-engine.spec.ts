@@ -171,3 +171,16 @@ describe('ModelingEngine', () => {
     expect(mesh?.edgePositions.length).toBeGreaterThan(0);
   });
 });
+
+describe('face planes', () => {
+  it('orient like the origin planes', async () => {
+    const shapes = createShapeAccess();
+    const local = createModelingEngine(shapes);
+    const box = await local.apply({ type: 'extrude', feature: 'box', key: 'orient', bodies: [], frame: originFrames.XY, profiles: [profile(rectangleLoop(0, 0, 10, 10, 'box'))], distance: 10, direction: 'normal', operation: 'new-body' });
+    const top = await local.planeOf(box.bodies, { kind: 'face', body: 'box', name: 'f:box:end' });
+    const front = await local.planeOf(box.bodies, { kind: 'face', body: 'box', name: 'f:box:side:box-bottom' });
+    const round = (v: readonly number[]) => v.map((x) => Math.round(x * 1e6) / 1e6 + 0);
+    expect(top.ok && [round(top.value.u), round(top.value.v)]).toEqual([[1, 0, 0], [0, 1, 0]]);
+    expect(front.ok && [round(front.value.u), round(front.value.v)]).toEqual([[1, 0, 0], [0, 0, 1]]);
+  });
+});

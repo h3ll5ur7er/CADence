@@ -20,6 +20,8 @@ How to run, test and build CADence. The rules for code and the definition of don
 
 Add `?webgl` to the URL to force the WebGL 2 renderer instead of WebGPU. The status bar shows which backend runs.
 
+The geometry kernel (OpenCascade, a 23 MB WebAssembly file) runs in a Web Worker, [[src/workers/geometry.worker.ts]], and loads on the first modeling operation. The build copies the kernel's and the sketch solver's WebAssembly to `/wasm/` (see `assets` in `angular.json`). In unit tests the kernel runs in-process in Node.
+
 The desktop app keeps each project as a folder below the app data folder, `%APPDATA%\dev.cadence.app\projects\<project id>\`:
 
 ```

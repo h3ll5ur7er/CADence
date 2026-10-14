@@ -2,7 +2,7 @@
   position: absolute;
   top: var(--space-3);
   left: 264px; /* clear of the model browser */
-  right: 120px; /* clear of the view cube */
+  right: 150px; /* clear of the view cube */
   display: flex;
   justify-content: center;
   pointer-events: none;
@@ -155,4 +155,55 @@
   padding: 0;
   list-style: none;
   font-size: 13px;
+}
+
+.model-bar .tool {
+  width: 32px;
+  height: 32px;
+  color: var(--text);
+}
+
+.menu-list.end {
+  left: auto;
+  right: 0;
+}
+
+.menu-list button:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.node-button {
+  width: 100%;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--surface-2);
+  }
+}
+
+.item.suppressed .item-name {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.item.failed .item-name {
+  color: var(--danger);
+}
+
+.areas li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 2px 0;
+}
+
+.picked {
+  margin: 0;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
 }

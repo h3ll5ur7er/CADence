@@ -57,6 +57,9 @@ export interface ImportedDocument extends DocumentBase {
   readonly kind: 'imported';
   readonly assetId: AssetId;
   readonly format: ImportFormat;
+  /** Name of the original file, e.g. `bracket.step`. */
+  readonly fileName: string;
+  readonly byteLength: number;
 }
 
 export type CadDocument = ComponentDocument | AssemblyDocument | ImportedDocument;

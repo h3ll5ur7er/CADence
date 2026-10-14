@@ -20,6 +20,7 @@ export default tseslint.config(
       '@angular-eslint/directive-selector': ['error', { type: 'attribute', prefix: 'cad', style: 'camelCase' }],
       '@angular-eslint/prefer-on-push-component-change-detection': 'error',
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-extraneous-class': ['error', { allowWithDecorator: true }],
       '@typescript-eslint/consistent-type-imports': ['error', { fixStyle: 'inline-type-imports' }],
     },
   },

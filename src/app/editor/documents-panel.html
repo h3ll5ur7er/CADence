@@ -1,0 +1,42 @@
+<div class="actions" role="toolbar" aria-label="Create documents">
+  <button type="button" class="btn" (click)="create.emit('component')">
+    <cad-icon name="component" /> Component
+  </button>
+  <button type="button" class="btn" (click)="create.emit('assembly')">
+    <cad-icon name="assembly" /> Assembly
+  </button>
+  <label class="btn import" title="Import STEP, STL, OBJ, 3MF, DXF or SVG">
+    <cad-icon name="upload" /> Import
+    <input #file type="file" class="visually-hidden" [accept]="accept" (change)="picked(file)" />
+  </label>
+</div>
+
+<nav aria-label="Project documents">
+  @for (group of groups; track group.kind) {
+    @let docs = ofKind(group.kind);
+    @if (docs.length > 0) {
+      <h3 class="eyebrow">{{ group.label }}</h3>
+      <ul>
+        @for (doc of docs; track doc.id) {
+          <li class="item" [class.active]="doc.id === activeId()">
+            <a [routerLink]="['/projects', doc.projectId, 'documents', doc.id]" [attr.aria-current]="doc.id === activeId() ? 'page' : null">
+              <cad-icon [name]="group.icon" />
+              <span class="name">{{ doc.name }}</span>
+            </a>
+            <span class="item-actions">
+              <button type="button" class="icon-btn" title="Rename" [attr.aria-label]="'Rename ' + doc.name" (click)="rename.emit(doc)">
+                <cad-icon name="pencil" [size]="14" />
+              </button>
+              <button type="button" class="icon-btn" title="Delete" [attr.aria-label]="'Delete ' + doc.name" (click)="remove.emit(doc)">
+                <cad-icon name="trash" [size]="14" />
+              </button>
+            </span>
+          </li>
+        }
+      </ul>
+    }
+  }
+  @if (documents().length === 0) {
+    <p class="hint">This project is empty. Create a component to start modeling.</p>
+  }
+</nav>

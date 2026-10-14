@@ -25,21 +25,29 @@ export interface ShapeAccessOptions {
   readonly capacity?: number;
 }
 
+/**
+ * The kernel loads once per thread: replicad keeps it in a global, so a second instance would make
+ * the shapes of the first unusable.
+ */
+let kernel: Promise<void> | undefined;
+
+function loadKernel(wasmUrl: string | undefined): Promise<void> {
+  kernel ??= (async () => {
+    const [{ default: opencascade }, { setOC }] = await Promise.all([import('replicad-opencascadejs'), import('replicad')]);
+    const quiet = () => undefined; // the STEP writer reports statistics on stdout
+    const oc = await opencascade({ print: quiet, printErr: quiet, ...(wasmUrl ? { locateFile: () => wasmUrl } : {}) });
+    setOC(oc);
+  })();
+  return kernel;
+}
+
 class KernelShapeAccess implements ShapeAccess {
   private readonly entries = new Map<string, NamedShape>();
-  private kernel: Promise<void> | undefined;
 
   constructor(private readonly options: ShapeAccessOptions) {}
 
   ready(): Promise<void> {
-    this.kernel ??= (async () => {
-      const [{ default: opencascade }, { setOC }] = await Promise.all([import('replicad-opencascadejs'), import('replicad')]);
-      const wasmUrl = this.options.wasmUrl;
-      const quiet = () => undefined; // the STEP writer reports statistics on stdout
-      const oc = await opencascade({ print: quiet, printErr: quiet, ...(wasmUrl ? { locateFile: () => wasmUrl } : {}) });
-      setOC(oc);
-    })();
-    return this.kernel;
+    return loadKernel(this.options.wasmUrl);
   }
 
   put(key: string, shape: NamedShape): void {
@@ -74,3 +82,4 @@ export function createShapeAccess(options: ShapeAccessOptions = {}): ShapeAccess
 }
 
 export { baseName, centerOf, find } from './lookup';
+export { place } from './placement';

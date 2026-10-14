@@ -1,5 +1,5 @@
-import type { ShapeAccess } from '@core/access/shape';
-import type { Sketch } from '@core/contracts';
+import { place, type ShapeAccess } from '@core/access/shape';
+import type { Matrix4, Sketch } from '@core/contracts';
 import { exportSTEP } from 'replicad';
 import { compensatedCurves, type DrawingCurve, drawingCurves, type KerfCompensation } from './drawing';
 import { writeDxf } from './dxf';
@@ -10,10 +10,11 @@ export type DrawingFormat = 'dxf' | 'svg';
 export type SolidFormat = 'step' | 'stl' | 'obj' | '3mf';
 export type { KerfCompensation } from './drawing';
 
-/** A body to export: its display name and the key of its shape in Shape Access. */
+/** A body to export: its display name, the key of its shape in Shape Access, and where it goes (assemblies). */
 export interface BodySource {
   readonly name: string;
   readonly key: string;
+  readonly transform?: Matrix4;
 }
 
 /**
@@ -57,20 +58,25 @@ class DefaultInterchangeEngine implements InterchangeEngine {
     const loaded = bodies.map((b) => {
       const named = shapes.get(b.key);
       if (!named) throw new Error(`Body ${b.name} has to be rebuilt first.`);
-      return { name: b.name, shape: named.shape };
+      return { name: b.name, shape: b.transform ? place(named.shape, b.transform) : named.shape, placed: Boolean(b.transform) };
     });
-    if (loaded.length === 0) throw new Error('There are no bodies to export.');
-    if (format === 'step') {
-      const blob = exportSTEP(loaded.map(({ name, shape }) => ({ shape, name })), { unit: 'MM', modelUnit: 'MM' });
-      return new Uint8Array(await blob.arrayBuffer());
+    try {
+      if (loaded.length === 0) throw new Error('There are no bodies to export.');
+      if (format === 'step') {
+        // One named solid per body (per instance in assemblies), as separate products in the STEP file.
+        const blob = exportSTEP(loaded.map(({ name, shape }) => ({ shape, name })), { unit: 'MM', modelUnit: 'MM' });
+        return new Uint8Array(await blob.arrayBuffer());
+      }
+      const meshes = loaded.map(({ name, shape }): TriangleMesh => {
+        const box = shape.boundingBox;
+        const tolerance = Math.max(0.005, Math.hypot(box.width, box.height, box.depth) / 5000);
+        const mesh = shape.mesh({ tolerance, angularTolerance: 0.1 });
+        return { name, positions: mesh.vertices, indices: mesh.triangles };
+      });
+      return meshWriters[format](meshes);
+    } finally {
+      for (const body of loaded) if (body.placed) body.shape.delete();
     }
-    const meshes = loaded.map(({ name, shape }): TriangleMesh => {
-      const box = shape.boundingBox;
-      const tolerance = Math.max(0.005, Math.hypot(box.width, box.height, box.depth) / 5000);
-      const mesh = shape.mesh({ tolerance, angularTolerance: 0.1 });
-      return { name, positions: mesh.vertices, indices: mesh.triangles };
-    });
-    return meshWriters[format](meshes);
   }
 }
 

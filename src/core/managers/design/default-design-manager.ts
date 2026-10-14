@@ -1,10 +1,13 @@
+import type { AssetAccess } from '@core/access/asset';
 import type { DocumentAccess } from '@core/access/document';
 import type { ExternalFileAccess } from '@core/access/external-file';
 import {
   type BodyMesh,
   type BodyProperties,
+  type BodyState,
   type ComponentDocument,
   type DocumentId,
+  type DomainEvents,
   fail,
   isSketch,
   manufacturingProfiles,
@@ -23,6 +26,7 @@ import type { ModelingEngine } from '@core/engines/modeling';
 import type { ParameterEngine } from '@core/engines/parameter';
 import type { SketchEngine } from '@core/engines/sketch';
 import type { Clock } from '@core/utilities/clock';
+import type { EventBus } from '@core/utilities/messaging';
 import { applyCommand } from './commands';
 import type {
   DesignCommand,
@@ -43,6 +47,8 @@ export interface DesignManagerDependencies {
   readonly modeling: ModelingEngine;
   readonly interchange: InterchangeEngine;
   readonly analysis: AnalysisEngine;
+  readonly assets: AssetAccess;
+  readonly events: EventBus<DomainEvents>;
   readonly clock: Clock;
 }
 
@@ -72,6 +78,7 @@ class Session implements DesignSession {
   constructor(
     private readonly deps: DesignManagerDependencies,
     initial: Snapshot,
+    private readonly results: ResultPublisher,
   ) {
     this.current = initial;
     for (const mesh of initial.meshes) this.meshCache.set(mesh.key, mesh);
@@ -219,6 +226,7 @@ class Session implements DesignSession {
     await this.deps.documents.store(snapshot.document);
     const state = this.state();
     for (const listener of this.listeners) listener(state);
+    await this.results.publish(snapshot.document, snapshot.derived.bodies);
   }
 
   private serialized<T>(work: () => Promise<T>): Promise<T> {
@@ -240,8 +248,27 @@ function errorCode(message: string | undefined): string {
   return 'feature-failed';
 }
 
-export class DefaultDesignManager implements DesignManager {
+/**
+ * Publishes component results for assemblies (docs/Architecture/Decisions.md#adr-11). Snapshots are
+ * reused while the bodies are unchanged, so most edits only re-stamp the result.
+ */
+class ResultPublisher {
+  private last: { readonly keys: string; readonly bytes: Uint8Array } | undefined;
+
   constructor(private readonly deps: DesignManagerDependencies) {}
+
+  async publish(document: ComponentDocument, bodies: readonly BodyState[]): Promise<void> {
+    const keys = bodies.map((b) => b.key).join('|');
+    if (this.last?.keys !== keys) this.last = { keys, bytes: await this.deps.modeling.snapshot(bodies) };
+    await this.deps.assets.publishResult({ documentId: document.id, projectId: document.projectId, stamp: document.modifiedAt, bytes: this.last.bytes });
+  }
+}
+
+export class DefaultDesignManager implements DesignManager {
+  constructor(private readonly deps: DesignManagerDependencies) {
+    deps.events.subscribe('regenerateComponent', ({ documentId }) => this.regenerate(documentId));
+    deps.events.subscribe('documentDeleted', ({ documentId }) => deps.assets.discardResult(documentId));
+  }
 
   async open(documentId: DocumentId): Promise<Result<DesignSession>> {
     const document = await this.deps.documents.load(documentId);
@@ -250,6 +277,18 @@ export class DefaultDesignManager implements DesignManager {
     }
     const derived = await new Regeneration(this.deps).run(document);
     const meshes = derived.bodies.length ? await this.deps.modeling.tessellate(derived.bodies) : [];
-    return ok(new Session(this.deps, { document, derived, meshes }));
+    return ok(new Session(this.deps, { document, derived, meshes }, new ResultPublisher(this.deps)));
+  }
+
+  /** Answers a queued `regenerateComponent` request with `componentRegenerated`. */
+  private async regenerate(documentId: DocumentId): Promise<void> {
+    const document = await this.deps.documents.load(documentId);
+    if (document?.kind !== 'component') {
+      this.deps.events.publish('componentRegenerated', { documentId, ok: false });
+      return;
+    }
+    const derived = await new Regeneration(this.deps).run(document);
+    await new ResultPublisher(this.deps).publish(document, derived.bodies);
+    this.deps.events.publish('componentRegenerated', { documentId, ok: true });
   }
 }

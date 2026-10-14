@@ -1,4 +1,4 @@
-import type { BodyMesh, PlaneFrame, Vec3 } from '@core/contracts';
+import type { BodyMesh, Matrix4 as Placement, PlaneFrame, Vec3 } from '@core/contracts';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
   Color,
@@ -27,6 +27,15 @@ import type { SketchDisplay } from './sketch-display';
 import type { Affine } from './sketch-planes';
 
 export type { ViewportTheme } from './scene-content';
+
+/** An assembly instance: its component's bodies where the assembly puts them. */
+export interface PartDisplay {
+  readonly id: string;
+  readonly bodies: readonly BodyMesh[];
+  readonly transform: Placement;
+  /** Shown in the flag colour (e.g. interfering parts). */
+  readonly flagged?: boolean;
+}
 export type StandardView = 'front' | 'back' | 'top' | 'bottom' | 'left' | 'right' | 'home';
 export type RendererBackend = 'WebGPU' | 'WebGL 2';
 
@@ -73,6 +82,8 @@ export class ViewportScene {
   private readonly planes = new Group();
   private readonly highlights = new Group();
   private readonly annotations = new Group();
+  private readonly parts = new Group();
+  private partEntries = new Map<string, { readonly group: Group; readonly signature: string; readonly part: PartDisplay }>();
   private flagged: readonly { readonly body: string; readonly name: string }[] = [];
   private readonly raycaster = new Raycaster();
   private meshes: readonly BodyMesh[] = [];
@@ -107,7 +118,7 @@ export class ViewportScene {
     this.scene.add(sun);
     this.scene.add(createGrid(theme));
     this.origin = createOrigin(theme);
-    this.scene.add(this.origin, this.bodies, this.sketches, this.planes, this.highlights, this.annotations);
+    this.scene.add(this.origin, this.bodies, this.parts, this.sketches, this.planes, this.highlights, this.annotations);
     this.controls.target.copy(homeTarget);
     this.placeCamera(viewDirections.home, homeDistance);
 
@@ -145,6 +156,39 @@ export class ViewportScene {
     this.meshes = meshes;
     this.replace(this.bodies, meshes.map((m) => createBody(m, this.theme)));
     this.updateHighlights();
+  }
+
+  /**
+   * Assembly instances. Parts whose bodies did not change keep their scene objects and only move,
+   * so playing a motion study costs one matrix per part and frame.
+   */
+  setParts(parts: readonly PartDisplay[]): void {
+    const next = new Map<string, { group: Group; signature: string; part: PartDisplay }>();
+    for (const part of parts) {
+      const signature = `${part.bodies.map((b) => b.key).join('|')}:${part.flagged ? 'flag' : ''}`;
+      let entry = this.partEntries.get(part.id);
+      if (!entry || entry.signature !== signature) {
+        if (entry) this.drop(entry.group);
+        const group = new Group();
+        group.name = `part-${part.id}`;
+        group.userData = { instance: part.id };
+        group.matrixAutoUpdate = false;
+        group.add(...part.bodies.map((m) => createBody(m, this.theme, part.flagged ? this.theme.flag : this.theme.body)));
+        this.parts.add(group);
+        entry = { group, signature, part };
+      }
+      entry.group.matrix.fromArray([...part.transform]);
+      entry.group.updateMatrixWorld(true);
+      next.set(part.id, { ...entry, part });
+    }
+    for (const [id, entry] of this.partEntries) if (!next.has(id)) this.drop(entry.group);
+    this.partEntries = next;
+    this.updateHighlights();
+  }
+
+  private drop(group: Group): void {
+    disposeTree(group);
+    this.parts.remove(group);
   }
 
   setPlanes(frames: readonly PlaneFrame[]): void {
@@ -259,7 +303,7 @@ export class ViewportScene {
     const distance = this.camera.position.distanceTo(this.controls.target);
     const worldPerPixel = (2 * distance * Math.tan((this.camera.fov * Math.PI) / 360)) / Math.max(rect.height, 1);
     this.raycaster.params.Line = { threshold: worldPerPixel * 5 };
-    return pickAt(this.raycaster, [this.bodies, this.sketches], this.pickable);
+    return pickAt(this.raycaster, [this.bodies, this.parts, this.sketches], this.pickable);
   }
 
   private updateHighlights(): void {
@@ -278,9 +322,15 @@ export class ViewportScene {
         this.highlights.add(copy);
         return;
       }
-      const mesh = this.meshes.find((m) => m.body === pick.body);
+      const part = pick.instance ? this.partEntries.get(pick.instance) : undefined;
+      const mesh = (part ? part.part.bodies : this.meshes).find((m) => m.body === pick.body);
       const highlight = mesh && (pick.kind === 'face' ? faceHighlight(mesh, pick.name, color) : edgeHighlight(mesh, pick.name, color));
-      if (highlight) this.highlights.add(highlight);
+      if (!highlight) return;
+      if (part) {
+        highlight.matrixAutoUpdate = false;
+        highlight.matrix.copy(part.group.matrix);
+      }
+      this.highlights.add(highlight);
     };
     for (const face of this.flagged) {
       const mesh = this.meshes.find((m) => m.body === face.body);

@@ -198,3 +198,20 @@ describe('AnalysisEngine laser checks', () => {
     expect(await engine.validate({ bodies: [], sketches: [] }, laser)).toMatchObject([{ status: 'fail' }]);
   });
 });
+
+describe('AnalysisEngine interference', () => {
+  it('finds overlapping instances and ignores touching ones', async () => {
+    const cube = body('cube', makeBaseBox(10, 10, 10));
+    const at = (x: number) => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, 0, 1];
+    const parts = [
+      { instance: 'a', bodies: [cube], transform: at(0) },
+      { instance: 'b', bodies: [cube], transform: at(8) }, // 2 mm into a
+      { instance: 'c', bodies: [cube], transform: at(18) }, // touches b
+    ];
+    const found = await engine.interference(parts);
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({ a: 'a', b: 'b' });
+    expect(found[0]?.volume).toBeCloseTo(2 * 10 * 10, 6);
+    expect(found[0]?.center[0]).toBeCloseTo(4, 6); // makeBaseBox is centred on x; the overlap spans 3 to 5
+  });
+});

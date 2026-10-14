@@ -87,3 +87,4 @@ export function circleCircle(c1: Vec2, r1: number, c2: Vec2, r2: number, toleran
 }
 
 export { type LoopEdge, offsetLoop } from './offset';
+export * from './transform';

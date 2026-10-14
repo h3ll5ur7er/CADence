@@ -3,7 +3,9 @@ import type {
   BodyProperties,
   BodyState,
   Check,
+  Interference,
   ManufacturingProfile,
+  Matrix4,
   Measurement,
   Profile,
   Result,
@@ -23,6 +25,13 @@ export interface SolvedSketch {
   readonly profiles: readonly Profile[];
 }
 
+/** An assembly instance's bodies where the assembly puts them. */
+export interface PlacedPart {
+  readonly instance: string;
+  readonly bodies: readonly BodyState[];
+  readonly transform: Matrix4;
+}
+
 /** What a manufacturability check looks at. */
 export interface ValidationSubject {
   readonly bodies: readonly NamedBody[];
@@ -40,6 +49,8 @@ export interface AnalysisEngine {
   properties(bodies: readonly BodyState[], density: number): Promise<BodyProperties[]>;
   /** The manufacturability rules of the profile's process, applied to the bodies and sketches. */
   validate(subject: ValidationSubject, profile: ManufacturingProfile): Promise<Check[]>;
+  /** Pairs of parts whose solids overlap (touching is fine), with the overlapping volume. */
+  interference(parts: readonly PlacedPart[]): Promise<Interference[]>;
 }
 
 export function createAnalysisEngine(shapes: ShapeAccess): AnalysisEngine {

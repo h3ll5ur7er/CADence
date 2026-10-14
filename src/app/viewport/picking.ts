@@ -3,13 +3,23 @@ import type { Intersection, Object3D, Raycaster } from 'three/webgpu';
 
 /** Something the user clicked in the 3D view. Faces and edges carry their persistent names. */
 export type Pick =
-  | { readonly kind: 'face'; readonly body: string; readonly name: string; readonly hint: Vec3; readonly planar: boolean }
-  | { readonly kind: 'edge'; readonly body: string; readonly name: string; readonly hint: Vec3 }
+  | { readonly kind: 'face'; readonly body: string; readonly name: string; readonly hint: Vec3; readonly planar: boolean; readonly instance?: string }
+  | { readonly kind: 'edge'; readonly body: string; readonly name: string; readonly hint: Vec3; readonly instance?: string }
   | { readonly kind: 'profile'; readonly sketch: string; readonly profile: string };
 
 export type PickKind = Pick['kind'];
 
-export const pickKey = (p: Pick): string => (p.kind === 'profile' ? `profile:${p.sketch}:${p.profile}` : `${p.kind}:${p.body}:${p.name}`);
+export const pickKey = (p: Pick): string =>
+  p.kind === 'profile' ? `profile:${p.sketch}:${p.profile}` : `${p.kind}:${p.instance ?? ''}:${p.body}:${p.name}`;
+
+/** The assembly instance an object belongs to (parts are groups marked with their instance). */
+function instanceOf(object: Object3D | null): string | undefined {
+  for (let o = object; o; o = o.parent) {
+    const instance = (o.userData as { instance?: string }).instance;
+    if (instance) return instance;
+  }
+  return undefined;
+}
 
 function edgeCenter(mesh: BodyMesh, start: number, count: number): Vec3 {
   let x = 0;
@@ -32,12 +42,14 @@ function toPick(hit: Intersection, kinds: ReadonlySet<PickKind>): Pick | undefin
     if (!kinds.has('edge') || hit.index === undefined) return undefined;
     const index = hit.index;
     const edge = mesh.edges.find((e) => index >= e.start && index < e.start + e.count);
-    return edge && { kind: 'edge', body: mesh.body, name: edge.name, hint: edgeCenter(mesh, edge.start, edge.count) };
+    const instance = instanceOf(hit.object);
+    return edge && { kind: 'edge', body: mesh.body, name: edge.name, hint: edgeCenter(mesh, edge.start, edge.count), ...(instance ? { instance } : {}) };
   }
   if (!kinds.has('face') || hit.faceIndex === undefined || hit.faceIndex === null) return undefined;
   const index = hit.faceIndex * 3;
   const face = mesh.faces.find((f) => index >= f.start && index < f.start + f.count);
-  return face && { kind: 'face', body: mesh.body, name: face.name, hint: face.center, planar: face.planar };
+  const instance = instanceOf(hit.object);
+  return face && { kind: 'face', body: mesh.body, name: face.name, hint: face.center, planar: face.planar, ...(instance ? { instance } : {}) };
 }
 
 /**

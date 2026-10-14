@@ -225,7 +225,7 @@ export class DefaultProjectManager implements ProjectManager {
     const document: CadDocument =
       kind === 'component'
         ? { ...header, kind, units: 'mm', parameters: [], timeline: [], rollbackIndex: 0 }
-        : { ...header, kind, instances: [], joints: [] };
+        : { ...header, kind, instances: [], joints: [], motionStudies: [] };
     await this.deps.documents.store(document);
     return summarize(document);
   }

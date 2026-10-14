@@ -186,3 +186,43 @@ describe('face planes', () => {
     expect(front.ok && [round(front.value.u), round(front.value.v)]).toEqual([[1, 0, 0], [0, 0, 1]]);
   });
 });
+
+describe('component results and joint frames', () => {
+  const round = (v: readonly number[]) => v.map((x) => Math.round(x * 1e6) / 1e6 + 0);
+  const holed = profile(rectangleLoop(0, 0, 80, 40, 'plate'), [circleLoop(20, 20, 5, 'hole', false)]);
+  const holedPlate = () =>
+    engine.apply({ type: 'extrude', feature: 'plate', key: 'joint-plate', bodies: [], frame: XY, profiles: [holed], distance: 6, direction: 'normal', operation: 'new-body' });
+
+  it('restores a snapshot with the same solid and names', async () => {
+    const bodies = ok(await holedPlate());
+    const snapshot = await engine.snapshot(bodies);
+    const fresh = createShapeAccess();
+    const restored = await createModelingEngine(fresh).restore(snapshot, 'result:doc');
+    expect(restored).toEqual([{ id: 'plate', key: 'result:doc:plate' }]);
+    expect(measureVolume((fresh.get('result:doc:plate') as NamedShape).shape)).toBeCloseTo(80 * 40 * 6 - Math.PI * 25 * 6, 6);
+    const [before] = await engine.tessellate(bodies);
+    const [after] = await createModelingEngine(fresh).tessellate(restored);
+    expect(after?.faces.map((f) => f.name).sort()).toEqual(before?.faces.map((f) => f.name).sort());
+    expect(after?.edges.map((e) => e.name).sort()).toEqual(before?.edges.map((e) => e.name).sort());
+  });
+
+  it('puts joint frames on face centres, hole axes and circular edges', async () => {
+    const bodies = ok(await holedPlate());
+    const top = await engine.frameOf(bodies, { kind: 'face', body: 'plate', name: 'f:plate:end' });
+    // The centroid of the face, which the hole pulls to the right.
+    const area = 80 * 40 - Math.PI * 25;
+    expect(top.ok && top.value.origin[0]).toBeCloseTo((80 * 40 * 40 - Math.PI * 25 * 20) / area, 6);
+    expect(top.ok && round(top.value.origin.slice(1))).toEqual([20, 6]);
+    const hole = await engine.frameOf(bodies, { kind: 'face', body: 'plate', name: 'f:plate:side:hole' });
+    expect(hole.ok && round(hole.value.origin)).toEqual([20, 20, 3]);
+    expect(hole.ok && round(normal(hole.value))).toEqual([0, 0, 1]); // holes point up, whatever the kernel says
+    const rim = await engine.frameOf(bodies, { kind: 'edge', body: 'plate', name: 'e:f:plate:end|f:plate:side:hole' });
+    expect(rim.ok && round(rim.value.origin)).toEqual([20, 20, 6]);
+  });
+});
+
+const normal = (f: { u: readonly number[]; v: readonly number[] }) => [
+  (f.u[1] as number) * (f.v[2] as number) - (f.u[2] as number) * (f.v[1] as number),
+  (f.u[2] as number) * (f.v[0] as number) - (f.u[0] as number) * (f.v[2] as number),
+  (f.u[0] as number) * (f.v[1] as number) - (f.u[1] as number) * (f.v[0] as number),
+];

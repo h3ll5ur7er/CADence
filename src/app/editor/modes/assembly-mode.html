@@ -1,0 +1,192 @@
+<div class="stage">
+  <cad-viewport
+    #viewport
+    [parts]="store.parts()"
+    [pickable]="store.pickable()"
+    [selection]="store.picks()"
+    (picked)="store.pick($event)"
+    (backendReady)="status.renderer.set($event)"
+  />
+
+  <section class="browser" aria-label="Assembly browser">
+    <h2 class="eyebrow browser-title">Browser</h2>
+    <ul class="tree">
+      <li>
+        <div class="node"><cad-icon name="instance" /> Instances <span class="count" data-testid="instance-count">{{ instances().length }}</span></div>
+        @if (instances().length === 0) {
+          <p class="node-empty">Insert components from the toolbar.</p>
+        }
+        <ul aria-label="Instances">
+          @for (row of instances(); track row.instance.id) {
+            <li class="node item" [class.active]="isSelected('instance', row.instance.id)" [class.failed]="row.status === 'missing'">
+              <button type="button" class="item-main" [attr.aria-label]="'Select ' + row.instance.name" (click)="store.select({ kind: 'instance', id: row.instance.id })">
+                <cad-icon name="component" />
+                <span class="item-name">{{ row.instance.name }}</span>
+                @if (row.status !== 'ready') {
+                  <span class="badge">{{ row.status === 'loading' ? 'loading' : 'missing' }}</span>
+                }
+                @if (row.instance.grounded) {
+                  <cad-icon name="pin" [size]="13" title="Grounded" />
+                }
+              </button>
+              <span class="item-actions">
+                <button type="button" class="icon-btn" [attr.aria-label]="'Delete ' + row.instance.name" title="Delete" (click)="removeInstance(row.instance.id)">
+                  <cad-icon name="trash" [size]="14" />
+                </button>
+              </span>
+            </li>
+          }
+        </ul>
+      </li>
+      <li>
+        <div class="node"><cad-icon name="joint" /> Joints <span class="count">{{ joints().length }}</span></div>
+        <ul aria-label="Joints">
+          @for (joint of joints(); track joint.id) {
+            <li class="node item" [class.active]="isSelected('joint', joint.id)" [class.failed]="store.state()?.jointErrors?.has(joint.id)">
+              <button type="button" class="item-main" [attr.aria-label]="'Select ' + joint.name" [title]="store.state()?.jointErrors?.get(joint.id) ?? joint.name" (click)="store.select({ kind: 'joint', id: joint.id })">
+                <cad-icon name="joint" />
+                <span class="item-name">{{ joint.name }}</span>
+              </button>
+            </li>
+          }
+        </ul>
+      </li>
+      <li>
+        <div class="node"><cad-icon name="film" /> Motion studies <span class="count">{{ studies().length }}</span></div>
+        <ul aria-label="Motion studies">
+          @for (study of studies(); track study.id) {
+            <li class="node item" [class.active]="isSelected('study', study.id)">
+              <button type="button" class="item-main" [attr.aria-label]="'Select ' + study.name" (click)="store.select({ kind: 'study', id: study.id })">
+                <cad-icon name="film" />
+                <span class="item-name">{{ study.name }}</span>
+              </button>
+            </li>
+          }
+        </ul>
+      </li>
+    </ul>
+  </section>
+
+  <div class="top-tools">
+    <div class="model-bar" role="toolbar" aria-label="Assembly tools">
+      <div class="menu">
+        <button type="button" class="btn btn-primary" aria-haspopup="menu" [attr.aria-expanded]="menu() === 'insert'" (click)="toggleMenu('insert')">
+          <cad-icon name="plus" /> Insert
+        </button>
+        @if (menu() === 'insert') {
+          <div class="menu-list" role="menu" aria-label="Components">
+            @for (c of store.insertable(); track c.id) {
+              <button type="button" role="menuitem" (click)="insert(c.id)">{{ c.name }}</button>
+            } @empty {
+              <button type="button" role="menuitem" disabled>No components in this project yet</button>
+            }
+          </div>
+        }
+      </div>
+      <span class="divider"></span>
+      <button type="button" class="btn" [class.on]="store.panel() === 'joint'" [disabled]="instances().length < 2" (click)="store.startJoint()">
+        <cad-icon name="joint" /> Joint
+      </button>
+      <button type="button" class="btn" [disabled]="joints().length === 0" (click)="addStudy()">
+        <cad-icon name="film" /> Motion
+      </button>
+      <button type="button" class="icon-btn tool" aria-label="Check interference" title="Check interference" [class.on]="store.panel() === 'interference'" [disabled]="instances().length < 2" (click)="store.checkInterference()">
+        <cad-icon name="overlap" [size]="18" />
+      </button>
+      <span class="divider"></span>
+      <div class="menu">
+        <button type="button" class="btn" aria-haspopup="menu" [attr.aria-expanded]="menu() === 'export'" [disabled]="instances().length === 0" (click)="toggleMenu('export')">
+          <cad-icon name="download" /> Export
+        </button>
+        @if (menu() === 'export') {
+          <div class="menu-list end" role="menu" aria-label="Export format">
+            @for (f of exportFormats; track f.format) {
+              <button type="button" role="menuitem" (click)="exportAs(f.format)">{{ f.label }}</button>
+            }
+          </div>
+        }
+      </div>
+      <button type="button" class="icon-btn" aria-label="Undo" title="Undo (Ctrl+Z)" [disabled]="!store.state()?.canUndo" (click)="store.undo()">
+        <cad-icon name="undo" [size]="18" />
+      </button>
+      <button type="button" class="icon-btn" aria-label="Redo" title="Redo (Ctrl+Y)" [disabled]="!store.state()?.canRedo" (click)="store.redo()">
+        <cad-icon name="redo" [size]="18" />
+      </button>
+    </div>
+  </div>
+
+  @if (store.error(); as error) {
+    @if (store.panel() !== 'joint') {
+      <p class="toast" role="alert">
+        {{ error }}
+        <button type="button" class="icon-btn" aria-label="Dismiss" (click)="store.error.set(undefined)">×</button>
+      </p>
+    }
+  }
+</div>
+
+<aside class="properties" aria-label="Properties">
+  @let selection = store.selection();
+  @if (store.panel() === 'joint') {
+    <cad-joint-panel />
+  } @else if (store.panel() === 'interference') {
+    <p class="eyebrow">Inspect</p>
+    <div class="head">
+      <h2>Interference</h2>
+      <button type="button" class="icon-btn" aria-label="Close interference" (click)="store.panel.set(undefined)">×</button>
+    </div>
+    @if (store.interference(); as found) {
+      @if (found.length === 0) {
+        <p class="ok" data-testid="interference-result">No parts overlap.</p>
+      } @else {
+        <p class="hint" data-testid="interference-result">{{ found.length }} {{ found.length === 1 ? 'pair overlaps' : 'pairs overlap' }}; the parts are shown in pink.</p>
+        <ul class="overlaps">
+          @for (i of found; track i.a + i.b) {
+            <li>
+              <strong>{{ instanceName(i.a) }} and {{ instanceName(i.b) }}</strong>
+              <span class="mono">{{ mm(i.volume, 3) }}</span>
+            </li>
+          }
+        </ul>
+      }
+    } @else {
+      <p class="hint">Checking…</p>
+    }
+  } @else if (selection?.kind === 'joint') {
+    <cad-joint-properties [jointId]="selection.id" />
+  } @else if (selection?.kind === 'study') {
+    <cad-motion-panel [studyId]="selection.id" [capture]="capture" />
+  } @else if (selectedInstance(); as row) {
+    <p class="eyebrow">Instance of {{ row.component }}</p>
+    <h2>{{ row.instance.name }}</h2>
+    <label class="check">
+      <input type="checkbox" [checked]="row.instance.grounded" (change)="store.run({ type: 'ground-instance', instanceId: row.instance.id, grounded: !row.instance.grounded })" />
+      Grounded (never moves)
+    </label>
+    @if (row.placed) {
+      <p class="hint">A joint places this instance. Move it with the joint's values.</p>
+    } @else {
+      <p class="eyebrow">Position</p>
+      <div class="position">
+        @for (field of positionFields; track field.label) {
+          <label>
+            <span>{{ field.label }}</span>
+            <input type="number" step="any" [attr.aria-label]="field.label + ' of ' + row.instance.name" [value]="row.position[field.index]" (change)="move(row.instance.id, row.position, field.index, $event)" />
+          </label>
+        }
+      </div>
+    }
+  } @else {
+    <p class="eyebrow">Assembly</p>
+    <h2>{{ document().name }}</h2>
+    <dl>
+      <dt>Instances</dt>
+      <dd>{{ instances().length }}</dd>
+      <dt>Joints</dt>
+      <dd>{{ joints().length }}</dd>
+      <dt>Modified</dt>
+      <dd>{{ relativeTime(document().modifiedAt) }}</dd>
+    </dl>
+    <p class="hint">Insert components, connect them with joints, then drag a joint's values or play a motion study.</p>
+  }
+</aside>

@@ -1,4 +1,4 @@
-import { asAssetId, asProjectId } from '@core/contracts';
+import { asAssetId, asDocumentId, asProjectId } from '@core/contracts';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Asset, AssetAccess } from '../asset-access';
 
@@ -38,6 +38,19 @@ export function describeAssetAccessContract(name: string, create: () => AssetAcc
       await access.release(asAssetId('a'));
       await access.release(asAssetId('nope'));
       expect(await access.fetch(asAssetId('a'))).toBeUndefined();
+    });
+
+    it('keeps the latest published result of each component', async () => {
+      const result = (stamp: string, bytes: number[]) => ({ documentId: asDocumentId('d'), projectId: asProjectId('p'), stamp, bytes: new Uint8Array(bytes) });
+      expect(await access.latestResult(asDocumentId('d'))).toBeUndefined();
+      await access.publishResult(result('t1', [1]));
+      await access.publishResult(result('t2', [2, 3]));
+      const latest = await access.latestResult(asDocumentId('d'));
+      expect(latest?.stamp).toBe('t2');
+      expect([...(latest?.bytes ?? [])]).toEqual([2, 3]);
+      await access.discardResult(asDocumentId('d'));
+      await access.discardResult(asDocumentId('unknown'));
+      expect(await access.latestResult(asDocumentId('d'))).toBeUndefined();
     });
   });
 }

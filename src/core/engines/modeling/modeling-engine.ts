@@ -76,4 +76,14 @@ export interface ModelingEngine {
   /** The plane of a planar face, for sketches and construction planes on faces. */
   planeOf(bodies: readonly BodyState[], face: TopologyRef): Promise<Result<PlaneFrame>>;
   tessellate(bodies: readonly BodyState[]): Promise<BodyMesh[]>;
+  /**
+   * A joint frame in body coordinates: on a flat face its centre and outward normal; on a cylinder,
+   * cone or circular edge a point and direction of its axis; on a straight edge its middle and
+   * direction. Axes without an inside point along their largest positive world axis.
+   */
+  frameOf(bodies: readonly BodyState[], ref: TopologyRef): Promise<Result<PlaneFrame>>;
+  /** The bodies' solids and names, for publishing as a component result. */
+  snapshot(bodies: readonly BodyState[]): Promise<Uint8Array>;
+  /** Loads a snapshot into the shape store (as `<prefix>:<body id>`, once) and returns its bodies. */
+  restore(snapshot: Uint8Array, prefix: string): Promise<BodyState[]>;
 }

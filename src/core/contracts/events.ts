@@ -1,0 +1,8 @@
+import type { DocumentId, ProjectId } from './ids';
+
+/** Queued domain events published by managers (manager → manager calls are queued only). */
+export interface DomainEvents {
+  readonly projectDeleted: { readonly projectId: ProjectId };
+  readonly documentRenamed: { readonly documentId: DocumentId; readonly name: string };
+  readonly documentDeleted: { readonly documentId: DocumentId };
+}

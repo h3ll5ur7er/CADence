@@ -13,3 +13,5 @@ The work is planned in phases. Each phase ends with a running demo and visible e
 | 6. Import ✅ | STEP/STL/OBJ/3MF import and the imported viewer with conversion; imported bodies in components and assemblies; DXF/SVG into sketches | [[CAD-26]] [[CAD-27]] |
 
 The order follows the dependencies: the Sketcher needs the editor shell, Part modeling needs profiles, and Assemblies need regenerated components. Within a phase, tasks are listed in the order they will be done.
+
+All six phases are done. What they left out, deferred or never covered is collected in [[Open points]]; the next phases are planned from the points checked there.

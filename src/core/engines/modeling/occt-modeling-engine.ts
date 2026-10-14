@@ -1,6 +1,6 @@
 import type { NamedShape, ShapeAccess } from '@core/access/shape';
 import { type BodyMesh, fail, ok, type PlaneFrame, type Result, type TopologyRef, type Vec3 } from '@core/contracts';
-import { type Edge, type Face, measureVolume, type Shape3D } from 'replicad';
+import { type Edge, type Face, getOC, measureVolume, type Shape3D } from 'replicad';
 import { combine, type LoadedBody, renameCopy } from './bodies';
 import { cross3, dot3, normalize3, scale3, sub3, toPlane } from './geometry';
 import type { AxisInput, BodyState, ModelingEngine, ModelingOutcome, ModelingRequest, ToolInput } from './modeling-engine';
@@ -153,6 +153,10 @@ export class OcctModelingEngine implements ModelingEngine {
     if (!body || refs.some((r) => r.body !== bodyId)) throw new FeatureError('Select faces of one body.');
     const faces = refs.map((ref) => this.element(body, ref) as Face);
     const shape = body.named.shape.shell(thickness, (finder) => finder.inList(faces)); // positive: inward
+    // OpenCascade returns the solid unchanged when the walls cannot fit.
+    if (measureVolume(shape) >= measureVolume(body.named.shape) * (1 - 1e-9)) {
+      throw new FeatureError('The walls are too thick for this body. Try a thinner shell.');
+    }
     const named = nameShape(shape, namedSurfaces(body.named), () => `f:${feature}:inner`, feature);
     const state = { id: body.state.id, key: `${key}:${body.state.id}` };
     return this.store({ bodies: bodies.map((b) => (b === body ? state : b.state)), stored: [[state.key, named]] });
@@ -188,6 +192,9 @@ export class OcctModelingEngine implements ModelingEngine {
   }
 
   private store(combined: { bodies: BodyState[]; stored: [string, NamedShape][] }): ModelingOutcome {
+    for (const [, named] of combined.stored) {
+      if (!valid(named.shape)) throw new FeatureError('The result is not a valid solid. Try other values or references.');
+    }
     for (const [key, named] of combined.stored) this.shapes.put(key, named);
     return { bodies: combined.bodies };
   }
@@ -200,6 +207,16 @@ export class OcctModelingEngine implements ModelingEngine {
     this.outcomes.delete(key);
     this.outcomes.set(key, outcome);
     if (this.outcomes.size > outcomeCacheSize) this.outcomes.delete(this.outcomes.keys().next().value as string);
+  }
+}
+
+/** OpenCascade's topology and geometry check. */
+function valid(shape: Shape3D): boolean {
+  const analyzer = new (getOC().BRepCheck_Analyzer)(shape.wrapped, true, false);
+  try {
+    return analyzer.IsValid();
+  } finally {
+    analyzer.delete();
   }
 }
 

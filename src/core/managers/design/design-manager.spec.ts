@@ -1,5 +1,6 @@
 import { InMemoryDocumentAccess } from '@core/access/document';
 import { InMemoryExternalFileAccess } from '@core/access/external-file';
+import { createShapeAccess } from '@core/access/shape';
 import {
   asDocumentId,
   asProjectId,
@@ -10,6 +11,7 @@ import {
   sketchOriginId,
 } from '@core/contracts';
 import { createInterchangeEngine } from '@core/engines/interchange';
+import { createModelingEngine } from '@core/engines/modeling';
 import { createParameterEngine } from '@core/engines/parameter';
 import { createSketchEngine } from '@core/engines/sketch';
 import { steppingClock } from '@core/utilities/clock';
@@ -22,6 +24,9 @@ function unwrap<T>(result: Result<T>): T {
 }
 
 const sketchEngine = createSketchEngine();
+const shapes = createShapeAccess();
+const modeling = createModelingEngine(shapes);
+const interchange = createInterchangeEngine(shapes);
 
 describe('DesignManager', () => {
   let documents: InMemoryDocumentAccess;
@@ -51,7 +56,8 @@ describe('DesignManager', () => {
       externalFiles: files,
       sketches: sketchEngine,
       parameters: createParameterEngine(),
-      interchange: createInterchangeEngine(),
+      modeling,
+      interchange,
       clock: steppingClock('2026-10-14T11:00:00.000Z'),
     });
     session = unwrap(await manager.open(documentId));
@@ -220,5 +226,87 @@ describe('DesignManager', () => {
     unwrap(await session.execute({ type: 'create-sketch', id: 's1', plane: 'XY' }));
     await session.undo();
     expect(seen).toEqual([1, 0]);
+  });
+
+  describe('part modeling', () => {
+    /** The rectangle, anchored at the origin and dimensioned with parameters. */
+    async function plate(): Promise<string> {
+      await drawRectangle();
+      unwrap(await session.execute({ type: 'add-parameter', parameter: { id: 'pw', name: 'width', expression: '60 mm' } }));
+      unwrap(await session.execute({ type: 'add-parameter', parameter: { id: 'pt', name: 'thickness', expression: 'width / 10' } }));
+      unwrap(await session.execute({ type: 'add-constraint', sketchId: 's1', constraint: { id: 'o', kind: 'coincident', points: ['a', sketchOriginId] } }));
+      unwrap(await session.execute({ type: 'add-constraint', sketchId: 's1', constraint: { id: 'w', kind: 'distance', points: ['a', 'b'], expression: 'width' } }));
+      unwrap(await session.execute({ type: 'add-constraint', sketchId: 's1', constraint: { id: 'h', kind: 'distance', points: ['b', 'c'], expression: '30' } }));
+      const profile = session.state().sketches.get('s1')?.profiles[0]?.id as string;
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'e1', type: 'extrude', name: '', suppressed: false, sketch: 's1', profiles: [profile], distance: 'thickness', direction: 'normal', operation: 'new-body' } }));
+      return profile;
+    }
+    const volume = async () => Object.values(await session.volumes()).reduce((a, b) => a + b, 0);
+
+    it('extrudes a sketch profile into a body driven by parameters', async () => {
+      await plate();
+      expect(session.state().document.timeline.map((i) => i.name)).toEqual(['Sketch 1', 'Extrude 1']);
+      expect(session.state().items.get('e1')).toEqual({ state: 'ok' });
+      expect(session.state().bodies).toHaveLength(1);
+      expect(await volume()).toBeCloseTo(60 * 30 * 6);
+      expect(session.state().parameters.map((p) => p.display)).toEqual(['60 mm', '6 mm']);
+
+      unwrap(await session.execute({ type: 'set-parameter', parameter: { id: 'pw', name: 'width', expression: '80 mm' } }));
+      expect(await volume()).toBeCloseTo(80 * 30 * 8);
+    });
+
+    it('refuses parameter changes that would break the model', async () => {
+      await plate();
+      const broken = await session.execute({ type: 'delete-parameter', id: 'pt' });
+      expect(broken).toMatchObject({ ok: false, error: { code: 'breaks-model', message: expect.stringContaining('Extrude 1 would fail') } });
+      const cycle = await session.execute({ type: 'set-parameter', parameter: { id: 'pw', name: 'width', expression: 'thickness * 10' } });
+      expect(cycle).toMatchObject({ ok: false, error: { code: 'cycle' } });
+    });
+
+    it('rounds edges and keeps them rounded when dimensions change', async () => {
+      await plate();
+      const edge = session.state().bodies[0]?.edges.find((e) => e.name.includes('f:e1:end') && e.name.includes(':side:ab'));
+      expect(edge).toBeDefined();
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'r1', type: 'fillet', name: '', suppressed: false, edges: [{ kind: 'edge', body: 'e1', name: edge?.name as string }], size: '2' } }));
+      const rounded = await volume();
+      expect(rounded).toBeLessThan(60 * 30 * 6);
+      unwrap(await session.execute({ type: 'set-dimension', sketchId: 's1', constraintId: 'h', expression: '40' }));
+      expect(session.state().items.get('r1')).toEqual({ state: 'ok' });
+      expect(await volume()).toBeCloseTo(rounded + 60 * 10 * 6, 1);
+    });
+
+    it('refuses features that fail, with the kernel’s reason', async () => {
+      await plate();
+      const tooThick = await session.execute({ type: 'add-feature', feature: { id: 'sh', type: 'shell', name: '', suppressed: false, faces: [{ kind: 'face', body: 'e1', name: 'f:e1:end' }], thickness: '40' } });
+      expect(tooThick.ok).toBe(false);
+      expect(session.state().document.timeline.some((i) => i.id === 'sh')).toBe(false);
+    });
+
+    it('sketches on faces and construction planes', async () => {
+      await plate();
+      unwrap(await session.execute({ type: 'create-sketch', id: 's2', plane: { face: { kind: 'face', body: 'e1', name: 'f:e1:end' } } }));
+      expect(session.state().sketches.get('s2')?.frame.origin[2]).toBeCloseTo(6);
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'p1', type: 'plane', name: '', suppressed: false, base: 'XY', offset: '-5' } }));
+      expect(session.state().planes.get('p1')?.origin).toEqual([0, 0, -5]);
+      unwrap(await session.execute({ type: 'create-sketch', id: 's3', plane: { plane: 'p1' } }));
+      expect(session.state().sketches.get('s3')?.frame.origin).toEqual([0, 0, -5]);
+    });
+
+    it('suppresses features and undoes them', async () => {
+      await plate();
+      unwrap(await session.execute({ type: 'suppress-item', itemId: 'e1', suppressed: true }));
+      expect(session.state().bodies).toHaveLength(0);
+      expect(session.state().items.get('e1')).toEqual({ state: 'suppressed' });
+      await session.undo();
+      expect(session.state().bodies).toHaveLength(1);
+    });
+
+    it('exports the bodies as STEP', async () => {
+      await plate();
+      unwrap(await session.exportBodies('step'));
+      const delivered = files.delivered.at(-1);
+      expect(delivered?.name).toBe('Component 1.step');
+      expect(new TextDecoder().decode(delivered?.bytes)).toContain("'Extrude 1'");
+    });
   });
 });

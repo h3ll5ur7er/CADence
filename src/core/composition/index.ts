@@ -16,8 +16,10 @@ import {
   InMemoryProjectAccess,
   type ProjectAccess,
 } from '@core/access/project';
+import { createShapeAccess } from '@core/access/shape';
 import type { DomainEvents } from '@core/contracts';
-import { createInterchangeEngine } from '@core/engines/interchange';
+import { createInterchangeEngine, type InterchangeEngine } from '@core/engines/interchange';
+import { createModelingEngine, type ModelingEngine } from '@core/engines/modeling';
 import { createParameterEngine } from '@core/engines/parameter';
 import { createSketchEngine } from '@core/engines/sketch';
 import { createDesignManager, type DesignManager } from '@core/managers/design';
@@ -25,7 +27,7 @@ import { createProjectManager, type ProjectManager } from '@core/managers/projec
 import { systemClock } from '@core/utilities/clock';
 import type { FileSystem } from '@core/utilities/file-system';
 import { newId } from '@core/utilities/identity';
-import { EventBus } from '@core/utilities/messaging';
+import { EventBus, type Port, remote } from '@core/utilities/messaging';
 
 /** Everything a client may use: the managers, plus where projects are kept. */
 export interface Core {
@@ -45,15 +47,32 @@ export interface Host {
   readonly externalFiles: ExternalFileAccess;
   /** Where the browser loads the constraint solver from; Node finds it on its own. */
   readonly solverWasmUrl?: string;
+  /** Port to the geometry worker; without it the geometry kernel runs in this thread (Node, tests). */
+  readonly geometry?: Port;
 }
 
 export interface HostOptions {
   readonly solverWasmUrl?: string;
+  readonly geometry?: Port;
+}
+
+interface Geometry {
+  readonly modeling: ModelingEngine;
+  readonly interchange: InterchangeEngine;
+}
+
+/** The kernel-bound engines, sharing one shape store (docs/Architecture.md#deployment-and-threads). */
+function localGeometry(): Geometry {
+  const shapes = createShapeAccess();
+  return { modeling: createModelingEngine(shapes), interchange: createInterchangeEngine(shapes) };
 }
 
 export function createCore(host: Host): Core {
   const events = new EventBus<DomainEvents>();
   const { projects, documents, assets, externalFiles } = host;
+  const geometry: Geometry = host.geometry
+    ? { modeling: remote<ModelingEngine>(host.geometry, 'modeling'), interchange: remote<InterchangeEngine>(host.geometry, 'interchange') }
+    : localGeometry();
   return {
     projectManager: createProjectManager({ projects, documents, assets, events, clock: systemClock, newId }),
     designManager: createDesignManager({
@@ -61,7 +80,8 @@ export function createCore(host: Host): Core {
       externalFiles,
       sketches: createSketchEngine(host.solverWasmUrl ? { wasmUrl: host.solverWasmUrl } : {}),
       parameters: createParameterEngine(),
-      interchange: createInterchangeEngine(),
+      modeling: geometry.modeling,
+      interchange: geometry.interchange,
       clock: systemClock,
     }),
     storage: host.kind,

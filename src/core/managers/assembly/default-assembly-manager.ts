@@ -4,6 +4,7 @@ import type { ExternalFileAccess } from '@core/access/external-file';
 import {
   type AssemblyDocument,
   type BodyState,
+  type CadDocument,
   type DocumentId,
   type DomainEvents,
   fail,
@@ -165,7 +166,8 @@ class Session implements AssemblySession {
     let componentName: string | undefined;
     if (command.type === 'insert-instance') {
       const component = await this.deps.documents.load(command.instance.component);
-      if (component?.kind !== 'component') return fail({ code: 'invalid-command', message: 'Only components can be inserted into an assembly.' });
+      const solid = component?.kind === 'component' || (component?.kind === 'imported' && component.format !== 'dxf' && component.format !== 'svg');
+      if (!component || !solid) return fail({ code: 'invalid-command', message: 'Only components and imported 3D files can be inserted into an assembly.' });
       componentName = component.name;
     }
     if (command.type === 'move-instance' && this.derived.placed.has(command.instanceId)) {
@@ -220,6 +222,10 @@ class Session implements AssemblySession {
   private async load(id: DocumentId, reason: 'open' | 'regenerated' | 'failed' | 'changed'): Promise<void> {
     const document = await this.deps.documents.load(id);
     const previous = this.components.get(id);
+    if (document?.kind === 'imported') {
+      await this.loadImported(document);
+      return;
+    }
     if (document?.kind !== 'component' || reason === 'failed') {
       this.components.set(id, { view: { id, name: document?.name ?? previous?.view.name ?? 'Missing component', status: 'missing', bodies: [] }, bodies: [], stamp: '' });
       return;
@@ -244,6 +250,26 @@ class Session implements AssemblySession {
     const bodies = await this.deps.modeling.restore(result.bytes, `result:${id}:${result.stamp}`);
     const meshes = bodies.length ? await this.deps.modeling.tessellate(bodies) : [];
     this.components.set(id, { view: { id, name: document.name, status: 'ready', bodies: meshes }, bodies, stamp: result.stamp });
+  }
+
+  /**
+   * An imported 3D file used like a component: its solids are read (once per original) and named
+   * like an inserted body, so joints can attach to its faces and edges.
+   */
+  private async loadImported(document: Extract<CadDocument, { kind: 'imported' }>): Promise<void> {
+    const { id, name, assetId, format } = document;
+    const missing = () => {
+      this.components.set(id, { view: { id, name, status: 'missing', bodies: [] }, bodies: [], stamp: '' });
+    };
+    if (this.components.get(id)?.stamp === assetId) return;
+    const original = format === 'dxf' || format === 'svg' ? undefined : await this.deps.assets.fetch(assetId);
+    if (!original || format === 'dxf' || format === 'svg') return missing();
+    const sources = await this.deps.interchange.readSolids(original.bytes, format, `import:${assetId}`);
+    if (!sources.ok) return missing();
+    const outcome = await this.deps.modeling.apply({ type: 'insert', feature: 'import', key: `imported:${assetId}`, bodies: [], sources: sources.value });
+    if (outcome.error) return missing();
+    const meshes = await this.deps.modeling.tessellate(outcome.bodies);
+    this.components.set(id, { view: { id, name, status: 'ready', bodies: meshes }, bodies: outcome.bodies, stamp: assetId });
   }
 
   /** The kinematic model: joints whose frames resolve, and the reasons of those that do not. */

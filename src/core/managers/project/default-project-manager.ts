@@ -1,5 +1,6 @@
 import type { AssetAccess } from '@core/access/asset';
 import type { DocumentAccess } from '@core/access/document';
+import type { ExternalFileAccess } from '@core/access/external-file';
 import type { ProjectAccess } from '@core/access/project';
 import {
   asAssetId,
@@ -22,14 +23,17 @@ import {
   type Result,
   summarize,
 } from '@core/contracts';
+import type { InterchangeEngine } from '@core/engines/interchange';
 import type { Clock } from '@core/utilities/clock';
 import type { EventBus } from '@core/utilities/messaging';
-import type { CreatedProject, ExternalFile, ImportedView, ProjectManager } from './project-manager';
+import type { CreatedProject, ExternalFile, ImportedContent, ImportedView, ProjectManager } from './project-manager';
 
 export interface ProjectManagerDependencies {
   readonly projects: ProjectAccess;
   readonly documents: DocumentAccess;
   readonly assets: AssetAccess;
+  readonly externalFiles: ExternalFileAccess;
+  readonly interchange: InterchangeEngine;
   readonly events: EventBus<DomainEvents>;
   readonly clock: Clock;
   readonly newId: () => string;
@@ -41,6 +45,15 @@ const kindLabels: Readonly<Record<DocumentKind, string>> = {
   component: 'Component',
   assembly: 'Assembly',
   imported: 'Imported',
+};
+
+const mediaTypes: Readonly<Record<ImportFormat, string>> = {
+  step: 'model/step',
+  stl: 'model/stl',
+  obj: 'model/obj',
+  '3mf': 'model/3mf',
+  dxf: 'image/vnd.dxf',
+  svg: 'image/svg+xml',
 };
 
 const formatsByExtension: Readonly<Record<string, ImportFormat>> = {
@@ -206,6 +219,47 @@ export class DefaultProjectManager implements ProjectManager {
     if (document?.kind !== 'imported') return undefined;
     const { format, fileName, byteLength } = document;
     return { document: summarize(document), format, fileName, byteLength };
+  }
+
+  async previewImported(id: DocumentId): Promise<Result<ImportedContent>> {
+    const original = await this.original(id);
+    if (!original.ok) return original;
+    const { document, bytes } = original.value;
+    if (document.format === 'dxf' || document.format === 'svg') {
+      const entities = await this.deps.interchange.readDrawing(bytes, document.format, 'i');
+      if (!entities.ok) return entities;
+      const points = entities.value.flatMap((e) => (e.kind === 'point' ? [[e.x, e.y]] : []));
+      const extent = (pick: (v: number[]) => number) => (points.length ? pick(points.map((p) => p[0] as number)) : 0);
+      const extentY = (pick: (v: number[]) => number) => (points.length ? pick(points.map((p) => p[1] as number)) : 0);
+      return ok({
+        kind: 'drawing',
+        entities: entities.value,
+        min: [extent((v) => Math.min(...v)), extentY((v) => Math.min(...v)), 0],
+        max: [extent((v) => Math.max(...v)), extentY((v) => Math.max(...v)), 0],
+      });
+    }
+    const model = await this.deps.interchange.readMesh(bytes, document.format, `preview:${document.assetId}`);
+    if (!model.ok) return model;
+    return ok({ kind: 'model', ...model.value });
+  }
+
+  async exportImported(id: DocumentId, format: ImportFormat): Promise<Result<void>> {
+    const original = await this.original(id);
+    if (!original.ok) return original;
+    const { document, bytes } = original.value;
+    const converted = await this.deps.interchange.convert(bytes, document.format, format);
+    if (!converted.ok) return converted;
+    await this.deps.externalFiles.deliver({ name: `${document.name}.${format}`, mediaType: mediaTypes[format], bytes: converted.value });
+    return ok(undefined);
+  }
+
+  /** An imported document with the bytes of its original file. */
+  private async original(id: DocumentId): Promise<Result<{ document: Extract<CadDocument, { kind: 'imported' }>; bytes: Uint8Array }>> {
+    const document = await this.deps.documents.load(id);
+    if (document?.kind !== 'imported') return fail({ code: 'unknown-document', message: `Imported file ${id} does not exist.` });
+    const asset = await this.deps.assets.fetch(document.assetId);
+    if (!asset) return fail({ code: 'missing-original', message: `The original of ${document.name} is missing.` });
+    return ok({ document, bytes: asset.bytes });
   }
 
   private async storeNewDocument(

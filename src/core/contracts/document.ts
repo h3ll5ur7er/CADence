@@ -21,6 +21,8 @@ export interface DocumentSummary {
   readonly name: string;
   readonly createdAt: Timestamp;
   readonly modifiedAt: Timestamp;
+  /** Imported documents: the file format, so lists can tell drawings from 3D files. */
+  readonly format?: ImportFormat;
 }
 
 /** Persisted design intent; see docs/Architecture/Document-model.md. */
@@ -75,5 +77,10 @@ export const currentSchemaVersion = 2;
 
 export function summarize(document: CadDocument): DocumentSummary {
   const { id, projectId, kind, name, createdAt, modifiedAt } = document;
-  return { id, projectId, kind, name, createdAt, modifiedAt };
+  return { id, projectId, kind, name, createdAt, modifiedAt, ...(document.kind === 'imported' ? { format: document.format } : {}) };
 }
+
+/** Imported documents a part or assembly can use as a solid. */
+export const isImportedModel = (d: DocumentSummary): boolean => d.kind === 'imported' && d.format !== undefined && d.format !== 'dxf' && d.format !== 'svg';
+/** Imported documents a sketch can take curves from. */
+export const isImportedDrawing = (d: DocumentSummary): boolean => d.kind === 'imported' && (d.format === 'dxf' || d.format === 'svg');

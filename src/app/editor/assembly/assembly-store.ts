@@ -2,6 +2,7 @@ import { computed, DestroyRef, inject, Injectable, signal } from '@angular/core'
 import {
   type DocumentId,
   type DocumentSummary,
+  isImportedModel,
   type Interference,
   type Joint,
   jointDofs,
@@ -85,7 +86,7 @@ export class AssemblyStore {
   /** Poses shown instead of the document's while a slider is dragged or a study plays. */
   readonly previewPoses = signal<ReadonlyMap<string, Matrix4> | undefined>(undefined);
   readonly interference = signal<readonly Interference[] | undefined>(undefined);
-  /** Components of the project that can be inserted. */
+  /** Components and imported 3D files of the project that can be inserted. */
   readonly insertable = signal<readonly DocumentSummary[]>([]);
 
   readonly parts = computed((): PartDisplay[] => {
@@ -131,7 +132,7 @@ export class AssemblyStore {
     this.session = session;
     this.state.set(session.state());
     this.unsubscribe = session.subscribe((state) => this.state.set(state));
-    this.insertable.set((await this.projects.listDocuments(projectId)).filter((d) => d.kind === 'component'));
+    this.insertable.set((await this.projects.listDocuments(projectId)).filter((d) => d.kind === 'component' || isImportedModel(d)));
   }
 
   /** Runs a command; shows its error and returns false when it was refused. */

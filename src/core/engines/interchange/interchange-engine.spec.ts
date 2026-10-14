@@ -6,8 +6,9 @@ import { circleLoop, profile, rectangleLoop } from '@core/contracts/testing/prof
 import { createShapeAccess } from '@core/access/shape';
 import { draw, drawCircle, drawRectangle, importSTEP, measureVolume, type Shape3D } from 'replicad';
 import { createInterchangeEngine } from './index';
-import { meshVolume } from './solids';
-import { unzip } from './zip';
+import { readStl } from './mesh-readers';
+import { meshVolume, writeStl } from './solids';
+import { readZip } from './zip';
 
 const engine = createInterchangeEngine();
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
@@ -117,7 +118,7 @@ describe('InterchangeEngine solids', () => {
     expect(obj).toMatch(/^o Plate$/m);
     expect(obj.match(/^f /gm)?.length).toBeGreaterThan(10);
 
-    const archive = unzip(await solids.exportBodies(await body(), '3mf'));
+    const archive = await readZip(await solids.exportBodies(await body(), '3mf'));
     expect([...archive.keys()]).toEqual(['[Content_Types].xml', '_rels/.rels', '3D/3dmodel.model']);
     const model = new TextDecoder().decode(archive.get('3D/3dmodel.model'));
     expect(model).toContain('unit="millimeter"');
@@ -141,5 +142,71 @@ describe('InterchangeEngine placed bodies', () => {
     expect(box[1][0]).toBeCloseTo(105);
     expect(measureVolume(imported)).toBeCloseTo(2000, 3);
     expect(new TextDecoder().decode(bytes)).toContain("'Right'");
+  });
+});
+
+describe('InterchangeEngine imports', () => {
+  const shapes = createShapeAccess();
+  const engine = createInterchangeEngine(shapes);
+  const cubeMesh = { name: 'Cube', positions: [-5, -5, -5, 5, -5, -5, 5, 5, -5, -5, 5, -5, -5, -5, 5, 5, -5, 5, 5, 5, 5, -5, 5, 5], indices: [0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7] };
+  const plateStep = async () => {
+    await shapes.ready();
+    shapes.put('import-plate', { shape: drawRectangle(40, 20).sketchOnPlane('XY').extrude(4) as Shape3D, faces: new Map(), edges: new Map() });
+    return engine.exportBodies([{ name: 'Plate', key: 'import-plate' }], 'step');
+  };
+  const volumeOf = (key: string) => measureVolume((shapes.get(key) as { shape: Shape3D }).shape);
+  const ok = <T>(result: { ok: true; value: T } | { ok: false; error: { message: string } }): T => {
+    if (!result.ok) throw new Error(result.error.message);
+    return result.value;
+  };
+
+  it('reads STEP solids once per key', async () => {
+    const step = await plateStep();
+    const keys = ok(await engine.readSolids(step, 'step', 'asset-1'));
+    expect(keys).toEqual(['asset-1:0']);
+    expect(volumeOf('asset-1:0')).toBeCloseTo(40 * 20 * 4, 3);
+    expect(ok(await engine.readSolids(new Uint8Array(), 'step', 'asset-1'))).toBe(keys);
+  });
+
+  it('turns closed meshes into solids with merged flat faces', async () => {
+    const [key] = ok(await engine.readSolids(writeStl([cubeMesh]), 'stl', 'asset-cube'));
+    expect(volumeOf(key as string)).toBeCloseTo(1000, 6);
+    expect((shapes.get(key as string) as { shape: Shape3D }).shape.faces).toHaveLength(6);
+  });
+
+  it('keeps very large meshes as meshes', async () => {
+    const triangles = 100_001;
+    const positions = Array.from({ length: triangles * 9 }, (_, i) => (i % 9 === 3 ? 1 : i % 9 === 7 ? 1 : 0) + Math.floor(i / 9));
+    const big = writeStl([{ name: 'Big', positions, indices: Array.from({ length: triangles * 3 }, (_, i) => i) }]);
+    const result = await engine.readSolids(big, 'stl', 'asset-big');
+    expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining('100,001 triangles') } });
+    const display = ok(await engine.readMesh(big, 'stl', 'asset-big'));
+    expect(display.triangles).toBe(triangles);
+  });
+
+  it('prepares meshes for display with their volume, extent and fold edges', async () => {
+    const display = ok(await engine.readMesh(writeStl([cubeMesh]), 'stl', 'asset-cube'));
+    expect(display).toMatchObject({ triangles: 12, min: [-5, -5, -5], max: [5, 5, 5] });
+    expect(display.volume).toBeCloseTo(1000, 6);
+    expect(display.meshes[0]?.edges[0]?.count).toBe(24); // the cube's 12 edges, not the diagonals
+  });
+
+  it('reads drawings into sketch entities', async () => {
+    const entities = ok(await engine.readDrawing(await engine.exportDrawing(plate(), 'dxf'), 'dxf', 'd'));
+    expect(entities.filter((e) => e.kind !== 'point').map((e) => e.kind).sort()).toEqual(['arc', 'circle', 'line', 'line', 'line', 'line']);
+  });
+
+  it('converts between formats of the same kind', async () => {
+    const step = await plateStep();
+    const stl = ok(await engine.convert(step, 'step', 'stl'));
+    const [mesh] = readStl(stl);
+    expect(meshVolume(mesh?.positions ?? [], mesh?.indices ?? [])).toBeCloseTo(3200, 0);
+    const mf = ok(await engine.convert(writeStl([cubeMesh]), 'stl', '3mf'));
+    expect((await readZip(mf)).has('3D/3dmodel.model')).toBe(true);
+    const fromMesh = ok(await engine.convert(writeStl([cubeMesh]), 'stl', 'step'));
+    expect(measureVolume((await importSTEP(new Blob([fromMesh as BlobPart]))) as Shape3D)).toBeCloseTo(1000, 3);
+    const svg = ok(await engine.convert(await engine.exportDrawing(plate(), 'dxf'), 'dxf', 'svg'));
+    expect(text(svg)).toContain('<circle');
+    expect(await engine.convert(svg, 'svg', 'stl')).toMatchObject({ ok: false, error: { message: expect.stringContaining('Drawings convert to drawings') } });
   });
 });

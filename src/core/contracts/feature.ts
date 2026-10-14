@@ -104,7 +104,15 @@ export interface MirrorFeature extends FeatureBase {
   readonly plane: PlaneRef;
 }
 
+/** Brings the solids of an imported 3D file (STEP, STL, OBJ, 3MF) in as new bodies. */
+export interface InsertFeature extends FeatureBase {
+  readonly type: 'insert';
+  /** The imported document. */
+  readonly document: string;
+}
+
 export type Feature =
+  | InsertFeature
   | ExtrudeFeature
   | RevolveFeature
   | EdgeTreatmentFeature

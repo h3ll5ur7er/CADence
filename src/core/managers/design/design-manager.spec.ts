@@ -3,11 +3,13 @@ import { InMemoryDocumentAccess } from '@core/access/document';
 import { InMemoryExternalFileAccess } from '@core/access/external-file';
 import { createShapeAccess } from '@core/access/shape';
 import {
+  asAssetId,
   asDocumentId,
   asProjectId,
   type ComponentDocument,
   currentSchemaVersion,
   type DomainEvents,
+  type ImportFormat,
   type Result,
   type SketchPoint,
   sketchOriginId,
@@ -17,6 +19,7 @@ import { createInterchangeEngine } from '@core/engines/interchange';
 import { createModelingEngine } from '@core/engines/modeling';
 import { createParameterEngine } from '@core/engines/parameter';
 import { createSketchEngine } from '@core/engines/sketch';
+import { cubeStl, plateSvg } from '@core/contracts/testing/files';
 import { steppingClock } from '@core/utilities/clock';
 import { EventBus } from '@core/utilities/messaging';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -25,6 +28,25 @@ import { createDesignManager, type DesignSession } from './index';
 function unwrap<T>(result: Result<T>): T {
   if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
   return result.value;
+}
+
+/** Stores an imported document with its original, as the Project Manager's import does. */
+async function storeImported(documents: InMemoryDocumentAccess, assets: InMemoryAssetAccess, id: string, format: ImportFormat, bytes: Uint8Array) {
+  const assetId = asAssetId(`asset-${id}`);
+  await assets.keep({ id: assetId, projectId: asProjectId('p1'), name: `${id}.${format}`, byteLength: bytes.length, bytes });
+  await documents.store({
+    id: asDocumentId(id),
+    projectId: asProjectId('p1'),
+    kind: 'imported',
+    name: id,
+    createdAt: '2026-10-14T10:00:00.000Z',
+    modifiedAt: '2026-10-14T10:00:00.000Z',
+    schemaVersion: currentSchemaVersion,
+    assetId,
+    format,
+    fileName: `${id}.${format}`,
+    byteLength: bytes.length,
+  });
 }
 
 const sketchEngine = createSketchEngine();
@@ -232,6 +254,18 @@ describe('DesignManager', () => {
     expect(new TextDecoder().decode(files.delivered[1]?.bytes)).toContain('ENTITIES');
   });
 
+  it('inserts an imported drawing into a sketch as one undoable change', async () => {
+    await storeImported(documents, assets, 'plate', 'svg', plateSvg());
+    unwrap(await session.execute({ type: 'create-sketch', id: 's1', plane: 'XY' }));
+    unwrap(await session.insertDrawing('s1', asDocumentId('plate'), 'imp'));
+    const view = session.state().sketches.get('s1');
+    expect(view?.sketch.entities.filter((e) => e.kind === 'line' || e.kind === 'circle')).toHaveLength(5);
+    expect(view?.profiles).toHaveLength(2); // the plate with its hole, and the hole
+    await session.undo();
+    expect(session.state().sketches.get('s1')?.sketch.entities).toHaveLength(0);
+    expect(await session.insertDrawing('s1', asDocumentId('nothing'), 'x')).toMatchObject({ ok: false });
+  });
+
   it('notifies subscribers of every change', async () => {
     const seen: number[] = [];
     session.subscribe((state) => seen.push(state.document.timeline.length));
@@ -378,6 +412,25 @@ describe('DesignManager', () => {
         { documentId: 'missing', ok: false },
       ]);
       expect((await assets.latestResult(documentId))?.stamp).toBe(session.state().document.modifiedAt);
+    });
+
+    it('inserts the solid of an imported mesh as a body with named faces', async () => {
+      await storeImported(documents, assets, 'cube', 'stl', cubeStl(10));
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'i1', type: 'insert', name: '', suppressed: false, document: 'cube' } }));
+      expect(session.state().document.timeline.map((i) => i.name)).toEqual(['Insert body 1']);
+      expect(await volume()).toBeCloseTo(1000, 6);
+      const faces = session.state().bodies[0]?.faces.map((f) => f.name) ?? [];
+      expect(faces).toHaveLength(6);
+      expect(faces.every((name) => name.startsWith('f:i1:new:'))).toBe(true);
+      // Its faces carry sketches like any other body's.
+      const top = session.state().bodies[0]?.faces.find((f) => Math.abs((f.center[2] as number) - 10) < 1e-6)?.name as string;
+      unwrap(await session.execute({ type: 'create-sketch', id: 's9', plane: { face: { kind: 'face', body: 'i1', name: top } } }));
+      expect(session.state().sketches.get('s9')?.frame.origin[2]).toBeCloseTo(10);
+    });
+
+    it('fails an insert whose imported file is gone', async () => {
+      const result = await session.execute({ type: 'add-feature', feature: { id: 'i1', type: 'insert', name: '', suppressed: false, document: 'nothing' } });
+      expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining('deleted or is not a 3D file') } });
     });
 
     it('exports the bodies as STEP', async () => {

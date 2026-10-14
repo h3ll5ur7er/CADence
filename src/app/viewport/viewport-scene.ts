@@ -255,6 +255,18 @@ export class ViewportScene {
     this.requestRender();
   }
 
+  /** Looks at a box from the home direction, close enough that it fills most of the view. */
+  fitTo(min: Vec3, max: Vec3): void {
+    const center = new Vector3((min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2);
+    const radius = Math.max(1, new Vector3(...max).distanceTo(new Vector3(...min)) / 2);
+    const distance = (radius / Math.sin((this.camera.fov * Math.PI) / 360)) * 1.15;
+    this.camera.near = Math.max(0.01, distance / 2000);
+    this.camera.far = distance * 100;
+    this.camera.updateProjectionMatrix();
+    this.controls.target.copy(center);
+    this.turnTo(viewDirections.home, distance);
+  }
+
   /** Turns the camera to a standard view around the current target, keeping the distance. */
   showView(view: StandardView): void {
     const distance = view === 'home' ? homeDistance : this.camera.position.distanceTo(this.controls.target);

@@ -103,3 +103,18 @@ export function checkPackage(from: string, specifier: string): string | null {
     ? `${from}: the core must not depend on '${specifier}'`
     : null;
 }
+
+/** Code that runs on the main thread at start-up: clients, managers and the composition root. */
+const mainThread = [/^src\/app\//, /^src\/core\/managers\//, /^src\/core\/composition\//];
+/** The geometry kernel and what wraps it: 23 MB of WebAssembly that only the geometry worker loads. */
+const kernelBound = [/^src\/core\/engines\/(modeling|interchange|analysis)\//, /^src\/core\/access\/shape\//, /^replicad(-opencascadejs)?$/];
+
+/**
+ * Main-thread code may use the kernel-bound engines' types, but never import their code: a value
+ * import would pull the kernel into the start-up bundle (ADR-16). The composition root loads them
+ * with dynamic `import()` where no worker is available.
+ */
+export function checkKernelImport(from: string, to: string): string | null {
+  if (isTestFile(from) || !mainThread.some((p) => p.test(from))) return null;
+  return kernelBound.some((p) => p.test(to)) ? `${from}: imports code of ${to} (the geometry kernel); import its types only` : null;
+}

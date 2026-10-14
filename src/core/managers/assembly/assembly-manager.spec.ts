@@ -4,6 +4,7 @@ import { InMemoryExternalFileAccess } from '@core/access/external-file';
 import { createShapeAccess } from '@core/access/shape';
 import {
   type AssemblyDocument,
+  asAssetId,
   asDocumentId,
   asProjectId,
   type ComponentDocument,
@@ -15,6 +16,7 @@ import {
   originFrames,
   type Result,
 } from '@core/contracts';
+import { cubeStl } from '@core/contracts/testing/files';
 import { circleLoop, profile, rectangleLoop } from '@core/contracts/testing/profiles';
 import { createAnalysisEngine } from '@core/engines/analysis';
 import { createInterchangeEngine } from '@core/engines/interchange';
@@ -223,6 +225,16 @@ describe('AssemblyManager', () => {
     await documents.discard(base);
     events.publish('documentDeleted', { documentId: base });
     await until(() => session.state().components.get(base)?.status === 'missing');
+  });
+
+  it('uses imported 3D files like components', async () => {
+    const bytes = cubeStl(10);
+    await assets.keep({ id: asAssetId('cube-asset'), projectId: project, name: 'cube.stl', byteLength: bytes.length, bytes });
+    await documents.store({ id: asDocumentId('cube'), projectId: project, kind: 'imported', name: 'Cube', createdAt: stamp, modifiedAt: stamp, schemaVersion: currentSchemaVersion, assetId: asAssetId('cube-asset'), format: 'stl', fileName: 'cube.stl', byteLength: bytes.length });
+    unwrap(await insert('c1', asDocumentId('cube'), identity(), true));
+    expect(session.state().components.get(asDocumentId('cube'))).toMatchObject({ name: 'Cube', status: 'ready' });
+    expect(session.state().document.instances[0]?.name).toBe('Cube 1');
+    expect(session.state().components.get(asDocumentId('cube'))?.bodies[0]?.faces).toHaveLength(6);
   });
 
   it('refuses joints that cannot hold, with the reason', async () => {

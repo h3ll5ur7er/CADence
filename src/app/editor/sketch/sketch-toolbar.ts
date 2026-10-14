@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { isCurve, type SketchEntity, sketchOriginId } from '@core/contracts';
 import type { DrawingFormat } from '@core/managers/design';
 import { newId } from '@core/utilities/identity';
@@ -53,6 +53,7 @@ export class SketchToolbar {
 
   protected readonly view = this.store.editedView;
   protected readonly hint = computed(() => hints[this.store.tool()]);
+  protected readonly insertOpen = signal(false);
   /** The kerf of a laser profile, for compensated exports. */
   protected readonly kerf = computed(() => {
     const process = this.store.process();

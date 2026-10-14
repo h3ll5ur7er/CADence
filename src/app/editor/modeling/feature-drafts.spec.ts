@@ -1,5 +1,6 @@
 import type { EdgeTreatmentFeature, ExtrudeFeature } from '@core/contracts';
-import { applyPick, type FeatureDraft, pickableFor, selectionOf } from './feature-drafts';
+import { circleLoop, profile, rectangleLoop } from '@core/contracts/testing/profiles';
+import { applyPick, type FeatureDraft, pickableFor, selectionOf, solidProfiles } from './feature-drafts';
 
 type Fillet = EdgeTreatmentFeature;
 
@@ -8,6 +9,13 @@ describe('feature drafts', () => {
     mode: 'create',
     feature: { id: 'e', type: 'extrude', name: '', suppressed: false, sketch: 's1', profiles: ['a'], distance: '10', direction: 'normal', operation: 'new-body' } satisfies ExtrudeFeature,
   };
+
+  it('preselects plates without the profiles that fill their holes', () => {
+    const plate = profile(rectangleLoop(0, 0, 40, 20, 'r'), [circleLoop(10, 10, 3, 'hole', false)], 'plate');
+    const plug = profile(circleLoop(10, 10, 3, 'hole'), [], 'plug');
+    const tab = profile(rectangleLoop(50, 0, 10, 10, 't'), [], 'tab');
+    expect(solidProfiles([plate, plug, tab])).toEqual(['plate', 'tab']);
+  });
 
   it('toggles profiles of one sketch and switches sketches', () => {
     const added = applyPick(extrude, { kind: 'profile', sketch: 's1', profile: 'b' });

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- An 80 × 50 mm laser-cut plate: rounded corners, two holes and a slot. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="80mm" height="50mm" viewBox="0 0 80 50">
+  <rect x="0" y="0" width="80" height="50" rx="5" fill="none" stroke="black" stroke-width="0.1"/>
+  <g fill="none" stroke="red" stroke-width="0.1">
+    <circle cx="12" cy="12" r="4"/>
+    <circle cx="68" cy="12" r="4"/>
+    <path d="M 30 30 h 20 a 5 5 0 0 1 0 10 h -20 a 5 5 0 0 1 0 -10 z"/>
+  </g>
+</svg>

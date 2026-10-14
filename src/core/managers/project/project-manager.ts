@@ -1,4 +1,5 @@
 import type {
+  BodyMesh,
   CreatableDocumentKind,
   DocumentId,
   DocumentSummary,
@@ -6,6 +7,8 @@ import type {
   ProjectId,
   ProjectSummary,
   Result,
+  SketchEntity,
+  Vec3,
 } from '@core/contracts';
 
 /** A file chosen by the user (picker or drag and drop); reading it is a client concern. */
@@ -27,6 +30,21 @@ export interface ImportedView {
   readonly byteLength: number;
 }
 
+/** What an imported file holds, for the imported viewer. */
+export type ImportedContent =
+  | {
+      readonly kind: 'model';
+      readonly meshes: readonly BodyMesh[];
+      readonly triangles: number;
+      /** mm³, from the triangles. */
+      readonly volume: number;
+      readonly min: Vec3;
+      readonly max: Vec3;
+      /** Whether components and assemblies can use it as a solid (meshes up to a size). */
+      readonly usableAsSolid: boolean;
+    }
+  | { readonly kind: 'drawing'; readonly entities: readonly SketchEntity[]; readonly min: Vec3; readonly max: Vec3 };
+
 /** Project and document lifecycle (see docs/Architecture/Components.md#project-manager). */
 export interface ProjectManager {
   /** Most recently modified first. */
@@ -46,4 +64,8 @@ export interface ProjectManager {
 
   importFile(projectId: ProjectId, file: ExternalFile): Promise<Result<DocumentSummary>>;
   openImported(id: DocumentId): Promise<ImportedView | undefined>;
+  /** Reads an imported file for the viewer. */
+  previewImported(id: DocumentId): Promise<Result<ImportedContent>>;
+  /** Hands the imported file to the user in another format (drawings as drawings, 3D files as 3D files). */
+  exportImported(id: DocumentId, format: ImportFormat): Promise<Result<void>>;
 }

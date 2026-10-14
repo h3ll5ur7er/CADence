@@ -34,11 +34,14 @@ interface ProjectManager {
   createDocument(projectId: ProjectId, kind: 'component' | 'assembly', name: string): Promise<DocumentSummary>;
   renameDocument(documentId: DocumentId, name: string): Promise<void>;
   deleteDocument(documentId: DocumentId): Promise<void>;
-  importFile(projectId: ProjectId, source: ExternalFileRef): Promise<DocumentSummary>;
+  importFile(projectId: ProjectId, file: ExternalFile): Promise<Result<DocumentSummary>>;  // keeps the original (Asset Access)
   openImported(documentId: DocumentId): Promise<ImportedView>;
-  exportImported(documentId: DocumentId, format: ExportFormat): Promise<void>;
+  previewImported(documentId: DocumentId): Promise<Result<ImportedContent>>;  // meshes + triangles, volume, extent; or sketch entities
+  exportImported(documentId: DocumentId, format: ImportFormat): Promise<Result<void>>;  // converted through the Interchange Engine
 }
 ```
+
+Imported documents keep their original file; their summaries carry the `format`, so lists can tell drawings from 3D files.
 
 It publishes queued events such as `DocumentRenamed` and `DocumentDeleted`. The Assembly Manager reacts to them, for example by flagging broken instance references.
 
@@ -58,6 +61,7 @@ interface DesignSession {
   redo(): Promise<void>;
   previewDrag(sketchId, pointId, x, y): Promise<SketchView | undefined>;  // solves without committing
   exportSketch(sketchId, format: 'dxf' | 'svg', { compensateKerf? }): Promise<Result<void>>;  // kerf: laser profiles only
+  insertDrawing(sketchId, importedDocumentId, idPrefix): Promise<Result<void>>;  // DXF/SVG curves into a sketch, one undoable change
   exportBodies(format: 'step' | 'stl' | 'obj' | '3mf'): Promise<Result<void>>;
   measure(refs: TopologyRef[]): Promise<Result<Measurement>>;  // area, length, radius, distance + points, angle
   properties(): Promise<BodyProperties[]>;  // volume, area, mass (document material), centre of mass, box
@@ -112,7 +116,7 @@ interface AssemblySession {
 }
 ```
 
-Commands: `insert-instance`, `remove-instance` (with its joints and their keys), `rename-instance`, `move-instance` (refused for instances a joint places), `ground-instance`, `add-joint`, `edit-joint`, `remove-joint`, `set-joint-values`, `add-study`, `edit-study`, `remove-study`. A joint command is refused when its joint cannot hold.
+Instances can be components or imported 3D files (read once per original). Commands: `insert-instance`, `remove-instance` (with its joints and their keys), `rename-instance`, `move-instance` (refused for instances a joint places), `ground-instance`, `add-joint`, `edit-joint`, `remove-joint`, `set-joint-values`, `add-study`, `edit-study`, `remove-study`. A joint command is refused when its joint cannot hold.
 
 The Assembly Manager never regenerates a component. It restores each instance from the component's **published result** (Asset Access → Modeling Engine `restore` + `tessellate`). When a result is missing or stale, it queues `regenerateComponent` to the Design Manager and reloads the component on `componentRegenerated` ([[Architecture/Decisions#ADR-11]]). It also follows `documentRenamed` and `documentDeleted` (a deleted component shows as missing). Joint frames come from the Modeling Engine (`frameOf`, cached per component version); positions from the Kinematics Engine.
 
@@ -127,7 +131,7 @@ Engines encapsulate the volatility of an *activity*: an algorithm or a set of bu
 | **Modeling** | `apply(request) → { bodies, toolKey?, error? }` for extrude, revolve, fillet, chamfer, shell, linear/circular pattern, mirror; `planeOf(bodies, face) → PlaneFrame`; `tessellate(bodies) → BodyMesh[]`; `frameOf(bodies, ref)` (joint frames, [[Architecture/Decisions#ADR-21]]); `snapshot(bodies) → bytes` and `restore(bytes, prefix)` (component results: B-rep text plus names in topological order) | OCCT (`replicad-opencascadejs`, through `replicad`) in the geometry worker. Generative naming ([[Architecture/Decisions#ADR-15]]); results validated with `BRepCheck_Analyzer`; outcomes cached by request content hash. |
 | **Analysis** | `measure(bodies, refs) → Result<Measurement>`; `properties(bodies, density) → BodyProperties[]`; `validate({ bodies, sketches }, profile) → Check[]` | In the geometry worker ([[src/core/engines/analysis/index.ts]]). Measures and mass properties with OCCT (`BRepExtrema_DistShapeShape`, `GProp`). **Print rules:** closed valid solid, build volume (also turned by 90°), overhangs steeper than the profile allows (bed contact excluded), wall thickness by ray casting (fail below one nozzle width, warn below two). **Laser rules:** body thickness = sheet, closed outlines, laser bed, kerf compensation possible. Each check names the faces it is about. TypeScript on cached meshes ([[Architecture/Decisions#ADR-18]]). `interference(placed parts)`: OCCT common of every overlapping pair (bounding boxes first), touching is not interference. |
 | **Kinematics** | `solve(model, driven?) → { poses, values, placed, error? }`; `simulate(model, study, fps) → { frames, error? }` | Pure TypeScript, synchronous ([[src/core/engines/kinematics/index.ts]]): spanning tree from the grounded instances, Levenberg–Marquardt for loops, limits clamp ([[Architecture/Decisions#ADR-20]]). Joint types and their degrees of freedom: `jointDofs` in [[src/core/contracts/assembly.ts]]. |
-| **Interchange** | `exportDrawing(sketch, 'dxf' \| 'svg', kerf?) → Uint8Array` (with `kerf`, profile outlines move half a kerf away from the part); `exportBodies(bodies, format)`, each body optionally placed by a transform (assemblies: one named solid or object per instance); later `import(bytes, format)` | DXF: ASCII with R12 entities (LINE, CIRCLE, ARC) and `$INSUNITS` set to mm. SVG: sized in mm, Y up, hairline strokes, no fill, which is what laser software expects. Construction geometry is left out. STEP goes through OCCT; STL, OBJ and 3MF are written in TypeScript. One writer per format, in a registry. |
+| **Interchange** | `exportDrawing(sketch, 'dxf' \| 'svg', kerf?) → Uint8Array` (with `kerf`, profile outlines move half a kerf away from the part); `exportBodies(bodies, format)`, each body optionally placed by a transform (assemblies: one named solid or object per instance); `readSolids(bytes, format, key)` (STEP, and meshes up to 100,000 triangles, into Shape Access); `readMesh(bytes, format, key)` (display meshes of any size); `readDrawing(bytes, 'dxf' \| 'svg', idPrefix)` (sketch entities); `convert(bytes, from, to)` | DXF: ASCII with R12 entities (LINE, CIRCLE, ARC) and `$INSUNITS` set to mm. SVG: sized in mm, Y up, hairline strokes, no fill, which is what laser software expects. Construction geometry is left out. STEP goes through OCCT; STL, OBJ and 3MF are written in TypeScript. One writer per format, in a registry. |
 
 ## Resource Access
 

@@ -113,20 +113,26 @@ UC5 (sketch → DXF/SVG) uses the same chain. The engine receives the solved 2D 
 
 ```mermaid
 sequenceDiagram
-  participant H as Home
+  participant E as Editor (documents panel, imported viewer)
   participant PM as Project Manager
-  participant XA as External File Access
   participant AA as Asset Access
   participant IE as Interchange Engine
   participant DA as Document Access
-  H->>PM: importFile(projectId, fileRef)
-  PM->>XA: read(fileRef)
-  PM->>AA: keep(bytes, {name, format})
-  PM->>IE: import(bytes, format)
-  IE-->>PM: ImportResult (shapes / meshes / 2D entities, metadata)
-  PM->>DA: store(imported document → asset id, metadata)
-  PM-->>H: DocumentSummary
+  participant XA as External File Access
+  E->>PM: importFile(projectId, { name, bytes })
+  PM->>AA: keep(original)
+  PM->>DA: store(imported document → asset id, format)
+  PM-->>E: DocumentSummary
+  E->>PM: previewImported(document)
+  PM->>AA: fetch(original)
+  PM->>IE: readMesh or readDrawing(bytes, format)
+  IE-->>PM: meshes and statistics, or sketch entities
+  E->>PM: exportImported(document, other format)
+  PM->>IE: convert(bytes, from, to)
+  PM->>XA: deliver(converted)
 ```
+
+The client picks the file (a picker or drag and drop needs a user gesture) and hands its name and bytes over. Components use the file through an **Insert body** feature (the Design Manager reads it with `readSolids`) and sketches through `insertDrawing`; assemblies insert it as an instance.
 
 ## UC7: Assembly with a revolute joint
 

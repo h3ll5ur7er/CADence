@@ -1,10 +1,10 @@
-import type { NamedShape, ShapeAccess } from '@core/access/shape';
+import { find, type NamedShape, type ShapeAccess } from '@core/access/shape';
 import { type BodyMesh, fail, ok, type PlaneFrame, type Result, type TopologyRef, type Vec3 } from '@core/contracts';
 import { type Edge, type Face, getOC, measureVolume, type Shape3D } from 'replicad';
 import { combine, type LoadedBody, renameCopy } from './bodies';
 import { cross3, dot3, normalize3, scale3, sub3, toPlane } from './geometry';
 import type { AxisInput, BodyState, ModelingEngine, ModelingOutcome, ModelingRequest, ToolInput } from './modeling-engine';
-import { nameShape, namedSurfaces, resolve } from './naming';
+import { nameShape, namedSurfaces } from './naming';
 import { tessellate } from './tessellation';
 import { extrudeTool, revolveTool } from './tools';
 
@@ -56,11 +56,6 @@ export class OcctModelingEngine implements ModelingEngine {
   async tessellate(bodies: readonly BodyState[]): Promise<BodyMesh[]> {
     await this.shapes.ready();
     return this.load(bodies).map((b) => tessellate(b.state, b.named));
-  }
-
-  async volumes(bodies: readonly BodyState[]): Promise<Record<string, number>> {
-    await this.shapes.ready();
-    return Object.fromEntries(this.load(bodies).map((b) => [b.state.id, measureVolume(b.named.shape)]));
   }
 
   private compute(request: ModelingRequest): ModelingOutcome {
@@ -181,7 +176,7 @@ export class OcctModelingEngine implements ModelingEngine {
   }
 
   private element(body: LoadedBody, ref: TopologyRef): Face | Edge {
-    const found = resolve(body.named, ref);
+    const found = find(body.named, ref);
     if (!found) throw new FeatureError(`The ${ref.kind} ${ref.name} no longer exists. Pick it again.`);
     return found;
   }

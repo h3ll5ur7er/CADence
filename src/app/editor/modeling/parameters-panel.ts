@@ -13,7 +13,7 @@ import { DesignStore } from '../sketch/design-store';
     <p class="eyebrow">Component</p>
     <div class="head">
       <h2>Parameters</h2>
-      <button type="button" class="icon-btn" aria-label="Close parameters" (click)="store.parametersOpen.set(false)">×</button>
+      <button type="button" class="icon-btn" aria-label="Close parameters" (click)="store.openPanel(undefined)">×</button>
     </div>
     <p class="hint">Use the names in any dimension or feature value, e.g. <code>wall * 2</code>. Units: mm, cm, in, deg.</p>
     <table aria-label="Parameters">

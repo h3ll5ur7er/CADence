@@ -10,6 +10,7 @@ import {
   type SketchPoint,
   sketchOriginId,
 } from '@core/contracts';
+import { createAnalysisEngine } from '@core/engines/analysis';
 import { createInterchangeEngine } from '@core/engines/interchange';
 import { createModelingEngine } from '@core/engines/modeling';
 import { createParameterEngine } from '@core/engines/parameter';
@@ -27,6 +28,7 @@ const sketchEngine = createSketchEngine();
 const shapes = createShapeAccess();
 const modeling = createModelingEngine(shapes);
 const interchange = createInterchangeEngine(shapes);
+const analysis = createAnalysisEngine(shapes);
 
 describe('DesignManager', () => {
   let documents: InMemoryDocumentAccess;
@@ -58,6 +60,7 @@ describe('DesignManager', () => {
       parameters: createParameterEngine(),
       modeling,
       interchange,
+      analysis,
       clock: steppingClock('2026-10-14T11:00:00.000Z'),
     });
     session = unwrap(await manager.open(documentId));
@@ -241,7 +244,7 @@ describe('DesignManager', () => {
       unwrap(await session.execute({ type: 'add-feature', feature: { id: 'e1', type: 'extrude', name: '', suppressed: false, sketch: 's1', profiles: [profile], distance: 'thickness', direction: 'normal', operation: 'new-body' } }));
       return profile;
     }
-    const volume = async () => Object.values(await session.volumes()).reduce((a, b) => a + b, 0);
+    const volume = async () => (await session.properties()).reduce((sum, b) => sum + b.volume, 0);
 
     it('extrudes a sketch profile into a body driven by parameters', async () => {
       await plate();
@@ -299,6 +302,47 @@ describe('DesignManager', () => {
       expect(session.state().items.get('e1')).toEqual({ state: 'suppressed' });
       await session.undo();
       expect(session.state().bodies).toHaveLength(1);
+    });
+
+    it('measures picked faces and weighs bodies in the chosen material', async () => {
+      await plate();
+      const between = unwrap(await session.measure([{ kind: 'face', body: 'e1', name: 'f:e1:end' }, { kind: 'face', body: 'e1', name: 'f:e1:start' }]));
+      expect(between).toMatchObject({ distance: 6, angle: 0, area: 2 * 60 * 30 });
+      const [pla] = await session.properties();
+      expect(pla?.mass).toBeCloseTo((60 * 30 * 6 * 1.24) / 1000);
+      unwrap(await session.execute({ type: 'set-material', material: { name: 'Steel', density: 7.85 } }));
+      expect(session.state().document.material).toEqual({ name: 'Steel', density: 7.85 });
+      expect((await session.properties())[0]?.mass).toBeCloseTo((60 * 30 * 6 * 7.85) / 1000);
+      await session.undo();
+      expect((await session.properties())[0]?.mass).toBeCloseTo((60 * 30 * 6 * 1.24) / 1000);
+      expect(await session.execute({ type: 'set-material', material: { name: 'Air', density: 0 } })).toMatchObject({ ok: false, error: { code: 'invalid-command' } });
+    });
+
+    it('validates against the manufacturing profile', async () => {
+      await plate();
+      const printing = await session.validate();
+      expect(printing.profile.kind).toBe('print');
+      expect(printing.checks.map((c) => c.status)).toEqual(['pass', 'pass', 'pass', 'pass']);
+      unwrap(await session.execute({ type: 'set-process', process: { kind: 'laser', name: 'Laser', bed: [400, 400], kerf: 0.2, thickness: 3 } }));
+      const cutting = await session.validate();
+      expect(cutting.checks.map((c) => [c.id, c.status])).toEqual([
+        ['sheet', 'warning'],
+        ['outlines', 'pass'],
+        ['bed', 'pass'],
+        ['kerf', 'pass'],
+      ]);
+      const invalid = await session.execute({ type: 'set-process', process: { kind: 'laser', name: 'Laser', bed: [400, 400], kerf: -1, thickness: 3 } });
+      expect(invalid).toMatchObject({ ok: false, error: { code: 'invalid-command' } });
+    });
+
+    it('exports kerf-compensated drawings for laser cutters only', async () => {
+      await plate();
+      expect(await session.exportSketch('s1', 'dxf', { compensateKerf: true })).toMatchObject({ ok: false, error: { code: 'not-laser' } });
+      unwrap(await session.execute({ type: 'set-process', process: { kind: 'laser', name: 'Laser', bed: [400, 400], kerf: 0.2, thickness: 3 } }));
+      unwrap(await session.exportSketch('s1', 'dxf', { compensateKerf: true }));
+      const delivered = files.delivered.at(-1);
+      expect(delivered?.name).toBe('Component 1 - Sketch 1 (kerf compensated).dxf');
+      expect(new TextDecoder().decode(delivered?.bytes).split('\n')).toContain('60.1'); // the 60 mm side moved out by half the kerf
     });
 
     it('exports the bodies as STEP', async () => {

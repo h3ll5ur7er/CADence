@@ -17,6 +17,7 @@ import {
   type ProjectAccess,
 } from '@core/access/project';
 import type { DomainEvents } from '@core/contracts';
+import type { AnalysisEngine } from '@core/engines/analysis';
 import type { InterchangeEngine } from '@core/engines/interchange';
 import type { ModelingEngine } from '@core/engines/modeling';
 import { createParameterEngine } from '@core/engines/parameter';
@@ -58,6 +59,7 @@ export interface HostOptions {
 interface Geometry {
   readonly modeling: ModelingEngine;
   readonly interchange: InterchangeEngine;
+  readonly analysis: AnalysisEngine;
 }
 
 /**
@@ -66,15 +68,16 @@ interface Geometry {
  */
 function localGeometry(): Geometry {
   const engines = (async (): Promise<Geometry> => {
-    const [{ createShapeAccess }, { createModelingEngine }, { createInterchangeEngine }] = await Promise.all([
+    const [{ createShapeAccess }, { createModelingEngine }, { createInterchangeEngine }, { createAnalysisEngine }] = await Promise.all([
       import('@core/access/shape'),
       import('@core/engines/modeling'),
       import('@core/engines/interchange'),
+      import('@core/engines/analysis'),
     ]);
     const shapes = createShapeAccess();
-    return { modeling: createModelingEngine(shapes), interchange: createInterchangeEngine(shapes) };
+    return { modeling: createModelingEngine(shapes), interchange: createInterchangeEngine(shapes), analysis: createAnalysisEngine(shapes) };
   })();
-  return { modeling: deferred(engines, 'modeling'), interchange: deferred(engines, 'interchange') };
+  return { modeling: deferred(engines, 'modeling'), interchange: deferred(engines, 'interchange'), analysis: deferred(engines, 'analysis') };
 }
 
 /** An engine whose (async) methods wait for it to load. */
@@ -91,7 +94,11 @@ export function createCore(host: Host): Core {
   const events = new EventBus<DomainEvents>();
   const { projects, documents, assets, externalFiles } = host;
   const geometry: Geometry = host.geometry
-    ? { modeling: remote<ModelingEngine>(host.geometry, 'modeling'), interchange: remote<InterchangeEngine>(host.geometry, 'interchange') }
+    ? {
+        modeling: remote<ModelingEngine>(host.geometry, 'modeling'),
+        interchange: remote<InterchangeEngine>(host.geometry, 'interchange'),
+        analysis: remote<AnalysisEngine>(host.geometry, 'analysis'),
+      }
     : localGeometry();
   return {
     projectManager: createProjectManager({ projects, documents, assets, events, clock: systemClock, newId }),
@@ -102,6 +109,7 @@ export function createCore(host: Host): Core {
       parameters: createParameterEngine(),
       modeling: geometry.modeling,
       interchange: geometry.interchange,
+      analysis: geometry.analysis,
       clock: systemClock,
     }),
     storage: host.kind,

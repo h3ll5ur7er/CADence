@@ -48,6 +48,11 @@
     <button type="button" class="btn" title="Export as SVG" (click)="export('svg')">
       <cad-icon name="download" /> SVG
     </button>
+    @if (kerf(); as kerf) {
+      <button type="button" class="btn" [title]="'DXF with outlines offset for the ' + kerf + ' mm kerf'" (click)="export('dxf', true)">
+        <cad-icon name="download" /> DXF −kerf
+      </button>
+    }
     <button type="button" class="btn btn-primary" (click)="store.finishEditing()">
       <cad-icon name="check" /> Finish sketch
     </button>

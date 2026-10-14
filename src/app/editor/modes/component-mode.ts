@@ -15,11 +15,16 @@ import {
   type FeatureType,
   isCurve,
   isSketch,
+  type Material,
+  materials,
   type PlaneRef,
   type TimelineItem,
 } from '@core/contracts';
 import type { SolidFormat } from '@core/managers/design';
 import { NameDialog } from '../../shared/dialogs';
+import { CheckPanel } from '../analysis/check-panel';
+import { MeasurePanel } from '../analysis/measure-panel';
+import { grams, millimetres, point } from '../analysis/units';
 import { relativeTime } from '../../shared/format';
 import { Icon, type IconName } from '../../shared/icon';
 import { sketchDisplay } from '../../viewport/sketch-display';
@@ -74,7 +79,7 @@ const exportFormats: readonly { format: SolidFormat; label: string }[] = [
 /** Part modeling mode: sketches, features, parameters and bodies. */
 @Component({
   selector: 'cad-component-mode',
-  imports: [Viewport, Icon, SketchEditor, SketchToolbar, NameDialog, FeatureDialog, ParametersPanel],
+  imports: [Viewport, Icon, SketchEditor, SketchToolbar, NameDialog, FeatureDialog, ParametersPanel, MeasurePanel, CheckPanel],
   providers: [DesignStore],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './component-mode.html',
@@ -95,6 +100,10 @@ export class ComponentMode {
   protected readonly itemIcons = itemIcons;
   protected readonly exportFormats = exportFormats;
   protected readonly relativeTime = relativeTime;
+  protected readonly materials = materials;
+  protected readonly mm = millimetres;
+  protected readonly grams = grams;
+  protected readonly point = point;
   private readonly nameDialog = viewChild.required(NameDialog);
 
   protected readonly timeline = computed(() => this.store.state()?.document.timeline ?? []);
@@ -115,17 +124,23 @@ export class ComponentMode {
     const sketch = this.editedSketch()?.sketch;
     return sketch && { curves: sketch.entities.filter(isCurve).length, constraints: sketch.constraints.length };
   });
-  protected readonly volumes = resource({
-    params: () => this.bodies().map((b) => b.key).join(','),
-    loader: () => this.store.volumes(),
+  protected readonly material = computed(() => this.store.state()?.document.material ?? (materials[0] as Material));
+  protected readonly properties = resource({
+    params: () => ({ bodies: this.bodies().map((b) => b.key).join(','), density: this.material().density }),
+    loader: () => this.store.properties(),
   });
   protected readonly bodyRows = computed(() => {
-    const volumes = this.volumes.value() ?? {};
+    const properties = this.properties.value() ?? [];
     return this.bodies().map((b) => ({
       id: b.body,
       name: this.timeline().find((i) => i.id === b.body)?.name ?? b.body,
-      volume: volumes[b.body],
+      properties: properties.find((p) => p.body === b.body),
     }));
+  });
+  /** The measured distance, drawn in the view. */
+  protected readonly measureLine = computed(() => {
+    const result = this.store.panel() === 'measure' ? this.store.measurement.value() : undefined;
+    return result?.ok ? result.value.points : undefined;
   });
 
   constructor() {
@@ -133,6 +148,15 @@ export class ComponentMode {
       const id = this.document().id;
       untracked(() => void this.store.open(id));
     });
+  }
+
+  protected setMaterial(name: string): void {
+    const material = materials.find((m) => m.name === name);
+    if (material) void this.store.run({ type: 'set-material', material });
+  }
+
+  protected togglePanel(panel: 'measure' | 'check'): void {
+    this.store.openPanel(this.store.panel() === panel ? undefined : panel);
   }
 
   protected toggleMenu(menu: 'sketch' | 'export'): void {

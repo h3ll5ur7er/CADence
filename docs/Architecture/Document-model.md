@@ -26,6 +26,8 @@ classDiagram
     parameters: Parameter[]
     timeline: TimelineItem[]
     rollbackIndex: number
+    material?: Material
+    process?: ManufacturingProfile
   }
   class AssemblyDocument {
     schemaVersion: number
@@ -51,6 +53,19 @@ All lengths are stored **in millimetres**, and `units` controls display only. An
 ## Component results
 
 The one exception to "geometry is never stored" is the **published result** of a component: its B-rep (OCCT `.brep`), mesh and topology names, written by the Design Manager after each successful full regeneration and keyed by the document's content hash. It is a cache, so deleting it is always safe; assemblies request a regeneration when it is missing or stale.
+
+## Material and manufacturing profile
+
+A component optionally stores what it is made of and on which machine ([[src/core/contracts/analysis.ts]], [[Architecture/Decisions#ADR-19]]):
+
+```ts
+interface Material { name: string; density: number }   // g/cm³; PLA (1.24) when absent
+type ManufacturingProfile =
+  | { kind: 'print'; name; bed: [x, y, z]; nozzle; layerHeight; maxOverhang }   // mm, overhang in degrees from vertical
+  | { kind: 'laser'; name; bed: [x, y]; kerf; thickness };                    // mm
+```
+
+When absent, the first preset applies (an FDM printer with a 220 × 220 × 250 mm volume and a 0.4 mm nozzle). The fields are optional, so older documents need no migration.
 
 ## Parameters
 

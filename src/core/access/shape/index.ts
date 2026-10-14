@@ -72,3 +72,5 @@ class KernelShapeAccess implements ShapeAccess {
 export function createShapeAccess(options: ShapeAccessOptions = {}): ShapeAccess {
   return new KernelShapeAccess(options);
 }
+
+export { baseName, centerOf, find } from './lookup';

@@ -11,7 +11,7 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
-import type { BodyMesh, PlaneFrame } from '@core/contracts';
+import type { BodyMesh, PlaneFrame, Vec3 } from '@core/contracts';
 import type { Pick, PickKind } from './picking';
 import type { SketchDisplay } from './sketch-display';
 import type { Affine } from './sketch-planes';
@@ -33,6 +33,7 @@ function readTheme(element: HTMLElement): ViewportTheme {
     edge: token('--edge'),
     hover: token('--hover'),
     selection: token('--selection'),
+    flag: token('--flag'),
   };
 }
 
@@ -66,6 +67,10 @@ export class Viewport {
   /** What a click may pick, and what is shown as selected. */
   readonly pickable = input<ReadonlySet<PickKind>>(new Set());
   readonly selection = input<readonly Pick[]>([]);
+  /** Faces to flag, such as those a manufacturability check found. */
+  readonly flagged = input<readonly { readonly body: string; readonly name: string }[]>([]);
+  /** The two closest points of a distance measurement. */
+  readonly measureLine = input<readonly [Vec3, Vec3] | undefined>(undefined);
   readonly backendReady = output<RendererBackend>();
   readonly picked = output<Pick>();
 
@@ -119,6 +124,8 @@ export class Viewport {
     effect(() => this.scene()?.setPlanes(this.planes()));
     effect(() => this.scene()?.setPickable(this.pickable()));
     effect(() => this.scene()?.setSelection(this.selection()));
+    effect(() => this.scene()?.setFlagged(this.flagged()));
+    effect(() => this.scene()?.setMeasureLine(this.measureLine()));
   }
 
   showView(view: StandardView): void {

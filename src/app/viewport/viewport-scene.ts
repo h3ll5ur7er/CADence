@@ -1,4 +1,4 @@
-import type { BodyMesh, PlaneFrame } from '@core/contracts';
+import type { BodyMesh, PlaneFrame, Vec3 } from '@core/contracts';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
   Color,
@@ -16,6 +16,7 @@ import {
   Quaternion,
   Raycaster,
   Scene,
+  SphereGeometry,
   Vector2,
   Vector3,
   WebGPURenderer,
@@ -71,6 +72,8 @@ export class ViewportScene {
   private readonly sketches = new Group();
   private readonly planes = new Group();
   private readonly highlights = new Group();
+  private readonly annotations = new Group();
+  private flagged: readonly { readonly body: string; readonly name: string }[] = [];
   private readonly raycaster = new Raycaster();
   private meshes: readonly BodyMesh[] = [];
   private pickable: ReadonlySet<PickKind> = new Set();
@@ -104,7 +107,7 @@ export class ViewportScene {
     this.scene.add(sun);
     this.scene.add(createGrid(theme));
     this.origin = createOrigin(theme);
-    this.scene.add(this.origin, this.bodies, this.sketches, this.planes, this.highlights);
+    this.scene.add(this.origin, this.bodies, this.sketches, this.planes, this.highlights, this.annotations);
     this.controls.target.copy(homeTarget);
     this.placeCamera(viewDirections.home, homeDistance);
 
@@ -158,6 +161,36 @@ export class ViewportScene {
   setSelection(picks: readonly Pick[]): void {
     this.selection = picks;
     this.updateHighlights();
+  }
+
+  /** Faces a validation check is about, shown in the flag colour. */
+  setFlagged(faces: readonly { readonly body: string; readonly name: string }[]): void {
+    this.flagged = faces;
+    this.updateHighlights();
+  }
+
+  /** A measured distance: a line between the two closest points, drawn over everything. */
+  setMeasureLine(points: readonly [Vec3, Vec3] | undefined): void {
+    const children: Object3D[] = [];
+    if (points) {
+      const [a, b] = points;
+      const line = lines([...a, ...b], this.theme.selection);
+      (line.material as { depthTest: boolean }).depthTest = false;
+      line.renderOrder = 5;
+      // End markers sized to the model, so they read at any zoom that shows the whole part.
+      let extent = 10;
+      for (const mesh of this.meshes) for (const v of mesh.positions) extent = Math.max(extent, Math.abs(v));
+      const radius = extent / 100;
+      const ends = points.map((p) => {
+        const end = new Mesh(new SphereGeometry(radius, 12, 8), new MeshBasicMaterial({ color: new Color(this.theme.selection), depthTest: false }));
+        end.position.set(...p);
+        end.renderOrder = 5;
+        return end;
+      });
+      children.push(line, ...ends);
+    }
+    this.replace(this.annotations, children);
+    this.requestRender();
   }
 
   /** Looks straight at a plane (u right, v up) and locks rotation while it is edited; `undefined` ends editing. */
@@ -249,6 +282,11 @@ export class ViewportScene {
       const highlight = mesh && (pick.kind === 'face' ? faceHighlight(mesh, pick.name, color) : edgeHighlight(mesh, pick.name, color));
       if (highlight) this.highlights.add(highlight);
     };
+    for (const face of this.flagged) {
+      const mesh = this.meshes.find((m) => m.body === face.body);
+      const highlight = mesh && faceHighlight(mesh, face.name, this.theme.flag);
+      if (highlight) this.highlights.add(highlight);
+    }
     for (const pick of this.selection) add(pick, this.theme.selection);
     if (this.hovered && !this.selection.some((s) => pickKey(s) === pickKey(this.hovered as Pick))) add(this.hovered, this.theme.hover);
     this.requestRender();

@@ -15,7 +15,7 @@ The architecture is validated by showing that every **core use case** is an inte
 | UC5 | Export a sketch as DXF / SVG | Component editor → Design Manager → Interchange Engine; External File Access |
 | UC6 | Import a STEP / STL / OBJ / DXF / SVG file | Home → Project Manager → External File Access, Asset Access, Interchange Engine, Document Access |
 | UC7 | Build an assembly with a revolute joint and animate it | Assembly editor → Assembly Manager → Asset Access, Modeling, Kinematics engines; queued request to the Design Manager |
-| UC8 | Validate a part for 3D printing | Component editor → Design Manager → Analysis Engine → Shape Access |
+| UC8 | Validate a part for 3D printing or laser cutting | Component editor → Design Manager → Analysis Engine → Shape Access |
 
 ## UC1: Browse projects
 
@@ -158,17 +158,23 @@ sequenceDiagram
 
 The Assembly Manager consumes the component's **published result** and never repeats the Design Manager's regeneration workflow. When it needs a fresh result, it asks through a *queued* request, because manager-to-manager calls are never synchronous.
 
-## UC8: Validate for 3D printing
+## UC8: Validate for 3D printing or laser cutting
 
 ```mermaid
 sequenceDiagram
+  actor U as User
   participant CE as Component editor
   participant DM as Design Manager
   participant AN as Analysis Engine
   participant SA as Shape Access
-  CE->>DM: validate(FDM 0.4 mm nozzle profile)
-  DM->>AN: checkManufacturability(bodyKeys, profile)
-  AN->>SA: get(bodyKeys)
-  AN-->>DM: ValidationReport (closed solid, min wall, overhangs, bed fit)
-  DM-->>CE: state$ (diagnostics highlighted in viewport)
+  U->>CE: open the check panel, choose a machine
+  CE->>DM: execute(set-process)
+  CE->>DM: validate()
+  DM->>AN: validate({ named bodies, solved sketches }, document process)
+  AN->>SA: get(body keys)
+  AN-->>DM: Check[] (status, message, faces)
+  DM-->>CE: ValidationReport
+  CE-->>U: list of checks; faces of the focused check flagged in the viewport
 ```
+
+The panel re-runs the validation after every change while it is open. Measuring follows the same chain: `measure(refs)` resolves the picked references in Shape Access and asks OCCT for areas, lengths, radii and the closest points.

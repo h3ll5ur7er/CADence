@@ -15,7 +15,10 @@
 
 .model-bar {
   display: flex;
+  flex-wrap: wrap; /* a second row rather than covering the browser or the view cube */
+  justify-content: center;
   align-items: center;
+  max-width: 100%;
   gap: var(--space-1);
   padding: var(--space-1);
   border: 1px solid var(--border);
@@ -206,4 +209,43 @@
   font-size: 11px;
   overflow-wrap: anywhere;
   color: var(--text-muted);
+}
+
+.model-bar .tool.on {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.material {
+  display: grid;
+  gap: var(--space-1);
+
+  select {
+    height: 30px;
+    padding: 0 var(--space-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-raised);
+    color: var(--text);
+    font: 13px var(--font);
+  }
+}
+
+.bodies {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+
+  li {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  dd {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
 }

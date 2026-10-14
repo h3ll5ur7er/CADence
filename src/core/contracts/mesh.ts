@@ -29,3 +29,9 @@ export interface BodyMesh {
   readonly edgePositions: Float32Array;
   readonly edges: readonly MeshEdge[];
 }
+
+/** A body in the model: its id (the feature that created it) and the cache key of its shape in the geometry worker. */
+export interface BodyState {
+  readonly id: string;
+  readonly key: string;
+}

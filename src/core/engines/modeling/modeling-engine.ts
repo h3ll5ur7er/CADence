@@ -1,10 +1,6 @@
-import type { BodyMesh, BodyOperation, PlaneFrame, Profile, Result, TopologyRef, Vec3 } from '@core/contracts';
+import type { BodyMesh, BodyOperation, BodyState, PlaneFrame, Profile, Result, TopologyRef, Vec3 } from '@core/contracts';
 
-/** A body in the model: its id (the feature that created it) and the cache key of its current shape. */
-export interface BodyState {
-  readonly id: string;
-  readonly key: string;
-}
+export type { BodyState };
 
 /** An axis given in world coordinates, or by a straight edge of a body. */
 export type AxisInput = { readonly origin: Vec3; readonly direction: Vec3 } | { readonly edge: TopologyRef };
@@ -80,6 +76,4 @@ export interface ModelingEngine {
   /** The plane of a planar face, for sketches and construction planes on faces. */
   planeOf(bodies: readonly BodyState[], face: TopologyRef): Promise<Result<PlaneFrame>>;
   tessellate(bodies: readonly BodyState[]): Promise<BodyMesh[]>;
-  /** Volume (mm³) of each body, by body id. */
-  volumes(bodies: readonly BodyState[]): Promise<Record<string, number>>;
 }

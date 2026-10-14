@@ -8,6 +8,8 @@
     [editPlane]="editPlane()"
     [pickable]="store.pickable()"
     [selection]="store.picks()"
+    [flagged]="store.flagged()"
+    [measureLine]="measureLine()"
     (picked)="store.pick($event)"
     (backendReady)="status.renderer.set($event)"
   >
@@ -28,7 +30,7 @@
         </div>
       </li>
       <li>
-        <button type="button" class="node node-button" (click)="store.cancelDraft(); store.finishEditing(); store.parametersOpen.set(true)">
+        <button type="button" class="node node-button" (click)="store.openPanel('parameters')">
           <cad-icon name="variable" /> Parameters <span class="count">{{ store.state()?.parameters?.length ?? 0 }}</span>
         </button>
       </li>
@@ -118,6 +120,13 @@
           </button>
         }
         <span class="divider"></span>
+        <button type="button" class="icon-btn tool" aria-label="Measure" title="Measure" [class.on]="store.panel() === 'measure'" (click)="togglePanel('measure')">
+          <cad-icon name="ruler" [size]="18" />
+        </button>
+        <button type="button" class="icon-btn tool" aria-label="Check manufacturability" title="Check manufacturability" [class.on]="store.panel() === 'check'" (click)="togglePanel('check')">
+          <cad-icon name="inspect" [size]="18" />
+        </button>
+        <span class="divider"></span>
         <div class="menu">
           <button type="button" class="btn" aria-haspopup="menu" [attr.aria-expanded]="menu() === 'export'" [disabled]="bodies().length === 0" (click)="toggleMenu('export')">
             <cad-icon name="download" /> Export
@@ -141,7 +150,7 @@
   </div>
 
   @if (store.error(); as error) {
-    @if (!store.draft() && !store.parametersOpen()) {
+    @if (!store.draft() && store.panel() !== 'parameters') {
       <p class="toast" role="alert">
         {{ error }}
         <button type="button" class="icon-btn" aria-label="Dismiss" (click)="store.error.set(undefined)">×</button>
@@ -153,8 +162,12 @@
 <aside class="properties" aria-label="Properties">
   @if (store.draft()) {
     <cad-feature-dialog />
-  } @else if (store.parametersOpen()) {
+  } @else if (store.panel() === 'parameters') {
     <cad-parameters-panel />
+  } @else if (store.panel() === 'measure') {
+    <cad-measure-panel />
+  } @else if (store.panel() === 'check') {
+    <cad-check-panel />
   } @else if (editedSketch(); as view) {
     <p class="eyebrow">Sketch</p>
     <h2>{{ view.sketch.name }}</h2>
@@ -189,13 +202,36 @@
       <dt>Modified</dt>
       <dd>{{ relativeTime(document().modifiedAt) }}</dd>
     </dl>
+    <label class="material">
+      <span class="eyebrow">Material</span>
+      <select id="component-material" (change)="setMaterial($any($event.target).value)">
+        @for (m of materials; track m.name) {
+          <option [value]="m.name" [selected]="m.name === material().name">{{ m.name }} · {{ m.density }} g/cm³</option>
+        }
+      </select>
+    </label>
     @if (bodyRows().length) {
       <p class="eyebrow">Bodies</p>
-      <ul class="areas" aria-label="Bodies">
+      <ul class="bodies" aria-label="Bodies">
         @for (body of bodyRows(); track body.id) {
           <li>
-            <span>{{ body.name }}</span>
-            <span class="mono" data-testid="body-volume">{{ body.volume === undefined ? '…' : body.volume.toFixed(1) + ' mm³' }}</span>
+            <strong>{{ body.name }}</strong>
+            @if (body.properties; as p) {
+              <dl>
+                <dt>Volume</dt>
+                <dd class="mono" data-testid="body-volume">{{ mm(p.volume, 3) }}</dd>
+                <dt>Mass</dt>
+                <dd class="mono" data-testid="body-mass">{{ grams(p.mass) }}</dd>
+                <dt>Surface</dt>
+                <dd class="mono">{{ mm(p.area, 2) }}</dd>
+                <dt>Size</dt>
+                <dd class="mono" data-testid="body-size">{{ point([p.box.max[0] - p.box.min[0], p.box.max[1] - p.box.min[1], p.box.max[2] - p.box.min[2]]) }} mm</dd>
+                <dt>Centre of mass</dt>
+                <dd class="mono">{{ point(p.centerOfMass) }}</dd>
+              </dl>
+            } @else {
+              <p class="mono">…</p>
+            }
           </li>
         }
       </ul>

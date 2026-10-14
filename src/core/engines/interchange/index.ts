@@ -1,13 +1,14 @@
 import type { ShapeAccess } from '@core/access/shape';
 import type { Sketch } from '@core/contracts';
 import { exportSTEP } from 'replicad';
-import { type DrawingCurve, drawingCurves } from './drawing';
+import { compensatedCurves, type DrawingCurve, drawingCurves, type KerfCompensation } from './drawing';
 import { writeDxf } from './dxf';
 import { type TriangleMesh, write3mf, writeObj, writeStl } from './solids';
 import { writeSvg } from './svg';
 
 export type DrawingFormat = 'dxf' | 'svg';
 export type SolidFormat = 'step' | 'stl' | 'obj' | '3mf';
+export type { KerfCompensation } from './drawing';
 
 /** A body to export: its display name and the key of its shape in Shape Access. */
 export interface BodySource {
@@ -20,8 +21,11 @@ export interface BodySource {
  * Runs where the shapes live (the geometry worker).
  */
 export interface InterchangeEngine {
-  /** A solved sketch as a 2D drawing; construction geometry is left out. */
-  exportDrawing(sketch: Sketch, format: DrawingFormat): Promise<Uint8Array>;
+  /**
+   * A solved sketch as a 2D drawing; construction geometry is left out. With `kerf`, the profile
+   * outlines are compensated for the laser's cut width (throws when a detail is too small for it).
+   */
+  exportDrawing(sketch: Sketch, format: DrawingFormat, kerf?: KerfCompensation): Promise<Uint8Array>;
   /** Solid bodies: STEP keeps exact geometry; STL, OBJ and 3MF are fine triangle meshes. */
   exportBodies(bodies: readonly BodySource[], format: SolidFormat): Promise<Uint8Array>;
 }
@@ -41,8 +45,9 @@ const meshWriters: Readonly<Record<Exclude<SolidFormat, 'step'>, (meshes: readon
 class DefaultInterchangeEngine implements InterchangeEngine {
   constructor(private readonly shapes?: ShapeAccess) {}
 
-  async exportDrawing(sketch: Sketch, format: DrawingFormat): Promise<Uint8Array> {
-    return new TextEncoder().encode(drawingWriters[format](drawingCurves(sketch)));
+  async exportDrawing(sketch: Sketch, format: DrawingFormat, kerf?: KerfCompensation): Promise<Uint8Array> {
+    const curves = kerf ? compensatedCurves(sketch, kerf) : drawingCurves(sketch);
+    return new TextEncoder().encode(drawingWriters[format](curves));
   }
 
   async exportBodies(bodies: readonly BodySource[], format: SolidFormat): Promise<Uint8Array> {

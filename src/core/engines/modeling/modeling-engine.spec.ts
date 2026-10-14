@@ -1,12 +1,14 @@
-import { createShapeAccess } from '@core/access/shape';
+import { createShapeAccess, type NamedShape } from '@core/access/shape';
+import { measureVolume } from 'replicad';
 import { originFrames, type TopologyRef } from '@core/contracts';
 import { circleLoop, profile, rectangleLoop } from '@core/contracts/testing/profiles';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { type BodyState, createModelingEngine, type ModelingEngine, type ModelingOutcome } from './index';
 
 let engine: ModelingEngine;
+const shapes = createShapeAccess();
 beforeAll(() => {
-  engine = createModelingEngine(createShapeAccess());
+  engine = createModelingEngine(shapes);
 });
 
 const XY = originFrames.XY;
@@ -32,7 +34,7 @@ async function plate(distance = 5, key = `plate-${distance}`): Promise<ModelingO
 }
 
 async function volume(bodies: readonly BodyState[]): Promise<number> {
-  return Object.values(await engine.volumes(bodies)).reduce((a, b) => a + b, 0);
+  return bodies.reduce((sum, b) => sum + measureVolume((shapes.get(b.key) as NamedShape).shape), 0);
 }
 
 async function names(bodies: readonly BodyState[]) {

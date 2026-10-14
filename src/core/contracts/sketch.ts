@@ -3,7 +3,10 @@
  * Points are entities of their own; curves reference them, so a shared corner is one point.
  */
 
-export type SketchPlane = 'XY' | 'XZ' | 'YZ';
+import type { PlaneRef } from './feature';
+
+/** Origin planes, planar faces or construction planes. */
+export type SketchPlane = PlaneRef;
 
 /** The fixed sketch origin every sketch has; constraints and curves may reference it. */
 export const sketchOriginId = 'origin';
@@ -92,9 +95,11 @@ export type SketchStatus = 'under-constrained' | 'fully-constrained' | 'over-con
 
 /** Closed boundary made of curve pieces; arcs are counter-clockwise from start to end. */
 export type ProfileEdge =
-  | { readonly kind: 'line'; readonly start: Vec2; readonly end: Vec2 }
+  | { readonly kind: 'line'; readonly start: Vec2; readonly end: Vec2; readonly source: string }
   | {
       readonly kind: 'arc';
+      /** The sketch curve this piece belongs to. */
+      readonly source: string;
       readonly start: Vec2;
       readonly end: Vec2;
       readonly center: Vec2;

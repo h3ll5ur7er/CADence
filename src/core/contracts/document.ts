@@ -1,5 +1,6 @@
 import type { AssetId, DocumentId, ProjectId } from './ids';
 import type { Timestamp } from './project';
+import type { Feature } from './feature';
 import type { Sketch } from './sketch';
 
 export type DocumentKind = 'component' | 'assembly' | 'imported';
@@ -32,8 +33,10 @@ export interface Parameter {
   readonly comment?: string;
 }
 
-/** Items of a component's parametric history. Features join sketches in the Part modeling phase. */
-export type TimelineItem = Sketch;
+/** Items of a component's parametric history, applied in order. */
+export type TimelineItem = Sketch | Feature;
+
+export const isSketch = (item: TimelineItem): item is Sketch => item.type === 'sketch';
 
 export interface ComponentDocument extends DocumentBase {
   readonly kind: 'component';

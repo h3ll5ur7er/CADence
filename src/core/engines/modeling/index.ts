@@ -1,0 +1,17 @@
+import type { ShapeAccess } from '@core/access/shape';
+import type { ModelingEngine } from './modeling-engine';
+import { OcctModelingEngine } from './occt-modeling-engine';
+
+export type {
+  AxisInput,
+  BodyState,
+  ModelingEngine,
+  ModelingOutcome,
+  ModelingRequest,
+  ToolInput,
+} from './modeling-engine';
+
+/** The OpenCascade engine; call it where the shapes live (the geometry worker, or in-process in tests). */
+export function createModelingEngine(shapes: ShapeAccess): ModelingEngine {
+  return new OcctModelingEngine(shapes);
+}

@@ -6,7 +6,7 @@ import {
   sketchOriginId,
 } from '@core/contracts';
 import { angleOf, normalizeAngle, sub, type Vec2 } from '@core/utilities/math';
-import { DebugMode, type GcsWrapper, make_gcs_wrapper, SolveStatus } from '@salusoft89/planegcs';
+import type { GcsWrapper } from '@salusoft89/planegcs';
 
 /** A point to pull toward a target while solving (interactive dragging). */
 export interface DragTarget {
@@ -24,6 +24,9 @@ export interface SolveOutcome {
 }
 
 type Primitive = Record<string, unknown> & { id: string; type: string };
+
+/** planegcs SolveStatus values (kept here so the solver module itself loads lazily). */
+const solveStatus = { success: 0, converged: 1 } as const;
 
 /** Solver ids of derived primitives carry the owning constraint id before '#'. */
 const ownerOf = (solverId: string) => solverId.split('#')[0] as string;
@@ -220,7 +223,7 @@ export class PlanegcsSolver {
       );
     }
     gcs.push_primitives_and_params(primitives as never);
-    const result = gcs.solve();
+    const result: number = gcs.solve();
     const conflicting = [
       ...new Set([...gcs.get_gcs_conflicting_constraints(), ...gcs.get_gcs_redundant_constraints()].map(ownerOf)),
     ];
@@ -228,7 +231,7 @@ export class PlanegcsSolver {
     if (conflicting.length > 0) {
       return { sketch, status: 'over-constrained', degreesOfFreedom, conflicting };
     }
-    if (result !== SolveStatus.Success && result !== SolveStatus.Converged) {
+    if (result !== solveStatus.success && result !== solveStatus.converged) {
       return { sketch, status: 'failed', degreesOfFreedom, conflicting };
     }
     gcs.apply_solution();
@@ -247,8 +250,10 @@ export class PlanegcsSolver {
     };
   }
 
+  /** Loads planegcs on first use, so it stays out of the app's start-up bundle. */
   private instance(): Promise<GcsWrapper> {
-    this.wrapper ??= make_gcs_wrapper(this.wasmUrl).then((gcs) => {
+    this.wrapper ??= import('@salusoft89/planegcs').then(async ({ make_gcs_wrapper, DebugMode }) => {
+      const gcs = await make_gcs_wrapper(this.wasmUrl);
       gcs.debug_mode = DebugMode.NoDebug;
       return gcs;
     });

@@ -143,6 +143,13 @@ describe('DesignManager', () => {
     expect(session.state().document).toBe(before);
   });
 
+  it('refuses changes that would collapse a curve to nothing', async () => {
+    await drawRectangle();
+    const collapse = await session.execute({ type: 'add-constraint', sketchId: 's1', constraint: { id: 'v3', kind: 'vertical', line: 'ab' } });
+    expect(collapse).toMatchObject({ ok: false, error: { code: 'degenerate' } });
+    expect(sketch()?.sketch.constraints.some((c) => c.id === 'v3')).toBe(false);
+  });
+
   it('undoes and redoes changes', async () => {
     await drawRectangle();
     unwrap(await session.execute({ type: 'add-constraint', sketchId: 's1', constraint: { id: 'w', kind: 'distance', points: ['a', 'b'], expression: '40' } }));

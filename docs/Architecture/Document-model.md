@@ -63,16 +63,30 @@ Expressions may reference other parameters by name, use units (`10 mm + 0.5 in`)
 ## Timeline items
 
 ```ts
-type TimelineItem = Sketch | Feature;
+type TimelineItem = Sketch | Feature;   // today: Sketch only
+```
 
+### Sketches
+
+As implemented in [[src/core/contracts/sketch.ts]]:
+
+```ts
 interface Sketch {
-  id: SketchId; type: 'sketch'; name: string; suppressed: boolean;
-  plane: PlaneRef;                 // origin plane, construction plane, or planar face ref
-  entities: SketchEntity[];        // point, line, arc, circle, ellipse, spline (later); construction flag
-  constraints: SketchConstraint[]; // coincident, horizontal, vertical, parallel, perpendicular, tangent,
-                                   // equal, midpoint, symmetric, fix, distance, angle, radius, diameter
+  id: string; type: 'sketch'; name: string; suppressed: boolean;
+  plane: 'XY' | 'XZ' | 'YZ';         // origin planes now; construction planes and faces in phase 3
+  entities: SketchEntity[];           // points, lines, circles, arcs (each curve has a construction flag)
+  constraints: SketchConstraint[];    // geometric relations and dimensions
 }
+```
 
+- **Points are entities of their own.** Curves reference them by id, so a shared corner *is* one point: drawing a polyline or a rectangle needs no coincident constraints, and dragging a corner moves every curve on it. Every sketch also has the implicit, fixed point `origin` at (0, 0).
+- **Arcs** run counter-clockwise from `start` to `end` around `center`. Their radius follows from the points; circles store a `radius`.
+- **Plane coordinates** (u, v) map to the world as: XY → (x, y), XZ → (x, z), YZ → (y, z), each seen head-on from the top, front and right view respectively.
+- **Geometric constraints:** coincident, horizontal, vertical, parallel, perpendicular, equal (lengths or radii), tangent, point-on (line, circle or arc), midpoint, fix.
+- **Dimensions** store an **expression**, not a number: distance, horizontal and vertical distance, point-to-line distance, radius, diameter, angle. `"2 * 20 mm"` and `"1 in"` are valid values. Signs and orientation (which side, which of the supplementary angles) follow the current geometry, so a dimension never flips the sketch over.
+- **Points store their last solved positions.** The solver needs a starting guess, and the document opens exactly as last seen, even before solving.
+
+```ts
 interface Feature {
   id: FeatureId; type: FeatureType; name: string; suppressed: boolean;
   inputs: Record<string, TopologyRef | TopologyRef[] | ProfileRef[]>;

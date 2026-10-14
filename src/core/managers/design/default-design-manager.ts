@@ -9,6 +9,7 @@ import {
   ok,
   type Result,
   type Sketch,
+  sketchOriginId,
 } from '@core/contracts';
 import type { InterchangeEngine } from '@core/engines/interchange';
 import type { ParameterEngine } from '@core/engines/parameter';
@@ -183,7 +184,27 @@ async function solveSketch(deps: DesignManagerDependencies, sketch: Sketch, drag
   if (solution.status === 'failed') {
     return fail({ code: 'unsolvable', message: 'The sketch cannot satisfy these constraints. Check the dimension values.' });
   }
+  if (collapses(solution.sketch)) {
+    return fail({ code: 'degenerate', message: 'This would shrink a line, circle or arc to nothing.' });
+  }
   return ok({ ...solution, values });
+}
+
+/** Solvable but meaningless: a curve of (almost) zero size, e.g. a line both horizontal and vertical. */
+function collapses(sketch: Sketch): boolean {
+  const minimum = 1e-6;
+  const points = new Map<string, readonly [number, number]>([[sketchOriginId, [0, 0]]]);
+  for (const e of sketch.entities) if (e.kind === 'point') points.set(e.id, [e.x, e.y]);
+  const gap = (a: string, b: string) => {
+    const [p, q] = [points.get(a) ?? [0, 0], points.get(b) ?? [0, 0]];
+    return Math.hypot(p[0] - q[0], p[1] - q[1]);
+  };
+  return sketch.entities.some(
+    (e) =>
+      (e.kind === 'line' && gap(e.start, e.end) < minimum) ||
+      (e.kind === 'circle' && e.radius < minimum) ||
+      (e.kind === 'arc' && (gap(e.center, e.start) < minimum || gap(e.start, e.end) < minimum)),
+  );
 }
 
 export class DefaultDesignManager implements DesignManager {

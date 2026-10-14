@@ -19,6 +19,9 @@
   --axis-x: #d0453b;
   --axis-y: #3a9a4b;
   --axis-z: #2f6fd0;
+  --sketch: #1f5fbf; /* sketch curves while under-constrained */
+  --sketch-done: #182026; /* fully constrained */
+  --selection: #e07a10;
   --shadow: 0 1px 2px rgb(16 24 32 / 8%), 0 4px 16px rgb(16 24 32 / 6%);
 
   --font: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
@@ -52,6 +55,9 @@
     --danger-soft: #3b1f1d;
     --viewport-top: #2b3339;
     --viewport-bottom: #161b1f;
+    --sketch: #6ea8ff;
+    --sketch-done: #e3e8eb;
+    --selection: #ffad4d;
     --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 6px 20px rgb(0 0 0 / 25%);
     color-scheme: dark;
   }

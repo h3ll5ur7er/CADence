@@ -1,0 +1,144 @@
+<div class="stage">
+  <cad-viewport
+    #viewport
+    [showOrigin]="originVisible()"
+    [sketches]="displays()"
+    [editPlane]="editPlane()"
+    (backendReady)="status.renderer.set($event)"
+  >
+    @if (editedSketch(); as view) {
+      <cad-sketch-editor [view]="view" [matrix]="viewport.planeMatrix()" />
+    }
+  </cad-viewport>
+
+  <section class="browser" aria-label="Model browser">
+    <h2 class="eyebrow browser-title">Browser</h2>
+    <ul class="tree">
+      <li>
+        <div class="node">
+          <cad-icon name="origin" /> Origin
+          <label class="toggle" title="Show origin">
+            <input type="checkbox" [checked]="originVisible()" (change)="originVisible.set(!originVisible())" aria-label="Show origin" />
+          </label>
+        </div>
+        <ul>
+          <li class="node"><span class="swatch" style="color: var(--axis-z)"></span> XY plane</li>
+          <li class="node"><span class="swatch" style="color: var(--axis-y)"></span> XZ plane</li>
+          <li class="node"><span class="swatch" style="color: var(--axis-x)"></span> YZ plane</li>
+        </ul>
+      </li>
+      <li>
+        <div class="node"><cad-icon name="variable" /> Parameters <span class="count">0</span></div>
+      </li>
+      <li>
+        <div class="node"><cad-icon name="timeline" /> Timeline <span class="count">{{ timeline().length }}</span></div>
+        @if (timeline().length === 0) {
+          <p class="node-empty">Sketches and features will appear here.</p>
+        }
+        <ul aria-label="Timeline">
+          @for (item of timeline(); track item.id) {
+            @let view = viewOf(item);
+            <li class="node item" [class.active]="store.editing() === item.id">
+              <button type="button" class="item-main" [title]="'Edit ' + item.name" [attr.aria-label]="'Edit ' + item.name" (dblclick)="store.edit(item.id)" (click)="store.edit(item.id)">
+                <cad-icon name="sketch" />
+                <span class="item-name">{{ item.name }}</span>
+                @if (view) {
+                  <span class="dot" [attr.data-status]="view.status" [title]="statusLabels[view.status]"></span>
+                }
+              </button>
+              <span class="item-actions">
+                <button type="button" class="icon-btn" [attr.aria-label]="'Rename ' + item.name" title="Rename" (click)="rename(item)">
+                  <cad-icon name="pencil" [size]="14" />
+                </button>
+                <button type="button" class="icon-btn" [attr.aria-label]="'Delete ' + item.name" title="Delete" (click)="remove(item)">
+                  <cad-icon name="trash" [size]="14" />
+                </button>
+              </span>
+            </li>
+          }
+        </ul>
+      </li>
+    </ul>
+  </section>
+
+  <div class="top-tools">
+    @if (store.editing()) {
+      <cad-sketch-toolbar />
+    } @else {
+      <div class="model-bar" role="toolbar" aria-label="Model tools">
+        <div class="menu">
+          <button type="button" class="btn btn-primary" aria-haspopup="menu" [attr.aria-expanded]="planeMenu()" (click)="planeMenu.set(!planeMenu())">
+            <cad-icon name="sketch" /> New sketch
+          </button>
+          @if (planeMenu()) {
+            <div class="menu-list" role="menu" aria-label="Sketch plane">
+              @for (p of planes; track p.plane) {
+                <button type="button" role="menuitem" (click)="startSketch(p.plane)">{{ p.label }}</button>
+              }
+            </div>
+          }
+        </div>
+        <span class="divider"></span>
+        <button type="button" class="icon-btn" aria-label="Undo" title="Undo (Ctrl+Z)" [disabled]="!store.state()?.canUndo" (click)="store.undo()">
+          <cad-icon name="undo" [size]="18" />
+        </button>
+        <button type="button" class="icon-btn" aria-label="Redo" title="Redo (Ctrl+Y)" [disabled]="!store.state()?.canRedo" (click)="store.redo()">
+          <cad-icon name="redo" [size]="18" />
+        </button>
+      </div>
+    }
+  </div>
+
+  @if (store.error(); as error) {
+    <p class="toast" role="alert">
+      {{ error }}
+      <button type="button" class="icon-btn" aria-label="Dismiss" (click)="store.error.set(undefined)">×</button>
+    </p>
+  }
+</div>
+
+<aside class="properties" aria-label="Properties">
+  @if (editedSketch(); as view) {
+    <p class="eyebrow">Sketch</p>
+    <h2>{{ view.sketch.name }}</h2>
+    <dl>
+      <dt>Plane</dt>
+      <dd>{{ view.sketch.plane }}</dd>
+      <dt>Status</dt>
+      <dd>{{ statusLabels[view.status] }}</dd>
+      <dt>Freedom</dt>
+      <dd>{{ view.degreesOfFreedom }} DOF</dd>
+      <dt>Curves</dt>
+      <dd>{{ counts()?.curves }}</dd>
+      <dt>Constraints</dt>
+      <dd>{{ counts()?.constraints }}</dd>
+      <dt>Profiles</dt>
+      <dd data-testid="profile-count">{{ view.profiles.length }}</dd>
+    </dl>
+    @if (view.profiles.length) {
+      <p class="eyebrow">Profile areas</p>
+      <ul class="areas">
+        @for (profile of view.profiles; track profile.id) {
+          <li class="mono">{{ profile.area.toFixed(2) }} mm²</li>
+        }
+      </ul>
+    }
+  } @else {
+    <p class="eyebrow">Component</p>
+    <h2>{{ document().name }}</h2>
+    <dl>
+      <dt>Units</dt>
+      <dd>Millimetres</dd>
+      <dt>Sketches</dt>
+      <dd>{{ timeline().length }}</dd>
+      <dt>Bodies</dt>
+      <dd>None yet</dd>
+      <dt>Created</dt>
+      <dd>{{ relativeTime(document().createdAt) }}</dd>
+      <dt>Modified</dt>
+      <dd>{{ relativeTime(document().modifiedAt) }}</dd>
+    </dl>
+  }
+</aside>
+
+<cad-name-dialog />

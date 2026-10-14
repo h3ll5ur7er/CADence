@@ -72,6 +72,7 @@
 <footer class="statusbar">
   <span>Renderer <strong data-testid="renderer">{{ status.renderer() ?? '…' }}</strong></span>
   <span>Units <strong>mm</strong></span>
+  <span>Storage <strong data-testid="storage">{{ storage }}</strong></span>
   @if (active(); as doc) {
     <span>Mode <strong data-testid="mode">{{ kindLabels[doc.kind] }}</strong></span>
   }

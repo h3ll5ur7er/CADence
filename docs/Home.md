@@ -20,4 +20,5 @@ CADence is a parametric 3D CAD application for makers. It covers the things you 
   - [[Architecture/Document model]]
   - [[Architecture/Decisions]]
 - [[Roadmap]]: the phases and their tasks
+- [[Development]]: run, test and build the web and desktop apps
 - [[Conventions]]: code, testing, git and the definition of done

@@ -15,7 +15,7 @@ import {
   type CreatableDocumentKind,
   type DocumentSummary,
 } from '@core/contracts';
-import { PROJECT_MANAGER } from '../core.providers';
+import { PROJECT_MANAGER, STORAGE_KIND } from '../core.providers';
 import { ConfirmDialog, NameDialog } from '../shared/dialogs';
 import { Icon } from '../shared/icon';
 import { DocumentsPanel } from './documents-panel';
@@ -25,6 +25,7 @@ import { ComponentMode } from './modes/component-mode';
 import { ImportedMode } from './modes/imported-mode';
 
 const kindLabels = { component: 'Component', assembly: 'Assembly', imported: 'Imported' } as const;
+const storageLabels = { browser: 'This browser', 'project-folders': 'Project folders', memory: 'Memory only' } as const;
 
 @Component({
   selector: 'cad-editor-page',
@@ -41,6 +42,7 @@ export class EditorPage {
 
   protected readonly status = inject(EditorStatus);
   protected readonly kindLabels = kindLabels;
+  protected readonly storage = storageLabels[inject(STORAGE_KIND)];
   protected readonly message = signal<string | undefined>(undefined);
   private readonly projectManager = inject(PROJECT_MANAGER);
   private readonly router = inject(Router);
@@ -71,7 +73,7 @@ export class EditorPage {
     const result = await this.projectManager.createDocument(asProjectId(this.projectId()), kind);
     if (!result.ok) return this.message.set(result.error.message);
     this.message.set(undefined);
-    await this.refresh();
+    this.refresh();
     await this.open(result.value);
   }
 
@@ -80,7 +82,7 @@ export class EditorPage {
     const result = await this.projectManager.importFile(asProjectId(this.projectId()), { name: file.name, bytes });
     if (!result.ok) return this.message.set(result.error.message);
     this.message.set(undefined);
-    await this.refresh();
+    this.refresh();
     await this.open(result.value);
   }
 
@@ -92,7 +94,7 @@ export class EditorPage {
     });
     if (!name || name === document.name) return;
     await this.projectManager.renameDocument(document.id, name);
-    await this.refresh();
+    this.refresh();
   }
 
   protected async remove(document: DocumentSummary): Promise<void> {
@@ -104,7 +106,7 @@ export class EditorPage {
     if (!confirmed) return;
     await this.projectManager.deleteDocument(document.id);
     if (document.id === this.documentId()) await this.router.navigate(['/projects', this.projectId()]);
-    await this.refresh();
+    this.refresh();
   }
 
   protected async renameProject(): Promise<void> {
@@ -120,7 +122,7 @@ export class EditorPage {
     return this.router.navigate(['/projects', document.projectId, 'documents', document.id], { replaceUrl });
   }
 
-  private async refresh(): Promise<void> {
+  private refresh(): void {
     this.documents.reload();
     this.project.reload();
   }

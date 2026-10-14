@@ -66,6 +66,14 @@ function entryPointOf(path: string, element: Element): string {
   return `${path.split('/').slice(0, depth).join('/')}/index.ts`;
 }
 
+const isTestFile = (path: string) => path.endsWith('.spec.ts') || path.includes('/testing/');
+
+/** A component's `testing/` folder is a second entry point, open to tests only. */
+function isTestSupport(from: string, to: string, target: Element): boolean {
+  const entry = entryPointOf(to, target).replace(/index\.ts$/, 'testing/');
+  return isTestFile(from) && to.startsWith(entry);
+}
+
 /** Returns a human-readable violation, or null when the import is allowed. */
 export function checkImport(from: string, to: string): string | null {
   const source = classify(from);
@@ -78,7 +86,7 @@ export function checkImport(from: string, to: string): string | null {
     return `${from}: ${source.layer} '${source.component}' must not call ${target.layer} '${target.component}' (${to})`;
   }
   const isCoreTarget = coreLayers.includes(target.layer) || target.layer === 'composition';
-  if (isCoreTarget && to !== entryPointOf(to, target)) {
+  if (isCoreTarget && to !== entryPointOf(to, target) && !isTestSupport(from, to, target)) {
     return `${from}: import ${target.layer} '${target.component}' through its index.ts, not ${to}`;
   }
   return null;

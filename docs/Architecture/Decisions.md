@@ -6,7 +6,7 @@ Architecture decision records. Each one records what was decided, why, and what 
 
 ## ADR-1
 
-**iDesign with lint-enforced layers.** The system is decomposed by volatility into Clients, Managers, Engines, Resource Access, Resources and Utilities ([[Architecture]]). The call rules are enforced with ESLint import boundaries per folder, so violations fail the build rather than a review.
+**iDesign with test-enforced layers.** The system is decomposed by volatility into Clients, Managers, Engines, Resource Access, Resources and Utilities ([[Architecture]]). The call rules are enforced by an architecture test over the real import graph ([[tools/architecture/rules.ts]]), so violations fail `npm test` rather than a review. This replaced the first plan of using `eslint-plugin-boundaries`, whose v7 configuration API changed completely; a ~100-line checker with its own tests is easier to trust.
 *Trade-off:* more interfaces and a composition root up front. In return, features (new feature types, formats, hosts) land in one component.
 
 ## ADR-2
@@ -26,7 +26,7 @@ Architecture decision records. Each one records what was decided, why, and what 
 
 ## ADR-5
 
-**IndexedDB in the browser; a project folder on desktop.** IndexedDB works on every browser and on the main thread. On desktop, a project is a human-readable folder (`project.json`, `documents/*.json`, `assets/*`) that the user can back up or put under git. Both sit behind the same Resource Access contracts.
+**IndexedDB in the browser; a project folder on desktop.** IndexedDB works on every browser and on the main thread; each Resource Access owns its own database. On desktop, a project is a human-readable folder (`project.json`, `documents/*.json`, `assets/*`) that the user can back up or put under git, below the app data folder (`%APPDATA%/dev.cadence.app/projects` on Windows). The folder implementations work on a small `FileSystem` port, which Tauri implements in the app and Node implements in tests, so they pass the same contract tests as IndexedDB.
 *Trade-off:* OPFS would be faster for large blobs. We will add it behind Asset Access if imports get big (YAGNI until then).
 
 ## ADR-6

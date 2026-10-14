@@ -21,6 +21,7 @@ describe('architecture rules', () => {
     ['src/core/access/project/indexed-db.ts', 'src/core/contracts/index.ts'],
     ['src/core/managers/project/project-manager.ts', 'src/core/managers/project/events.ts'],
     ['src/core/composition/browser.ts', 'src/core/access/project/index.ts'],
+    ['src/core/access/project/fs.spec.ts', 'src/core/utilities/file-system/testing/node-file-system.ts'],
   ])('allows %s → %s', (from, to) => {
     expect(checkImport(from, to)).toBeNull();
   });
@@ -35,6 +36,7 @@ describe('architecture rules', () => {
     ['utility → contracts', 'src/core/utilities/messaging/a.ts', 'src/core/contracts/index.ts'],
     ['contracts → utility', 'src/core/contracts/a.ts', 'src/core/utilities/identity/index.ts'],
     ['internals', 'src/core/managers/project/a.ts', 'src/core/access/project/indexed-db.ts'],
+    ['test support in production code', 'src/core/access/project/fs.ts', 'src/core/utilities/file-system/testing/x.ts'],
   ])('rejects %s', (_, from, to) => {
     expect(checkImport(from, to)).not.toBeNull();
   });

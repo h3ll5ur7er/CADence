@@ -1,6 +1,7 @@
 import type { NamedShape } from '@core/access/shape';
-import type { PlaneFrame, Profile, ProfileEdge, Vec3 } from '@core/contracts';
-import type { Face, Shape3D } from 'replicad';
+import type { PlaneFrame, Profile, ProfileEdge, Vec2, Vec3 } from '@core/contracts';
+import { curveAt, ellipseParameter } from '@core/utilities/math';
+import { type Face, getOC, makeVertex, type Shape3D } from 'replicad';
 import { cross3, dot3, length3, normalize3, normalOf, scale3, sub3, toPlane, toWorld, add3 } from './geometry';
 import { nameShape } from './naming';
 import { type Line, sameLine, samePlaneIgnoringSide, type Surface } from './surfaces';
@@ -9,7 +10,40 @@ import { profilesDrawing } from './geometry';
 /** The surface a profile edge sweeps out, to recognise which tool face it made. */
 interface Expected {
   readonly source: string;
-  readonly matches: (surface: Surface) => boolean;
+  readonly matches: (surface: Surface, face: Face) => boolean;
+}
+
+/** A point halfway along a free-form profile edge (a spline piece or an ellipse piece). */
+function middleOf(edge: Extract<ProfileEdge, { kind: 'bezier' | 'ellipse' }>): Vec2 {
+  if (edge.kind === 'bezier') return curveAt({ kind: 'bezier', points: [edge.start, edge.c1, edge.c2, edge.end] }, 0.5);
+  const ellipse = { center: edge.center, a: edge.a, b: edge.b, rotation: edge.rotation };
+  const t0 = ellipseParameter(ellipse, edge.start);
+  let t1 = ellipseParameter(ellipse, edge.end);
+  if (edge.ccw) while (t1 <= t0 + 1e-12) t1 += 2 * Math.PI;
+  else while (t1 >= t0 - 1e-12) t1 -= 2 * Math.PI;
+  return curveAt({ kind: 'ellipse', ellipse }, (t0 + t1) / 2);
+}
+
+/** Whether a point lies on a face: free-form side faces are recognised by a point they must pass through. */
+function passesThrough(face: Face, point: Vec3): boolean {
+  const tool = new (getOC().BRepExtrema_DistShapeShape)();
+  try {
+    tool.LoadS1(face.wrapped);
+    tool.LoadS2(makeVertex([...point]).wrapped);
+    tool.Perform();
+    return tool.IsDone() && tool.Value() < 1e-4;
+  } finally {
+    tool.delete();
+  }
+}
+
+/** A point turned about an axis (Rodrigues' rotation). */
+function rotateAbout(p: Vec3, axis: { readonly origin: Vec3; readonly direction: Vec3 }, angle: number): Vec3 {
+  const k = normalize3(axis.direction);
+  const v = sub3(p, axis.origin);
+  const cos = Math.cos(angle);
+  const turned = add3(add3(scale3(v, cos), scale3(cross3(k, v), Math.sin(angle))), scale3(k, dot3(k, v) * (1 - cos)));
+  return add3(axis.origin, turned);
 }
 
 const near = (a: number, b: number) => Math.abs(a - b) <= 1e-5 * Math.max(1, Math.abs(a), Math.abs(b));
@@ -32,7 +66,7 @@ function nameTool(
     (face, surface) => {
       const capName = cap(surface, face);
       if (capName) return `f:${feature}:${capName}`;
-      const side = expected.find((e) => e.matches(surface));
+      const side = expected.find((e) => e.matches(surface, face));
       return side ? `f:${feature}:side:${side.source}` : undefined;
     },
     feature,
@@ -62,6 +96,10 @@ export function extrudeTool(
     return Math.abs(t - low) < Math.abs(t - high) ? 'start' : 'end';
   };
   const expected = edgesOf(profiles).map((edge): Expected => {
+    if (edge.kind === 'bezier' || edge.kind === 'ellipse') {
+      const point = add3(toWorld(frame, middleOf(edge)), scale3(n, (low + high) / 2));
+      return { source: edge.source, matches: (s, face) => s.type === 'other' && passesThrough(face, point) };
+    }
     if (edge.kind === 'line') {
       const p = toWorld(frame, edge.start);
       const normal = normalize3(cross3(sub3(toWorld(frame, edge.end), p), n));
@@ -98,6 +136,10 @@ export function revolveTool(
     return dot3(radial(face.center.toTuple() as Vec3), profileSide) > 1 - 1e-6 ? 'start' : 'end';
   };
   const expected = edgesOf(profiles).map((edge): Expected => {
+    if (edge.kind === 'bezier' || edge.kind === 'ellipse') {
+      const point = rotateAbout(toWorld(frame, middleOf(edge)), axis, angle / 2);
+      return { source: edge.source, matches: (s, face) => s.type === 'other' && passesThrough(face, point) };
+    }
     if (edge.kind === 'line') {
       const [p, q] = [toWorld(frame, edge.start), toWorld(frame, edge.end)];
       const d = normalize3(sub3(q, p));

@@ -46,6 +46,12 @@ export const shortcutCommands = {
   'sketch-point': { scope: 'sketch', label: 'Point' },
   'sketch-dimension': { scope: 'sketch', label: 'Dimension' },
   'sketch-construction': { scope: 'sketch', label: 'Construction on or off' },
+  'sketch-trim': { scope: 'sketch', label: 'Trim' },
+  'sketch-copy': { scope: 'sketch', label: 'Copy the selection' },
+  'sketch-cut': { scope: 'sketch', label: 'Cut the selection' },
+  'sketch-paste': { scope: 'sketch', label: 'Paste at the pointer' },
+  'sketch-move': { scope: 'sketch', label: 'Move the selection' },
+  'sketch-offset': { scope: 'sketch', label: 'Offset the selection' },
   'sketch-delete': { scope: 'sketch', label: 'Delete the selection' },
   'finish-sketch': { scope: 'sketch', label: 'Finish the sketch' },
 } as const satisfies Record<string, { readonly scope: ShortcutScope; readonly label: string }>;
@@ -60,6 +66,9 @@ const common: Keymap = {
   redo: ['Ctrl+Y', 'Ctrl+Shift+Z'],
   cancel: ['Escape'],
   'sketch-delete': ['Delete', 'Backspace'],
+  'sketch-copy': ['Ctrl+C'],
+  'sketch-cut': ['Ctrl+X'],
+  'sketch-paste': ['Ctrl+V'],
 };
 
 const cadence: Keymap = {
@@ -91,6 +100,9 @@ const cadence: Keymap = {
   'sketch-point': ['P'],
   'sketch-dimension': ['D'],
   'sketch-construction': ['X'],
+  'sketch-trim': ['T'],
+  'sketch-move': ['M'],
+  'sketch-offset': ['O'],
   'finish-sketch': ['Enter'],
 };
 

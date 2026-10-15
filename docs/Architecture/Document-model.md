@@ -90,7 +90,7 @@ As implemented in [[src/core/contracts/sketch.ts]]:
 interface Sketch {
   id: string; type: 'sketch'; name: string; suppressed: boolean;
   plane: 'XY' | 'XZ' | 'YZ';         // origin planes now; construction planes and faces in phase 3
-  entities: SketchEntity[];           // points, lines, circles, arcs (each curve has a construction flag)
+  entities: SketchEntity[];           // points, lines, circles, arcs, ellipses, splines (each curve has a construction flag), projections
   constraints: SketchConstraint[];    // geometric relations and dimensions
 }
 ```

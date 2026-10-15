@@ -1,6 +1,6 @@
 import type { SketchEntity } from '@core/contracts';
 import { angleOf, ccwSweep, type Vec2 } from '@core/utilities/math';
-import type { DrawingCurve } from './drawing';
+import { type DrawingCurve, samplePoints } from './drawing';
 import { parseXml, type XmlElement } from './xml';
 
 /** Largest distance between a curve and the lines that stand in for it (splines, ellipses, Béziers), mm. */
@@ -485,6 +485,16 @@ export function sketchEntities(curves: readonly DrawingCurve[], prefix: string):
       if (start !== end) entities.push({ id: id(), kind: 'line', start, end, construction: false });
     } else if (curve.kind === 'circle') {
       if (curve.radius > 1e-6) entities.push({ id: id(), kind: 'circle', center: pointAt(curve.center), radius: curve.radius, construction: false });
+    } else if (curve.kind === 'ellipse' && curve.sweep >= 2 * Math.PI - 1e-9) {
+      const { center, a, b, rotation } = curve.ellipse;
+      const major: Vec2 = [center[0] + a * Math.cos(rotation), center[1] + a * Math.sin(rotation)];
+      entities.push({ id: id(), kind: 'ellipse', center: pointAt(center), major: pointAt(major), minorRadius: b, construction: false });
+    } else if (curve.kind === 'bezier' || curve.kind === 'ellipse') {
+      // A lone Bézier or a piece of an ellipse has no sketch entity of its own: short lines within 0.05 mm.
+      const points = samplePoints(curve, 0.05).map(pointAt);
+      for (let i = 1; i < points.length; i++) {
+        if (points[i] !== points[i - 1]) entities.push({ id: id(), kind: 'line', start: points[i - 1] as string, end: points[i] as string, construction: false });
+      }
     } else {
       if (curve.radius <= 1e-6) continue;
       const polar = (a: number): Vec2 => [curve.center[0] + curve.radius * Math.cos(a), curve.center[1] + curve.radius * Math.sin(a)];

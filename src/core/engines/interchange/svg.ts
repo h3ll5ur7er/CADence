@@ -1,4 +1,4 @@
-import { polar } from '@core/utilities/math';
+import { curveAt, polar } from '@core/utilities/math';
 import { boundsOf, type DrawingCurve, num } from './drawing';
 
 /** SVG coordinates: Y flips because SVG's Y axis points down. */
@@ -10,6 +10,21 @@ function element(curve: DrawingCurve): string {
       return `<line x1="${num(curve.start[0])}" y1="${y(curve.start[1])}" x2="${num(curve.end[0])}" y2="${y(curve.end[1])}"/>`;
     case 'circle':
       return `<circle cx="${num(curve.center[0])}" cy="${y(curve.center[1])}" r="${num(curve.radius)}"/>`;
+    case 'bezier': {
+      const [p, c1, c2, q] = curve.points;
+      return `<path d="M ${num(p[0])} ${y(p[1])} C ${num(c1[0])} ${y(c1[1])} ${num(c2[0])} ${y(c2[1])} ${num(q[0])} ${y(q[1])}"/>`;
+    }
+    case 'ellipse': {
+      const { center, a, b, rotation } = curve.ellipse;
+      // Y flips, so the rotation turns the other way.
+      const turn = num((-rotation * 180) / Math.PI);
+      if (curve.sweep >= 2 * Math.PI - 1e-9) {
+        return `<ellipse cx="${num(center[0])}" cy="${y(center[1])}" rx="${num(a)}" ry="${num(b)}" transform="rotate(${turn} ${num(center[0])} ${y(center[1])})"/>`;
+      }
+      const at = (t: number) => curveAt({ kind: 'ellipse', ellipse: curve.ellipse }, t);
+      const [start, end] = [at(curve.start), at(curve.start + curve.sweep)];
+      return `<path d="M ${num(start[0])} ${y(start[1])} A ${num(a)} ${num(b)} ${turn} ${curve.sweep > Math.PI ? 1 : 0} 0 ${num(end[0])} ${y(end[1])}"/>`;
+    }
     case 'arc': {
       const start = polar(curve.center, curve.radius, curve.startAngle);
       const end = polar(curve.center, curve.radius, curve.startAngle + curve.sweep);

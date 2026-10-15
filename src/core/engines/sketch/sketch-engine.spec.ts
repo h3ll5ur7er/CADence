@@ -135,4 +135,63 @@ describe('SketchEngine.solve', () => {
     const solution = await engine.solve(b.build(), values(), { point: 'p2', x: 25, y: 9 });
     expect(point(solution, 'p2')).toEqual([expect.closeTo(25), expect.closeTo(0)]);
   });
+
+  it('shapes an ellipse by its points and its minor radius dimension', async () => {
+    const b = new SketchBuilder();
+    const center = b.point(1, 1);
+    const major = b.point(18, 2);
+    const ellipse = b.ellipse(center, major, 6);
+    b.constrain({ id: 'c', kind: 'coincident', points: [center, sketchOriginId] });
+    b.constrain({ id: 'h', kind: 'horizontal-distance', points: [center, major], expression: '20' });
+    b.constrain({ id: 'v', kind: 'vertical-distance', points: [center, major], expression: '0' });
+    const loose = await engine.solve(b.build(), values({ h: 20, v: 0 }));
+    expect(loose.degreesOfFreedom).toBe(1); // the minor radius
+    b.constrain({ id: 'r', kind: 'radius', curve: ellipse, expression: '8' });
+    const solution = await engine.solve(b.build(), values({ h: 20, v: 0, r: 8 }));
+    expect(solution.status).toBe('fully-constrained');
+    expect(solution.sketch.entities.find((e) => e.id === ellipse)).toMatchObject({ minorRadius: 8 });
+    expect(solution.profiles[0]?.area).toBeCloseTo(Math.PI * 20 * 8, 6);
+  });
+
+  it('moves a spline with its points', async () => {
+    const b = new SketchBuilder();
+    const points = [b.point(0, 0), b.point(10, 8), b.point(20, 0)];
+    b.spline(points);
+    b.constrain({ id: 'c', kind: 'coincident', points: [points[0] as string, sketchOriginId] });
+    const solution = await engine.solve(b.build(), values());
+    expect(solution.status).toBe('under-constrained');
+    expect(solution.degreesOfFreedom).toBe(4);
+  });
+
+  it('holds the new relations: level points, symmetry, concentric curves, collinear lines', async () => {
+    const b = new SketchBuilder();
+    const [p, q] = [b.point(1, 2), b.point(9, 5)];
+    b.constrain({ id: 'level', kind: 'horizontal-points', points: [p, q] });
+    const bottom = b.point(0, -10);
+    const axis = b.line(bottom, b.point(0, 10));
+    b.constrain({ id: 'axis', kind: 'vertical', line: axis });
+    const [m, n] = [b.point(-4, 3), b.point(5, 2)];
+    b.constrain({ id: 'mirror', kind: 'symmetric', points: [m, n], line: axis });
+    const c1 = b.circle(b.point(20, 20), 5);
+    const c2 = b.arc(b.point(22, 19), b.point(30, 19), b.point(22, 27));
+    b.constrain({ id: 'same-centre', kind: 'concentric', curves: [c1, c2] });
+    const l1 = b.line(b.point(0, 30), b.point(10, 31));
+    const l2 = b.line(b.point(15, 33), b.point(25, 32));
+    b.constrain({ id: 'in-line', kind: 'collinear', lines: [l1, l2] });
+    const solution = await engine.solve(b.build(), values());
+    expect(solution.status).toBe('under-constrained');
+    expect(point(solution, p)[1]).toBeCloseTo(point(solution, q)[1], 9);
+    const [mx, my] = point(solution, m);
+    const [nx, ny] = point(solution, n);
+    const x = point(solution, bottom)[0];
+    expect(mx + nx).toBeCloseTo(2 * x, 9);
+    expect(my).toBeCloseTo(ny, 9);
+    const centre = (id: string) => solution.sketch.entities.find((e) => e.id === id) as { center: string };
+    expect(point(solution, centre(c1).center)).toEqual(point(solution, centre(c2).center).map((v) => expect.closeTo(v, 9)));
+    const line = (id: string) => solution.sketch.entities.find((e) => e.id === id) as { start: string; end: string };
+    const [a, d] = [point(solution, line(l1).start), point(solution, line(l1).end)];
+    for (const e of [point(solution, line(l2).start), point(solution, line(l2).end)]) {
+      expect((d[0] - a[0]) * (e[1] - a[1]) - (d[1] - a[1]) * (e[0] - a[0])).toBeCloseTo(0, 6);
+    }
+  });
 });

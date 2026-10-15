@@ -3,7 +3,7 @@
  * Points are entities of their own; curves reference them, so a shared corner is one point.
  */
 
-import type { PlaneRef } from './feature';
+import type { PlaneRef, TopologyRef } from './feature';
 
 /** Origin planes, planar faces or construction planes. */
 export type SketchPlane = PlaneRef;
@@ -44,8 +44,50 @@ export interface SketchArc {
   readonly construction: boolean;
 }
 
-export type SketchCurve = SketchLine | SketchCircle | SketchArc;
-export type SketchEntity = SketchPoint | SketchCurve;
+/** An ellipse: its major axis runs from `center` to the point `major`; `minorRadius` is the half axis across it. */
+export interface SketchEllipse {
+  readonly id: string;
+  readonly kind: 'ellipse';
+  readonly center: string;
+  readonly major: string;
+  readonly minorRadius: number;
+  readonly construction: boolean;
+}
+
+/**
+ * A smooth curve through its points in order (cubic Béziers, tangent continuous; see
+ * `splineBeziers`). A closed spline also runs from the last point back to the first.
+ */
+export interface SketchSpline {
+  readonly id: string;
+  readonly kind: 'spline';
+  readonly points: readonly string[];
+  readonly closed: boolean;
+  readonly construction: boolean;
+}
+
+export type SketchCurve = SketchLine | SketchCircle | SketchArc | SketchEllipse | SketchSpline;
+
+/**
+ * Edges of bodies (or the outline of a face) projected straight onto the sketch plane: reference
+ * geometry that follows the body. Its points and curves live in the sketch with ids
+ * `<projection id>:<n>`, are refreshed on every regeneration and cannot be moved.
+ */
+export interface SketchProjection {
+  readonly id: string;
+  readonly kind: 'projection';
+  readonly refs: readonly TopologyRef[];
+  readonly construction: boolean;
+}
+
+export type SketchEntity = SketchPoint | SketchCurve | SketchProjection;
+
+/** The projection an entity was made by, if any. */
+export function projectionOf(sketch: Pick<Sketch, 'entities'>, id: string): SketchProjection | undefined {
+  const owner = id.includes(':') ? id.slice(0, id.lastIndexOf(':')) : undefined;
+  const found = owner === undefined ? undefined : sketch.entities.find((e) => e.id === owner);
+  return found?.kind === 'projection' ? found : undefined;
+}
 
 /** Geometric constraints: relations without a value. */
 export type GeometricConstraint =
@@ -61,6 +103,15 @@ export type GeometricConstraint =
   /** The point lies on the curve (line, circle or arc). */
   | { readonly id: string; readonly kind: 'point-on'; readonly point: string; readonly curve: string }
   | { readonly id: string; readonly kind: 'midpoint'; readonly point: string; readonly line: string }
+  /** Two points level with each other, or one above the other. */
+  | { readonly id: string; readonly kind: 'horizontal-points'; readonly points: readonly [string, string] }
+  | { readonly id: string; readonly kind: 'vertical-points'; readonly points: readonly [string, string] }
+  /** Two points mirror each other across a line. */
+  | { readonly id: string; readonly kind: 'symmetric'; readonly points: readonly [string, string]; readonly line: string }
+  /** Circles, arcs or ellipses around the same centre. */
+  | { readonly id: string; readonly kind: 'concentric'; readonly curves: readonly [string, string] }
+  /** Two lines on one straight line. */
+  | { readonly id: string; readonly kind: 'collinear'; readonly lines: readonly [string, string] }
   | { readonly id: string; readonly kind: 'fix'; readonly point: string; readonly x: number; readonly y: number };
 
 /** Dimensions: constraints with a value given as an expression ("25", "2 * 10 mm", "45 deg"). */
@@ -69,6 +120,7 @@ export type Dimension =
   | { readonly id: string; readonly kind: 'horizontal-distance'; readonly points: readonly [string, string]; readonly expression: string }
   | { readonly id: string; readonly kind: 'vertical-distance'; readonly points: readonly [string, string]; readonly expression: string }
   | { readonly id: string; readonly kind: 'point-line-distance'; readonly point: string; readonly line: string; readonly expression: string }
+  /** Of a circle or arc; of an ellipse, its minor radius. */
   | { readonly id: string; readonly kind: 'radius'; readonly curve: string; readonly expression: string }
   | { readonly id: string; readonly kind: 'diameter'; readonly curve: string; readonly expression: string }
   /** Angle between two lines, measured from the first to the second. */
@@ -78,7 +130,7 @@ export type SketchConstraint = GeometricConstraint | Dimension;
 export type DimensionKind = Dimension['kind'];
 
 export const isDimension = (c: SketchConstraint): c is Dimension => 'expression' in c;
-export const isCurve = (e: SketchEntity): e is SketchCurve => e.kind !== 'point';
+export const isCurve = (e: SketchEntity): e is SketchCurve => e.kind !== 'point' && e.kind !== 'projection';
 
 /** A sketch as stored in a component's timeline. Points hold the last solved positions. */
 export interface Sketch {
@@ -105,6 +157,20 @@ export type ProfileEdge =
       readonly center: Vec2;
       readonly radius: number;
       /** True when the boundary runs counter-clockwise along the arc. */
+      readonly ccw: boolean;
+    }
+  /** A cubic Bézier from `start` through the controls to `end` (a piece of a spline). */
+  | { readonly kind: 'bezier'; readonly source: string; readonly start: Vec2; readonly end: Vec2; readonly c1: Vec2; readonly c2: Vec2 }
+  | {
+      /** A piece of an ellipse with semi-axes `a` (along `rotation`, radians) and `b`. */
+      readonly kind: 'ellipse';
+      readonly source: string;
+      readonly start: Vec2;
+      readonly end: Vec2;
+      readonly center: Vec2;
+      readonly a: number;
+      readonly b: number;
+      readonly rotation: number;
       readonly ccw: boolean;
     };
 

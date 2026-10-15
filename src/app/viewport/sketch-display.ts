@@ -1,4 +1,5 @@
-import { type PlaneFrame, type Profile, type Sketch, sketchOriginId, type Vec2 } from '@core/contracts';
+import { type PlaneFrame, type Profile, type Sketch, type SketchCurve, sketchOriginId, type Vec2 } from '@core/contracts';
+import { ellipseOf, type ParamCurve, sampleCurve, splineBeziers } from '@core/utilities/math';
 
 /** What the 3D scene draws of a sketch that is not being edited: polylines in plane coordinates. */
 export interface SketchDisplay {
@@ -38,16 +39,34 @@ export function sampleCircle(center: Vec2, radius: number): Vec2[] {
   });
 }
 
+/** An ellipse or a spline as parametric pieces (an ellipse is one, a spline one Bézier per gap). */
+export function freeformPieces(e: Extract<SketchCurve, { kind: 'ellipse' | 'spline' }>, at: (id: string) => Vec2): { curve: ParamCurve; t0: number; t1: number }[] {
+  if (e.kind === 'ellipse') return [{ curve: { kind: 'ellipse', ellipse: ellipseOf(at(e.center), at(e.major), e.minorRadius) }, t0: 0, t1: 2 * Math.PI }];
+  return splineBeziers(e.points.map(at), e.closed).map((points) => ({ curve: { kind: 'bezier', points }, t0: 0, t1: 1 }));
+}
+
+/** A sketch curve as a polyline, close enough for display (0.02 mm). */
+export function curvePolyline(e: SketchCurve, at: (id: string) => Vec2): Vec2[] {
+  switch (e.kind) {
+    case 'line':
+      return [at(e.start), at(e.end)];
+    case 'circle':
+      return sampleCircle(at(e.center), e.radius);
+    case 'arc':
+      return sampleArc(at(e.center), at(e.start), at(e.end));
+    default:
+      return freeformPieces(e, at).flatMap(({ curve, t0, t1 }, i) => sampleCurve(curve, t0, t1, 0.02).slice(i === 0 ? 0 : 1));
+  }
+}
+
 export function sketchDisplay(sketch: Sketch, profiles: readonly Profile[], frame: PlaneFrame): SketchDisplay {
   const points = pointsOf(sketch);
   const at = (id: string): Vec2 => points.get(id) ?? [0, 0];
   const curves: Vec2[][] = [];
   const construction: Vec2[][] = [];
   for (const e of sketch.entities) {
-    if (e.kind === 'point') continue;
-    const polyline =
-      e.kind === 'line' ? [at(e.start), at(e.end)] : e.kind === 'circle' ? sampleCircle(at(e.center), e.radius) : sampleArc(at(e.center), at(e.start), at(e.end));
-    (e.construction ? construction : curves).push(polyline);
+    if (e.kind === 'point' || e.kind === 'projection') continue;
+    (e.construction ? construction : curves).push(curvePolyline(e, at));
   }
   return { id: sketch.id, frame, curves, construction, profiles };
 }

@@ -26,6 +26,16 @@ export class SketchBuilder {
     return id;
   }
 
+  ellipse(center: string, major: string, minorRadius: number, construction = false, id = `e${++this.next}`): string {
+    this.entities.push({ id, kind: 'ellipse', center, major, minorRadius, construction });
+    return id;
+  }
+
+  spline(points: readonly string[], closed = false, construction = false, id = `s${++this.next}`): string {
+    this.entities.push({ id, kind: 'spline', points, closed, construction });
+    return id;
+  }
+
   /** Closed polygon through the given corners; returns the line ids in order. */
   polygon(...corners: [number, number][]): string[] {
     const points = corners.map(([x, y]) => this.point(x, y));

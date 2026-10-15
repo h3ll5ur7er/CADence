@@ -3,6 +3,7 @@ import { type DragTarget, PlanegcsSolver, type SolveOutcome } from './planegcs-s
 import { findProfiles } from './profiles';
 
 export type { DragTarget } from './planegcs-solver';
+export { chamfer, type EditResult, extend, fillet, offset, type SketchEdit, split, trim } from './editing';
 
 export interface SketchSolution extends SolveOutcome {
   /** Closed regions of the solved sketch, for features such as extrude. */

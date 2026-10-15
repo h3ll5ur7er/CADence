@@ -23,6 +23,7 @@ import { newId } from '@core/utilities/identity';
 import { DESIGN_MANAGER, PROJECT_MANAGER } from '../../core.providers';
 import type { Pick, PickKind, TopologyPick } from '../../viewport/picking';
 import { applyPick, defaultFeature, type FeatureDraft, type PickTarget, pickableFor, selectionOf } from '../modeling/feature-drafts';
+import type { SketchClipboard } from './selection';
 import type { Tool } from './sketch-tools';
 
 /** What the properties column shows besides feature dialogs and sketch info. */
@@ -46,6 +47,14 @@ export class DesignStore {
   readonly error = signal<string | undefined>(undefined);
   readonly editing = signal<string | undefined>(undefined);
   readonly tool = signal<Tool>('select');
+  /** Corners of the polygon tool. */
+  readonly polygonSides = signal(6);
+  /** Sketch geometry copied or cut, to paste into this or another sketch. */
+  readonly sketchClipboard = signal<SketchClipboard | undefined>(undefined);
+  /** Copies (the original counts) a circular pattern makes when its centre is clicked. */
+  readonly patternCount = signal(6);
+  /** Radius of the sketch fillet tool and length of the chamfer tool, mm. */
+  readonly cornerSize = signal(2);
   readonly selection = signal<readonly string[]>([]);
   /** A solved drag that is not committed yet. */
   readonly preview = signal<SketchView | undefined>(undefined);
@@ -64,7 +73,8 @@ export class DesignStore {
   readonly focusedCheck = signal<string | undefined>(undefined);
 
   readonly pickable = computed((): ReadonlySet<PickKind> => {
-    if (this.editing()) return new Set();
+    // While sketching, the project tool picks edges and faces of bodies to project.
+    if (this.editing()) return this.tool() === 'project' ? new Set<PickKind>(['edge', 'face']) : new Set<PickKind>();
     if (!this.draft() && this.panel() === 'measure') return new Set<PickKind>(['face', 'edge', 'vertex']);
     return pickableFor(this.draft());
   });
@@ -144,7 +154,11 @@ export class DesignStore {
 
   /** A click in the 3D view: feeds the open dialog, or picks a face to sketch on. */
   pick(pick: Pick): void {
-    if (this.editing()) return;
+    const sketchId = this.editing();
+    if (sketchId) {
+      if (this.tool() === 'project' && (pick.kind === 'edge' || pick.kind === 'face')) void this.project(sketchId, pick);
+      return;
+    }
     const draft = this.draft();
     if (draft) {
       this.draft.set(applyPick(draft, pick));
@@ -160,6 +174,12 @@ export class DesignStore {
     if (pick.kind !== 'face') return;
     const current = this.pickedFace();
     this.pickedFace.set(current?.name === pick.name && current.body === pick.body ? undefined : pick);
+  }
+
+  /** Projects a picked edge or face (its outline) into the sketch being edited. */
+  private async project(sketchId: string, pick: Extract<Pick, { kind: 'edge' | 'face' }>): Promise<void> {
+    const projection = { id: newId(), kind: 'projection' as const, refs: [toRef(pick)], construction: false };
+    await this.run({ type: 'add-sketch-geometry', sketchId, entities: [projection], constraints: [] });
   }
 
   startFeature(type: FeatureType): void {

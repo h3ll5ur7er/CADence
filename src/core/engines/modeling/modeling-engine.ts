@@ -1,4 +1,4 @@
-import type { BodyMesh, BodyOperation, BodyState, PlaneFrame, Profile, Result, TopologyRef, Vec3 } from '@core/contracts';
+import type { BodyMesh, BodyOperation, BodyState, PlaneFrame, Profile, Result, TopologyRef, Vec2, Vec3 } from '@core/contracts';
 
 export type { BodyState };
 
@@ -73,8 +73,16 @@ export interface ModelingOutcome {
  * Builds solids with OpenCascade (docs/Architecture/Components.md#engines). Runs in the geometry
  * worker; shapes stay there (Shape Access) and are referred to by key.
  */
+/** A projected edge in plane coordinates: lines and circles (or arcs, counter-clockwise) where they stay such; others as short lines. */
+export type ProjectedCurve =
+  | { readonly kind: 'line'; readonly start: Vec2; readonly end: Vec2 }
+  | { readonly kind: 'circle'; readonly center: Vec2; readonly radius: number }
+  | { readonly kind: 'arc'; readonly center: Vec2; readonly start: Vec2; readonly end: Vec2 };
+
 export interface ModelingEngine {
   apply(request: ModelingRequest): Promise<ModelingOutcome>;
+  /** Edges (or the outlines of faces) projected straight onto a plane, in its (u, v) coordinates. */
+  project(bodies: readonly BodyState[], refs: readonly TopologyRef[], frame: PlaneFrame): Promise<Result<ProjectedCurve[]>>;
   /** The plane of a planar face, for sketches and construction planes on faces. */
   planeOf(bodies: readonly BodyState[], face: TopologyRef): Promise<Result<PlaneFrame>>;
   tessellate(bodies: readonly BodyState[]): Promise<BodyMesh[]>;

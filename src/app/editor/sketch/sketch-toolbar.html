@@ -7,11 +7,97 @@
         [class.active]="store.tool() === t.tool"
         [attr.aria-pressed]="store.tool() === t.tool"
         [attr.aria-label]="t.label"
-        [title]="t.label + ' (' + t.key + ')'"
-        (click)="store.tool.set(t.tool)"
+        [title]="t.key ? t.label + ' (' + t.key + ')' : t.label"
+        (click)="choose(t.tool)"
       >
         <cad-icon [name]="t.icon" [size]="18" />
       </button>
+    }
+    <div class="menu">
+      <button
+        type="button"
+        class="tool wide"
+        [class.active]="activeShape()"
+        aria-haspopup="menu"
+        [attr.aria-expanded]="menu() === 'shapes'"
+        aria-label="Shapes"
+        [title]="activeShape()?.label ?? 'More shapes'"
+        (click)="menu.set(menu() === 'shapes' ? undefined : 'shapes')"
+      >
+        <cad-icon [name]="activeShape()?.icon ?? 'slot'" [size]="18" /><span class="caret">▾</span>
+      </button>
+      @if (menu() === 'shapes') {
+        <div class="menu-list start" role="menu" aria-label="Shapes">
+          @for (t of shapeTools; track t.tool) {
+            <button type="button" role="menuitem" (click)="choose(t.tool)"><cad-icon [name]="t.icon" [size]="16" /> {{ t.label }}</button>
+          }
+        </div>
+      }
+    </div>
+    @if (store.tool() === 'polygon') {
+      <label class="sides" title="Sides of the polygon">
+        <input type="number" min="3" max="64" aria-label="Polygon sides" [value]="store.polygonSides()" (change)="setSides($any($event.target).value)" />
+        sides
+      </label>
+    }
+  </div>
+
+  <div class="group" role="group" aria-label="Modify">
+    <div class="menu">
+      <button
+        type="button"
+        class="tool wide"
+        [class.active]="activeModify()"
+        aria-haspopup="menu"
+        [attr.aria-expanded]="menu() === 'modify'"
+        aria-label="Modify"
+        [title]="activeModify()?.label ?? 'Trim, fillet, offset, move, mirror, pattern'"
+        (click)="menu.set(menu() === 'modify' ? undefined : 'modify')"
+      >
+        <cad-icon [name]="activeModify()?.icon ?? 'trim'" [size]="18" /><span class="caret">▾</span>
+      </button>
+      @if (menu() === 'modify') {
+        <div class="menu-list start" role="menu" aria-label="Modify">
+          @for (t of modifyTools; track t.tool) {
+            <button type="button" role="menuitem" (click)="choose(t.tool)"><cad-icon [name]="t.icon" [size]="16" /> {{ t.label }}</button>
+          }
+          <button type="button" role="menuitem" [disabled]="!canOffset()" (click)="menu.set(undefined); offsetDistance.set(2)"><cad-icon name="offset" [size]="16" /> Offset the selection…</button>
+          <button type="button" role="menuitem" [disabled]="!canOffset()" (click)="menu.set(undefined); linearOpen.set(true)"><cad-icon name="pattern" [size]="16" /> Linear pattern of the selection…</button>
+        </div>
+      }
+      @if (offsetDistance() !== undefined) {
+        <form class="menu-list start offset" aria-label="Offset" (submit)="$event.preventDefault(); applyOffset(distance.value)">
+          <label>Distance <input #distance type="number" step="0.5" aria-label="Offset distance" [value]="offsetDistance()" /> mm</label>
+          <span class="hint">Negative offsets to the other side.</span>
+          <div class="actions">
+            <button type="button" class="btn" (click)="offsetDistance.set(undefined)">Cancel</button>
+            <button type="submit" class="btn btn-primary">Offset</button>
+          </div>
+        </form>
+      }
+      @if (linearOpen()) {
+        <form class="menu-list start offset" aria-label="Linear pattern" (submit)="$event.preventDefault(); applyLinearPattern(count.value, dx.value, dy.value)">
+          <label>Copies <input #count type="number" min="2" aria-label="Linear pattern count" value="3" /></label>
+          <label>X step <input #dx type="number" step="1" aria-label="Linear pattern X step" value="20" /> mm</label>
+          <label>Y step <input #dy type="number" step="1" aria-label="Linear pattern Y step" value="0" /> mm</label>
+          <div class="actions">
+            <button type="button" class="btn" (click)="linearOpen.set(false)">Cancel</button>
+            <button type="submit" class="btn btn-primary">Repeat</button>
+          </div>
+        </form>
+      }
+    </div>
+    @if (store.tool() === 'fillet' || store.tool() === 'chamfer') {
+      <label class="sides" [title]="store.tool() === 'fillet' ? 'Radius of the rounded corner' : 'Distance cut back along each line'">
+        <input type="number" min="0.01" step="0.5" [attr.aria-label]="store.tool() === 'fillet' ? 'Fillet radius' : 'Chamfer distance'" [value]="store.cornerSize()" (change)="setCornerSize($any($event.target).value)" />
+        mm
+      </label>
+    }
+    @if (store.tool() === 'circular-pattern') {
+      <label class="sides" title="Copies around the centre, the original included">
+        <input type="number" min="2" max="360" aria-label="Pattern count" [value]="store.patternCount()" (change)="setPatternCount($any($event.target).value)" />
+        copies
+      </label>
     }
   </div>
 

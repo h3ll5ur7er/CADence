@@ -1,4 +1,5 @@
 import {
+  projectionOf,
   appearanceProblem,
   type ComponentDocument,
   fail,
@@ -13,7 +14,8 @@ import {
   type SketchEntity,
   sketchOriginId,
 } from '@core/contracts';
-import type { DesignCommand } from './design-manager';
+import { chamfer, type EditResult, extend as extendCurve, fillet, offset, type SketchEdit, split, trim } from '@core/engines/sketch';
+import type { DesignCommand, SketchOperation } from './design-manager';
 
 /** The document a command produces, plus what must come out of regeneration intact for it to be accepted. */
 export interface Applied {
@@ -41,7 +43,7 @@ const featureLabels: Readonly<Record<FeatureType, string>> = {
 const invalid = (message: string) => fail({ code: 'invalid-command', message });
 
 /** Ids an entity or constraint refers to. */
-function references(item: SketchEntity | SketchConstraint): string[] {
+export function references(item: SketchEntity | SketchConstraint): string[] {
   switch (item.kind) {
     case 'point':
       return [];
@@ -51,6 +53,21 @@ function references(item: SketchEntity | SketchConstraint): string[] {
       return [item.center];
     case 'arc':
       return [item.center, item.start, item.end];
+    case 'ellipse':
+      return [item.center, item.major];
+    case 'spline':
+      return [...item.points];
+    case 'projection':
+      return [];
+    case 'horizontal-points':
+    case 'vertical-points':
+      return [...item.points];
+    case 'symmetric':
+      return [...item.points, item.line];
+    case 'concentric':
+      return [...item.curves];
+    case 'collinear':
+      return [...item.lines];
     case 'coincident':
     case 'distance':
     case 'horizontal-distance':
@@ -120,6 +137,15 @@ function extend(sketch: Sketch, entities: readonly SketchEntity[], constraints: 
 /** Removes elements, the constraints on them, curves on removed points and points no curve uses any more. */
 function remove(sketch: Sketch, ids: readonly string[]): Sketch {
   const doomed = new Set(ids);
+  // Projected geometry goes with its projection, and a projection with any of its curves.
+  for (const id of ids) {
+    const owner = projectionOf(sketch, id);
+    if (owner) doomed.add(owner.id);
+  }
+  for (const e of sketch.entities) {
+    const owner = projectionOf(sketch, e.id);
+    if (owner && doomed.has(owner.id)) doomed.add(e.id);
+  }
   const removedCurves = sketch.entities.filter((e) => e.kind !== 'point' && (doomed.has(e.id) || references(e).some((r) => doomed.has(r))));
   for (const curve of removedCurves) doomed.add(curve.id);
   const remaining = sketch.entities.filter((e) => !doomed.has(e.id));
@@ -130,6 +156,60 @@ function remove(sketch: Sketch, ids: readonly string[]): Sketch {
     entities: sketch.entities.filter((e) => !doomed.has(e.id)),
     constraints: sketch.constraints.filter((c) => !doomed.has(c.id) && !references(c).some((r) => doomed.has(r))),
   };
+}
+
+/** Moves and turns elements: their points, and the points their curves use. */
+function transformed(sketch: Sketch, ids: readonly string[], [dx, dy]: readonly [number, number], rotate?: { readonly center: readonly [number, number]; readonly angle: number }): Result<Sketch> {
+  const chosen = sketch.entities.filter((e) => ids.includes(e.id));
+  if (chosen.length !== ids.length || !chosen.length) return invalid('Select sketch elements to move.');
+  const points = new Set(chosen.flatMap((e) => (e.kind === 'point' ? [e.id] : references(e))));
+  points.delete(sketchOriginId);
+  const [cos, sin] = rotate ? [Math.cos(rotate.angle), Math.sin(rotate.angle)] : [1, 0];
+  const [cx, cy] = rotate?.center ?? [0, 0];
+  const entities = sketch.entities.map((e) => {
+    if (e.kind !== 'point' || !points.has(e.id)) return e;
+    const [x, y] = [e.x + dx - cx, e.y + dy - cy];
+    return { ...e, x: cx + x * cos - y * sin, y: cy + x * sin + y * cos };
+  });
+  // Horizontal and vertical relations on what turned would pull it back.
+  const turned = rotate && Math.abs(rotate.angle) > 1e-12;
+  const moved = new Set([...points, ...chosen.map((e) => e.id)]);
+  const constraints = sketch.constraints.filter((c) => {
+    if (!turned) return true;
+    if (c.kind === 'horizontal' || c.kind === 'vertical') return !moved.has(c.line);
+    if (c.kind === 'horizontal-points' || c.kind === 'vertical-points') return !c.points.every((p) => moved.has(p));
+    return true;
+  });
+  return ok({ ...sketch, entities, constraints });
+}
+
+/** The edit an editing tool makes of a sketch, or why it cannot. */
+function editOf(sketch: Sketch, operation: SketchOperation, prefix: string): EditResult {
+  switch (operation.kind) {
+    case 'trim':
+      return trim(sketch, operation.curve, operation.at, prefix);
+    case 'extend':
+      return extendCurve(sketch, operation.curve, operation.at, prefix);
+    case 'split':
+      return split(sketch, operation.curve, operation.at, prefix);
+    case 'offset':
+      return offset(sketch, operation.curves, operation.distance, prefix);
+    case 'fillet':
+      return fillet(sketch, operation.point, operation.size, prefix);
+    case 'chamfer':
+      return chamfer(sketch, operation.point, operation.size, prefix);
+  }
+}
+
+/** Applies an edit: changed entities, removals (with what depends on them), points no curve uses any more, then additions. */
+function applyEdit(sketch: Sketch, edit: SketchEdit): Result<Sketch> {
+  const changed = new Map(edit.update.map((e) => [e.id, e]));
+  const before = new Set(edit.update.flatMap((e) => references(sketch.entities.find((x) => x.id === e.id) ?? e)));
+  let next = remove({ ...sketch, entities: sketch.entities.map((e) => changed.get(e.id) ?? e) }, edit.remove);
+  const used = new Set([...next.entities, ...edit.add].flatMap(references));
+  const orphans = [...before].filter((p) => p !== sketchOriginId && !used.has(p) && next.entities.some((e) => e.id === p && e.kind === 'point'));
+  next = remove(next, orphans);
+  return extend(next, edit.add, edit.constraints);
 }
 
 export function applyCommand(document: ComponentDocument, command: DesignCommand): Result<Applied> {
@@ -172,11 +252,23 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
       return withSketch(document, command.sketchId, (s) =>
         ok({
           ...s,
-          entities: s.entities.map((e) => (e.kind !== 'point' && command.ids.includes(e.id) ? { ...e, construction: !e.construction } : e)),
+          entities: s.entities.map((e) => {
+            // A projected curve stands for its whole projection: the projection and all its curves switch.
+            const toggled = new Set(command.ids.flatMap((id) => [id, projectionOf(s, id)?.id ?? id]));
+            const owner = projectionOf(s, e.id);
+            return e.kind !== 'point' && (toggled.has(e.id) || (owner && toggled.has(owner.id))) ? { ...e, construction: !e.construction } : e;
+          }),
         }),
       );
     case 'delete-sketch-elements':
       return withSketch(document, command.sketchId, (s) => ok(remove(s, command.ids)));
+    case 'transform-sketch-elements':
+      return withSketch(document, command.sketchId, (s) => transformed(s, command.ids, command.translate, command.rotate));
+    case 'edit-sketch':
+      return withSketch(document, command.sketchId, (s) => {
+        const result = editOf(s, command.operation, command.idPrefix);
+        return result.ok ? applyEdit(s, result.edit) : invalid(result.reason);
+      });
     case 'rename-item': {
       const name = command.name.trim();
       if (!name || name.length > 80) return fail({ code: 'invalid-name', message: 'Names need 1 to 80 characters.' });

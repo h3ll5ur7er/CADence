@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { signedArea } from '@core/utilities/math';
 import { findProfiles } from './profiles';
 import { SketchBuilder } from '@core/contracts/testing/sketch-builder';
 
@@ -66,5 +67,47 @@ describe('findProfiles', () => {
     const b2 = new SketchBuilder();
     b2.polygon([0, 0], [15, 0], [15, 12], [0, 12]);
     expect(findProfiles(b1.build())[0]?.id).toBe(findProfiles(b2.build())[0]?.id);
+  });
+
+  it('closes an ellipse into one exact region, and cuts it with a line', () => {
+    const b = new SketchBuilder();
+    b.ellipse(b.point(0, 0), b.point(20, 0), 10);
+    const [whole] = findProfiles(b.build());
+    expect(whole?.area).toBeCloseTo(Math.PI * 200, 6);
+    expect(whole?.outer.edges.map((e) => e.kind)).toEqual(['ellipse', 'ellipse']);
+    b.line(b.point(0, -15), b.point(0, 15));
+    expect(areas(b)).toEqual([expect.closeTo(Math.PI * 100, 6), expect.closeTo(Math.PI * 100, 6)]);
+  });
+
+  it('closes a region with a spline and a line, as Bézier pieces', () => {
+    const b = new SketchBuilder();
+    const [left, right] = [b.point(0, 0), b.point(40, 0)];
+    b.line(left, right);
+    b.spline([right, b.point(30, 15), b.point(10, 15), left]);
+    const [profile] = findProfiles(b.build());
+    expect(profile?.outer.edges.filter((e) => e.kind === 'bezier')).toHaveLength(3);
+    // The exact area is a little larger than that of the polygon inscribed in the curve (0.01 mm chords).
+    const inscribed = Math.abs(signedArea(profile?.outer.polygon ?? []));
+    expect((profile?.area ?? 0) - inscribed).toBeGreaterThan(0);
+    expect((profile?.area ?? 0) - inscribed).toBeLessThan(0.5);
+    expect(profile?.area).toBeGreaterThan(400);
+  });
+
+  it('finds where a spline crosses lines and circles', () => {
+    const b = new SketchBuilder();
+    b.polygon([0, 0], [40, 0], [40, 20], [0, 20]);
+    // A wave across the rectangle splits it in two.
+    b.spline([b.point(-5, 10), b.point(10, 15), b.point(30, 5), b.point(45, 10)]);
+    const parts = areas(b);
+    expect(parts).toHaveLength(2);
+    expect((parts[0] as number) + (parts[1] as number)).toBeCloseTo(800, 6);
+  });
+
+  it('makes a closed spline a region of its own', () => {
+    const b = new SketchBuilder();
+    b.spline([b.point(0, 0), b.point(20, 0), b.point(20, 20), b.point(0, 20)], true);
+    const [profile] = findProfiles(b.build());
+    expect(profile?.outer.edges).toHaveLength(4);
+    expect(profile?.area).toBeGreaterThan(400);
   });
 });

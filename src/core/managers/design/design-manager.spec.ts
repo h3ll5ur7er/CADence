@@ -152,6 +152,32 @@ describe('DesignManager', () => {
     expect(sketch()?.profiles).toHaveLength(1);
   });
 
+  it('rounds a corner of a dimensioned rectangle with one undoable edit, and refuses what does not fit', async () => {
+    await drawRectangle();
+    unwrap(await session.execute({ type: 'add-constraint', sketchId: 's1', constraint: { id: 'w', kind: 'distance', points: ['a', 'b'], expression: '40' } }));
+    unwrap(await session.execute({ type: 'edit-sketch', sketchId: 's1', operation: { kind: 'fillet', point: 'c', size: 5 }, idPrefix: 'f' }));
+    expect(sketch()?.sketch.entities.some((e) => e.id === 'c')).toBe(false);
+    expect(sketch()?.sketch.entities.filter((e) => e.kind === 'arc')).toHaveLength(1);
+    expect(sketch()?.profiles).toHaveLength(1);
+    expect(sketch()?.values.get('w')).toBe(40); // dimensions on other points survive
+    await session.undo();
+    expect(sketch()?.sketch.entities.some((e) => e.id === 'c')).toBe(true);
+    expect(await session.execute({ type: 'edit-sketch', sketchId: 's1', operation: { kind: 'fillet', point: 'c', size: 50 }, idPrefix: 'g' })).toMatchObject({
+      ok: false,
+      error: { code: 'invalid-command', message: 'The radius is too large for these lines.' },
+    });
+  });
+
+  it('moves and turns sketch elements, dropping the relations a turn would undo', async () => {
+    await drawRectangle();
+    unwrap(await session.execute({ type: 'transform-sketch-elements', sketchId: 's1', ids: ['ab', 'bc', 'cd', 'da'], translate: [10, 5] }));
+    expect(pointAt('a')).toEqual([expect.closeTo(12), expect.closeTo(6)]);
+    unwrap(await session.execute({ type: 'transform-sketch-elements', sketchId: 's1', ids: ['ab', 'bc', 'cd', 'da'], translate: [0, 0], rotate: { center: [12, 6], angle: Math.PI / 2 } }));
+    expect(pointAt('b')).toEqual([expect.closeTo(12), expect.closeTo(34)]);
+    expect(sketch()?.sketch.constraints.some((c) => c.kind === 'horizontal' || c.kind === 'vertical')).toBe(false);
+    expect(await session.execute({ type: 'transform-sketch-elements', sketchId: 's1', ids: ['nope'], translate: [1, 0] })).toMatchObject({ ok: false });
+  });
+
   it('drives geometry with dimensions and expressions', async () => {
     await drawRectangle();
     unwrap(await session.execute({ type: 'add-constraint', sketchId: 's1', constraint: { id: 'o', kind: 'coincident', points: ['a', sketchOriginId] } }));
@@ -361,6 +387,24 @@ describe('DesignManager', () => {
         expect(await session.execute({ type: 'set-appearance', body: 'e1', appearance })).toMatchObject({ ok: false, error: { code: 'invalid-command' } });
       }
       expect(await session.execute({ type: 'set-appearance', body: 'nope', appearance: { hidden: true } })).toMatchObject({ ok: false, error: { code: 'invalid-command' } });
+    });
+
+    it('projects the edges of a face into a sketch, follows the body, and goes as one', async () => {
+      await plate();
+      unwrap(await session.execute({ type: 'create-sketch', id: 's2', plane: { face: { kind: 'face', body: 'e1', name: 'f:e1:end' } } }));
+      const top = { kind: 'face' as const, body: 'e1', name: 'f:e1:end' };
+      unwrap(await session.execute({ type: 'add-sketch-geometry', sketchId: 's2', entities: [{ id: 'pr', kind: 'projection', refs: [top], construction: false }], constraints: [] }));
+      const projected = () => session.state().sketches.get('s2');
+      expect(projected()?.sketch.entities.filter((e) => e.kind === 'line')).toHaveLength(4);
+      expect(projected()?.status).toBe('fully-constrained'); // projected points cannot move
+      expect(projected()?.profiles[0]?.area).toBeCloseTo(60 * 30, 6);
+      unwrap(await session.execute({ type: 'set-parameter', parameter: { id: 'pw', name: 'width', expression: '80 mm' } }));
+      expect(projected()?.profiles[0]?.area).toBeCloseTo(80 * 30, 6);
+      const line = projected()?.sketch.entities.find((e) => e.kind === 'line')?.id as string;
+      unwrap(await session.execute({ type: 'toggle-construction', sketchId: 's2', ids: [line] }));
+      expect(projected()?.sketch.entities.filter((e) => e.kind === 'line').every((e) => e.kind === 'line' && e.construction)).toBe(true);
+      unwrap(await session.execute({ type: 'delete-sketch-elements', sketchId: 's2', ids: [line] }));
+      expect(projected()?.sketch.entities).toEqual([]);
     });
 
     it('measures picked faces and weighs bodies in the chosen material', async () => {

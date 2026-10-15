@@ -1,4 +1,5 @@
 import {
+  projectionOf,
   type Sketch,
   type SketchConstraint,
   type SketchEntity,
@@ -44,7 +45,8 @@ class Translator {
     this.entities = new Map(sketch.entities.map((e) => [e.id, e]));
     this.primitives.push({ id: sketchOriginId, type: 'point', x: 0, y: 0, fixed: true });
     // planegcs requires referenced primitives to be pushed first: points, then curves.
-    for (const e of sketch.entities) if (e.kind === 'point') this.primitives.push({ id: e.id, type: 'point', x: e.x, y: e.y, fixed: false });
+    // Points of projected geometry follow the body, not the solver.
+    for (const e of sketch.entities) if (e.kind === 'point') this.primitives.push({ id: e.id, type: 'point', x: e.x, y: e.y, fixed: projectionOf(sketch, e.id) !== undefined });
     for (const e of sketch.entities) if (e.kind !== 'point') this.pushCurve(e);
     for (const c of sketch.constraints) this.pushConstraint(c);
   }
@@ -62,6 +64,31 @@ class Translator {
     return e.kind;
   }
 
+  private centerOf(id: string): string {
+    const e = this.entities.get(id);
+    if (e?.kind !== 'circle' && e?.kind !== 'arc' && e?.kind !== 'ellipse') throw new Error(`${id} has no centre`);
+    return e.center;
+  }
+
+  /** The end point two lines or arcs share, if any. */
+  private sharedEnd(a: string, b: string): string | undefined {
+    const ends = (id: string): string[] => {
+      const e = this.entities.get(id);
+      return e?.kind === 'line' || e?.kind === 'arc' ? [e.start, e.end] : [];
+    };
+    const other = ends(b);
+    return ends(a).find((p) => other.includes(p));
+  }
+
+  /** Direction of travel of a line or arc (counter-clockwise) at one of its points. */
+  private tangentAt(id: string, point: string): Vec2 {
+    const e = this.entities.get(id);
+    if (e?.kind === 'line') return this.lineDirection(id);
+    if (e?.kind !== 'arc') return [1, 0];
+    const r = sub(this.position(point), this.position(e.center));
+    return [-r[1], r[0]];
+  }
+
   private lineDirection(id: string): Vec2 {
     const e = this.entities.get(id);
     if (e?.kind !== 'line') throw new Error(`${id} is not a line`);
@@ -76,6 +103,12 @@ class Translator {
 
   private pushCurve(e: Exclude<SketchEntity, { kind: 'point' }>): void {
     switch (e.kind) {
+      // Ellipses and splines are shaped by their points (and an ellipse's minor radius, set by its
+      // dimension after solving); the solver needs no curve for them.
+      case 'ellipse':
+      case 'spline':
+      case 'projection':
+        return;
       case 'line':
         this.primitives.push({ id: e.id, type: 'line', p1_id: e.start, p2_id: e.end });
         return;
@@ -126,9 +159,24 @@ class Translator {
         return this.pushTangent(c.curves, add);
       case 'point-on': {
         const kind = this.kindOf(c.curve);
+        if (kind === 'ellipse' || kind === 'spline') throw new Error(`Points cannot be put on a ${kind} yet`);
         if (kind === 'line') return add('point_on_line_pl', { p_id: c.point, l_id: c.curve });
         if (kind === 'circle') return add('point_on_circle', { p_id: c.point, c_id: c.curve });
         return add('point_on_arc', { p_id: c.point, a_id: c.curve });
+      }
+      case 'horizontal-points':
+        return add('horizontal_pp', { p1_id: c.points[0], p2_id: c.points[1] });
+      case 'vertical-points':
+        return add('vertical_pp', { p1_id: c.points[0], p2_id: c.points[1] });
+      case 'symmetric':
+        return add('p2p_symmetric_ppl', { p1_id: c.points[0], p2_id: c.points[1], l_id: c.line });
+      case 'concentric':
+        return add('p2p_coincident', { p1_id: this.centerOf(c.curves[0]), p2_id: this.centerOf(c.curves[1]) });
+      case 'collinear': {
+        const second = this.entities.get(c.lines[1]);
+        if (second?.kind !== 'line') throw new Error(`${c.lines[1]} is not a line`);
+        add('parallel', { l1_id: c.lines[0], l2_id: c.lines[1] }, 'parallel');
+        return add('point_on_line_pl', { p_id: second.start, l_id: c.lines[0] }, 'on');
       }
       case 'midpoint': {
         const line = this.entities.get(c.line);
@@ -155,6 +203,7 @@ class Translator {
       case 'point-line-distance':
         return add('p2l_distance', { p_id: c.point, l_id: c.line, distance: this.value(c.id) });
       case 'radius':
+        if (this.kindOf(c.curve) === 'ellipse') return;
         return this.kindOf(c.curve) === 'circle'
           ? add('circle_radius', { c_id: c.curve, radius: this.value(c.id) })
           : add('arc_radius', { a_id: c.curve, radius: this.value(c.id) });
@@ -193,6 +242,14 @@ class Translator {
     [a, b]: readonly [string, string],
     add: (type: string, fields: Record<string, unknown>) => void,
   ): void {
+    // Curves that share an end point touch there: tangency at the point (as FreeCAD does), since the
+    // plain tangency and the shared point together would count as redundant.
+    const shared = this.sharedEnd(a, b);
+    if (shared) {
+      const [ta, tb] = [this.tangentAt(a, shared), this.tangentAt(b, shared)];
+      const current = Math.atan2(ta[0] * tb[1] - ta[1] * tb[0], ta[0] * tb[0] + ta[1] * tb[1]);
+      return add('angle_via_point', { crv1_id: a, crv2_id: b, p_id: shared, angle: closest(current, [0, Math.PI, -Math.PI]) });
+    }
     const [first, second] = this.kindOf(a) === 'line' || this.kindOf(b) !== 'line' ? [a, b] : [b, a];
     const k1 = this.kindOf(first);
     const k2 = this.kindOf(second);
@@ -227,7 +284,11 @@ export class PlanegcsSolver {
     const conflicting = [
       ...new Set([...gcs.get_gcs_conflicting_constraints(), ...gcs.get_gcs_redundant_constraints()].map(ownerOf)),
     ];
-    const degreesOfFreedom = gcs.gcs.dof();
+    // An ellipse's minor radius is a freedom of its own until a dimension sets it.
+    const minorRadii = new Map(
+      sketch.constraints.flatMap((c) => (c.kind === 'radius' && sketch.entities.find((e) => e.id === c.curve)?.kind === 'ellipse' ? [[c.curve, values.get(c.id)] as const] : [])),
+    );
+    const degreesOfFreedom = gcs.gcs.dof() + sketch.entities.filter((e) => e.kind === 'ellipse' && minorRadii.get(e.id) === undefined).length;
     if (conflicting.length > 0) {
       return { sketch, status: 'over-constrained', degreesOfFreedom, conflicting };
     }
@@ -240,6 +301,7 @@ export class PlanegcsSolver {
       const p = solved.get(e.id);
       if (e.kind === 'point' && p) return { ...e, x: p['x'] as number, y: p['y'] as number };
       if (e.kind === 'circle' && p) return { ...e, radius: p['radius'] as number };
+      if (e.kind === 'ellipse') return { ...e, minorRadius: minorRadii.get(e.id) ?? e.minorRadius };
       return e;
     });
     return {

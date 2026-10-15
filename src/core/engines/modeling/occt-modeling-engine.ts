@@ -1,9 +1,9 @@
 import { find, type NamedShape, type ShapeAccess } from '@core/access/shape';
-import { type BodyMesh, fail, ok, type PlaneFrame, type Result, type TopologyRef, type Vec3 } from '@core/contracts';
+import { type BodyMesh, fail, ok, type PlaneFrame, type Result, type TopologyRef, type Vec2, type Vec3 } from '@core/contracts';
 import { type Edge, type Face, getOC, measureVolume, type Shape3D, Vertex } from 'replicad';
 import { combine, type LoadedBody, renameCopy } from './bodies';
 import { add3, cross3, dot3, normalize3, scale3, sub3, toPlane } from './geometry';
-import type { AxisInput, BodyState, ModelingEngine, ModelingOutcome, ModelingRequest, ToolInput } from './modeling-engine';
+import type { AxisInput, BodyState, ModelingEngine, ModelingOutcome, ModelingRequest, ProjectedCurve, ToolInput } from './modeling-engine';
 import { nameShape, namedSurfaces } from './naming';
 import { readSnapshot, snapshotOf } from './results';
 import { tessellate } from './tessellation';
@@ -32,6 +32,29 @@ export class OcctModelingEngine implements ModelingEngine {
     }
     this.remember(request.key, outcome);
     return outcome;
+  }
+
+  async project(bodies: readonly BodyState[], refs: readonly TopologyRef[], frame: PlaneFrame): Promise<Result<ProjectedCurve[]>> {
+    await this.shapes.ready();
+    try {
+      const loaded = this.load(bodies);
+      const n = normalize3(cross3(frame.u, frame.v));
+      const flat = (p: Vec3): Vec2 => {
+        const d = sub3(p, frame.origin);
+        return [dot3(d, frame.u), dot3(d, frame.v)];
+      };
+      const curves: ProjectedCurve[] = [];
+      for (const ref of refs) {
+        const body = loaded.find((b) => b.state.id === ref.body);
+        if (!body) throw new FeatureError(`The body of ${ref.name} no longer exists.`);
+        const element = this.element(body, ref);
+        const edges: Edge[] = 'normalAt' in element ? (element as Face).edges : [element as Edge];
+        for (const edge of edges) curves.push(...projectEdge(edge, flat, n));
+      }
+      return ok(curves);
+    } catch (error) {
+      return fail({ code: 'lost-reference', message: describe(error) });
+    }
   }
 
   async planeOf(bodies: readonly BodyState[], ref: TopologyRef): Promise<Result<PlaneFrame>> {
@@ -325,3 +348,38 @@ function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** One edge projected onto the plane: straight lines and circles in the plane's direction stay exact, others become 24 short lines. */
+function projectEdge(edge: Edge, flat: (p: Vec3) => Vec2, normal: Vec3): ProjectedCurve[] {
+  const point = (t: number): Vec2 => {
+    const v = edge.pointAt(t);
+    const p = v.toTuple() as Vec3;
+    v.delete();
+    return flat(p);
+  };
+  const [start, end, middle] = [point(0), point(1), point(0.5)];
+  const gap = (a: Vec2, b: Vec2) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  if (edge.geomType === 'LINE') return gap(start, end) > 1e-7 ? [{ kind: 'line', start, end }] : [];
+  if (edge.geomType === 'CIRCLE') {
+    const curve = new (getOC().BRepAdaptor_Curve)(edge.wrapped);
+    try {
+      const circle = curve.Circle();
+      const axis = circle.Axis().Direction();
+      const location = circle.Location();
+      const along = Math.abs(dot3([axis.X(), axis.Y(), axis.Z()], normal));
+      if (along > 1 - 1e-9) {
+        const center = flat([location.X(), location.Y(), location.Z()]);
+        const radius = circle.Radius();
+        if (gap(start, end) < 1e-7) return [{ kind: 'circle', center, radius }];
+        // Counter-clockwise in the plane: the way round that passes the edge's middle.
+        const angle = (p: Vec2) => Math.atan2(p[1] - center[1], p[0] - center[0]);
+        const ccw = (a: number, b: number) => (((b - a) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+        const forward = ccw(angle(start), angle(middle)) < ccw(angle(start), angle(end));
+        return [{ kind: 'arc', center, start: forward ? start : end, end: forward ? end : start }];
+      }
+    } finally {
+      curve.delete();
+    }
+  }
+  const points = Array.from({ length: 25 }, (_, i) => point(i / 24));
+  return points.slice(1).flatMap((p, i): ProjectedCurve[] => (gap(points[i] as Vec2, p) > 1e-7 ? [{ kind: 'line', start: points[i] as Vec2, end: p }] : []));
+}

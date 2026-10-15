@@ -1,3 +1,4 @@
+import { InMemoryAssetAccess } from '@core/access/asset';
 import { InMemoryDocumentAccess } from '@core/access/document';
 import { InMemoryExternalFileAccess } from '@core/access/external-file';
 import { createShapeAccess } from '@core/access/shape';
@@ -6,6 +7,7 @@ import {
   asProjectId,
   type ComponentDocument,
   currentSchemaVersion,
+  type DomainEvents,
   type Result,
   type SketchPoint,
   sketchOriginId,
@@ -16,6 +18,7 @@ import { createModelingEngine } from '@core/engines/modeling';
 import { createParameterEngine } from '@core/engines/parameter';
 import { createSketchEngine } from '@core/engines/sketch';
 import { steppingClock } from '@core/utilities/clock';
+import { EventBus } from '@core/utilities/messaging';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createDesignManager, type DesignSession } from './index';
 
@@ -33,12 +36,16 @@ const analysis = createAnalysisEngine(shapes);
 describe('DesignManager', () => {
   let documents: InMemoryDocumentAccess;
   let files: InMemoryExternalFileAccess;
+  let assets: InMemoryAssetAccess;
+  let events: EventBus<DomainEvents>;
   let session: DesignSession;
   let documentId: ComponentDocument['id'];
 
   beforeEach(async () => {
     documents = new InMemoryDocumentAccess();
     files = new InMemoryExternalFileAccess();
+    assets = new InMemoryAssetAccess();
+    events = new EventBus<DomainEvents>();
     documentId = asDocumentId('d1');
     await documents.store({
       id: documentId,
@@ -61,6 +68,8 @@ describe('DesignManager', () => {
       modeling,
       interchange,
       analysis,
+      assets,
+      events,
       clock: steppingClock('2026-10-14T11:00:00.000Z'),
     });
     session = unwrap(await manager.open(documentId));
@@ -343,6 +352,32 @@ describe('DesignManager', () => {
       const delivered = files.delivered.at(-1);
       expect(delivered?.name).toBe('Component 1 - Sketch 1 (kerf compensated).dxf');
       expect(new TextDecoder().decode(delivered?.bytes).split('\n')).toContain('60.1'); // the 60 mm side moved out by half the kerf
+    });
+
+    it('publishes its result for assemblies after every change', async () => {
+      await plate();
+      const result = await assets.latestResult(documentId);
+      expect(result?.stamp).toBe(session.state().document.modifiedAt);
+      const bodies = (JSON.parse(new TextDecoder().decode(result?.bytes)) as { bodies: { id: string }[] }).bodies;
+      expect(bodies.map((b) => b.id)).toEqual(['e1']);
+      await session.undo();
+      expect((await assets.latestResult(documentId))?.stamp).toBe(session.state().document.modifiedAt);
+    });
+
+    it('answers regeneration requests with a fresh result', async () => {
+      await plate();
+      await assets.discardResult(documentId);
+      const answers: unknown[] = [];
+      events.subscribe('componentRegenerated', (answer) => void answers.push(answer));
+      events.publish('regenerateComponent', { documentId });
+      events.publish('regenerateComponent', { documentId: 'missing' as typeof documentId });
+      await events.drained();
+      await events.drained();
+      expect(answers).toEqual([
+        { documentId, ok: true },
+        { documentId: 'missing', ok: false },
+      ]);
+      expect((await assets.latestResult(documentId))?.stamp).toBe(session.state().document.modifiedAt);
     });
 
     it('exports the bodies as STEP', async () => {

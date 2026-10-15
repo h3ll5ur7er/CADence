@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { SketchBuilder } from '@core/contracts/testing/sketch-builder';
 import { circleLoop, profile, rectangleLoop } from '@core/contracts/testing/profiles';
 import { createShapeAccess } from '@core/access/shape';
-import { draw, drawCircle, importSTEP, measureVolume, type Shape3D } from 'replicad';
+import { draw, drawCircle, drawRectangle, importSTEP, measureVolume, type Shape3D } from 'replicad';
 import { createInterchangeEngine } from './index';
 import { meshVolume } from './solids';
 import { unzip } from './zip';
@@ -124,5 +124,22 @@ describe('InterchangeEngine solids', () => {
     const positions = [...model.matchAll(/<vertex x="([^"]+)" y="([^"]+)" z="([^"]+)"/g)].flatMap((m) => [Number(m[1]), Number(m[2]), Number(m[3])]);
     const indices = [...model.matchAll(/<triangle v1="(\d+)" v2="(\d+)" v3="(\d+)"/g)].flatMap((m) => [Number(m[1]), Number(m[2]), Number(m[3])]);
     expect(meshVolume(positions, indices)).toBeCloseTo(expected, -1);
+  });
+});
+
+describe('InterchangeEngine placed bodies', () => {
+  it('exports each body where its transform puts it', async () => {
+    const shapes = createShapeAccess();
+    const solids = createInterchangeEngine(shapes);
+    await shapes.ready();
+    shapes.put('cube', { shape: drawRectangle(10, 10).sketchOnPlane('XY').extrude(10) as Shape3D, faces: new Map(), edges: new Map() });
+    const at = (x: number) => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, 0, 1];
+    const bytes = await solids.exportBodies([{ name: 'Left', key: 'cube' }, { name: 'Right', key: 'cube', transform: at(100) }], 'step');
+    const imported = (await importSTEP(new Blob([bytes as BlobPart]))) as Shape3D;
+    const box = imported.boundingBox.bounds;
+    expect(box[0][0]).toBeCloseTo(-5);
+    expect(box[1][0]).toBeCloseTo(105);
+    expect(measureVolume(imported)).toBeCloseTo(2000, 3);
+    expect(new TextDecoder().decode(bytes)).toContain("'Right'");
   });
 });

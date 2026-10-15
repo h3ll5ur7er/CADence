@@ -1,6 +1,6 @@
 import { readFileSync, statSync } from 'node:fs';
 import { expect, type Page, test } from '@playwright/test';
-import { center, evidence, plateProject, screenPositionOf, setThickness, shown, typeDimension } from './support';
+import { cutHole, evidence, plateProject, screenPositionOf, setThickness, shown } from './support';
 
 /** Phase 3 (Part modeling) user journey: a parametric bracket, printed and exported. */
 test.describe.configure({ mode: 'serial' });
@@ -13,27 +13,7 @@ test('a parametric bracket: extrude, hole on a face, pattern, fillet, exports', 
   await expect(volume(page)).toHaveText(shown(10800, 'mm³'));
 
   // A hole sketched on the top face, cut through.
-  const top = await screenPositionOf(page, 'face', ':end$');
-  await page.mouse.click(top.x, top.y);
-  await expect(page.locator('.picked')).toContainText(':end');
-  await page.getByRole('button', { name: 'New sketch' }).click();
-  await page.getByRole('menuitem', { name: 'Selected face' }).click();
-  await page.waitForTimeout(600);
-  const faceOrigin = await center(page, 'circle.point.origin');
-  await page.getByRole('button', { name: 'Circle', exact: true }).click();
-  await page.mouse.click(faceOrigin.x - 80, faceOrigin.y);
-  await page.mouse.click(faceOrigin.x - 60, faceOrigin.y);
-  await expect(page.getByTestId('profile-count')).toHaveText('1');
-  await page.getByRole('button', { name: 'Dimension', exact: true }).click();
-  await page.mouse.click(faceOrigin.x - 60, faceOrigin.y);
-  await typeDimension(page, '8');
-  await page.getByRole('button', { name: 'Finish sketch' }).click();
-  await page.getByRole('button', { name: 'Extrude', exact: true }).click();
-  await page.locator('#feature-distance').fill('thickness');
-  await page.locator('#feature-distance').press('Tab');
-  await page.locator('#feature-direction').selectOption('reverse');
-  await page.locator('#feature-operation').selectOption('cut');
-  await page.getByRole('button', { name: 'OK' }).click();
+  await cutHole(page);
   await expect(volume(page)).toHaveText(shown(10800 - Math.PI * 16 * 6, 'mm³'));
 
   // Three holes in a row.

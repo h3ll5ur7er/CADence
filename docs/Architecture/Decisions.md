@@ -55,7 +55,8 @@ Architecture decision records. Each one records what was decided, why, and what 
 
 **Assemblies consume published component results.** Only the Design Manager knows how to regenerate a component. After each full regeneration it publishes the result (B-rep, mesh, topology names) through Asset Access. The Assembly Manager restores instances from that result and asks for a fresh one with a *queued* `RegenerateComponent` request.
 *Why:* it keeps the regeneration workflow in one manager (DRY) without a synchronous manager-to-manager call, and opening a large assembly no longer regenerates every part.
-*Trade-off:* results are caches that can go stale, so they are keyed by content hash and validated on use. Per-instance parameter overrides (configurations) will need a variant key on the request when they arrive.
+*Trade-off:* results are caches that can go stale, so they are validated on use. Per-instance parameter overrides (configurations) will need a variant key on the request when they arrive.
+*As built (phase 5):* a result is stamped with the component's `modifiedAt` rather than a content hash, since that is what both managers can see without sharing code. The Design Manager publishes after every change (re-using the snapshot while the bodies are unchanged) and answers `regenerateComponent` with `componentRegenerated`. An Assembly session asks again, up to three times, when the answer is already stale because the component changed meanwhile.
 
 ## ADR-12
 
@@ -101,3 +102,15 @@ Architecture decision records. Each one records what was decided, why, and what 
 **Material and manufacturing profile belong to the component; kerf is applied on export.** The material (for mass) and the machine profile (printer or laser, for validation) are stored in the component document and changed by commands (`set-material`, `set-process`), so they are saved, undoable and travel with the design. Presets live in [[src/core/contracts/analysis.ts]]. Kerf compensation is not modelled as geometry: the drawing export offsets every profile loop by half the kerf away from the material ([[src/core/utilities/math/offset.ts]]), extending or trimming neighbouring edges so corners stay sharp. Curves that bound no profile, such as engraving lines, are exported unchanged.
 *Why:* the design stays at its true size for printing and for other cutters. A laser with a different kerf only needs another export.
 *Trade-off:* a machine profile per component rather than per user. Sharing machines between components is left to a later settings store.
+
+## ADR-20
+
+**Kinematics: a spanning tree, plus damped least squares for loops.** The Kinematics Engine ([[src/core/engines/kinematics/index.ts]]) walks the joints breadth first from the grounded instances (and from the first instance of any unconnected group), so most assemblies are placed directly by composing frames: `B = A · frameA · motion(values) · flip · frameB⁻¹`. Joints that close a loop (a four-bar linkage) are kept by adjusting the free values of the tree joints with Levenberg–Marquardt on the loop's constraint errors, while *driven* joints (the one being dragged, the keyed ones of a motion study) keep their values. Limits clamp values. Values are mm and degrees in the document, and solved values are written back, so the document always describes a consistent pose.
+*Why:* trees are exact and instant, which covers hinges, sliders and robot-arm chains; loops need iteration only where they exist. The engine is pure TypeScript on the main thread: assemblies of home projects have tens of joints, not thousands.
+*Trade-off:* no dynamics (forces, gravity, contact). Motion studies are kinematic: keyframes are interpolated linearly and every frame is solved, starting from the previous one so loops follow the motion.
+
+## ADR-21
+
+**Joint frames come from geometry, with fixed conventions.** A joint attaches to a face or edge of a component ([[src/core/engines/modeling/occt-modeling-engine.ts]] `frameOf`). A flat face gives its centroid and outward normal; a cylinder, cone or circular edge gives its axis (through the point nearest the element's centre); a straight edge gives its middle and direction. Axes without an inside point along their largest positive world axis, so holes in parts lying on XY turn counter-clockwise seen from above. Side A stays and side B moves; two flat faces start turned face to face (`flip`).
+*Why:* joint angles and distances mean the same thing in every part, whatever direction OpenCascade happens to store an axis in.
+*Trade-off:* the joint origin cannot be offset from the picked geometry yet; use a construction plane in the component when a joint needs to sit elsewhere.

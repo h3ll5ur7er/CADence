@@ -105,3 +105,60 @@ export async function setThickness(page: Page, expression: string): Promise<void
   await expect(page.getByRole('table', { name: 'Parameters' })).toContainText(expression);
   await page.getByRole('button', { name: 'Close parameters' }).click();
 }
+
+/** A ⌀8 hole through the plate, sketched on its top face 20 mm in from the left end. */
+export async function cutHole(page: Page): Promise<void> {
+  const top = await screenPositionOf(page, 'face', ':end$');
+  await page.mouse.click(top.x, top.y);
+  await expect(page.locator('.picked')).toContainText(':end');
+  await page.getByRole('button', { name: 'New sketch' }).click();
+  await page.getByRole('menuitem', { name: 'Selected face' }).click();
+  await page.waitForTimeout(600);
+  const faceOrigin = await center(page, 'circle.point.origin');
+  await page.getByRole('button', { name: 'Circle', exact: true }).click();
+  await page.mouse.click(faceOrigin.x - 80, faceOrigin.y);
+  await page.mouse.click(faceOrigin.x - 60, faceOrigin.y);
+  await expect(page.getByTestId('profile-count')).toHaveText('1');
+  await page.getByRole('button', { name: 'Dimension', exact: true }).click();
+  await page.mouse.click(faceOrigin.x - 60, faceOrigin.y);
+  await typeDimension(page, '8');
+  await page.getByRole('button', { name: 'Finish sketch' }).click();
+  await page.getByRole('button', { name: 'Extrude', exact: true }).click();
+  await page.locator('#feature-distance').fill('thickness');
+  await page.locator('#feature-distance').press('Tab');
+  await page.locator('#feature-direction').selectOption('reverse');
+  await page.locator('#feature-operation').selectOption('cut');
+  await page.getByRole('button', { name: 'OK' }).click();
+  await expect(page.locator('.item.failed')).toHaveCount(0);
+}
+
+/**
+ * Where the rim of an assembly part's hole is on screen: the circular edge (the one drawn with the
+ * most segments) at the top or bottom of the part.
+ */
+export async function rimOf(page: Page, instance: number, side: 'top' | 'bottom'): Promise<{ x: number; y: number }> {
+  return page.evaluate(
+    ({ instance, side }) => {
+      // Test-only introspection of Angular's dev-mode debug API and the viewport's three.js scene.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ng = (window as unknown as { ng: { getComponent(e: Element): any } }).ng;
+      const scene = ng.getComponent(document.querySelector('cad-viewport') as Element).scene();
+      const entry = [...scene.partEntries.values()][instance];
+      const mesh = entry.part.bodies[0];
+      const p = mesh.edgePositions;
+      const edges = mesh.edges.map((e: { start: number; count: number }) => {
+        const zs = Array.from({ length: e.count }, (_, k) => p[(e.start + k) * 3 + 2]);
+        const point = [0, 1, 2].map((k) => p[(e.start + Math.floor(e.count / 2)) * 3 + k]);
+        return { count: e.count, z: Math.max(...zs) - Math.min(...zs) < 1e-6 ? zs[0] : NaN, point };
+      });
+      const flat = edges.filter((e: { z: number }) => !Number.isNaN(e.z));
+      const level = side === 'top' ? Math.max(...flat.map((e: { z: number }) => e.z)) : Math.min(...flat.map((e: { z: number }) => e.z));
+      const rim = flat.filter((e: { z: number }) => Math.abs(e.z - level) < 1e-6).sort((a: { count: number }, b: { count: number }) => b.count - a.count)[0];
+      const Vector = scene.camera.position.constructor;
+      const v = new Vector(...rim.point).applyMatrix4(entry.group.matrix).project(scene.camera);
+      const rect = scene.eventTarget.getBoundingClientRect();
+      return { x: rect.left + ((v.x + 1) / 2) * rect.width, y: rect.top + ((1 - v.y) / 2) * rect.height };
+    },
+    { instance, side },
+  );
+}

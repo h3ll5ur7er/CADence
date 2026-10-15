@@ -88,7 +88,7 @@ export function createSketch(display: SketchDisplay, theme: ViewportTheme): Grou
 }
 
 /** A solid body: shaded faces, pushed back slightly so its edge lines stay visible on top. */
-export function createBody(mesh: BodyMesh, theme: ViewportTheme): Group {
+export function createBody(mesh: BodyMesh, theme: ViewportTheme, color = theme.body): Group {
   const group = new Group();
   group.name = `body-${mesh.body}`;
   const geometry = new BufferGeometry();
@@ -97,7 +97,7 @@ export function createBody(mesh: BodyMesh, theme: ViewportTheme): Group {
   geometry.setIndex(new BufferAttribute(mesh.indices, 1));
   const faces = new Mesh(
     geometry,
-    new MeshStandardMaterial({ color: new Color(theme.body), roughness: 0.55, metalness: 0.05, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }),
+    new MeshStandardMaterial({ color: new Color(color), roughness: 0.55, metalness: 0.05, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }),
   );
   faces.userData = { body: mesh };
   const edges = lines(mesh.edgePositions, theme.edge);

@@ -9,10 +9,15 @@ export class UnsupportedSchemaError extends Error {
   }
 }
 
+/** The schema history (docs/Architecture/Document-model.md#schema-versioning). */
+export const documentMigrations: Readonly<Record<number, Migration>> = {
+  1: (document) => (document['kind'] === 'assembly' ? { ...document, motionStudies: [] } : document),
+};
+
 /** Upgrades a stored document to the current schema version. */
 export function migrate(
   raw: Record<string, unknown>,
-  migrations: Readonly<Record<number, Migration>> = {},
+  migrations: Readonly<Record<number, Migration>> = documentMigrations,
   target = currentSchemaVersion,
 ): CadDocument {
   let document = raw;

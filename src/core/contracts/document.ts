@@ -1,6 +1,7 @@
 import type { AssetId, DocumentId, ProjectId } from './ids';
 import type { Timestamp } from './project';
 import type { Material, ManufacturingProfile } from './analysis';
+import type { Instance, Joint, MotionStudy } from './assembly';
 import type { Feature } from './feature';
 import type { Sketch } from './sketch';
 
@@ -53,8 +54,9 @@ export interface ComponentDocument extends DocumentBase {
 
 export interface AssemblyDocument extends DocumentBase {
   readonly kind: 'assembly';
-  readonly instances: readonly unknown[];
-  readonly joints: readonly unknown[];
+  readonly instances: readonly Instance[];
+  readonly joints: readonly Joint[];
+  readonly motionStudies: readonly MotionStudy[];
 }
 
 export interface ImportedDocument extends DocumentBase {
@@ -68,7 +70,8 @@ export interface ImportedDocument extends DocumentBase {
 
 export type CadDocument = ComponentDocument | AssemblyDocument | ImportedDocument;
 
-export const currentSchemaVersion = 1;
+/** 2: assemblies got motion studies. */
+export const currentSchemaVersion = 2;
 
 export function summarize(document: CadDocument): DocumentSummary {
   const { id, projectId, kind, name, createdAt, modifiedAt } = document;

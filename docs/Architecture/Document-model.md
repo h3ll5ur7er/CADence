@@ -52,7 +52,7 @@ All lengths are stored **in millimetres**, and `units` controls display only. An
 
 ## Component results
 
-The one exception to "geometry is never stored" is the **published result** of a component: its B-rep (OCCT `.brep`), mesh and topology names, written by the Design Manager after each successful full regeneration and keyed by the document's content hash. It is a cache, so deleting it is always safe; assemblies request a regeneration when it is missing or stale.
+The one exception to "geometry is never stored" is the **published result** of a component: the B-rep of each body (OCCT text) with its face and edge names in topological order, written by the Design Manager after every change and stamped with the component's `modifiedAt`. It is a cache, so deleting it is always safe; assemblies request a regeneration when it is missing or its stamp is not the component's `modifiedAt` ([[Architecture/Decisions#ADR-11]]).
 
 ## Material and manufacturing profile
 
@@ -155,16 +155,32 @@ The Modeling Engine names every face after each feature (*generative naming*, [[
 
 ## Assemblies
 
+As implemented in [[src/core/contracts/assembly.ts]]:
+
 ```ts
-interface Instance { id: InstanceId; componentId: DocumentId; name: string; transform: Matrix4; grounded: boolean }
+interface AssemblyDocument { instances: Instance[]; joints: Joint[]; motionStudies: MotionStudy[] }
+interface Instance { id: string; component: DocumentId; name: string; transform: Matrix4; grounded: boolean }
 interface Joint {
-  id: JointId; type: 'rigid' | 'revolute' | 'slider' | 'cylindrical' | 'pin-slot' | 'planar' | 'ball';
-  a: JointOrigin; b: JointOrigin;     // instance + TopologyRef-based frame
-  limits?: { min: Expression; max: Expression }; value?: Expression;
+  id: string; name: string;
+  type: 'rigid' | 'revolute' | 'slider' | 'cylindrical' | 'pin-slot' | 'planar' | 'ball';
+  a: JointOrigin; b: JointOrigin;          // { instance, ref?: TopologyRef }; no ref = component origin
+  flip: boolean;                            // B's frame turned over
+  values: number[];                         // one per degree of freedom: mm or degrees
+  limits: ({ min: number; max: number } | null)[];
 }
-interface MotionStudy { id: MotionStudyId; name: string; duration: number; keys: { joint: JointId; t: number; value: Expression }[] }
+interface MotionStudy { id: string; name: string; duration: number; keys: { time: number; joint: string; values: number[] }[] }
 ```
+
+- `Matrix4` is a rigid 4 × 4 transform, column-major like three.js (translation at 12, 13, 14).
+- An instance's `transform` is where it sits when no joint places it; joints place the others ([[Architecture/Decisions#ADR-20]]).
+- The degrees of freedom of each joint type, and the order of `values`, are `jointDofs`: a revolute joint turns about z; a slider moves along z; cylindrical does both; pin-slot slides along x and turns about z; planar moves in x and y and turns about z; a ball turns about z, y and x.
+- Joint frames come from the referenced geometry ([[Architecture/Decisions#ADR-21]]).
 
 ## Schema versioning
 
-Every document carries `schemaVersion`. Document Access runs pure migration functions (`vN → vN+1`) on read and always writes the newest version. Each migration has a fixture-based unit test.
+Every document carries `schemaVersion`. Document Access runs pure migration functions (`vN → vN+1`, [[src/core/access/document/migrations.ts]]) on read and always writes the newest version. Each migration has a unit test.
+
+| Version | Change |
+| --- | --- |
+| 1 | First schema |
+| 2 | Assemblies get `motionStudies` (empty for older assemblies) |

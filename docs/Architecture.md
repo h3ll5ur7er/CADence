@@ -132,7 +132,7 @@ flowchart LR
 
 - **Managers and storage Resource Access stay on the main thread.** Tauri IPC is not available inside Web Workers, and IndexedDB works on both. Keeping them here keeps one code path for both hosts.
 - **Kernel-bound engines share one geometry worker.** OCCT shapes cannot cross thread boundaries cheaply, so Modeling, Analysis (geometric checks) and Interchange share the in-worker shape cache through Shape Access. Engines exchange shapes by key rather than by calling each other.
-- **Light engines start on the main thread.** Parameter, Sketch (planegcs, about 1 MB of WASM) and Kinematics start here and move to a worker once profiling shows a need. Their interfaces are already async.
+- **Light engines run on the main thread.** Parameter and Kinematics are pure and synchronous (a solve takes well under a millisecond for home-sized assemblies); Sketch (planegcs, about 1 MB of WASM) is async. Any of them can move to a worker behind an async proxy once profiling shows a need.
 
 ## Technology
 

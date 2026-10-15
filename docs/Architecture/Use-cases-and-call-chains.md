@@ -138,22 +138,23 @@ sequenceDiagram
   participant ME as Modeling Engine
   participant KE as Kinematics Engine
   participant DM as Design Manager
-  AE->>AM: execute(insertInstance componentDocId)
-  AM->>AA: latestResult(componentDocId)
+  AE->>AM: execute(insert-instance component)
+  AM->>AA: latestResult(component)
   alt result missing or stale
-    AM--)DM: queue RegenerateComponent(componentDocId)
-    DM--)AM: event ComponentRegenerated
-    AM->>AA: latestResult(componentDocId)
+    AM--)DM: queue regenerateComponent(component)
+    DM->>AA: publishResult(snapshot)
+    DM--)AM: event componentRegenerated
+    AM->>AA: latestResult(component)
   end
-  AM->>ME: restoreBodies(result, placement) + tessellate
-  AE->>AM: execute(addJoint revolute, originA, originB)
-  AM->>KE: solve(assembly, drivers)
-  KE-->>AM: instance transforms
-  AE->>AM: simulate(study)
-  loop frames
-    AM->>KE: step(state, dt)
-    AM-->>AE: MotionFrame (transforms)
-  end
+  AM->>ME: restore(result) + tessellate
+  AE->>AM: execute(add-joint revolute, rim A, rim B)
+  AM->>ME: frameOf(bodies, ref) for each side
+  AM->>KE: solve(instances, joints, driven)
+  KE-->>AM: poses, solved values
+  AE->>AM: motion(study, 30 fps)
+  AM->>KE: simulate(model, study, fps)
+  KE-->>AM: frames
+  AM-->>AE: MotionFrame[] (played and recorded by the editor)
 ```
 
 The Assembly Manager consumes the component's **published result** and never repeats the Design Manager's regeneration workflow. When it needs a fresh result, it asks through a *queued* request, because manager-to-manager calls are never synchronous.

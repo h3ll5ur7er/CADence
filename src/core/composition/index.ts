@@ -19,9 +19,11 @@ import {
 import type { DomainEvents } from '@core/contracts';
 import type { AnalysisEngine } from '@core/engines/analysis';
 import type { InterchangeEngine } from '@core/engines/interchange';
+import { createKinematicsEngine } from '@core/engines/kinematics';
 import type { ModelingEngine } from '@core/engines/modeling';
 import { createParameterEngine } from '@core/engines/parameter';
 import { createSketchEngine } from '@core/engines/sketch';
+import { type AssemblyManager, createAssemblyManager } from '@core/managers/assembly';
 import { createDesignManager, type DesignManager } from '@core/managers/design';
 import { createProjectManager, type ProjectManager } from '@core/managers/project';
 import { systemClock } from '@core/utilities/clock';
@@ -33,6 +35,7 @@ import { EventBus, type Port, remote } from '@core/utilities/messaging';
 export interface Core {
   readonly projectManager: ProjectManager;
   readonly designManager: DesignManager;
+  readonly assemblyManager: AssemblyManager;
   readonly storage: StorageKind;
 }
 
@@ -110,6 +113,19 @@ export function createCore(host: Host): Core {
       modeling: geometry.modeling,
       interchange: geometry.interchange,
       analysis: geometry.analysis,
+      assets,
+      events,
+      clock: systemClock,
+    }),
+    assemblyManager: createAssemblyManager({
+      documents,
+      assets,
+      externalFiles,
+      modeling: geometry.modeling,
+      kinematics: createKinematicsEngine(),
+      analysis: geometry.analysis,
+      interchange: geometry.interchange,
+      events,
       clock: systemClock,
     }),
     storage: host.kind,

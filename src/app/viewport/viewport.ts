@@ -16,7 +16,7 @@ import type { Pick, PickKind } from './picking';
 import type { SketchDisplay } from './sketch-display';
 import type { Affine } from './sketch-planes';
 import { ViewCube } from './view-cube';
-import { type RendererBackend, type StandardView, ViewportScene, type ViewportTheme } from './viewport-scene';
+import { type PartDisplay, type RendererBackend, type StandardView, ViewportScene, type ViewportTheme } from './viewport-scene';
 
 function readTheme(element: HTMLElement): ViewportTheme {
   const style = getComputedStyle(element);
@@ -60,6 +60,8 @@ export class Viewport {
   readonly showOrigin = input(true);
   readonly sketches = input<readonly SketchDisplay[]>([]);
   readonly bodies = input<readonly BodyMesh[]>([]);
+  /** Assembly instances, each placed by its transform. */
+  readonly parts = input<readonly PartDisplay[]>([]);
   /** Construction planes to show. */
   readonly planes = input<readonly PlaneFrame[]>([]);
   /** The sketch plane being edited: the camera looks straight at it and rotation is locked. */
@@ -121,11 +123,17 @@ export class Viewport {
     effect(() => this.scene()?.setSketches(this.sketches()));
     effect(() => this.scene()?.editPlane(this.editPlane()));
     effect(() => this.scene()?.setBodies(this.bodies()));
+    effect(() => this.scene()?.setParts(this.parts()));
     effect(() => this.scene()?.setPlanes(this.planes()));
     effect(() => this.scene()?.setPickable(this.pickable()));
     effect(() => this.scene()?.setSelection(this.selection()));
     effect(() => this.scene()?.setFlagged(this.flagged()));
     effect(() => this.scene()?.setMeasureLine(this.measureLine()));
+  }
+
+  /** The rendered picture as a video stream, for recording animations. */
+  captureStream(fps: number): MediaStream {
+    return this.canvas().nativeElement.captureStream(fps);
   }
 
   showView(view: StandardView): void {

@@ -2,9 +2,10 @@ import { find, type NamedShape, type ShapeAccess } from '@core/access/shape';
 import { type BodyMesh, fail, ok, type PlaneFrame, type Result, type TopologyRef, type Vec3 } from '@core/contracts';
 import { type Edge, type Face, getOC, measureVolume, type Shape3D } from 'replicad';
 import { combine, type LoadedBody, renameCopy } from './bodies';
-import { cross3, dot3, normalize3, scale3, sub3, toPlane } from './geometry';
+import { add3, cross3, dot3, normalize3, scale3, sub3, toPlane } from './geometry';
 import type { AxisInput, BodyState, ModelingEngine, ModelingOutcome, ModelingRequest, ToolInput } from './modeling-engine';
 import { nameShape, namedSurfaces } from './naming';
+import { readSnapshot, snapshotOf } from './results';
 import { tessellate } from './tessellation';
 import { extrudeTool, revolveTool } from './tools';
 
@@ -38,19 +39,40 @@ export class OcctModelingEngine implements ModelingEngine {
     try {
       const face = this.face(this.load(bodies), ref);
       if (face.geomType !== 'PLANE') return fail({ code: 'not-planar', message: 'Sketches and planes need a flat face.' });
-      const origin = face.center.toTuple() as Vec3;
-      const normal = normalize3(face.normalAt(face.center).toTuple() as Vec3);
-      // In-plane axes like the origin planes': on horizontal faces u follows world X; on others v points up.
-      const flat = (axis: Vec3) => normalize3(sub3(axis, scale3(normal, dot3(axis, normal))));
-      if (Math.abs(normal[2]) > 0.9) {
-        const u = flat([1, 0, 0]);
-        return ok({ origin, u, v: normalize3(cross3(normal, u)) });
-      }
-      const v = flat([0, 0, 1]);
-      return ok({ origin, u: normalize3(cross3(v, normal)), v });
+      return ok(frameAround(face.center.toTuple() as Vec3, normalize3(face.normalAt(face.center).toTuple() as Vec3)));
     } catch (error) {
       return fail({ code: 'lost-reference', message: describe(error) });
     }
+  }
+
+  async frameOf(bodies: readonly BodyState[], ref: TopologyRef): Promise<Result<PlaneFrame>> {
+    await this.shapes.ready();
+    try {
+      const body = this.load(bodies).find((b) => b.state.id === ref.body);
+      if (!body) throw new FeatureError(`The body of ${ref.name} no longer exists.`);
+      const element = this.element(body, ref);
+      const axis = axisOf(element);
+      if (!axis) return fail({ code: 'no-axis', message: 'Joints attach to flat or round faces and to straight or circular edges.' });
+      // A flat face keeps its outward normal; other axes have no inside, so they point along their largest positive world axis.
+      const flat = 'normalAt' in element && element.geomType === 'PLANE';
+      return ok(frameAround(axis.origin, flat ? axis.direction : positive3(axis.direction)));
+    } catch (error) {
+      return fail({ code: 'lost-reference', message: describe(error) });
+    }
+  }
+
+  async snapshot(bodies: readonly BodyState[]): Promise<Uint8Array> {
+    await this.shapes.ready();
+    return snapshotOf(this.load(bodies).map((b) => ({ id: b.state.id, named: b.named })));
+  }
+
+  async restore(snapshot: Uint8Array, prefix: string): Promise<BodyState[]> {
+    await this.shapes.ready();
+    return readSnapshot(snapshot).map(({ id, named }) => {
+      const key = `${prefix}:${id}`;
+      if (!this.shapes.has(key)) this.shapes.put(key, named());
+      return { id, key };
+    });
   }
 
   async tessellate(bodies: readonly BodyState[]): Promise<BodyMesh[]> {
@@ -205,6 +227,55 @@ export class OcctModelingEngine implements ModelingEngine {
     this.outcomes.delete(key);
     this.outcomes.set(key, outcome);
     if (this.outcomes.size > outcomeCacheSize) this.outcomes.delete(this.outcomes.keys().next().value as string);
+  }
+}
+
+/** A frame with the given normal; in-plane axes like the origin planes': u follows world X on horizontal planes, else v points up. */
+function frameAround(origin: Vec3, normal: Vec3): PlaneFrame {
+  const flat = (axis: Vec3) => normalize3(sub3(axis, scale3(normal, dot3(axis, normal))));
+  if (Math.abs(normal[2]) > 0.9) {
+    const u = flat([1, 0, 0]);
+    return { origin, u, v: normalize3(cross3(normal, u)) };
+  }
+  const v = flat([0, 0, 1]);
+  return { origin, u: normalize3(cross3(v, normal)), v };
+}
+
+/** The direction or its opposite, whichever has its largest component positive. */
+function positive3(direction: Vec3): Vec3 {
+  const largest = direction.reduce((best, v) => (Math.abs(v) > Math.abs(best) + 1e-9 ? v : best), 0);
+  return largest < 0 ? scale3(direction, -1) : direction;
+}
+
+/** Where a joint axis runs through a face or edge, if it has one. */
+function axisOf(element: Face | Edge): { origin: Vec3; direction: Vec3 } | undefined {
+  const oc = getOC();
+  interface Xyz { X(): number; Y(): number; Z(): number }
+  interface Axis { Location(): Xyz; Direction(): Xyz }
+  const tuple = (p: Xyz): Vec3 => [p.X(), p.Y(), p.Z()];
+  /** The point of the axis nearest the element's centre, so the joint sits in the middle of a hole. */
+  const onAxis = (point: Vec3, direction: Vec3, center: Vec3): Vec3 => add3(point, scale3(direction, dot3(sub3(center, point), direction)));
+  const center = element.boundingBox.center as Vec3;
+  if ('normalAt' in element) {
+    if (element.geomType === 'PLANE') return { origin: element.center.toTuple() as Vec3, direction: normalize3(element.normalAt(element.center).toTuple() as Vec3) };
+    if (element.geomType !== 'CYLINDRE' && element.geomType !== 'CONE') return undefined;
+    const surface = new oc.BRepAdaptor_Surface(element.wrapped, false);
+    try {
+      const axis = ((element.geomType === 'CYLINDRE' ? surface.Cylinder() : surface.Cone()) as unknown as { Axis(): Axis }).Axis();
+      const direction = normalize3(tuple(axis.Direction()));
+      return { origin: onAxis(tuple(axis.Location()), direction, center), direction };
+    } finally {
+      surface.delete();
+    }
+  }
+  if (element.geomType === 'LINE') return { origin: center, direction: normalize3(element.tangentAt(0).toTuple() as Vec3) };
+  if (element.geomType !== 'CIRCLE') return undefined;
+  const curve = new oc.BRepAdaptor_Curve(element.wrapped);
+  try {
+    const circle = curve.Circle().Position() as unknown as Axis;
+    return { origin: tuple(circle.Location()), direction: normalize3(tuple(circle.Direction())) };
+  } finally {
+    curve.delete();
   }
 }
 

@@ -83,7 +83,7 @@ const exportFormats: readonly { format: SolidFormat; label: string }[] = [
   providers: [DesignStore],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './component-mode.html',
-  styleUrls: ['./mode-layout.scss', './component-mode.scss'],
+  styleUrls: ['./mode-layout.scss', './editor-tools.scss', './component-mode.scss'],
   host: {
     '(document:keydown)': 'shortcut($event)',
   },

@@ -1,4 +1,5 @@
 export * from './analysis';
+export * from './assembly';
 export * from './document';
 export * from './feature';
 export type * from './events';

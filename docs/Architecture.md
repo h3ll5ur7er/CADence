@@ -1,0 +1,168 @@
+# Architecture
+
+CADence follows **iDesign** (Juval Löwy, *Righting Software*). The system is decomposed by **volatility**, not by function: each component encapsulates one area that is likely to change, so a change stays inside one component. The functional requirements (projects, sketches, features, assemblies, import/export) are not components. They come out of how these components *interact*, as shown in [[Architecture/Use cases and call chains]].
+
+[TOC]
+
+## Layers
+
+```mermaid
+flowchart TB
+  subgraph Clients
+    HOME[Home / Project browser]
+    CE[Component editor]
+    AE[Assembly editor]
+    IV[Imported viewer]
+    VP[Viewport<br/>three.js WebGPU]
+    DS[Desktop shell<br/>Tauri]
+  end
+
+  subgraph Managers
+    PM[Project Manager]
+    DM[Design Manager]
+    AM[Assembly Manager]
+  end
+
+  subgraph Engines
+    SE[Sketch Engine]
+    PE[Parameter Engine]
+    ME[Modeling Engine]
+    KE[Kinematics Engine]
+    AN[Analysis Engine]
+    IE[Interchange Engine]
+  end
+
+  subgraph ResourceAccess[Resource Access]
+    PA[Project Access]
+    DA[Document Access]
+    AA[Asset Access]
+    SA[Shape Access]
+    XA[External File Access]
+  end
+
+  subgraph Resources
+    PS[(Project store<br/>IndexedDB / file system)]
+    AS[(Asset store<br/>blobs)]
+    SC[(Shape cache<br/>OCCT B-rep in worker)]
+    HF[(Host files<br/>pickers, downloads, dialogs)]
+  end
+
+  subgraph Utilities
+    MSG[Messaging]
+    DIA[Diagnostics]
+    MATH[Math and Units]
+    ID[Identity]
+  end
+
+  HOME --> PM
+  IV --> PM
+  CE --> DM
+  AE --> AM
+  PM -. queued events .-> AM
+  AM -. queued requests .-> DM
+  DM --> SE & ME
+  DM --> DA
+  AM --> KE
+  ME --> SA
+  DA --> PS
+  AA --> AS
+  SA --> SC
+  XA --> HF
+  Resources ~~~ Utilities
+```
+
+The diagram shows a representative selection of calls. The complete matrix follows in [[Architecture#Who uses what]].
+
+The Viewport is a presentation component shared by the editors. It only renders the mesh DTOs the managers return, and it never calls a manager itself. The Desktop shell hosts the same web app and provides the native resources (file system, dialogs) that the Resource Access implementations for desktop use.
+
+### Who uses what
+
+Clients enter through one manager each: Home and the Imported viewer use the **Project Manager**, the Component editor uses the **Design Manager**, and the Assembly editor uses the **Assembly Manager**.
+
+| | Sketch | Parameter | Modeling | Kinematics | Analysis | Interchange | Project Access | Document Access | Asset Access | Shape Access | External File Access |
+| --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| **Project Manager** | | | ● | | | ● | ● | ● | ● | | ● |
+| **Design Manager** | ● | ● | ● | | ● | ● | | ● | ● | | ● |
+| **Assembly Manager** | | ● | ● | ● | ● | ● | | ● | ● | | ● |
+| **Modeling Engine** | | | | | | | | | | ● | |
+| **Analysis Engine** | | | | | | | | | | ● | |
+| **Interchange Engine** | | | | | | | | | | ● | |
+
+Project Access, Document Access and Asset Access read and write the project store and asset store. Shape Access works on the in-worker shape cache, and External File Access on the host's file pickers, downloads and dialogs.
+
+## Call rules
+
+These rules are enforced by lint (`eslint` import boundaries per folder, see [[Conventions]]):
+
+| From → To | Allowed? |
+| --- | --- |
+| Client → Manager | ✅ the only way into the system |
+| Client → Engine / Resource Access | ❌ |
+| Manager → Engine, Resource Access | ✅ |
+| Manager → Manager | ⚠️ only queued (fire-and-forget domain events), never synchronous calls |
+| Engine → Resource Access | ✅ |
+| Engine → Engine | ❌ the manager orchestrates; engines share data through Resource Access (Shape Access) |
+| Resource Access → Resource | ✅ |
+| Anything → Utilities, Contracts | ✅ |
+| Any upward call | ❌ (results flow back as return values or event streams) |
+
+Each component exposes an **interface plus a factory** from its `index.ts`. The implementation stays private. Wiring happens in exactly one **composition root per host** (browser or desktop), and Angular DI provides the managers to the clients through injection tokens.
+
+## Deployment and threads
+
+Where code runs is volatile too: the main thread, a Web Worker, or native Rust inside Tauri. Engines are therefore called through **async interfaces**, so an engine can move between threads without changing its managers. The Messaging utility provides typed worker RPC, and transferable typed arrays carry the meshes.
+
+```mermaid
+flowchart LR
+  subgraph Main[Main thread]
+    UI[Angular clients] --> MGR[Managers]
+    MGR --> LIGHT[Sketch, Parameter, Kinematics engines]
+    MGR --> RA[Project, Document, Asset,<br/>External File Access]
+    MGR --> PROXY[Engine proxies]
+  end
+  subgraph GW[Geometry worker]
+    PROXY <-->|Messaging RPC<br/>transferables| GE[Modeling, Analysis,<br/>Interchange engines]
+    GE --> SA2[Shape Access] --> OCCT[(OCCT WASM<br/>shape cache)]
+  end
+  RA --> IDB[(IndexedDB)]
+  RA --> TAURI[(Tauri IPC → native FS)]
+```
+
+- **Managers and storage Resource Access stay on the main thread.** Tauri IPC is not available inside Web Workers, and IndexedDB works on both. Keeping them here keeps one code path for both hosts.
+- **Kernel-bound engines share one geometry worker.** OCCT shapes cannot cross thread boundaries cheaply, so Modeling, Analysis (geometric checks) and Interchange share the in-worker shape cache through Shape Access. Engines exchange shapes by key rather than by calling each other.
+- **Light engines start on the main thread.** Parameter, Sketch (planegcs, about 1 MB of WASM) and Kinematics start here and move to a worker once profiling shows a need. Their interfaces are already async.
+
+## Technology
+
+| Concern | Choice | See |
+| --- | --- | --- |
+| Client framework | Angular 22: standalone, zoneless, signals, `OnPush`, deferrable views | [[Architecture/Decisions#ADR-7]] |
+| B-rep kernel | OpenCascade (OCCT) via `replicad-opencascadejs` WASM in a Web Worker | [[Architecture/Decisions#ADR-2]] |
+| Sketch constraints | `@salusoft89/planegcs` (FreeCAD GCS as WASM) | [[Architecture/Decisions#ADR-3]] |
+| Rendering | three.js `WebGPURenderer` with automatic WebGL2 fallback | [[Architecture/Decisions#ADR-6]] |
+| Storage | IndexedDB (browser), project folder on disk (desktop) | [[Architecture/Decisions#ADR-5]] |
+| Desktop | Tauri 2 | [[Architecture/Decisions#ADR-4]] |
+| Speed-ups | WASM kernels; Rust/WASM where profiling proves a hotspot | [[Architecture/Decisions#ADR-8]] |
+| Tests | Vitest (unit, TDD), Playwright (end to end and visual evidence) | [[Architecture/Decisions#ADR-9]] |
+
+## Code layout
+
+```
+src/
+  app/                    Clients (Angular): home, editor shell, component-editor,
+                          assembly-editor, imported-viewer, viewport, shared UI
+  core/
+    contracts/            Data contracts: document model, DTOs, commands, events
+    managers/             project/  design/  assembly/
+    engines/              sketch/  parameter/  modeling/  kinematics/  analysis/  interchange/
+    access/               project/  document/  asset/  shape/  external-file/
+    utilities/            messaging/  diagnostics/  math/  identity/
+    composition/          composition roots: browser.ts, desktop.ts
+  workers/                geometry.worker.ts (hosts the kernel-bound engines)
+src-tauri/                Desktop shell (Rust)
+e2e/                      Playwright specs and evidence screenshots
+```
+
+`src/core` has no dependency on Angular. It runs under Node in unit tests, and both OCCT and planegcs load in Node, so engines are tested headless.
+
+[SUBPAGES]

@@ -100,3 +100,14 @@ ul {
   color: var(--text-muted);
   font-size: 13px;
 }
+
+/* The document's picture, or its kind's icon until it has one. */
+.thumb {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 20px;
+  overflow: hidden;
+  border-radius: 3px;
+}

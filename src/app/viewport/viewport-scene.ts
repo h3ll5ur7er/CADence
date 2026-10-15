@@ -103,6 +103,7 @@ export class ViewportScene {
   private readonly planes = new Group();
   private readonly highlights = new Group();
   private readonly annotations = new Group();
+  private readonly grid: Group;
   private readonly threads = new Group();
   private readonly parts = new Group();
   private partEntries = new Map<string, { readonly group: Group; readonly signature: string; readonly part: PartDisplay }>();
@@ -141,7 +142,8 @@ export class ViewportScene {
     const sun = new DirectionalLight(0xffffff, 1.4);
     sun.position.set(300, -400, 600);
     this.scene.add(sun);
-    this.scene.add(createGrid(theme));
+    this.grid = createGrid(theme);
+    this.scene.add(this.grid);
     this.origin = createOrigin(theme);
     this.model.enabled = false;
     this.model.add(this.bodies, this.parts);
@@ -533,6 +535,47 @@ export class ViewportScene {
   private requestRender(): void {
     if (this.frame || !this.initialized) return;
     this.frame = requestAnimationFrame(() => this.renderFrame());
+  }
+
+  /**
+   * A picture of the model from the home direction, framed to fit (without the grid, origin, planes
+   * and highlights), cropped to `width` × `height`, as PNG bytes.
+   */
+  async snapshot(width = 320, height = 200): Promise<Uint8Array | undefined> {
+    const box = new Box3().setFromObject(this.model);
+    if (box.isEmpty()) box.setFromObject(this.sketches);
+    if (box.isEmpty()) return undefined;
+    const helpers = [this.grid, this.origin, this.planes, this.highlights, this.annotations];
+    const shown = helpers.map((h) => h.visible);
+    for (const h of helpers) h.visible = false;
+    try {
+      const source = this.renderer.domElement;
+      const camera = new PerspectiveCamera(fov, source.width / Math.max(source.height, 1), 0.1, 1e6);
+      const center = box.getCenter(new Vector3());
+      const radius = Math.max(box.getSize(new Vector3()).length() / 2, 1);
+      // Far enough that the model's sphere fits the picture's height (the crop keeps the middle).
+      const distance = (radius / Math.sin((fov * Math.PI) / 360)) * 1.05;
+      camera.position.copy(center).add(viewDirections.home.clone().normalize().multiplyScalar(distance));
+      camera.up.set(0, 0, 1);
+      camera.lookAt(center);
+      camera.near = Math.max(distance - radius * 2, 0.1);
+      camera.far = distance + radius * 2;
+      camera.updateProjectionMatrix();
+      this.renderer.render(this.scene, camera);
+      const picture = document.createElement('canvas');
+      [picture.width, picture.height] = [width, height];
+      const context = picture.getContext('2d');
+      if (!context || !source.width || !source.height) return undefined;
+      // Crop the middle of the view to the picture's proportions.
+      const scale = Math.min(source.width / width, source.height / height);
+      const [w, h] = [width * scale, height * scale];
+      context.drawImage(source, (source.width - w) / 2, (source.height - h) / 2, w, h, 0, 0, width, height);
+      const blob = await new Promise<Blob | null>((resolve) => picture.toBlob(resolve, 'image/png'));
+      return blob ? new Uint8Array(await blob.arrayBuffer()) : undefined;
+    } finally {
+      helpers.forEach((h, i) => (h.visible = shown[i] as boolean));
+      this.requestRender();
+    }
   }
 
   private renderFrame(): void {

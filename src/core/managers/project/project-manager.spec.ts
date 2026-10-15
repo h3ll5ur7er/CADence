@@ -6,8 +6,10 @@ import { asDocumentId, asProjectId, type DomainEvents, type ImportedDocument, ty
 import { createInterchangeEngine } from '@core/engines/interchange';
 import { steppingClock } from '@core/utilities/clock';
 import { EventBus } from '@core/utilities/messaging';
+import { GitVersionAccess } from '@core/access/version';
 import { createParameterEngine } from '@core/engines/parameter';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { MemoryFileSystem } from '@core/utilities/file-system';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createProjectManager, type ProjectManager } from './index';
 
 function unwrap<T>(result: Result<T>): T {
@@ -35,6 +37,8 @@ describe('ProjectManager', () => {
       assets,
       externalFiles: files,
       parameters: createParameterEngine(),
+      versions: new GitVersionAccess(new MemoryFileSystem()),
+      versionDelay: 20,
       // Meshes and drawings need no geometry kernel.
       interchange: createInterchangeEngine(),
       events,
@@ -87,6 +91,52 @@ describe('ProjectManager', () => {
       const cycle = await manager.setProjectParameters(projectId, [{ id: 'a', name: 'wall', expression: 'gap' }, { id: 'b', name: 'gap', expression: 'wall' }]);
       expect(cycle).toMatchObject({ ok: false, error: { code: 'cycle' } });
       expect(seen).toHaveLength(1);
+    });
+
+    it('keeps a picture of each document, and shows the latest as the picture of the project', async () => {
+      const created = await manager.createProject('Pictures');
+      if (!created.ok) throw new Error(created.error.message);
+      const projectId = created.value.project.id;
+      const first = await manager.createDocument(projectId, 'component');
+      const second = await manager.createDocument(projectId, 'component');
+      if (!first.ok || !second.ok) throw new Error('documents');
+      expect(await manager.projectThumbnail(projectId)).toBeUndefined();
+      await manager.saveThumbnail(first.value.id, new Uint8Array([1, 2]));
+      expect([...((await manager.thumbnail(first.value.id)) ?? [])]).toEqual([1, 2]);
+      expect([...((await manager.projectThumbnail(projectId)) ?? [])]).toEqual([1, 2]);
+      await manager.deleteDocument(first.value.id);
+      expect(await manager.thumbnail(first.value.id)).toBeUndefined();
+      expect(await manager.projectThumbnail(projectId)).toBeUndefined();
+    });
+
+    it('records versions after changes, names them and restores documents from them', async () => {
+      const created = await manager.createProject('History');
+      if (!created.ok) throw new Error(created.error.message);
+      const projectId = created.value.project.id;
+      const document = await manager.createDocument(projectId, 'component', 'Bracket');
+      if (!document.ok) throw new Error(document.error.message);
+      // A version is recorded a moment after the last change.
+      await vi.waitFor(async () => expect(await manager.projectHistory(projectId)).toHaveLength(1), { timeout: 10_000 });
+      const [first] = await manager.projectHistory(projectId);
+      expect(first?.message).toBe('First version');
+      unwrap(await manager.renameDocument(document.value.id, 'Bracket v2'));
+      await manager.recordVersion(projectId);
+      expect((await manager.projectHistory(projectId))[0]?.message).toBe('Changed Bracket v2');
+      expect(await manager.documentHistory(document.value.id)).toHaveLength(2);
+      unwrap(await manager.nameVersion(projectId, 'release-1'));
+      expect((await manager.projectHistory(projectId))[0]?.names).toEqual(['release-1']);
+      expect(await manager.nameVersion(projectId, 'with spaces')).toMatchObject({ ok: false, error: { code: 'invalid-name' } });
+      // Back to the first version: a change of its own, recorded with where it came from.
+      const restored: string[] = [];
+      events.subscribe('documentRestored', ({ documentId }) => {
+        restored.push(documentId);
+      });
+      unwrap(await manager.restoreDocument(document.value.id, first?.id as string));
+      expect((await manager.findDocument(document.value.id))?.name).toBe('Bracket');
+      expect(restored).toEqual([document.value.id]);
+      expect((await manager.projectHistory(projectId))[0]?.message).toMatch(/^Restored Bracket from /);
+      await manager.deleteProject(projectId);
+      expect(await manager.projectHistory(projectId)).toEqual([]);
     });
 
     it('renames a project', async () => {

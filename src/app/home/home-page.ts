@@ -1,14 +1,16 @@
 import { ChangeDetectionStrategy, Component, inject, resource, viewChild } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
-import type { ProjectSummary } from '@core/contracts';
+import type { ProjectId, ProjectSummary } from '@core/contracts';
 import { PROJECT_MANAGER } from '../core.providers';
 import { ConfirmDialog, NameDialog } from '../shared/dialogs';
 import { plural, relativeTime } from '../shared/format';
+import { Thumbnail } from '../shared/thumbnail';
 import { Icon } from '../shared/icon';
+import { OpenRemoteDialog } from './open-remote-dialog';
 
 @Component({
   selector: 'cad-home-page',
-  imports: [RouterLink, Icon, NameDialog, ConfirmDialog],
+  imports: [RouterLink, Icon, NameDialog, ConfirmDialog, Thumbnail, OpenRemoteDialog],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './home-page.html',
   styleUrl: './home-page.scss',
@@ -20,6 +22,8 @@ export class HomePage {
   private readonly confirmDialog = viewChild.required(ConfirmDialog);
 
   protected readonly projects = resource({ loader: () => this.projectManager.listProjects() });
+  /** A project's picture: its most recently changed document's. */
+  protected readonly pictureOf = (id: ProjectId) => () => this.projectManager.projectThumbnail(id);
   protected readonly plural = plural;
   protected readonly relativeTime = relativeTime;
 
@@ -34,6 +38,10 @@ export class HomePage {
     if (!result.ok) return;
     const { project, firstDocument } = result.value;
     await this.router.navigate(['/projects', project.id, 'documents', firstDocument.id]);
+  }
+
+  protected async openProject(project: ProjectSummary): Promise<void> {
+    await this.router.navigate(['/projects', project.id]);
   }
 
   protected async rename(project: ProjectSummary): Promise<void> {

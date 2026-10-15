@@ -1,6 +1,7 @@
 <div class="stage">
   <cad-viewport
     #viewport
+    (thumbnail)="thumbnails.save($event)"
     [showOrigin]="originVisible()"
     [sketches]="displays()"
     [bodies]="bodies()"

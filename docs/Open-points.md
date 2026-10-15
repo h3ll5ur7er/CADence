@@ -20,14 +20,18 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 
 ## Projects and documents
 
-- [X] **Thumbnails** of projects and documents on the home page and in the documents panel. *(Architecture: Home client)* → [[CAD-52]]
+- [X] **Thumbnails** of projects and documents on the home page and in the documents panel. *(Architecture: Home client)* → [[CAD-52]] ✅
 - [ ] **Drag and drop to import** files onto the documents panel or the home page. *(Architecture: Imported files are "picked or dropped"; only the picker exists)*
 - [ ] **Open with CADence** from the operating system (file associations on desktop). *(Volatility analysis, host file exchange)*
 - [ ] **Duplicate** projects and documents. *(Volatility analysis, project workflow)*
 - [ ] **Replace an imported file with a newer version**, keeping the features and instances that use it. *(new)*
 - [ ] **Export or back up a whole project** (one archive with documents and originals), and import it again. *(new)*
-- [X] **Version history** of documents beyond undo (named versions, restore, git based with user settable version tags). *(Volatility analysis: "later versioned or shared")* → [[CAD-53]]
-- [X] **Cloud or git sync** of project folders. *(Volatility analysis, storage medium)* → [[CAD-54]]
+- [X] **Version history** of documents beyond undo (named versions, restore, git based with user settable version tags). *(Volatility analysis: "later versioned or shared")* → [[CAD-53]] ✅
+- [X] **Cloud or git sync** of project folders. *(Volatility analysis, storage medium)* → [[CAD-54]] ✅
+- [ ] **Sync version names** (git tags) along with the versions, and show which versions are on the remote. *(ADR-30 trade-off)*
+- [ ] **Remember the sign-in** for a remote in the operating system's keychain on the desktop, or sign in with OAuth (GitHub, GitLab). *(ADR-30 trade-off)*
+- [ ] **Three-way merge inside a document** (e.g. two people adding different features to one component), instead of choosing one side. *(ADR-30 trade-off)*
+- [ ] **Compare versions** of a component side by side in the viewport. *(new)*
 - [ ] **Users, sign-in and sharing.** *(Volatility analysis: deliberately not encapsulated)*
 - [ ] **Real-time collaboration.** Commands keep it possible. *(Volatility analysis: not planned)*
 - [ ] **Large originals in OPFS** instead of IndexedDB, if imports get big. *(ADR-5)*

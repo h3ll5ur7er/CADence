@@ -95,6 +95,7 @@
 .thumb {
   display: grid;
   place-items: center;
+  overflow: hidden;
   aspect-ratio: 16 / 10;
   margin-bottom: var(--space-2);
   border-radius: 5px;
@@ -167,4 +168,8 @@
 
 .error {
   color: var(--danger);
+}
+
+.open-remote {
+  margin-left: auto;
 }

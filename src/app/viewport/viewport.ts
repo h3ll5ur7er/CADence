@@ -67,6 +67,9 @@ async function softwareWebGPU(): Promise<boolean> {
  * Overlays (such as the sketch editor) are projected on top and share its navigation.
  * How the view is seen (projection, section, framing) belongs to the viewport, not to the document.
  */
+/** How long the model must stay unchanged before its picture is taken (ms). */
+const thumbnailDelay = 1500;
+
 @Component({
   selector: 'cad-viewport',
   imports: [ViewCube, Icon],
@@ -155,6 +158,8 @@ export class Viewport {
   readonly threads = input<readonly ThreadMarker[]>([]);
   readonly backendReady = output<RendererBackend>();
   readonly picked = output<Pick>();
+  /** A picture of the model (PNG), a moment after what it shows changed. */
+  readonly thumbnail = output<Uint8Array>();
 
   /** Plane-to-pixel map of the edited plane, updated as the camera pans and zooms. */
   readonly planeMatrix = signal<Affine | undefined>(undefined);
@@ -224,6 +229,16 @@ export class Viewport {
     effect(() => this.scene()?.setFlagged(this.flagged()));
     effect(() => this.scene()?.setMeasureLine(this.measureLine()));
     effect(() => this.scene()?.setThreads(this.threads()));
+    // A picture once the model has settled: after its bodies, parts or sketches stop changing.
+    let pending: ReturnType<typeof setTimeout> | undefined;
+    effect((onCleanup) => {
+      const scene = this.scene();
+      const content = [this.bodies(), this.parts(), this.sketches(), this.appearances()];
+      if (!scene || !content.slice(0, 3).some((list) => (list as readonly unknown[]).length)) return;
+      clearTimeout(pending);
+      pending = setTimeout(() => void scene.snapshot().then((png) => png && this.thumbnail.emit(png)), thumbnailDelay);
+      onCleanup(() => clearTimeout(pending));
+    });
     effect(() => this.scene()?.setProjection(this.settings.projection()));
     effect(() => this.scene()?.setMouse(mouseBindings[this.settings.controls()]));
     effect(() => {

@@ -1,16 +1,21 @@
 import type {
   BodyMesh,
+  ConflictChoice,
   CreatableDocumentKind,
   DocumentId,
   DocumentSummary,
   ImportFormat,
   Parameter,
   ProjectId,
+  ProjectRemote,
   ProjectSummary,
+  RemoteCredentials,
   Result,
   SketchEntity,
+  SyncOutcome,
   TextOutlines,
   Vec3,
+  Version,
 } from '@core/contracts';
 
 /** A file chosen by the user (picker or drag and drop); reading it is a client concern. */
@@ -68,6 +73,35 @@ export interface ProjectManager {
   deleteDocument(id: DocumentId): Promise<void>;
 
   importFile(projectId: ProjectId, file: ExternalFile): Promise<Result<DocumentSummary>>;
+
+  /** Records the project as a version now (a few seconds after saves this happens on its own). */
+  recordVersion(id: ProjectId, message?: string): Promise<void>;
+  /** The project's versions, newest first. */
+  projectHistory(id: ProjectId): Promise<Version[]>;
+  /** The versions in which a document changed, newest first. */
+  documentHistory(id: DocumentId): Promise<Version[]>;
+  /** Brings a document back as it was in a version (a change of its own, recorded as a version). */
+  restoreDocument(id: DocumentId, version: string): Promise<Result<void>>;
+  /** Names a version (the latest when none is given); a name given again moves. */
+  nameVersion(id: ProjectId, name: string, version?: string): Promise<Result<void>>;
+  unnameVersion(id: ProjectId, name: string): Promise<void>;
+
+  /** Shares the project's versions with a git repository; without one, stops sharing them. */
+  setRemote(id: ProjectId, remote: ProjectRemote | undefined): Promise<Result<void>>;
+  /**
+   * Records a version, then exchanges versions with the project's remote: sends ours, takes theirs,
+   * or combines both document by document. Documents changed on both sides need a choice each
+   * (`resolutions`, by the conflict's path); without one, sync reports the conflicts and changes nothing.
+   */
+  syncProject(id: ProjectId, credentials?: RemoteCredentials, resolutions?: Readonly<Record<string, ConflictChoice>>): Promise<Result<SyncOutcome>>;
+  /** A new project holding the latest version of a remote, synced with it from then on. */
+  openRemoteProject(remote: ProjectRemote, credentials?: RemoteCredentials): Promise<Result<ProjectSummary>>;
+
+  /** Keeps a picture of a document (PNG), replacing the one before. Unknown documents are ignored. */
+  saveThumbnail(id: DocumentId, png: Uint8Array): Promise<void>;
+  thumbnail(id: DocumentId): Promise<Uint8Array | undefined>;
+  /** The picture of the project's most recently changed document that has one. */
+  projectThumbnail(id: ProjectId): Promise<Uint8Array | undefined>;
   openImported(id: DocumentId): Promise<ImportedView | undefined>;
   /** Reads an imported file for the viewer. */
   previewImported(id: DocumentId): Promise<Result<ImportedContent>>;

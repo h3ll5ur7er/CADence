@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { FileSystem } from '../index';
 
@@ -9,6 +9,10 @@ export class NodeFileSystem implements FileSystem {
 
   async exists(path: string): Promise<boolean> {
     return existsSync(this.resolve(path));
+  }
+
+  async isDirectory(path: string): Promise<boolean> {
+    return existsSync(this.resolve(path)) && (await stat(this.resolve(path))).isDirectory();
   }
 
   readText(path: string): Promise<string> {

@@ -38,6 +38,7 @@ import { Shortcuts } from '../../shared/shortcuts';
 import { sketchDisplay } from '../../viewport/sketch-display';
 import { Viewport } from '../../viewport/viewport';
 import { EditorStatus } from '../editor-status';
+import { ThumbnailSaver } from '../thumbnail-saver';
 import { bodyNames } from '../modeling/body-names';
 import { featureLabels } from '../modeling/feature-drafts';
 import { FeatureDialog } from '../modeling/feature-dialog';
@@ -150,6 +151,7 @@ const exportFormats: readonly { format: SolidFormat; label: string }[] = [
 export class ComponentMode {
   readonly document = input.required<DocumentSummary>();
   protected readonly status = inject(EditorStatus);
+  protected readonly thumbnails = inject(ThumbnailSaver);
   private readonly unitsInStatus = effect(() => this.status.units.set(this.store.units()));
 
   protected setUnits(units: LengthUnit): void {

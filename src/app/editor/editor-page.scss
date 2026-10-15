@@ -18,8 +18,20 @@
   background: var(--surface-1);
 }
 
-.settings {
+.sync {
+  position: relative;
   margin-left: auto;
+}
+
+/* The project is synced with a repository. */
+.synced-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
 }
 
 .brand {

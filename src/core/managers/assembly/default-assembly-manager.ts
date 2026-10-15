@@ -94,6 +94,7 @@ class Session implements AssemblySession {
         return this.components.has(source) ? this.serialized(() => this.refresh(source, done ? 'regenerated' : 'failed')) : undefined;
       }),
       events.subscribe('documentRenamed', ({ documentId }) => refreshAll(sourcesOf(documentId))),
+      events.subscribe('documentRestored', ({ documentId }) => refreshAll(sourcesOf(documentId))),
       events.subscribe('documentDeleted', ({ documentId }) => refreshAll(sourcesOf(documentId))),
       // New project parameters make the project's component results stale.
       events.subscribe('projectParametersChanged', ({ projectId }) => (projectId === this.document.projectId ? refreshAll([...this.components.keys()]) : undefined)),
@@ -220,6 +221,7 @@ class Session implements AssemblySession {
     this.document = document;
     this.derived = derived;
     await this.deps.documents.store(document);
+    this.deps.events.publish('documentSaved', { projectId: document.projectId, documentId: document.id });
     this.notify();
   }
 

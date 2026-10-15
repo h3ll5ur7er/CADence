@@ -195,3 +195,16 @@ Imported SVG `<text>` and DXF `TEXT`/`MTEXT` become editable sketch texts in thi
 
 *Why:* converting stored numbers on a unit change would rewrite the model's history; keeping one internal unit makes the change a display setting. An analytic flat pattern is exact for the flanges this phase builds and needs no unfolding algorithm in the kernel.
 *Trade-off:* only flanges standing on the base flange unfold; no corner relief; one sheet per component. Assemblies show millimetres.
+
+## ADR-30
+
+**Projects: versions are a git repository per project, written with isomorphic-git through the host's file system; sync is git over HTTP; sign-ins live in memory only.**
+- *History.* Version Access keeps a bare repository per project (`projects/<id>/.git`): on the desktop in the project folder, in the browser on an IndexedDB file system (`IndexedDbFileSystem`, one entry per path), in tests in memory. isomorphic-git (pinned, loaded lazily with the global `Buffer` it needs; the `buffer` package arrives as named or as default export depending on the bundle, so both are read) writes blobs, trees and commits directly; there is no working tree. A version is recorded only when the tree changed; names are lightweight tags.
+- *Files of a version.* Documents without their project id, imported originals (immutable by asset id, so a recorded one is reused without reading the asset again) and the project's settings. Pictures and component results are caches and stay out.
+- *Sync.* `fetch` lists the remote's `main` (empty remotes are fine) and fetches it; the Project Manager then pushes, fast-forwards (`advance` + apply) or merges. The merge is per file against the common version, which for CADence is per document: one side changed → that side; both → a conflict the user resolves (mine or theirs). The merge version has both parents, so histories stay git histories any git tool understands.
+- *Remotes and sign-in.* The remote's address and an optional CORS proxy are stored on the project; user name and password or token are passed per sync (`onAuth`) and kept by the client in memory (`RemoteSignIns`) until the app closes. Remote failures become `remote-unreachable`, `remote-unauthorized` or `remote-rejected` results.
+- *Pictures.* The viewport renders a snapshot with its own camera from the home direction, without grid or helpers, 1.5 s after content settles; the editor saves it through the Project Manager as an asset.
+- *Tests* run against a real git server: the system's `git http-backend` behind a small Node server ([[src/core/access/version/testing/git-http-server.ts]]), in unit tests and in the browser journey across two browser contexts.
+
+*Why:* git is the history format people already have tools, hosts and backups for; isomorphic-git runs the same code in the browser, in the desktop webview and in Node, over the file system abstraction the app already has. Per-document conflicts match how people think about a project and keep the merge exact without knowing every document schema.
+*Trade-off:* browsers need a CORS proxy for most git hosts, and a third-party proxy sees the traffic, sign-in included (run your own for private work). Two people changing the same document must pick one side. Version names are not synced. Large originals make the browser repository grow, since git keeps every file ever recorded.

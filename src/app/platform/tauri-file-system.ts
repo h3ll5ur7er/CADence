@@ -7,6 +7,7 @@ import {
   readFile,
   readTextFile,
   remove,
+  stat,
   writeFile,
   writeTextFile,
 } from '@tauri-apps/plugin-fs';
@@ -19,6 +20,10 @@ const parentOf = (path: string) => path.slice(0, Math.max(path.lastIndexOf('/'),
 export class TauriFileSystem implements FileSystem {
   exists(path: string): Promise<boolean> {
     return exists(path, options);
+  }
+
+  async isDirectory(path: string): Promise<boolean> {
+    return (await exists(path, options)) && (await stat(path, options)).isDirectory;
   }
 
   readText(path: string): Promise<string> {

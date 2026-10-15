@@ -6,7 +6,9 @@ import {
   asAssetId,
   asDocumentId,
   asProjectId,
+  type AssetId,
   type CadDocument,
+  type ConflictChoice,
   type CreatableDocumentKind,
   currentSchemaVersion,
   type DocumentId,
@@ -20,10 +22,15 @@ import {
   type Parameter,
   type Project,
   type ProjectId,
+  type ProjectRemote,
   type ProjectSummary,
+  type RemoteCredentials,
   type Result,
   summarize,
+  type SyncConflict,
+  type SyncOutcome,
 } from '@core/contracts';
+import { InvalidVersionNameError, RemoteError, type Version, type VersionAccess, type VersionFile } from '@core/access/version';
 import type { InterchangeEngine } from '@core/engines/interchange';
 import type { ParameterEngine } from '@core/engines/parameter';
 import type { Clock } from '@core/utilities/clock';
@@ -38,12 +45,36 @@ export interface ProjectManagerDependencies {
   readonly interchange: InterchangeEngine;
   /** Checks project parameters before they are saved. */
   readonly parameters: ParameterEngine;
+  /** Each project's version history. */
+  readonly versions: VersionAccess;
+  /** How long after the last save a version is recorded (ms). */
+  readonly versionDelay?: number;
   readonly events: EventBus<DomainEvents>;
   readonly clock: Clock;
   readonly newId: () => string;
 }
 
 const maxNameLength = 80;
+
+/** Where a document is kept in the project's version history. */
+const documentPath = (id: DocumentId) => `documents/${id}.json`;
+/** A document as kept in the version history: without its project, which the history belongs to (on each device its own id). */
+const versionText = (document: CadDocument) => JSON.stringify({ ...document, projectId: undefined }, null, 2);
+const documentPattern = /^documents\/(.+)\.json$/;
+/** Where an imported document's original file is kept in the version history (it never changes). */
+const originalPath = (id: AssetId) => `originals/${id}`;
+const isOriginal = (path: string) => path.startsWith('originals/');
+const settingsPath = 'project.json';
+
+/** Whether a remote's address can be used: git over HTTP(S). */
+const validRemote = (remote: ProjectRemote) =>
+  [remote.url, ...(remote.corsProxy ? [remote.corsProxy] : [])].every((url) => /^https?:\/\/[^\s/]+/.test(url));
+
+const sameBytes = (a: Uint8Array | undefined, b: Uint8Array | undefined) =>
+  a === b || (a !== undefined && b !== undefined && a.length === b.length && a.every((byte, i) => byte === b[i]));
+
+/** Where a document's picture is kept among the project's assets. */
+const thumbnailId = (documentId: DocumentId): AssetId => asAssetId(`thumbnail-${documentId}`);
 
 const kindLabels: Readonly<Record<DocumentKind, string>> = {
   component: 'Component',
@@ -79,6 +110,7 @@ function validName(name: string): Result<string> {
 }
 
 const unknownProject = (id: ProjectId) => fail({ code: 'unknown-project', message: `Project ${id} does not exist.` });
+const invalidRemote = () => fail({ code: 'invalid-remote', message: 'A remote is a git repository address starting with https:// (or http://).' });
 const unknownDocument = (id: DocumentId) =>
   fail({ code: 'unknown-document', message: `Document ${id} does not exist.` });
 
@@ -94,7 +126,247 @@ const byKindThenName = (a: DocumentSummary, b: DocumentSummary) =>
   documentKinds.indexOf(a.kind) - documentKinds.indexOf(b.kind) || a.name.localeCompare(b.name);
 
 export class DefaultProjectManager implements ProjectManager {
-  constructor(private readonly deps: ProjectManagerDependencies) {}
+  /** Versions waiting to be recorded, by project. */
+  private readonly pending = new Map<ProjectId, ReturnType<typeof setTimeout>>();
+  /** One recording or sync at a time. */
+  private recording: Promise<unknown> = Promise.resolve();
+
+  constructor(private readonly deps: ProjectManagerDependencies) {
+    deps.events.subscribe('documentSaved', ({ projectId }) => this.scheduleVersion(projectId));
+  }
+
+  /** Records a version once the project has been left alone for a moment. */
+  private scheduleVersion(projectId: ProjectId): void {
+    clearTimeout(this.pending.get(projectId));
+    this.pending.set(
+      projectId,
+      setTimeout(() => {
+        this.pending.delete(projectId);
+        void this.recordVersion(projectId);
+      }, this.deps.versionDelay ?? 3000),
+    );
+  }
+
+  recordVersion(id: ProjectId, message?: string): Promise<void> {
+    return this.serially(() => this.record(id, message));
+  }
+
+  /** Runs after the recordings and syncs before it, so they never interleave. */
+  private serially<T>(work: () => Promise<T>): Promise<T> {
+    const run = this.recording.then(work);
+    this.recording = run.catch(() => undefined);
+    return run;
+  }
+
+  private async record(id: ProjectId, message?: string): Promise<void> {
+    const project = await this.deps.projects.find(id);
+    if (!project) return;
+    const documents = await Promise.all((await this.deps.documents.enumerate(id)).map((d) => this.deps.documents.load(d.id)));
+    const files: VersionFile[] = documents.flatMap((d) => (d ? [{ path: documentPath(d.id), text: versionText(d) }] : []));
+    for (const document of documents) {
+      if (document?.kind !== 'imported') continue;
+      const { assetId } = document;
+      files.push({ path: originalPath(assetId), bytes: async () => (await this.deps.assets.fetch(assetId))?.bytes ?? new Uint8Array() });
+    }
+    files.push({ path: settingsPath, text: JSON.stringify({ name: project.name, parameters: project.parameters ?? [] }, null, 2) });
+    const summary = message ?? (await this.changes(id, files, documents.flatMap((d) => (d ? [d] : []))));
+    await this.deps.versions.record(id, files, summary, this.now());
+  }
+
+  /** What changed since the latest version: documents added, changed or removed. */
+  private async changes(id: ProjectId, files: readonly VersionFile[], documents: readonly CadDocument[]): Promise<string> {
+    const [latest] = await this.deps.versions.versions(id);
+    if (!latest) return 'First version';
+    const changed: string[] = [];
+    for (const document of documents) {
+      const before = await this.deps.versions.read(id, latest.id, documentPath(document.id));
+      const file = files.find((f) => f.path === documentPath(document.id));
+      const now = file && 'text' in file ? file.text : undefined;
+      if (before === undefined) changed.push(`Added ${document.name}`);
+      else if (before !== now) changed.push(`Changed ${document.name}`);
+    }
+    return changed.join(', ') || 'Changed the project';
+  }
+
+  async projectHistory(id: ProjectId): Promise<Version[]> {
+    return this.deps.versions.versions(id);
+  }
+
+  async documentHistory(id: DocumentId): Promise<Version[]> {
+    const document = await this.deps.documents.load(id);
+    return document ? this.deps.versions.versions(document.projectId, documentPath(id)) : [];
+  }
+
+  async restoreDocument(id: DocumentId, version: string): Promise<Result<void>> {
+    const current = await this.deps.documents.load(id);
+    if (!current) return fail({ code: 'unknown-document', message: `Document ${id} does not exist.` });
+    const text = await this.deps.versions.read(current.projectId, version, documentPath(id));
+    if (text === undefined) return fail({ code: 'unknown-version', message: 'The document did not exist in that version.' });
+    const restored = { ...(JSON.parse(text) as CadDocument), id, projectId: current.projectId, modifiedAt: this.now() } as CadDocument;
+    await this.deps.documents.store(restored);
+    const from = (await this.deps.versions.versions(current.projectId)).find((v) => v.id === version);
+    await this.recordVersion(current.projectId, `Restored ${restored.name} from ${from?.names[0] ?? from?.time ?? version.slice(0, 7)}`);
+    this.deps.events.publish('documentRestored', { documentId: id });
+    return ok(undefined);
+  }
+
+  async nameVersion(id: ProjectId, name: string, version?: string): Promise<Result<void>> {
+    if (!version) await this.recordVersion(id);
+    const target = version ?? (await this.deps.versions.versions(id))[0]?.id;
+    if (!target) return fail({ code: 'no-versions', message: 'The project has no versions yet.' });
+    try {
+      await this.deps.versions.name(id, target, name.trim());
+      return ok(undefined);
+    } catch (error) {
+      if (error instanceof InvalidVersionNameError) return fail({ code: 'invalid-name', message: error.message });
+      throw error;
+    }
+  }
+
+  async unnameVersion(id: ProjectId, name: string): Promise<void> {
+    await this.deps.versions.unname(id, name);
+  }
+
+  async setRemote(id: ProjectId, remote: ProjectRemote | undefined): Promise<Result<void>> {
+    const project = await this.deps.projects.find(id);
+    if (!project) return unknownProject(id);
+    if (remote && !validRemote(remote)) return invalidRemote();
+    const { remote: _, ...rest } = project;
+    await this.deps.projects.revise(remote ? { ...rest, remote } : rest);
+    return ok(undefined);
+  }
+
+  async syncProject(id: ProjectId, credentials?: RemoteCredentials, resolutions: Readonly<Record<string, ConflictChoice>> = {}): Promise<Result<SyncOutcome>> {
+    const project = await this.deps.projects.find(id);
+    if (!project) return unknownProject(id);
+    const { remote } = project;
+    if (!remote) return fail({ code: 'no-remote', message: 'The project is not shared with a git repository yet.' });
+    return this.serially(async () => {
+      await this.record(id);
+      return this.exchange(id, remote, credentials, resolutions);
+    });
+  }
+
+  async openRemoteProject(remote: ProjectRemote, credentials?: RemoteCredentials): Promise<Result<ProjectSummary>> {
+    if (!validRemote(remote)) return invalidRemote();
+    const now = this.now();
+    // Named after the repository until its settings arrive.
+    const name = /([^/]+?)(\.git)?\/*$/.exec(remote.url)?.[1] ?? 'Shared project';
+    const project: Project = { id: asProjectId(this.deps.newId()), name, createdAt: now, modifiedAt: now, remote };
+    await this.deps.projects.establish(project);
+    const synced = await this.serially(() => this.exchange(project.id, remote, credentials, {}));
+    if (!synced.ok) {
+      await this.deleteProject(project.id);
+      return synced;
+    }
+    return ok(await this.summarizeProject((await this.deps.projects.find(project.id)) ?? project));
+  }
+
+  /** Exchanges versions with the remote (see `syncProject`). */
+  private async exchange(
+    id: ProjectId,
+    remote: ProjectRemote,
+    credentials: RemoteCredentials | undefined,
+    resolutions: Readonly<Record<string, ConflictChoice>>,
+  ): Promise<Result<SyncOutcome>> {
+    const { versions } = this.deps;
+    try {
+      const theirs = await versions.fetch(id, remote, credentials);
+      const mine = await versions.latest(id);
+      if (theirs === mine) return ok({ kind: 'up-to-date' });
+      const common = mine && theirs ? await versions.commonVersion(id, mine, theirs) : undefined;
+      if (!theirs || common === theirs) {
+        await versions.push(id, remote, credentials);
+        return ok({ kind: 'pushed' });
+      }
+      if (!mine || common === mine) {
+        await versions.advance(id, theirs);
+        await this.apply(id, theirs);
+        return ok({ kind: 'pulled' });
+      }
+      const merged = await this.merge(id, common, mine, theirs, resolutions);
+      if ('conflicts' in merged) return ok({ kind: 'conflicts', conflicts: merged.conflicts });
+      const version = (await versions.record(id, merged.files, `Merged the changes from ${remote.url}`, this.now(), theirs)) as string;
+      await this.apply(id, version);
+      await versions.push(id, remote, credentials);
+      return ok({ kind: 'merged' });
+    } catch (error) {
+      if (error instanceof RemoteError) return fail({ code: `remote-${error.problem}`, message: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Combines two versions file by file against the version they share: a file changed on one side
+   * takes that side; one changed on both needs a choice.
+   */
+  private async merge(
+    id: ProjectId,
+    common: string | undefined,
+    mine: string,
+    theirs: string,
+    resolutions: Readonly<Record<string, ConflictChoice>>,
+  ): Promise<{ files: VersionFile[] } | { conflicts: SyncConflict[] }> {
+    const { versions } = this.deps;
+    const paths = new Set([...(common ? await versions.files(id, common) : []), ...(await versions.files(id, mine)), ...(await versions.files(id, theirs))]);
+    const files: VersionFile[] = [];
+    const conflicts: SyncConflict[] = [];
+    for (const path of [...paths].sort()) {
+      const [base, ours, other] = await Promise.all([common, mine, theirs].map((v) => (v ? versions.readBytes(id, v, path) : undefined)));
+      let kept: Uint8Array | undefined;
+      if (sameBytes(ours, other) || sameBytes(other, base)) kept = ours;
+      else if (sameBytes(ours, base)) kept = other;
+      else if (resolutions[path]) kept = resolutions[path] === 'mine' ? ours : other;
+      else {
+        conflicts.push({ path, name: this.conflictName(path, ours ?? other) });
+        continue;
+      }
+      if (!kept) continue;
+      const bytes = kept;
+      files.push(isOriginal(path) ? { path, bytes: async () => bytes } : { path, text: new TextDecoder().decode(bytes) });
+    }
+    return conflicts.length ? { conflicts } : { files };
+  }
+
+  private conflictName(path: string, bytes: Uint8Array | undefined): string {
+    if (path === settingsPath) return 'Project settings';
+    try {
+      return (JSON.parse(new TextDecoder().decode(bytes)) as { name?: string }).name ?? path;
+    } catch {
+      return path;
+    }
+  }
+
+  /** Brings the project to a version's files: its settings, its documents and their originals. */
+  private async apply(id: ProjectId, version: string): Promise<void> {
+    const { versions, documents, assets, events } = this.deps;
+    const project = await this.deps.projects.find(id);
+    if (!project) return;
+    const settings = await versions.read(id, version, settingsPath);
+    if (settings) {
+      const { name, parameters } = JSON.parse(settings) as Pick<Project, 'name' | 'parameters'>;
+      await this.deps.projects.revise({ ...project, name, parameters: parameters ?? [], modifiedAt: this.now() });
+      if (JSON.stringify(parameters ?? []) !== JSON.stringify(project.parameters ?? [])) events.publish('projectParametersChanged', { projectId: id });
+    }
+    const kept = new Set<string>();
+    for (const path of await versions.files(id, version)) {
+      if (!documentPattern.test(path)) continue;
+      const text = (await versions.read(id, version, path)) as string;
+      const document = { ...(JSON.parse(text) as CadDocument), projectId: id } as CadDocument;
+      kept.add(document.id);
+      const current = await documents.load(document.id);
+      if (current && versionText(current) === text) continue;
+      if (document.kind === 'imported' && !(await assets.fetch(document.assetId))) {
+        const bytes = await versions.readBytes(id, version, originalPath(document.assetId));
+        if (bytes) await assets.keep({ id: document.assetId, projectId: id, name: document.fileName, byteLength: bytes.length, bytes });
+      }
+      await documents.store(document);
+      events.publish('documentRestored', { documentId: document.id });
+    }
+    for (const document of await documents.enumerate(id)) {
+      if (!kept.has(document.id)) await this.discardDocument(document.id);
+    }
+  }
 
   async listProjects(): Promise<ProjectSummary[]> {
     const projects = await this.deps.projects.enumerate();
@@ -141,6 +413,8 @@ export class DefaultProjectManager implements ProjectManager {
       await this.discardDocument(document.id);
     }
     await this.deps.projects.discard(id);
+    clearTimeout(this.pending.get(id));
+    await this.deps.versions.discard(id);
     this.deps.events.publish('projectDeleted', { projectId: id });
   }
 
@@ -301,9 +575,29 @@ export class DefaultProjectManager implements ProjectManager {
     return summarize(document);
   }
 
+  async saveThumbnail(id: DocumentId, png: Uint8Array): Promise<void> {
+    const document = await this.deps.documents.load(id);
+    if (!document) return;
+    await this.deps.assets.keep({ id: thumbnailId(id), projectId: document.projectId, name: 'thumbnail.png', byteLength: png.length, bytes: png });
+  }
+
+  async thumbnail(id: DocumentId): Promise<Uint8Array | undefined> {
+    return (await this.deps.assets.fetch(thumbnailId(id)))?.bytes;
+  }
+
+  async projectThumbnail(id: ProjectId): Promise<Uint8Array | undefined> {
+    const documents = [...(await this.deps.documents.enumerate(id))].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
+    for (const document of documents) {
+      const png = await this.thumbnail(document.id);
+      if (png) return png;
+    }
+    return undefined;
+  }
+
   private async discardDocument(id: DocumentId): Promise<void> {
     const document = await this.deps.documents.load(id);
     if (document?.kind === 'imported') await this.deps.assets.release(document.assetId);
+    await this.deps.assets.release(thumbnailId(id));
     await this.deps.documents.discard(id);
     this.deps.events.publish('documentDeleted', { documentId: id });
   }
@@ -311,6 +605,7 @@ export class DefaultProjectManager implements ProjectManager {
   private async touchProject(id: ProjectId): Promise<void> {
     const project = await this.deps.projects.find(id);
     if (project) await this.deps.projects.revise({ ...project, modifiedAt: this.now() });
+    this.scheduleVersion(id);
   }
 
   private async summarizeProject(project: Project): Promise<ProjectSummary> {

@@ -43,6 +43,12 @@ interface ProjectManager {
 
 Imported documents keep their original file; their summaries carry the `format`, so lists can tell drawings from 3D files.
 
+**Pictures** of documents (`saveThumbnail`, `thumbnail`, `projectThumbnail`) are PNGs the viewport takes once a model settles, kept as assets (`thumbnail-<documentId>`).
+
+**Versions** ([[Architecture/Decisions#ADR-30]]). The manager records the project through Version Access three seconds after the last `documentSaved` (published by the Design and Assembly Managers' commits) or project change: each document as JSON without its project id (`documents/<id>.json`), imported originals (`originals/<assetId>`, read only when not yet recorded) and the project's name and parameters (`project.json`). Recordings and syncs run one at a time. `projectHistory`, `documentHistory`, `nameVersion`, `unnameVersion` and `restoreDocument` (publishes `documentRestored`) work on that history.
+
+**Sync** (`setRemote`, `syncProject(id, credentials?, resolutions?)`, `openRemoteProject(remote, credentials?)`): record, fetch the remote's `main`, then push, fast-forward, or merge file by file against the common version. Files changed on both sides are reported as conflicts (`SyncOutcome` `conflicts`) until each has a resolution (`mine` or `theirs`); the merge version has both parents and is pushed. Taking versions applies their files: documents stored (and `documentRestored` published), documents no longer there discarded, missing originals kept as assets, project settings revised.
+
 It publishes queued events such as `DocumentRenamed` and `DocumentDeleted`. The Assembly Manager reacts to them, for example by flagging broken instance references.
 
 ### Design Manager
@@ -142,12 +148,13 @@ Atomic business verbs over a resource. Implementations vary by host and are chos
 | --- | --- | --- | --- |
 | **Project Access** | `enumerate`, `find`, `establish`, `revise`, `discard` projects | IndexedDB | `projects/<id>/project.json` |
 | **Document Access** | `load(id)` (migrates schema on read), `store(doc)`, `discard(id)`, `enumerate(projectId)` | IndexedDB | `projects/<id>/documents/<docId>.json` |
+| **Asset Access** | `keep(asset)`, `fetch(assetId)`, `release(assetId)`; `publishResult({ documentId, projectId, stamp, bytes })`, `latestResult(documentId)`, `discardResult(documentId)` | IndexedDB blobs | `projects/<id>/assets/*`, `projects/<id>/results/*` |
+| **Version Access** | `record(files, message, time, mergeOf?)`, `versions(path?)`, `latest`, `read`/`readBytes`, `files`, `commonVersion`, `advance`, `name`/`unname`, `discard`; `fetch(remote, credentials?)`, `push(remote, credentials?)` ([[src/core/access/version/version-access.ts]]) | a bare git repository per project (isomorphic-git) on an IndexedDB file system | the same in `projects/<id>/.git` |
+| **Shape Access** | `ready()` (loads OCCT once), `put(key, named shape)`, `get(key)`, `has(key)`; `find(named, ref)` resolves a persistent reference to its face or edge; `place(shape, transform)` makes a moved copy. OCCT loads once per thread | in-worker OCCT shapes with their face and edge names; least recently used ones are evicted and their memory freed | same |
+| **External File Access** | `deliver(bytes, suggestedName)` (exports) | download | Tauri dialog and fs plugins |
 
 > [!NOTE]
 > Choosing a file to import needs a user gesture, so the **client** shows the picker (or accepts a drop) and passes the file's name and bytes to the Project Manager as an `ExternalFile`. External File Access only delivers files *out* of the app.
-| **Asset Access** | `keep(asset)`, `fetch(assetId)`, `release(assetId)`; `publishResult({ documentId, projectId, stamp, bytes })`, `latestResult(documentId)`, `discardResult(documentId)` | IndexedDB blobs | `projects/<id>/assets/*`, `projects/<id>/results/*` |
-| **Shape Access** | `ready()` (loads OCCT once), `put(key, named shape)`, `get(key)`, `has(key)`; `find(named, ref)` resolves a persistent reference to its face or edge; `place(shape, transform)` makes a moved copy. OCCT loads once per thread | in-worker OCCT shapes with their face and edge names; least recently used ones are evicted and their memory freed | same |
-| **External File Access** | `deliver(bytes, suggestedName)` (exports) | download | Tauri dialog and fs plugins |
 
 ## Utilities
 

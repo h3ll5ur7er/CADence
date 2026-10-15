@@ -301,6 +301,7 @@ class Session implements DesignSession {
   private async commit(snapshot: Snapshot): Promise<void> {
     this.current = snapshot;
     await this.deps.documents.store(snapshot.document);
+    this.deps.events.publish('documentSaved', { projectId: snapshot.document.projectId, documentId: snapshot.document.id });
     const state = this.state();
     for (const listener of this.listeners) listener(state);
     await this.results.publish(snapshot.document, snapshot.derived.bodies, this.context.projectParameters, snapshot.document.configuration);

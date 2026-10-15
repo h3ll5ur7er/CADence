@@ -31,5 +31,8 @@ test('runs below a sub-path, opens deep links, and keeps working offline', async
   await expect(page.getByTestId('body-volume')).toHaveText('10,800 mm³');
   await page.waitForTimeout(800);
   await evidence(page, '29-offline-pages');
+  // Versions too: the version history's git library comes from the cache.
+  await page.getByRole('button', { name: 'History of Component 1' }).click();
+  await expect(page.getByRole('list', { name: 'Versions' }).getByRole('listitem').first()).toContainText('First version');
   await context.setOffline(false);
 });

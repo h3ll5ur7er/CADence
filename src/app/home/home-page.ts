@@ -6,10 +6,11 @@ import { ConfirmDialog, NameDialog } from '../shared/dialogs';
 import { plural, relativeTime } from '../shared/format';
 import { Thumbnail } from '../shared/thumbnail';
 import { Icon } from '../shared/icon';
+import { OpenRemoteDialog } from './open-remote-dialog';
 
 @Component({
   selector: 'cad-home-page',
-  imports: [RouterLink, Icon, NameDialog, ConfirmDialog, Thumbnail],
+  imports: [RouterLink, Icon, NameDialog, ConfirmDialog, Thumbnail, OpenRemoteDialog],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './home-page.html',
   styleUrl: './home-page.scss',
@@ -37,6 +38,10 @@ export class HomePage {
     if (!result.ok) return;
     const { project, firstDocument } = result.value;
     await this.router.navigate(['/projects', project.id, 'documents', firstDocument.id]);
+  }
+
+  protected async openProject(project: ProjectSummary): Promise<void> {
+    await this.router.navigate(['/projects', project.id]);
   }
 
   protected async rename(project: ProjectSummary): Promise<void> {

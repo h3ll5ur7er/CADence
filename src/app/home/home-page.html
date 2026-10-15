@@ -3,6 +3,10 @@
     <span class="mark" aria-hidden="true"></span>
     CADence
   </a>
+  <button type="button" class="btn open-remote" (click)="openRemote.open()">
+    <cad-icon name="sync" />
+    Open from git…
+  </button>
   <button type="button" class="btn btn-primary" (click)="createProject()">
     <cad-icon name="plus" />
     New project
@@ -74,3 +78,4 @@
 
 <cad-name-dialog />
 <cad-confirm-dialog />
+<cad-open-remote-dialog #openRemote (opened)="openProject($event)" />

@@ -13,6 +13,7 @@ classDiagram
     name: string
     createdAt, modifiedAt
     parameters?: Parameter[]
+    remote?: ProjectRemote
   }
   class DocumentSummary {
     id: DocumentId
@@ -51,6 +52,18 @@ classDiagram
 ```
 
 All lengths are stored **in millimetres**, and `units` controls display only. Angles are stored in degrees in expressions and in radians internally. Plain numbers in expressions are millimetres; a plain number typed in a document of another unit is saved with the unit written out (`lengthExpression`), so changing `units` never changes the model.
+
+## Versions
+
+Each project has a version history: a git repository with one commit per version on `main` and version names as tags ([[Architecture/Decisions#ADR-30]]). A version holds the files
+
+| Path | Content |
+| --- | --- |
+| `documents/<documentId>.json` | the document as stored, without `projectId` (a project has its own id on each device) |
+| `originals/<assetId>` | an imported document's original file, unchanged |
+| `project.json` | `{ name, parameters }` |
+
+`Project.remote` (`{ url, corsProxy? }`) is where the versions are synced; it is a setting of this device and not part of the versions. Sign-ins are never stored.
 
 ## Component results
 

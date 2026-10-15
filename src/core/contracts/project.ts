@@ -11,7 +11,38 @@ export interface Project {
   readonly modifiedAt: Timestamp;
   /** Parameters every component of the project can use; a component's own parameter of the same name wins. */
   readonly parameters?: readonly Parameter[];
+  /** Where the project's versions are shared, when they are. */
+  readonly remote?: ProjectRemote;
 }
+
+/** A git repository over HTTPS that a project's versions are synced with. */
+export interface ProjectRemote {
+  readonly url: string;
+  /** A CORS proxy for hosts a browser cannot reach directly (e.g. https://cors.isomorphic-git.org). */
+  readonly corsProxy?: string;
+}
+
+/** Sign-in for a remote, asked for when syncing and never stored; an access token goes in `password`. */
+export interface RemoteCredentials {
+  readonly username: string;
+  readonly password: string;
+}
+
+/** A document (or the project's settings) changed both here and on the remote. */
+export interface SyncConflict {
+  /** Where it is kept in the version history; resolutions are given by it. */
+  readonly path: string;
+  readonly name: string;
+}
+
+/** Which side of a conflict to keep. */
+export type ConflictChoice = 'mine' | 'theirs';
+
+export type SyncOutcome =
+  /** Nothing to do / sent our versions / took theirs / combined both and sent the result. */
+  | { readonly kind: 'up-to-date' | 'pushed' | 'pulled' | 'merged' }
+  /** Both sides changed these; sync again with a choice for each. */
+  | { readonly kind: 'conflicts'; readonly conflicts: readonly SyncConflict[] };
 
 /**
  * What a component result was made from: the component's last change and the project parameters it

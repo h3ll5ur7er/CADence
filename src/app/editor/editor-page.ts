@@ -24,6 +24,7 @@ import { SettingsDialog } from '../shared/settings-dialog';
 import { DocumentsPanel } from './documents-panel';
 import { EditorStatus } from './editor-status';
 import { HistoryDialog } from './history-dialog';
+import { SyncDialog } from './sync-dialog';
 import { ThumbnailSaver } from './thumbnail-saver';
 import { AssemblyMode } from './modes/assembly-mode';
 import { ComponentMode } from './modes/component-mode';
@@ -34,7 +35,7 @@ const storageLabels = { browser: 'This browser', 'project-folders': 'Project fol
 
 @Component({
   selector: 'cad-editor-page',
-  imports: [RouterLink, Icon, DocumentsPanel, ComponentMode, AssemblyMode, ImportedMode, NameDialog, ConfirmDialog, SettingsDialog, HistoryDialog],
+  imports: [RouterLink, Icon, DocumentsPanel, ComponentMode, AssemblyMode, ImportedMode, NameDialog, ConfirmDialog, SettingsDialog, HistoryDialog, SyncDialog],
   providers: [EditorStatus, ThumbnailSaver],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './editor-page.html',
@@ -56,6 +57,7 @@ export class EditorPage {
   private readonly router = inject(Router);
   private readonly nameDialog = viewChild.required(NameDialog);
   private readonly confirmDialog = viewChild.required(ConfirmDialog);
+  private readonly syncDialog = viewChild.required(SyncDialog);
 
   protected readonly project = resource({
     params: () => asProjectId(this.projectId()),
@@ -127,11 +129,16 @@ export class EditorPage {
     this.project.reload();
   }
 
+  protected openSync(): void {
+    const project = this.project.value();
+    if (project) this.syncDialog().open(project);
+  }
+
   private open(document: DocumentSummary, replaceUrl = false): Promise<boolean> {
     return this.router.navigate(['/projects', document.projectId, 'documents', document.id], { replaceUrl });
   }
 
-  private refresh(): void {
+  protected refresh(): void {
     this.documents.reload();
     this.project.reload();
   }

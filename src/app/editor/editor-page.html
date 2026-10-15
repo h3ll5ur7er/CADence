@@ -14,7 +14,13 @@
       <span class="mode-chip" [attr.data-kind]="doc.kind">{{ kindLabels[doc.kind] }}</span>
     }
   </nav>
-  <button type="button" class="icon-btn settings" aria-label="Settings and shortcuts" title="Settings and shortcuts (?)" (click)="settings.open()">
+  <button type="button" class="icon-btn sync" aria-label="Sync with git" title="Sync with git" [disabled]="!project.value()" (click)="openSync()">
+    <cad-icon name="sync" />
+    @if (project.value()?.remote) {
+      <span class="synced-dot" aria-hidden="true"></span>
+    }
+  </button>
+  <button type="button" class="icon-btn" aria-label="Settings and shortcuts" title="Settings and shortcuts (?)" (click)="settings.open()">
     <cad-icon name="settings" />
   </button>
 </header>
@@ -88,3 +94,4 @@
 <cad-settings-dialog #settings />
 <cad-confirm-dialog />
 <cad-history-dialog #historyDialog (restored)="documents.reload(); project.reload()" />
+<cad-sync-dialog (synced)="refresh()" />

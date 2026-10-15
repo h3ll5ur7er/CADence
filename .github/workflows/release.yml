@@ -1,0 +1,49 @@
+# CAD-59: a version tag (v1.2.3, matching `node tools/release/version.mjs`) builds the desktop
+# installers and publishes them as a GitHub release, with the signed update files (latest.json) that
+# installed desktop apps check for at start.
+#
+# Needs the repository secrets TAURI_SIGNING_PRIVATE_KEY (the private key made with
+# `npx tauri signer generate`, whose public key is in src-tauri/tauri.conf.json) and
+# TAURI_SIGNING_PRIVATE_KEY_PASSWORD (empty if it has none). See docs/Development.md#releases.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  desktop:
+    name: Desktop installers (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: The tag matches the version
+        shell: bash
+        run: test "v$(node tools/release/version.mjs)" = "$GITHUB_REF_NAME"
+      - run: npm ci
+      - name: Build, sign the update files and publish the release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: CADence ${{ github.ref_name }}
+          releaseBody: Installers for Windows. Installed apps update themselves; the web app is at https://h3ll5ur7er.github.io/CADence/.
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true
+          args: --config src-tauri/tauri.release.conf.json

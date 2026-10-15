@@ -24,6 +24,7 @@ import { SettingsDialog } from '../shared/settings-dialog';
 import { DocumentsPanel } from './documents-panel';
 import { EditorStatus } from './editor-status';
 import { HistoryDialog } from './history-dialog';
+import { AboutDialog } from '../about/about-dialog';
 import { SyncDialog } from './sync-dialog';
 import { ThumbnailSaver } from './thumbnail-saver';
 import { AssemblyMode } from './modes/assembly-mode';
@@ -35,7 +36,7 @@ const storageLabels = { browser: 'This browser', 'project-folders': 'Project fol
 
 @Component({
   selector: 'cad-editor-page',
-  imports: [RouterLink, Icon, DocumentsPanel, ComponentMode, AssemblyMode, ImportedMode, NameDialog, ConfirmDialog, SettingsDialog, HistoryDialog, SyncDialog],
+  imports: [RouterLink, Icon, DocumentsPanel, ComponentMode, AssemblyMode, ImportedMode, NameDialog, ConfirmDialog, SettingsDialog, HistoryDialog, SyncDialog, AboutDialog],
   providers: [EditorStatus, ThumbnailSaver],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './editor-page.html',

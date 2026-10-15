@@ -10,10 +10,10 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 
 ## Obligations and housekeeping
 
-- [X] **About dialog with licence credits.** ADR-2 promises to credit OpenCascade (LGPL-2.1) and planegcs (LGPL) in an About dialog; no such dialog exists yet. The bundled Inter font (SIL Open Font License), opentype.js (MIT) and isomorphic-git (MIT) belong there too. *(ADR-2, ADR-3, ADR-26, ADR-30; an obligation before any release)* → [[CAD-57]]
-- [X] **Desktop smoke tests in the repository.** The desktop checks (WebView2 remote debugging, window capture) are scripts outside the repository and run by hand. *(phases 1–6)* → [[CAD-58]]
-- [X] **Desktop installers.** Only the bare executable was built and tested (`tauri build --no-bundle`); the MSI/NSIS installers, code signing and auto-update are untried. *(phase 1)* → [[CAD-59]]
-- [X] **Native save dialog under test.** Exports on desktop go through the Tauri save dialog, which no automated test drives. *(phase 3)* → [[CAD-58]]
+- [X] **About dialog with licence credits.** ADR-2 promises to credit OpenCascade (LGPL-2.1) and planegcs (LGPL) in an About dialog; no such dialog exists yet. The bundled Inter font (SIL Open Font License), opentype.js (MIT) and isomorphic-git (MIT) belong there too. *(ADR-2, ADR-3, ADR-26, ADR-30; an obligation before any release)* → [[CAD-57]] ✅
+- [X] **Desktop smoke tests in the repository.** The desktop checks (WebView2 remote debugging, window capture) are scripts outside the repository and run by hand. *(phases 1–6)* → [[CAD-58]] ✅
+- [X] **Desktop installers.** Only the bare executable was built and tested (`tauri build --no-bundle`); the MSI/NSIS installers, code signing and auto-update are untried. *(phase 1)* → [[CAD-59]] ✅ (code signing documented, needs a certificate)
+- [X] **Native save dialog under test.** Exports on desktop go through the Tauri save dialog, which no automated test drives. *(phase 3)* → [[CAD-58]] ✅
 - [ ] **Other browsers.** Browser tests run in Chromium only; Firefox and Safari (WebGL 2 fallback, file APIs) are untested. *(new)*
 - [ ] **Steadier browser journeys.** The git sync journey failed once in a slow run of the whole suite (phase 14); look for timing assumptions before CI shows it again. *(phase 14)*
 - [ ] **Release process:** version numbers, a changelog and release notes in the app ("What's new"). *(new)*

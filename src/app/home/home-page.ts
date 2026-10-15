@@ -6,11 +6,12 @@ import { ConfirmDialog, NameDialog } from '../shared/dialogs';
 import { plural, relativeTime } from '../shared/format';
 import { Thumbnail } from '../shared/thumbnail';
 import { Icon } from '../shared/icon';
+import { AboutDialog } from '../about/about-dialog';
 import { OpenRemoteDialog } from './open-remote-dialog';
 
 @Component({
   selector: 'cad-home-page',
-  imports: [RouterLink, Icon, NameDialog, ConfirmDialog, Thumbnail, OpenRemoteDialog],
+  imports: [RouterLink, Icon, NameDialog, ConfirmDialog, Thumbnail, OpenRemoteDialog, AboutDialog],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './home-page.html',
   styleUrl: './home-page.scss',

@@ -1,6 +1,6 @@
 [package]
 name = "cadence"
-version = "0.1.0"
+version = "0.15.0"
 description = "CADence: parametric CAD for 3D printing and laser cutting"
 authors = ["Emanuel Knecht"]
 license = ""
@@ -16,5 +16,10 @@ tauri-build = { version = "2.7.2", features = [] }
 
 [dependencies]
 tauri = { version = "2.12.3", features = [] }
+# Plugin settings in tauri.conf.json are embedded as JSON by `generate_context!`.
+serde_json = "1"
 tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-opener = "~2.6"
+tauri-plugin-process = "~2.4"
+tauri-plugin-updater = "~2.13"

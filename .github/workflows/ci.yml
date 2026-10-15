@@ -1,4 +1,4 @@
-# CAD-31, CAD-32: every push and pull request is checked; master is then published on GitHub Pages.
+# CAD-31, CAD-32, CAD-58: every push and pull request is checked (the desktop app on Windows too); master is then published on GitHub Pages.
 name: CI
 
 on:
@@ -48,6 +48,43 @@ jobs:
           path: |
             e2e/evidence/
             playwright-report/
+            test-results/
+          retention-days: 14
+
+  desktop:
+    name: Desktop smoke test (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: WebView2 runtime
+        shell: pwsh
+        run: |
+          $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          if (-not (Test-Path $key)) {
+            Invoke-WebRequest 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile "$env:RUNNER_TEMP\webview2.exe"
+            Start-Process "$env:RUNNER_TEMP\webview2.exe" -ArgumentList '/silent', '/install' -Wait
+          }
+      - run: npm ci
+      - name: Build the desktop app
+        run: npx tauri build --no-bundle
+      - name: Smoke test (WebView2 remote debugging, the native save dialog)
+        run: npm run e2e:desktop
+      - name: Keep the evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop
+          path: |
+            e2e/evidence/63-desktop.png
             test-results/
           retention-days: 14
 

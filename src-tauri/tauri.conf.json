@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "CADence",
-  "version": "0.1.0",
+  "version": "0.15.0",
   "identifier": "dev.cadence.app",
   "build": {
     "frontendDist": "../dist/cadence/browser",
@@ -30,12 +30,33 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "Emanuel Knecht",
+    "copyright": "Emanuel Knecht",
+    "category": "Graphics and Design",
+    "shortDescription": "Parametric CAD for 3D printing and laser cutting",
+    "longDescription": "CADence is a parametric CAD application for 3D printing and laser cutting: sketches, features, assemblies, analysis and export.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ0MzdGQTFCMkU2Q0E5OEEKUldTS3FXd3VHL28zUkdLWHJqNFBZajErL2JyVTdwUEJQV0tTNjBWWVN6Nm1OTGw1N0VMb1pQbWUK",
+      "endpoints": [
+        "https://github.com/h3ll5ur7er/CADence/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

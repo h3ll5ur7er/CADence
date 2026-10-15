@@ -8,6 +8,9 @@ import { routes } from './app.routes';
 import { provideCore } from './core.providers';
 import { TauriFileDelivery } from './platform/tauri-file-delivery';
 import { TauriFileSystem } from './platform/tauri-file-system';
+import { openWebLinksInBrowser } from './platform/tauri-links';
+import { TauriUpdater } from './platform/tauri-updater';
+import { AppUpdates, DesktopUpdates, ServiceWorkerUpdates } from './shared/app-updates';
 
 /**
  * The sketch solver's WebAssembly is copied to /wasm by the build (angular.json assets); the geometry
@@ -24,6 +27,7 @@ const desktop = isTauri();
 const core = desktop
   ? createDesktopCore(new TauriFileSystem(), new TauriFileDelivery(), options)
   : createBrowserCore(options);
+if (desktop) openWebLinksInBrowser();
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -32,5 +36,7 @@ export const appConfig: ApplicationConfig = {
     provideCore(core),
     // The web app works offline from its cache (ngsw-config.json); the desktop app is installed and needs none.
     provideServiceWorker('ngsw-worker.js', { enabled: !isDevMode() && !desktop, registrationStrategy: 'registerWhenStable:5000' }),
+    // Newer versions: the service worker's on the web, signed GitHub releases on the desktop.
+    desktop ? { provide: AppUpdates, useValue: new DesktopUpdates(new TauriUpdater()) } : { provide: AppUpdates, useClass: ServiceWorkerUpdates },
   ],
 };

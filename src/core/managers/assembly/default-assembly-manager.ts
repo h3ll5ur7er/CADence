@@ -1,5 +1,6 @@
 import type { AssetAccess } from '@core/access/asset';
 import type { DocumentAccess } from '@core/access/document';
+import type { ProjectAccess } from '@core/access/project';
 import type { ExternalFileAccess } from '@core/access/external-file';
 import {
   type AssemblyDocument,
@@ -15,6 +16,7 @@ import {
   ok,
   type PlaneFrame,
   type Result,
+  resultStamp,
 } from '@core/contracts';
 import type { AnalysisEngine } from '@core/engines/analysis';
 import type { InterchangeEngine } from '@core/engines/interchange';
@@ -26,6 +28,8 @@ import type { AssemblyCommand, AssemblyFormat, AssemblyManager, AssemblySession,
 import { applyCommand } from './commands';
 
 export interface AssemblyManagerDependencies {
+  /** Project parameters are part of what a component result was made from. */
+  readonly projects: ProjectAccess;
   readonly documents: DocumentAccess;
   readonly assets: AssetAccess;
   readonly externalFiles: ExternalFileAccess;
@@ -80,6 +84,10 @@ class Session implements AssemblySession {
       ),
       events.subscribe('documentRenamed', ({ documentId }) => (uses(documentId) ? this.serialized(() => this.refresh(documentId, 'changed')) : undefined)),
       events.subscribe('documentDeleted', ({ documentId }) => (uses(documentId) ? this.serialized(() => this.refresh(documentId, 'changed')) : undefined)),
+      // New project parameters make the project's component results stale.
+      events.subscribe('projectParametersChanged', ({ projectId }) =>
+        projectId === this.document.projectId ? this.serialized(async () => { for (const id of [...this.components.keys()]) await this.refresh(id, 'changed'); }) : undefined,
+      ),
     ];
   }
 
@@ -231,7 +239,8 @@ class Session implements AssemblySession {
       return;
     }
     const result = await this.deps.assets.latestResult(id);
-    if (result?.stamp !== document.modifiedAt) {
+    const stamp = resultStamp(document.modifiedAt, (await this.deps.projects.find(document.projectId))?.parameters);
+    if (result?.stamp !== stamp) {
       const requests = this.requests.get(id) ?? 0;
       if (reason === 'regenerated' && requests >= maxRequests) {
         this.components.set(id, { view: { id, name: document.name, status: 'missing', bodies: [] }, bodies: [], stamp: '' });

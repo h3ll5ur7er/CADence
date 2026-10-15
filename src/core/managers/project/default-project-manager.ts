@@ -17,6 +17,7 @@ import {
   fail,
   type ImportFormat,
   ok,
+  type Parameter,
   type Project,
   type ProjectId,
   type ProjectSummary,
@@ -24,6 +25,7 @@ import {
   summarize,
 } from '@core/contracts';
 import type { InterchangeEngine } from '@core/engines/interchange';
+import type { ParameterEngine } from '@core/engines/parameter';
 import type { Clock } from '@core/utilities/clock';
 import type { EventBus } from '@core/utilities/messaging';
 import type { CreatedProject, ExternalFile, ImportedContent, ImportedView, ProjectManager } from './project-manager';
@@ -34,6 +36,8 @@ export interface ProjectManagerDependencies {
   readonly assets: AssetAccess;
   readonly externalFiles: ExternalFileAccess;
   readonly interchange: InterchangeEngine;
+  /** Checks project parameters before they are saved. */
+  readonly parameters: ParameterEngine;
   readonly events: EventBus<DomainEvents>;
   readonly clock: Clock;
   readonly newId: () => string;
@@ -119,6 +123,16 @@ export class DefaultProjectManager implements ProjectManager {
     const project = await this.deps.projects.find(id);
     if (!project) return unknownProject(id);
     await this.deps.projects.revise({ ...project, name: valid.value, modifiedAt: this.now() });
+    return ok(undefined);
+  }
+
+  async setProjectParameters(id: ProjectId, parameters: readonly Parameter[]): Promise<Result<void>> {
+    const project = await this.deps.projects.find(id);
+    if (!project) return unknownProject(id);
+    const evaluated = this.deps.parameters.evaluateAll(parameters);
+    if (!evaluated.ok) return evaluated;
+    await this.deps.projects.revise({ ...project, parameters, modifiedAt: this.now() });
+    this.deps.events.publish('projectParametersChanged', { projectId: id });
     return ok(undefined);
   }
 

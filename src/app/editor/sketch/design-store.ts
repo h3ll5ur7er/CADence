@@ -124,10 +124,16 @@ export class DesignStore {
     inject(DestroyRef).onDestroy(() => this.unsubscribe?.());
   }
 
+  /** The parameters of the open component's project (all of them, also those the component overrides). */
+  readonly projectParameters = signal<readonly Parameter[]>([]);
+  private projectId: ProjectId | undefined;
+
   async open(documentId: DocumentId, projectId: ProjectId): Promise<void> {
     this.unsubscribe?.();
     this.reset();
+    this.projectId = projectId;
     void this.projects.listDocuments(projectId).then((documents) => this.projectDocuments.set(documents));
+    void this.projects.findProject(projectId).then((project) => this.projectParameters.set(project?.parameters ?? []));
     const opened = await this.manager.open(documentId);
     if (!opened.ok) {
       this.error.set(opened.error.message);
@@ -225,6 +231,15 @@ export class DesignStore {
 
   async setParameter(parameter: Parameter, isNew: boolean): Promise<boolean> {
     return this.run(isNew ? { type: 'add-parameter', parameter } : { type: 'set-parameter', parameter });
+  }
+
+  /** Replaces the project's parameters; every component of the project regenerates. */
+  async setProjectParameters(parameters: readonly Parameter[]): Promise<boolean> {
+    if (!this.projectId) return false;
+    const result = await this.projects.setProjectParameters(this.projectId, parameters);
+    this.error.set(result.ok ? undefined : result.error.message);
+    if (result.ok) this.projectParameters.set(parameters);
+    return result.ok;
   }
 
   async exportBodies(format: SolidFormat, options?: ExportOptions): Promise<void> {

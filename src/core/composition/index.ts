@@ -108,8 +108,9 @@ export function createCore(host: Host): Core {
       }
     : localGeometry();
   return {
-    projectManager: createProjectManager({ projects, documents, assets, externalFiles, interchange: geometry.interchange, events, clock: systemClock, newId }),
+    projectManager: createProjectManager({ projects, documents, assets, externalFiles, interchange: geometry.interchange, parameters: createParameterEngine(), events, clock: systemClock, newId }),
     designManager: createDesignManager({
+      projects,
       documents,
       externalFiles,
       sketches: createSketchEngine({ ...(host.solverWasmUrl ? { wasmUrl: host.solverWasmUrl } : {}), fonts: fontSource(host.fontUrls) }),
@@ -122,6 +123,7 @@ export function createCore(host: Host): Core {
       clock: systemClock,
     }),
     assemblyManager: createAssemblyManager({
+      projects,
       documents,
       assets,
       externalFiles,

@@ -1,5 +1,6 @@
 import { InMemoryAssetAccess } from '@core/access/asset';
 import { InMemoryDocumentAccess } from '@core/access/document';
+import { InMemoryProjectAccess } from '@core/access/project';
 import { InMemoryExternalFileAccess } from '@core/access/external-file';
 import { createShapeAccess } from '@core/access/shape';
 import {
@@ -117,6 +118,7 @@ describe('AssemblyManager', () => {
       events.publish('componentRegenerated', { documentId, ok: documentId === link });
     });
     const manager = createAssemblyManager({
+      projects: new InMemoryProjectAccess(),
       documents,
       assets,
       externalFiles: files,

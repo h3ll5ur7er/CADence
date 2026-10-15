@@ -114,6 +114,8 @@ export interface ParameterView {
   readonly parameter: Parameter;
   /** Evaluated value with a unit label, e.g. "12 mm" or "30°". */
   readonly display?: string;
+  /** A project parameter (edited in the project, used here). */
+  readonly project?: boolean;
 }
 
 export interface DesignState {

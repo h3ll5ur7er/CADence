@@ -1,5 +1,6 @@
 import type { AssetAccess } from '@core/access/asset';
 import type { DocumentAccess } from '@core/access/document';
+import type { ProjectAccess } from '@core/access/project';
 import type { ExternalFileAccess } from '@core/access/external-file';
 import {
   type BodyMesh,
@@ -10,13 +11,15 @@ import {
   type DomainEvents,
   fail,
   isSketch,
-  manufacturingProfiles,
   type ManufacturingProfile,
+  manufacturingProfiles,
   type Material,
   materials,
   type Measurement,
   ok,
+  type Parameter,
   type Result,
+  resultStamp,
   type TopologyRef,
   type ValidationReport,
 } from '@core/contracts';
@@ -39,9 +42,11 @@ import type {
   SketchView,
   SolidFormat,
 } from './design-manager';
-import { type Derived, Regeneration } from './regeneration';
+import { type Derived, Regeneration, type RegenerationContext } from './regeneration';
 
 export interface DesignManagerDependencies {
+  /** Where project parameters are read. */
+  readonly projects: ProjectAccess;
   readonly documents: DocumentAccess;
   readonly externalFiles: ExternalFileAccess;
   readonly sketches: SketchEngine;
@@ -77,13 +82,24 @@ class Session implements DesignSession {
   private readonly meshCache = new Map<string, BodyMesh>();
   private queue: Promise<unknown> = Promise.resolve();
 
+  /** Listening for project parameter changes, while the session has listeners. */
+  private projectWatch: (() => void) | undefined;
+
   constructor(
     private readonly deps: DesignManagerDependencies,
     initial: Snapshot,
     private readonly results: ResultPublisher,
+    private context: RegenerationContext,
   ) {
     this.current = initial;
     for (const mesh of initial.meshes) this.meshCache.set(mesh.key, mesh);
+  }
+
+  /** Regenerates with the project's new parameters; the document itself does not change. */
+  private async projectChanged(): Promise<void> {
+    this.context = { ...this.context, projectParameters: await projectParametersOf(this.deps, this.current.document) };
+    const derived = await new Regeneration(this.deps).run(this.current.document, this.context);
+    await this.commit({ document: this.current.document, derived, meshes: await this.meshes(derived) });
   }
 
   state(): DesignState {
@@ -103,7 +119,17 @@ class Session implements DesignSession {
 
   subscribe(listener: (state: DesignState) => void): () => void {
     this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    const { projectId } = this.current.document;
+    this.projectWatch ??= this.deps.events.subscribe('projectParametersChanged', (event) =>
+      event.projectId === projectId ? void this.serialized(() => this.projectChanged()) : undefined,
+    );
+    return () => {
+      this.listeners.delete(listener);
+      if (this.listeners.size === 0) {
+        this.projectWatch?.();
+        this.projectWatch = undefined;
+      }
+    };
   }
 
   /** Commands run one after another, so fast input (drags, typing) can never interleave. */
@@ -219,7 +245,7 @@ class Session implements DesignSession {
     const applied = applyCommand(this.current.document, command);
     if (!applied.ok) return applied;
     const { document, target, drag } = applied.value;
-    const derived = await new Regeneration(this.deps, drag).run(document);
+    const derived = await new Regeneration(this.deps, drag).run(document, this.context);
     if (applied.value.parameters) {
       if (derived.parameterError) return fail(derived.parameterError);
       // A parameter change must not break anything that worked before.
@@ -261,7 +287,7 @@ class Session implements DesignSession {
     await this.deps.documents.store(snapshot.document);
     const state = this.state();
     for (const listener of this.listeners) listener(state);
-    await this.results.publish(snapshot.document, snapshot.derived.bodies);
+    await this.results.publish(snapshot.document, snapshot.derived.bodies, this.context.projectParameters);
   }
 
   private serialized<T>(work: () => Promise<T>): Promise<T> {
@@ -269,6 +295,11 @@ class Session implements DesignSession {
     this.queue = run.catch(() => undefined);
     return run;
   }
+}
+
+/** The parameters of the component's project. */
+async function projectParametersOf(deps: DesignManagerDependencies, document: ComponentDocument): Promise<readonly Parameter[]> {
+  return (await deps.projects.find(document.projectId))?.parameters ?? [];
 }
 
 const materialOf = (document: ComponentDocument): Material => document.material ?? (materials[0] as Material);
@@ -292,10 +323,11 @@ class ResultPublisher {
 
   constructor(private readonly deps: DesignManagerDependencies) {}
 
-  async publish(document: ComponentDocument, bodies: readonly BodyState[]): Promise<void> {
+  async publish(document: ComponentDocument, bodies: readonly BodyState[], projectParameters: readonly Parameter[] = []): Promise<void> {
     const keys = bodies.map((b) => b.key).join('|');
     if (this.last?.keys !== keys) this.last = { keys, bytes: await this.deps.modeling.snapshot(bodies) };
-    await this.deps.assets.publishResult({ documentId: document.id, projectId: document.projectId, stamp: document.modifiedAt, bytes: this.last.bytes });
+    const stamp = resultStamp(document.modifiedAt, projectParameters);
+    await this.deps.assets.publishResult({ documentId: document.id, projectId: document.projectId, stamp, bytes: this.last.bytes });
   }
 }
 
@@ -310,9 +342,10 @@ export class DefaultDesignManager implements DesignManager {
     if (document?.kind !== 'component') {
       return fail({ code: 'unknown-document', message: `Component ${documentId} does not exist.` });
     }
-    const derived = await new Regeneration(this.deps).run(document);
+    const context = { projectParameters: await projectParametersOf(this.deps, document) };
+    const derived = await new Regeneration(this.deps).run(document, context);
     const meshes = derived.bodies.length ? await this.deps.modeling.tessellate(derived.bodies) : [];
-    return ok(new Session(this.deps, { document, derived, meshes }, new ResultPublisher(this.deps)));
+    return ok(new Session(this.deps, { document, derived, meshes }, new ResultPublisher(this.deps), context));
   }
 
   /** Answers a queued `regenerateComponent` request with `componentRegenerated`. */
@@ -322,8 +355,9 @@ export class DefaultDesignManager implements DesignManager {
       this.deps.events.publish('componentRegenerated', { documentId, ok: false });
       return;
     }
-    const derived = await new Regeneration(this.deps).run(document);
-    await new ResultPublisher(this.deps).publish(document, derived.bodies);
+    const projectParameters = await projectParametersOf(this.deps, document);
+    const derived = await new Regeneration(this.deps).run(document, { projectParameters });
+    await new ResultPublisher(this.deps).publish(document, derived.bodies, projectParameters);
     this.deps.events.publish('componentRegenerated', { documentId, ok: true });
   }
 }

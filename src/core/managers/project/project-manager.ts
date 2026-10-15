@@ -4,6 +4,7 @@ import type {
   DocumentId,
   DocumentSummary,
   ImportFormat,
+  Parameter,
   ProjectId,
   ProjectSummary,
   Result,
@@ -55,6 +56,8 @@ export interface ProjectManager {
   createProject(name: string): Promise<Result<CreatedProject>>;
   renameProject(id: ProjectId, name: string): Promise<Result<void>>;
   deleteProject(id: ProjectId): Promise<void>;
+  /** Replaces the project's parameters (checked first: names, cycles, expressions); its components regenerate. */
+  setProjectParameters(id: ProjectId, parameters: readonly Parameter[]): Promise<Result<void>>;
 
   /** Grouped by kind (components, assemblies, imported), then by name. */
   listDocuments(projectId: ProjectId): Promise<DocumentSummary[]>;

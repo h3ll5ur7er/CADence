@@ -70,8 +70,8 @@ export async function plateProject(page: Page, name: string, home = '/'): Promis
   await page.getByRole('button', { name: /Parameters/ }).click();
   await page.getByRole('textbox', { name: 'New parameter name' }).fill('thickness');
   await page.getByRole('textbox', { name: 'New parameter expression' }).fill('6 mm');
-  await page.getByRole('button', { name: 'Add' }).click();
-  await expect(page.getByRole('table', { name: 'Parameters' })).toContainText('6 mm');
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  await expect(page.getByRole('table', { name: 'Parameters', exact: true })).toContainText('6 mm');
   await page.getByRole('button', { name: 'Close parameters' }).click();
 
   await rectangleSketch(page, 'XY plane (top)', 60, 30);
@@ -109,7 +109,7 @@ export async function setThickness(page: Page, expression: string): Promise<void
   await page.getByRole('button', { name: /Parameters/ }).click();
   await page.getByRole('textbox', { name: 'Expression of thickness' }).fill(expression);
   await page.getByRole('textbox', { name: 'Expression of thickness' }).press('Enter');
-  await expect(page.getByRole('table', { name: 'Parameters' })).toContainText(expression);
+  await expect(page.getByRole('table', { name: 'Parameters', exact: true })).toContainText(expression);
   await page.getByRole('button', { name: 'Close parameters' }).click();
 }
 

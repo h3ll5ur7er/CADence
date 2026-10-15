@@ -18,3 +18,24 @@ test('shows and takes lengths in inches without changing the model', async ({ pa
   await page.getByRole('combobox', { name: 'Units' }).selectOption('in');
   await evidence(page, '52-inches');
 });
+
+test('drives a component from a project parameter', async ({ page }) => {
+  await plateProject(page, 'Shared parameters');
+  await page.getByRole('button', { name: /Parameters/ }).click();
+  await page.getByRole('textbox', { name: 'New project parameter name' }).fill('sheet');
+  await page.getByRole('textbox', { name: 'New project parameter expression' }).fill('12 mm');
+  await page.getByRole('textbox', { name: 'New project parameter expression' }).press('Enter');
+  const shared = page.getByRole('table', { name: 'Project parameters' });
+  await expect(shared).toContainText('12 mm');
+  // The component's thickness follows the project's sheet.
+  await page.getByRole('textbox', { name: 'Expression of thickness' }).fill('sheet');
+  await page.getByRole('textbox', { name: 'Expression of thickness' }).press('Enter');
+  await expect(page.getByRole('table', { name: 'Parameters', exact: true })).toContainText('12 mm');
+  await page.getByRole('textbox', { name: 'Expression of project parameter sheet' }).fill('3 mm');
+  await page.getByRole('textbox', { name: 'Expression of project parameter sheet' }).press('Enter');
+  await expect(shared).toContainText('3 mm');
+  await expect(page.getByRole('table', { name: 'Parameters', exact: true })).toContainText('3 mm');
+  await evidence(page, '53-project-parameters');
+  await page.getByRole('button', { name: 'Close parameters' }).click();
+  await expect(page.getByTestId('body-size')).toHaveText('60, 30, 3 mm');
+});

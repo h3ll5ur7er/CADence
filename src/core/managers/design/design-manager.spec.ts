@@ -1,6 +1,7 @@
 import { InMemoryAssetAccess } from '@core/access/asset';
 import { InMemoryDocumentAccess } from '@core/access/document';
 import { InMemoryExternalFileAccess } from '@core/access/external-file';
+import { InMemoryProjectAccess } from '@core/access/project';
 import { createShapeAccess } from '@core/access/shape';
 import {
   asAssetId,
@@ -67,10 +68,13 @@ describe('DesignManager', () => {
   let files: InMemoryExternalFileAccess;
   let assets: InMemoryAssetAccess;
   let events: EventBus<DomainEvents>;
+  let projects: InMemoryProjectAccess;
   let session: DesignSession;
   let documentId: ComponentDocument['id'];
 
   beforeEach(async () => {
+    projects = new InMemoryProjectAccess();
+    await projects.establish({ id: asProjectId('p1'), name: 'Project', createdAt: '2026-10-14T10:00:00.000Z', modifiedAt: '2026-10-14T10:00:00.000Z' });
     documents = new InMemoryDocumentAccess();
     files = new InMemoryExternalFileAccess();
     assets = new InMemoryAssetAccess();
@@ -90,6 +94,7 @@ describe('DesignManager', () => {
       rollbackIndex: 0,
     });
     const manager = createDesignManager({
+      projects,
       documents,
       externalFiles: files,
       sketches: sketchEngine,
@@ -488,6 +493,32 @@ describe('DesignManager', () => {
       unwrap(await session.execute({ type: 'set-dimension', sketchId: 's1', constraintId: 'h', expression: lengthExpression('1', 'in') }));
       unwrap(await session.execute({ type: 'set-units', units: 'mm' }));
       expect(await volume()).toBeCloseTo(60 * 25.4 * 6);
+    });
+
+    it('uses project parameters, follows their changes, and lets its own win', async () => {
+      await plate();
+      /** Sets the project's parameters as the Project Manager does, and waits for the session to regenerate. */
+      const setShared = async (parameters: { id: string; name: string; expression: string }[]) => {
+        const updated = new Promise<void>((resolve) => {
+          const stop = session.subscribe(() => {
+            stop();
+            resolve();
+          });
+        });
+        const project = await projects.find(asProjectId('p1'));
+        await projects.revise({ ...(project as NonNullable<typeof project>), parameters });
+        events.publish('projectParametersChanged', { projectId: asProjectId('p1') });
+        await updated;
+      };
+      const stop = session.subscribe(() => undefined);
+      await setShared([{ id: 'g', name: 'gap', expression: '10 mm' }, { id: 'w', name: 'width', expression: '999 mm' }]);
+      expect(session.state().parameters.filter((p) => p.project).map((p) => p.parameter.name)).toEqual(['gap']);
+      unwrap(await session.execute({ type: 'set-dimension', sketchId: 's1', constraintId: 'h', expression: 'gap * 3' }));
+      expect(await volume()).toBeCloseTo(60 * 30 * 6);
+      await setShared([{ id: 'g', name: 'gap', expression: '5 mm' }]);
+      expect(await volume()).toBeCloseTo(60 * 15 * 6);
+      expect((await assets.latestResult(documentId))?.stamp).toContain('#');
+      stop();
     });
 
     it('refuses parameter changes that would break the model', async () => {

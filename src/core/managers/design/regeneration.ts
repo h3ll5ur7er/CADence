@@ -14,6 +14,7 @@ import {
   type LengthUnit,
   lengthUnitSize,
   metricThreads,
+  type Parameter,
   type PlaneRef,
   type Profile,
   type ThreadMarker,
@@ -50,6 +51,11 @@ function handlesMoved(before: Sketch, after: Sketch): boolean {
       return p?.kind === 'point' && q?.kind === 'point' && Math.hypot(p.x - q.x, p.y - q.y) > 1e-9;
     });
   });
+}
+
+/** What a component is regenerated with, beyond its own document. */
+export interface RegenerationContext {
+  readonly projectParameters?: readonly Parameter[];
 }
 
 export interface RegenerationEngines {
@@ -122,14 +128,18 @@ export class Regeneration {
     private readonly drag?: DragTarget & { readonly sketch: string },
   ) {}
 
-  async run(document: ComponentDocument): Promise<Derived> {
+  /** Runs the timeline with the project's parameters (the component's own of the same name win). */
+  async run(document: ComponentDocument, context: RegenerationContext = {}): Promise<Derived> {
     if (document.process?.kind === 'print') this.layer = document.process.layerHeight;
-    const evaluated = this.engines.parameters.evaluateAll(document.parameters);
+    const own = new Set(document.parameters.map((p) => p.name));
+    const shared = (context.projectParameters ?? []).filter((p) => !own.has(p.name));
+    const evaluated = this.engines.parameters.evaluateAll([...shared, ...document.parameters]);
     if (evaluated.ok) this.scope = evaluated.value;
-    const parameters = document.parameters.map((parameter): ParameterView => {
+    const view = (parameter: Parameter, project: boolean): ParameterView => {
       const value = this.scope.get(parameter.name);
-      return value ? { parameter, display: display(value, document.units) } : { parameter };
-    });
+      return { parameter, ...(value ? { display: display(value, document.units) } : {}), ...(project ? { project } : {}) };
+    };
+    const parameters = [...shared.map((p) => view(p, true)), ...document.parameters.map((p) => view(p, false))];
     const marker = document.timeline.length - document.rollbackIndex;
     for (const [index, item] of document.timeline.entries()) {
       if (index >= marker) {

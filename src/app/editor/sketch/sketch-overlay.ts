@@ -1,0 +1,194 @@
+import {
+  type Dimension,
+  isDimension,
+  type Profile,
+  type Sketch,
+  type SketchConstraint,
+  type SketchEntity,
+  sketchOriginId,
+  type Vec2,
+} from '@core/contracts';
+import { pointsOf } from '../../viewport/sketch-display';
+import { type Affine, applyAffine } from '../../viewport/sketch-planes';
+
+/** Pure view-model helpers for the sketch overlay: SVG paths and screen-space annotations. */
+
+const n = (v: number) => Math.round(v * 1e4) / 1e4;
+
+/** An SVG path in sketch coordinates; arcs are counter-clockwise (sweep flag 1 before the Y flip). */
+export function curvePath(entity: SketchEntity, points: ReadonlyMap<string, Vec2>): string {
+  const at = (id: string): Vec2 => points.get(id) ?? [0, 0];
+  switch (entity.kind) {
+    case 'point':
+      return '';
+    case 'line': {
+      const [s, e] = [at(entity.start), at(entity.end)];
+      return `M ${n(s[0])} ${n(s[1])} L ${n(e[0])} ${n(e[1])}`;
+    }
+    case 'circle': {
+      const [cx, cy] = at(entity.center);
+      const r = n(entity.radius);
+      return `M ${n(cx + r)} ${n(cy)} A ${r} ${r} 0 1 1 ${n(cx - r)} ${n(cy)} A ${r} ${r} 0 1 1 ${n(cx + r)} ${n(cy)}`;
+    }
+    case 'arc': {
+      const [c, s, e] = [at(entity.center), at(entity.start), at(entity.end)];
+      const r = Math.hypot(s[0] - c[0], s[1] - c[1]);
+      let sweep = Math.atan2(e[1] - c[1], e[0] - c[0]) - Math.atan2(s[1] - c[1], s[0] - c[0]);
+      while (sweep <= 0) sweep += 2 * Math.PI;
+      return `M ${n(s[0])} ${n(s[1])} A ${n(r)} ${n(r)} 0 ${sweep > Math.PI ? 1 : 0} 1 ${n(e[0])} ${n(e[1])}`;
+    }
+  }
+}
+
+export function profilePath(profile: Profile): string {
+  return [profile.outer, ...profile.holes]
+    .map((loop) => `M ${loop.polygon.map(([x, y]) => `${n(x)} ${n(y)}`).join(' L ')} Z`)
+    .join(' ');
+}
+
+export interface ScreenLabel {
+  readonly id: string;
+  readonly text: string;
+  readonly title: string;
+  readonly x: number;
+  readonly y: number;
+  /** Optional leader line from the measured geometry, in pixels. */
+  readonly line?: readonly [Vec2, Vec2];
+}
+
+const degrees = (radians: number) => (radians * 180) / Math.PI;
+const formatLength = (v: number) => String(Math.round(v * 100) / 100);
+
+/** Where to anchor a constraint's glyph: a quarter along a line (its middle holds dimensions), top of a circle, or its point. */
+function anchorOf(sketch: Sketch, id: string, points: ReadonlyMap<string, Vec2>): Vec2 | undefined {
+  const point = points.get(id);
+  if (point) return point;
+  const e = sketch.entities.find((x) => x.id === id);
+  if (!e || e.kind === 'point') return undefined;
+  const at = (p: string): Vec2 => points.get(p) ?? [0, 0];
+  if (e.kind === 'line') {
+    const [s, t] = [at(e.start), at(e.end)];
+    return [s[0] + (t[0] - s[0]) * 0.25, s[1] + (t[1] - s[1]) * 0.25];
+  }
+  const c = at(e.center);
+  const r = e.kind === 'circle' ? e.radius : Math.hypot(at(e.start)[0] - c[0], at(e.start)[1] - c[1]);
+  return [c[0], c[1] + r];
+}
+
+const glyphText: Readonly<Record<string, string>> = {
+  coincident: '●',
+  horizontal: 'H',
+  vertical: 'V',
+  parallel: '∥',
+  perpendicular: '⊥',
+  equal: '=',
+  tangent: 'T',
+  'point-on': '◦',
+  midpoint: 'M',
+  fix: '⚲',
+};
+
+const glyphTitle: Readonly<Record<string, string>> = {
+  coincident: 'Coincident',
+  horizontal: 'Horizontal',
+  vertical: 'Vertical',
+  parallel: 'Parallel',
+  perpendicular: 'Perpendicular',
+  equal: 'Equal',
+  tangent: 'Tangent',
+  'point-on': 'Point on curve',
+  midpoint: 'Midpoint',
+  fix: 'Fixed',
+};
+
+function firstReference(c: SketchConstraint): string {
+  switch (c.kind) {
+    case 'coincident':
+      return c.points[0];
+    case 'horizontal':
+    case 'vertical':
+      return c.line;
+    case 'parallel':
+    case 'perpendicular':
+      return c.lines[1];
+    case 'equal':
+    case 'tangent':
+      return c.curves[1];
+    case 'point-on':
+    case 'midpoint':
+    case 'fix':
+      return c.point;
+    default:
+      return '';
+  }
+}
+
+/** Small badges for geometric constraints, stacked beside their anchors. */
+export function glyphs(sketch: Sketch, matrix: Affine): ScreenLabel[] {
+  const points = pointsOf(sketch);
+  const stacks = new Map<string, number>();
+  return sketch.constraints.flatMap((c) => {
+    if (isDimension(c)) return [];
+    const ref = firstReference(c);
+    if (c.kind === 'coincident' && c.points.includes(sketchOriginId)) return [];
+    const anchor = anchorOf(sketch, ref, points);
+    if (!anchor) return [];
+    const [x, y] = applyAffine(matrix, anchor[0], anchor[1]);
+    const index = stacks.get(ref) ?? 0;
+    stacks.set(ref, index + 1);
+    return [{ id: c.id, text: glyphText[c.kind] ?? '?', title: glyphTitle[c.kind] ?? c.kind, x: x + 12 + index * 16, y: y - 12 }];
+  });
+}
+
+/** Dimension labels with the evaluated value, placed beside what they measure. */
+export function dimensionLabels(sketch: Sketch, values: ReadonlyMap<string, number>, matrix: Affine): ScreenLabel[] {
+  const points = pointsOf(sketch);
+  const at = (id: string): Vec2 => points.get(id) ?? [0, 0];
+  const screen = (p: Vec2): Vec2 => applyAffine(matrix, p[0], p[1]);
+  const besides = (a: Vec2, b: Vec2, offset = 16): Vec2 => {
+    const [sa, sb] = [screen(a), screen(b)];
+    const len = Math.hypot(sb[0] - sa[0], sb[1] - sa[1]) || 1;
+    const normal: Vec2 = [-(sb[1] - sa[1]) / len, (sb[0] - sa[0]) / len];
+    return [(sa[0] + sb[0]) / 2 + normal[0] * offset, (sa[1] + sb[1]) / 2 + normal[1] * offset];
+  };
+  return sketch.constraints.filter(isDimension).map((d: Dimension): ScreenLabel => {
+    const value = values.get(d.id) ?? 0;
+    const title = `${d.expression}`;
+    switch (d.kind) {
+      case 'distance':
+      case 'horizontal-distance':
+      case 'vertical-distance': {
+        const [a, b] = [at(d.points[0]), at(d.points[1])];
+        const [x, y] = besides(a, b);
+        const prefix = d.kind === 'horizontal-distance' ? '↔ ' : d.kind === 'vertical-distance' ? '↕ ' : '';
+        return { id: d.id, text: prefix + formatLength(value), title, x, y, line: [screen(a), screen(b)] };
+      }
+      case 'point-line-distance': {
+        const line = sketch.entities.find((e) => e.id === d.line);
+        const p = at(d.point);
+        if (line?.kind !== 'line') return { id: d.id, text: formatLength(value), title, x: 0, y: 0 };
+        const [s, e] = [at(line.start), at(line.end)];
+        const dir: Vec2 = [e[0] - s[0], e[1] - s[1]];
+        const t = ((p[0] - s[0]) * dir[0] + (p[1] - s[1]) * dir[1]) / (dir[0] ** 2 + dir[1] ** 2 || 1);
+        const foot: Vec2 = [s[0] + t * dir[0], s[1] + t * dir[1]];
+        const [x, y] = besides(p, foot, 0);
+        return { id: d.id, text: formatLength(value), title, x: x + 12, y, line: [screen(p), screen(foot)] };
+      }
+      case 'radius':
+      case 'diameter': {
+        const curve = sketch.entities.find((e) => e.id === d.curve);
+        const center = curve && curve.kind !== 'point' && curve.kind !== 'line' ? at(curve.center) : ([0, 0] as Vec2);
+        const r = curve?.kind === 'circle' ? curve.radius : curve?.kind === 'arc' ? Math.hypot(at(curve.start)[0] - center[0], at(curve.start)[1] - center[1]) : 0;
+        const rim: Vec2 = [center[0] + r * Math.SQRT1_2, center[1] + r * Math.SQRT1_2];
+        const [x, y] = screen(rim);
+        return { id: d.id, text: (d.kind === 'radius' ? 'R ' : '⌀ ') + formatLength(value), title, x: x + 14, y: y - 14, line: [screen(center), [x, y]] };
+      }
+      case 'angle': {
+        const [l1, l2] = d.lines.map((id) => sketch.entities.find((e) => e.id === id));
+        const corner = l1?.kind === 'line' && l2?.kind === 'line' ? at(l2.start) : ([0, 0] as Vec2);
+        const [x, y] = screen(corner);
+        return { id: d.id, text: `${formatLength(degrees(value))}°`, title, x: x + 24, y: y - 18 };
+      }
+    }
+  });
+}

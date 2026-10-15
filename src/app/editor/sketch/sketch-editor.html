@@ -1,0 +1,82 @@
+<svg
+  #svg
+  class="overlay"
+  [class.fully]="fully()"
+  [attr.data-tool]="store.tool()"
+  role="application"
+  aria-label="Sketch canvas"
+  (pointerdown)="down($event)"
+  (pointermove)="move($event)"
+  (pointerup)="up()"
+  (pointerleave)="leave()"
+  (dblclick)="doubleClick()"
+>
+  @if (matrix()) {
+    <g [attr.transform]="transform()">
+      @for (profile of profiles(); track profile.id) {
+        <path class="profile" fill-rule="evenodd" [attr.d]="profile.d" />
+      }
+      @for (curve of curves(); track curve.id) {
+        <path class="hit" data-kind="curve" [attr.data-id]="curve.id" [attr.d]="curve.d" />
+        <path
+          class="curve"
+          [class.construction]="curve.construction"
+          [class.selected]="highlighted().has(curve.id)"
+          [class.hovered]="hovered() === curve.id"
+          [attr.d]="curve.d"
+        />
+      }
+      @if (rubberBand(); as d) {
+        <path class="rubber" [attr.d]="d" />
+      }
+    </g>
+
+    @for (label of dimensions(); track label.id) {
+      @if (label.line; as line) {
+        <line class="leader" [attr.x1]="line[0][0]" [attr.y1]="line[0][1]" [attr.x2]="line[1][0]" [attr.y2]="line[1][1]" />
+      }
+    }
+    @for (point of screenPoints(); track point.id) {
+      <circle class="point-hit" data-kind="point" [attr.data-id]="point.id" [attr.cx]="point.x" [attr.cy]="point.y" r="9" />
+      <circle
+        class="point"
+        [class.origin]="point.origin"
+        [class.selected]="highlighted().has(point.id)"
+        [class.snapped]="snapped() === point.id && store.tool() !== 'select'"
+        [class.hovered]="hovered() === point.id"
+        [attr.cx]="point.x"
+        [attr.cy]="point.y"
+        [attr.r]="point.origin ? 4.5 : 3.5"
+      />
+    }
+    @for (glyph of glyphs(); track glyph.id) {
+      <g class="glyph" data-kind="constraint" [attr.data-id]="glyph.id" [class.selected]="highlighted().has(glyph.id)">
+        <title>{{ glyph.title }}</title>
+        <rect [attr.x]="glyph.x - 7" [attr.y]="glyph.y - 7" width="14" height="14" rx="3" />
+        <text [attr.x]="glyph.x" [attr.y]="glyph.y + 4">{{ glyph.text }}</text>
+      </g>
+    }
+    @for (label of dimensions(); track label.id) {
+      <g class="dimension" data-kind="dimension" [attr.data-id]="label.id" [class.selected]="highlighted().has(label.id)">
+        <title>{{ label.title }} · click to edit</title>
+        <text [attr.x]="label.x" [attr.y]="label.y">{{ label.text }}</text>
+      </g>
+    }
+  }
+</svg>
+
+@if (inline(); as edit) {
+  <input
+    #field
+    class="dimension-input"
+    aria-label="Dimension value"
+    autocomplete="off"
+    [style.left.px]="edit.x"
+    [style.top.px]="edit.y"
+    [value]="edit.expression"
+    (keydown.enter)="commitInline(field.value)"
+    (keydown.escape)="cancelInline()"
+    (blur)="cancelInline()"
+    cadAutofocus
+  />
+}

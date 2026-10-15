@@ -1,0 +1,120 @@
+/**
+ * Sketch design intent (persisted). Lengths in millimetres in the sketch plane's (u, v) coordinates.
+ * Points are entities of their own; curves reference them, so a shared corner is one point.
+ */
+
+export type SketchPlane = 'XY' | 'XZ' | 'YZ';
+
+/** The fixed sketch origin every sketch has; constraints and curves may reference it. */
+export const sketchOriginId = 'origin';
+
+export interface SketchPoint {
+  readonly id: string;
+  readonly kind: 'point';
+  readonly x: number;
+  readonly y: number;
+}
+
+export interface SketchLine {
+  readonly id: string;
+  readonly kind: 'line';
+  readonly start: string;
+  readonly end: string;
+  readonly construction: boolean;
+}
+
+export interface SketchCircle {
+  readonly id: string;
+  readonly kind: 'circle';
+  readonly center: string;
+  readonly radius: number;
+  readonly construction: boolean;
+}
+
+/** Counter-clockwise from `start` to `end` around `center`. */
+export interface SketchArc {
+  readonly id: string;
+  readonly kind: 'arc';
+  readonly center: string;
+  readonly start: string;
+  readonly end: string;
+  readonly construction: boolean;
+}
+
+export type SketchCurve = SketchLine | SketchCircle | SketchArc;
+export type SketchEntity = SketchPoint | SketchCurve;
+
+/** Geometric constraints: relations without a value. */
+export type GeometricConstraint =
+  | { readonly id: string; readonly kind: 'coincident'; readonly points: readonly [string, string] }
+  | { readonly id: string; readonly kind: 'horizontal'; readonly line: string }
+  | { readonly id: string; readonly kind: 'vertical'; readonly line: string }
+  | { readonly id: string; readonly kind: 'parallel'; readonly lines: readonly [string, string] }
+  | { readonly id: string; readonly kind: 'perpendicular'; readonly lines: readonly [string, string] }
+  /** Equal length (two lines) or equal radius (two circles/arcs). */
+  | { readonly id: string; readonly kind: 'equal'; readonly curves: readonly [string, string] }
+  /** A line and a circle/arc, or two circles/arcs. */
+  | { readonly id: string; readonly kind: 'tangent'; readonly curves: readonly [string, string] }
+  /** The point lies on the curve (line, circle or arc). */
+  | { readonly id: string; readonly kind: 'point-on'; readonly point: string; readonly curve: string }
+  | { readonly id: string; readonly kind: 'midpoint'; readonly point: string; readonly line: string }
+  | { readonly id: string; readonly kind: 'fix'; readonly point: string; readonly x: number; readonly y: number };
+
+/** Dimensions: constraints with a value given as an expression ("25", "2 * 10 mm", "45 deg"). */
+export type Dimension =
+  | { readonly id: string; readonly kind: 'distance'; readonly points: readonly [string, string]; readonly expression: string }
+  | { readonly id: string; readonly kind: 'horizontal-distance'; readonly points: readonly [string, string]; readonly expression: string }
+  | { readonly id: string; readonly kind: 'vertical-distance'; readonly points: readonly [string, string]; readonly expression: string }
+  | { readonly id: string; readonly kind: 'point-line-distance'; readonly point: string; readonly line: string; readonly expression: string }
+  | { readonly id: string; readonly kind: 'radius'; readonly curve: string; readonly expression: string }
+  | { readonly id: string; readonly kind: 'diameter'; readonly curve: string; readonly expression: string }
+  /** Angle between two lines, measured from the first to the second. */
+  | { readonly id: string; readonly kind: 'angle'; readonly lines: readonly [string, string]; readonly expression: string };
+
+export type SketchConstraint = GeometricConstraint | Dimension;
+export type DimensionKind = Dimension['kind'];
+
+export const isDimension = (c: SketchConstraint): c is Dimension => 'expression' in c;
+export const isCurve = (e: SketchEntity): e is SketchCurve => e.kind !== 'point';
+
+/** A sketch as stored in a component's timeline. Points hold the last solved positions. */
+export interface Sketch {
+  readonly id: string;
+  readonly type: 'sketch';
+  readonly name: string;
+  readonly suppressed: boolean;
+  readonly plane: SketchPlane;
+  readonly entities: readonly SketchEntity[];
+  readonly constraints: readonly SketchConstraint[];
+}
+
+export type SketchStatus = 'under-constrained' | 'fully-constrained' | 'over-constrained' | 'failed';
+
+/** Closed boundary made of curve pieces; arcs are counter-clockwise from start to end. */
+export type ProfileEdge =
+  | { readonly kind: 'line'; readonly start: Vec2; readonly end: Vec2 }
+  | {
+      readonly kind: 'arc';
+      readonly start: Vec2;
+      readonly end: Vec2;
+      readonly center: Vec2;
+      readonly radius: number;
+      /** True when the boundary runs counter-clockwise along the arc. */
+      readonly ccw: boolean;
+    };
+
+export interface ProfileLoop {
+  readonly edges: readonly ProfileEdge[];
+  /** The loop flattened to a polygon, counter-clockwise for outer loops and clockwise for holes. */
+  readonly polygon: readonly Vec2[];
+}
+
+/** A closed region of a sketch, usable by features such as extrude. */
+export interface Profile {
+  readonly id: string;
+  readonly outer: ProfileLoop;
+  readonly holes: readonly ProfileLoop[];
+  readonly area: number;
+}
+
+export type Vec2 = readonly [number, number];

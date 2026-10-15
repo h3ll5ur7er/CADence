@@ -44,26 +44,33 @@ It publishes queued events such as `DocumentRenamed` and `DocumentDeleted`. The 
 
 ### Design Manager
 
-A session-based manager for one component document. **All edits are commands**, which gives undo/redo, autosave and later collaboration from one mechanism.
+A session-based manager for one component document. **All edits are commands**, which gives undo/redo, autosave and later collaboration from one mechanism. Implemented in [[src/core/managers/design/design-manager.ts]]:
 
 ```ts
 interface DesignManager {
-  open(documentId: DocumentId): Promise<DesignSession>;
+  open(documentId: DocumentId): Promise<Result<DesignSession>>;
 }
 interface DesignSession {
-  readonly state$: Observable<DesignState>;       // document, regen results, meshes, diagnostics
-  execute(command: DesignCommand): Promise<CommandResult>;
+  state(): DesignState;                       // document, solved sketches (status, DOF, profiles, values), canUndo/canRedo
+  subscribe(listener: (state: DesignState) => void): () => void;
+  execute(command: DesignCommand): Promise<Result<void>>;
   undo(): Promise<void>;
   redo(): Promise<void>;
-  measure(selection: TopologyRef[]): Promise<Measurement>;
-  validate(profile: ManufacturingProfile): Promise<ValidationReport>;
-  exportBodies(format: SolidExportFormat, options?: ExportOptions): Promise<void>;  // 'step' | 'stl' | 'obj' | '3mf'
-  exportSketch(sketchId: SketchId, format: DrawingExportFormat): Promise<void>;     // 'dxf' | 'svg'
-  close(): Promise<void>;
+  previewDrag(sketchId, pointId, x, y): Promise<SketchView | undefined>;  // solves without committing
+  exportSketch(sketchId, format: 'dxf' | 'svg'): Promise<Result<void>>;
+  // later: measure, validate, exportBodies (STEP / STL / OBJ / 3MF)
 }
 ```
 
-`DesignCommand` is a discriminated union: `addSketch`, `editSketch` (with sketch operations), `addFeature`, `editFeature`, `deleteItem`, `reorderItem`, `suppressItem`, `rollTo`, `setParameter`, `addParameter`, and so on.
+`DesignCommand` is a discriminated union, and the caller supplies the ids of new elements. Sketch commands so far: `create-sketch`, `add-sketch-geometry`, `add-constraint`, `set-dimension`, `move-point`, `toggle-construction` and `delete-sketch-elements`, plus `rename-item` and `delete-item` for timeline items. Features join them in phase 3.
+
+**A command is atomic.** The manager applies it to a copy of the document (pure functions in [[src/core/managers/design/commands.ts]]), evaluates the sketch's dimension expressions and solves the sketch. It **rejects** the command and leaves the document untouched in three cases:
+
+- an expression is invalid;
+- constraints conflict (the message names the constraint kinds involved);
+- the result would collapse a line, circle or arc to nothing. For example, horizontal *and* vertical on one line is something the solver could satisfy, but only by shrinking the line to zero length.
+
+Accepted commands are saved immediately and pushed onto the undo history (state snapshots, up to 200). Commands run one at a time, so fast input such as drags never interleaves.
 
 **Regeneration workflow** (owned by this manager only): evaluate parameters, then walk the timeline up to the rollback marker. For a sketch, resolve its plane through the Modeling Engine and then solve it through the Sketch Engine. For a feature, apply it through the Modeling Engine. Engines cache by content hash, so only items downstream of a change are recomputed.
 
@@ -97,12 +104,12 @@ Engines encapsulate the volatility of an *activity*: an algorithm or a set of bu
 
 | Engine | Contract (core operations) | Implementation notes |
 | --- | --- | --- |
-| **Parameter** | `evaluate(parameters) → ParameterValues \| errors`; `evaluateExpression(expr, scope)` | Own expression parser (units, math functions, references), dependency-graph ordering, cycle detection. |
-| **Sketch** | `solve(sketch, values, externalGeometry) → SolvedSketch` (geometry, DOF, status: under / fully / over-constrained / conflicting, conflicting constraint ids); `findProfiles(solved) → Profile[]` | planegcs (WASM). Profile (closed region) detection by a planar graph walk. |
+| **Parameter** | `evaluate(expression, kind, scope) → Result<number>` (mm, radians); later `evaluate(parameters)` with dependency ordering | Own recursive-descent parser: arithmetic, `^`, functions (`sin`, `sqrt`, `min`, …), constants, names from the scope, and units (`mm cm m in ft`, `deg rad`) with dimensional analysis. Plain numbers are read as mm or degrees. It is pure and fast, so it is the one **synchronous** engine. |
+| **Sketch** | `solve(sketch, values, drag?) → SketchSolution`: solved geometry, status (under / fully / over-constrained / failed), degrees of freedom, conflicting constraint ids, profiles | planegcs (WASM, loaded lazily on the first solve). Drags pull a point with temporary constraints. For profiles, curves are split at intersections and faces are traced in the planar graph (tangent and curvature order at each vertex). Areas are exact (with circular-segment corrections), and islands become holes. Profile ids derive from the bounding curves, so they survive dimension changes. |
 | **Modeling** | `resolvePlane(planeRef) → Plane`; `applyFeature(feature, inputs) → FeatureResult` (body keys, topology map, errors); `tessellate(bodyKeys, quality) → MeshDTO[]`; `snapshotBodies(keys) → bytes`; `restoreBodies(bytes, placement) → keys` | OCCT in the geometry worker. Persistent naming via OCCT generation history (see [[Architecture/Document model#Persistent references]]). |
 | **Analysis** | `measure(refs)`; `massProperties(bodyKey, density)`; `checkManufacturability(bodyKey, profile) → ValidationReport` | Geometric checks with OCCT; mesh-based printability checks (overhang, thin walls) are Rust/WASM candidates. |
 | **Kinematics** | `solve(assemblyModel, drivers) → InstanceTransforms`; `step(state, dt)` | Joint graph and constraint solver (Newton-Raphson on joint equations); rigid body motion first. |
-| **Interchange** | `export(source, format, options) → Uint8Array`; `import(bytes, format) → ImportResult` | STEP through OCCT; STL, OBJ, 3MF, DXF, SVG writers and readers in TypeScript. A format registry keeps adding a format a local change. |
+| **Interchange** | `exportDrawing(sketch, 'dxf' \| 'svg') → Uint8Array`; later `export(bodies, format)` and `import(bytes, format)` | DXF: ASCII with R12 entities (LINE, CIRCLE, ARC) and `$INSUNITS` set to mm. SVG: sized in mm, Y up, hairline strokes, no fill, which is what laser software expects. Construction geometry is left out. STEP goes through OCCT; STL, OBJ and 3MF are written in TypeScript. One writer per format, in a registry. |
 
 ## Resource Access
 

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="80mm" height="40mm" viewBox="0 -40 80 40">
+<g fill="none" stroke="#000" stroke-width="0.1">
+<line x1="0" y1="0" x2="80" y2="0"/>
+<line x1="80" y1="0" x2="80" y2="-40"/>
+<line x1="80" y1="-40" x2="0" y2="-40"/>
+<line x1="0" y1="-40" x2="0" y2="0"/>
+<circle cx="40.035647" cy="-17.339201" r="6"/>
+</g>
+</svg>

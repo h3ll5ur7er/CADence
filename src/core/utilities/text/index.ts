@@ -35,9 +35,13 @@ export interface TextFont {
   readonly capRatio: number;
 }
 
-/** Loads a font from its bytes (TTF, OTF or WOFF); opentype.js loads on first use. */
+/**
+ * Loads a font from its bytes (TTF, OTF or WOFF); opentype.js loads on first use. Its ES module build
+ * is imported by path: the package's `browser` entry is a UMD bundle, whose named exports bundlers
+ * do not reliably expose.
+ */
 export async function loadFont(bytes: ArrayBuffer): Promise<TextFont> {
-  const { parse } = await import('opentype.js');
+  const { parse } = await import('opentype.js/dist/opentype.mjs');
   return fontOf(parse(bytes));
 }
 

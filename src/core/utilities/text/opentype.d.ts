@@ -24,3 +24,8 @@ declare module 'opentype.js' {
   }
   export function parse(buffer: ArrayBuffer): Font;
 }
+
+/** The package's ES module build, which the app loads (see `loadFont`). */
+declare module 'opentype.js/dist/opentype.mjs' {
+  export { parse } from 'opentype.js';
+}

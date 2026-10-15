@@ -104,7 +104,7 @@ export function createCore(host: Host): Core {
       }
     : localGeometry();
   return {
-    projectManager: createProjectManager({ projects, documents, assets, events, clock: systemClock, newId }),
+    projectManager: createProjectManager({ projects, documents, assets, externalFiles, interchange: geometry.interchange, events, clock: systemClock, newId }),
     designManager: createDesignManager({
       documents,
       externalFiles,

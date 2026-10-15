@@ -146,6 +146,18 @@ class Session implements DesignSession {
     }
   }
 
+  async insertDrawing(sketchId: string, documentId: DocumentId, idPrefix: string): Promise<Result<void>> {
+    const document = await this.deps.documents.load(documentId);
+    if (document?.kind !== 'imported' || (document.format !== 'dxf' && document.format !== 'svg')) {
+      return fail({ code: 'invalid-command', message: 'Only imported DXF and SVG drawings can be inserted into a sketch.' });
+    }
+    const original = await this.deps.assets.fetch(document.assetId);
+    if (!original) return fail({ code: 'missing-original', message: `The original of ${document.name} is missing.` });
+    const entities = await this.deps.interchange.readDrawing(original.bytes, document.format, idPrefix);
+    if (!entities.ok) return entities;
+    return this.execute({ type: 'add-sketch-geometry', sketchId, entities: entities.value, constraints: [] });
+  }
+
   async exportBodies(format: SolidFormat): Promise<Result<void>> {
     const { document, derived } = this.current;
     if (derived.bodies.length === 0) return fail({ code: 'nothing-to-export', message: 'There are no bodies to export yet.' });

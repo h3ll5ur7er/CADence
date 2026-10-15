@@ -107,6 +107,7 @@ These rules are enforced by the **architecture test** ([[tools/architecture/rule
 | Any upward call | ❌ (results flow back as return values or event streams) |
 | Platform adapter (`src/app/platform`) → Resource Access, Utilities, Contracts | ✅ host-specific implementations of access and utility ports that cannot live in the core because they need Tauri |
 | Client → Platform adapter | ✅ only to choose the host in `app.config.ts` |
+| Main thread (clients, managers, composition) → kernel-bound engines (Modeling, Interchange, Analysis), Shape Access, replicad | types only; their code loads in the geometry worker ([[Architecture/Decisions#ADR-22]]) |
 
 Each component exposes an **interface plus a factory** from its `index.ts`. The implementation stays private, and the architecture test rejects imports of another component's internals. A component's `testing/` folder (contract suites, test doubles) is a second entry point that only tests may use. Wiring happens in exactly one **composition root per host** (browser or desktop), and Angular DI provides the managers to the clients through injection tokens.
 

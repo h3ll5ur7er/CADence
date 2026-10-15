@@ -1,7 +1,9 @@
 import { InMemoryAssetAccess } from '@core/access/asset';
 import { InMemoryDocumentAccess } from '@core/access/document';
+import { InMemoryExternalFileAccess } from '@core/access/external-file';
 import { InMemoryProjectAccess } from '@core/access/project';
 import { asDocumentId, asProjectId, type DomainEvents, type ImportedDocument, type Result } from '@core/contracts';
+import { createInterchangeEngine } from '@core/engines/interchange';
 import { steppingClock } from '@core/utilities/clock';
 import { EventBus } from '@core/utilities/messaging';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -16,6 +18,7 @@ describe('ProjectManager', () => {
   let manager: ProjectManager;
   let documents: InMemoryDocumentAccess;
   let assets: InMemoryAssetAccess;
+  let files: InMemoryExternalFileAccess;
   let events: EventBus<DomainEvents>;
   let seq: number;
 
@@ -23,11 +26,15 @@ describe('ProjectManager', () => {
     seq = 0;
     documents = new InMemoryDocumentAccess();
     assets = new InMemoryAssetAccess();
+    files = new InMemoryExternalFileAccess();
     events = new EventBus<DomainEvents>();
     manager = createProjectManager({
       projects: new InMemoryProjectAccess(),
       documents,
       assets,
+      externalFiles: files,
+      // Meshes and drawings need no geometry kernel.
+      interchange: createInterchangeEngine(),
       events,
       clock: steppingClock('2026-10-14T10:00:00.000Z'),
       newId: () => `id-${++seq}`,
@@ -166,6 +173,35 @@ describe('ProjectManager', () => {
       const { project } = unwrap(await manager.createProject('P'));
       const result = await manager.importFile(project.id, { name: 'notes.txt', bytes: new Uint8Array(1) });
       expect(result).toMatchObject({ ok: false, error: { code: 'unsupported-format' } });
+    });
+
+    it('previews a mesh file and converts it to another mesh format', async () => {
+      const { project } = unwrap(await manager.createProject('P'));
+      const triangle = ['solid t', 'facet normal 0 0 1', 'outer loop', 'vertex 0 0 0', 'vertex 10 0 0', 'vertex 0 10 0', 'endloop', 'endfacet', 'endsolid t'].join('\n');
+      const doc = unwrap(await manager.importFile(project.id, { name: 'tri.stl', bytes: new TextEncoder().encode(triangle) }));
+      const content = unwrap(await manager.previewImported(doc.id));
+      expect(content).toMatchObject({ kind: 'model', triangles: 1, min: [0, 0, 0], max: [10, 10, 0], usableAsSolid: true });
+      unwrap(await manager.exportImported(doc.id, 'obj'));
+      expect(files.delivered[0]?.name).toBe('tri.obj');
+      expect(new TextDecoder().decode(files.delivered[0]?.bytes)).toContain('f 1 2 3');
+    });
+
+    it('previews a drawing as sketch entities and converts it to DXF', async () => {
+      const { project } = unwrap(await manager.createProject('P'));
+      const svg = '<svg viewBox="0 0 40 20" width="40mm" height="20mm"><rect width="40" height="20"/><circle cx="30" cy="10" r="4"/></svg>';
+      const doc = unwrap(await manager.importFile(project.id, { name: 'plate.svg', bytes: new TextEncoder().encode(svg) }));
+      const content = unwrap(await manager.previewImported(doc.id));
+      expect(content.kind === 'drawing' && content.entities.filter((e) => e.kind !== 'point').map((e) => e.kind)).toEqual(['line', 'line', 'line', 'line', 'circle']);
+      expect(content).toMatchObject({ min: [0, 0, 0], max: [40, 20, 0] });
+      unwrap(await manager.exportImported(doc.id, 'dxf'));
+      expect(new TextDecoder().decode(files.delivered[0]?.bytes)).toContain('CIRCLE');
+      expect(await manager.exportImported(doc.id, 'stl')).toMatchObject({ ok: false, error: { code: 'unreadable' } });
+    });
+
+    it('reports files that cannot be read', async () => {
+      const { project } = unwrap(await manager.createProject('P'));
+      const doc = unwrap(await manager.importFile(project.id, { name: 'empty.obj', bytes: new TextEncoder().encode('# nothing') }));
+      expect(await manager.previewImported(doc.id)).toMatchObject({ ok: false, error: { message: expect.stringContaining('no readable faces') } });
     });
 
     it('releases the asset when the imported document is deleted', async () => {

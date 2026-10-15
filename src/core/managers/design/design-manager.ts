@@ -96,6 +96,8 @@ export interface DesignSession {
   previewDrag(sketchId: string, pointId: string, x: number, y: number): Promise<SketchView | undefined>;
   /** With `compensateKerf`, outlines are offset for the laser profile's kerf (laser profiles only). */
   exportSketch(sketchId: string, format: DrawingFormat, options?: { readonly compensateKerf?: boolean }): Promise<Result<void>>;
+  /** Adds the curves of an imported DXF or SVG document to a sketch (one undoable change); new ids start with `idPrefix`. */
+  insertDrawing(sketchId: string, documentId: DocumentId, idPrefix: string): Promise<Result<void>>;
   /** All bodies, one file. */
   exportBodies(format: SolidFormat): Promise<Result<void>>;
   /** Area, length, radius, distance and angle of picked faces and edges. */

@@ -94,6 +94,8 @@ export class OcctModelingEngine implements ModelingEngine {
         this.shapes.put(toolKey, tool);
         return { ...this.store(combine(bodies, tool, request.operation, request.feature, request.key)), toolKey };
       }
+      case 'insert':
+        return this.insert(request.feature, request.key, request.bodies, request.sources);
       case 'fillet':
       case 'chamfer':
         return this.treatEdges(request.feature, request.key, bodies, request.edges, positive(request.size, request.type === 'fillet' ? 'radius' : 'distance'), request.type);
@@ -201,6 +203,19 @@ export class OcctModelingEngine implements ModelingEngine {
     const found = find(body.named, ref);
     if (!found) throw new FeatureError(`The ${ref.kind} ${ref.name} no longer exists. Pick it again.`);
     return found;
+  }
+
+  /** New bodies from imported solids: `<feature>`, `<feature>:2`, …, with fresh face names. */
+  private insert(feature: string, key: string, bodies: readonly BodyState[], sources: readonly string[]): ModelingOutcome {
+    if (sources.length === 0) throw new FeatureError('The imported file holds no solids.');
+    const stored: [string, NamedShape][] = sources.map((source, i) => {
+      const imported = this.shapes.get(source);
+      if (!imported) throw new FeatureError('The imported file has to be read again.');
+      const id = i === 0 ? feature : `${feature}:${i + 1}`;
+      return [`${key}:${id}`, nameShape(imported.shape.clone(), [], () => undefined, feature)];
+    });
+    const added = stored.map(([storedKey], i) => ({ id: i === 0 ? feature : `${feature}:${i + 1}`, key: storedKey }));
+    return this.store({ bodies: [...bodies, ...added], stored });
   }
 
   private load(states: readonly BodyState[]): LoadedBody[] {

@@ -1,4 +1,5 @@
 import {
+  asDocumentId,
   type AxisRef,
   type ComponentDocument,
   type Dimension,
@@ -16,6 +17,9 @@ import {
   sketchOriginId,
   type Vec3,
 } from '@core/contracts';
+import type { AssetAccess } from '@core/access/asset';
+import type { DocumentAccess } from '@core/access/document';
+import type { InterchangeEngine } from '@core/engines/interchange';
 import type { AxisInput, BodyState, ModelingEngine, ModelingRequest, ToolInput } from '@core/engines/modeling';
 import type { ParameterEngine, ParameterError, Quantity, ValueKind } from '@core/engines/parameter';
 import type { DragTarget, SketchEngine } from '@core/engines/sketch';
@@ -26,6 +30,10 @@ export interface RegenerationEngines {
   readonly sketches: SketchEngine;
   readonly parameters: ParameterEngine;
   readonly modeling: ModelingEngine;
+  /** Insert features read imported files: the document, its original, and a reader. */
+  readonly documents: DocumentAccess;
+  readonly assets: AssetAccess;
+  readonly interchange: InterchangeEngine;
 }
 
 /** Everything derived from a document by running its timeline. */
@@ -172,6 +180,18 @@ export class Regeneration {
     const withKey = (body: WithoutKey<ModelingRequest>): Result<ModelingRequest> =>
       ok({ ...body, key: contentHash({ ...body, bodies: this.bodies.map((b) => b.key) }) } as ModelingRequest);
     switch (feature.type) {
+      case 'insert': {
+        const document = await this.engines.documents.load(asDocumentId(feature.document));
+        const format = document?.kind === 'imported' ? document.format : undefined;
+        if (!document || document.kind !== 'imported' || format === undefined || format === 'dxf' || format === 'svg') {
+          return fail({ code: 'missing-input', message: 'Its imported 3D file was deleted or is not a 3D file.' });
+        }
+        const original = await this.engines.assets.fetch(document.assetId);
+        if (!original) return fail({ code: 'missing-input', message: 'The original of its imported file is missing.' });
+        const sources = await this.engines.interchange.readSolids(original.bytes, format, `import:${document.assetId}`);
+        if (!sources.ok) return fail({ code: 'feature-failed', message: sources.error.message });
+        return withKey({ ...base, type: 'insert', sources: sources.value });
+      }
       case 'extrude':
       case 'revolve': {
         const view = this.sketches.get(feature.sketch);

@@ -2,6 +2,10 @@ import { computed, DestroyRef, inject, Injectable, resource, signal } from '@ang
 import {
   type BodyProperties,
   type DocumentId,
+  type DocumentSummary,
+  isImportedDrawing,
+  isImportedModel,
+  type ProjectId,
   type Feature,
   type FeatureType,
   isSketch,
@@ -16,7 +20,7 @@ import {
 } from '@core/contracts';
 import type { DesignCommand, DesignSession, DesignState, DrawingFormat, SketchView, SolidFormat } from '@core/managers/design';
 import { newId } from '@core/utilities/identity';
-import { DESIGN_MANAGER } from '../../core.providers';
+import { DESIGN_MANAGER, PROJECT_MANAGER } from '../../core.providers';
 import type { Pick, PickKind } from '../../viewport/picking';
 import { applyPick, defaultFeature, type FeatureDraft, type PickTarget, pickableFor, selectionOf } from '../modeling/feature-drafts';
 import type { Tool } from './sketch-tools';
@@ -33,6 +37,7 @@ const toRef = (pick: Extract<Pick, { kind: 'face' | 'edge' }>): TopologyRef => (
 @Injectable()
 export class DesignStore {
   private readonly manager = inject(DESIGN_MANAGER);
+  private readonly projects = inject(PROJECT_MANAGER);
   private session: DesignSession | undefined;
   private unsubscribe: (() => void) | undefined;
   private dragFrame: Promise<unknown> = Promise.resolve();
@@ -49,6 +54,10 @@ export class DesignStore {
   /** A face picked in the 3D view outside dialogs (for sketching on it). */
   readonly pickedFace = signal<Extract<Pick, { kind: 'face' }> | undefined>(undefined);
   readonly panel = signal<SidePanel | undefined>(undefined);
+  /** The project's documents, for inserting imported files. */
+  readonly projectDocuments = signal<readonly DocumentSummary[]>([]);
+  readonly importedModels = computed(() => this.projectDocuments().filter(isImportedModel));
+  readonly importedDrawings = computed(() => this.projectDocuments().filter(isImportedDrawing));
   /** Faces and edges picked with the measure tool. */
   readonly measurePicks = signal<readonly Extract<Pick, { kind: 'face' | 'edge' }>[]>([]);
   /** The check whose faces are highlighted; the first one with faces when unset. */
@@ -102,9 +111,10 @@ export class DesignStore {
     inject(DestroyRef).onDestroy(() => this.unsubscribe?.());
   }
 
-  async open(documentId: DocumentId): Promise<void> {
+  async open(documentId: DocumentId, projectId: ProjectId): Promise<void> {
     this.unsubscribe?.();
     this.reset();
+    void this.projects.listDocuments(projectId).then((documents) => this.projectDocuments.set(documents));
     const opened = await this.manager.open(documentId);
     if (!opened.ok) {
       this.error.set(opened.error.message);
@@ -158,7 +168,7 @@ export class DesignStore {
     this.finishEditing();
     this.panel.set(undefined);
     this.pickedFace.set(undefined);
-    this.draft.set({ mode: 'create', feature: defaultFeature(type, newId(), state) });
+    this.draft.set({ mode: 'create', feature: defaultFeature(type, newId(), state, this.importedModels().map((d) => d.id)) });
   }
 
   editFeature(id: string): void {
@@ -255,6 +265,14 @@ export class DesignStore {
   async redo(): Promise<void> {
     await this.session?.redo();
     this.error.set(undefined);
+  }
+
+  /** Adds an imported drawing's curves to the edited sketch. */
+  async insertDrawing(documentId: DocumentId): Promise<void> {
+    const sketchId = this.editing();
+    if (!sketchId || !this.session) return;
+    const result = await this.session.insertDrawing(sketchId, documentId, `${newId()}-`);
+    this.error.set(result.ok ? undefined : result.error.message);
   }
 
   async exportSketch(sketchId: string, format: DrawingFormat, compensateKerf = false): Promise<void> {

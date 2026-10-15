@@ -56,6 +56,8 @@ export type ModelingRequest = RequestBase &
         readonly angle: number;
       }
     | { readonly type: 'mirror'; readonly tools: readonly ToolInput[]; readonly plane: PlaneFrame }
+    /** Solids read by the Interchange Engine (stored without names) become new bodies, named by this feature. */
+    | { readonly type: 'insert'; readonly sources: readonly string[] }
   );
 
 export interface ModelingOutcome {

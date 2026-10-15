@@ -45,6 +45,7 @@ const statusLabels = {
 } as const;
 
 const featureTools: readonly { type: FeatureType; icon: IconName }[] = [
+  { type: 'insert', icon: 'imported' },
   { type: 'extrude', icon: 'extrude' },
   { type: 'revolve', icon: 'revolve' },
   { type: 'fillet', icon: 'fillet' },
@@ -57,6 +58,7 @@ const featureTools: readonly { type: FeatureType; icon: IconName }[] = [
 ];
 
 const itemIcons: Readonly<Record<TimelineItem['type'], IconName>> = {
+  insert: 'imported',
   sketch: 'sketch',
   extrude: 'extrude',
   revolve: 'revolve',
@@ -145,8 +147,8 @@ export class ComponentMode {
 
   constructor() {
     effect(() => {
-      const id = this.document().id;
-      untracked(() => void this.store.open(id));
+      const { id, projectId } = this.document();
+      untracked(() => void this.store.open(id, projectId));
     });
   }
 

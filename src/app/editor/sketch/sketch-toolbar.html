@@ -42,6 +42,20 @@
   <span class="status" [class.done]="view()?.status === 'fully-constrained'" data-testid="sketch-status">{{ status() }}</span>
 
   <div class="group end" role="group" aria-label="Sketch">
+    @if (store.importedDrawings().length) {
+      <div class="menu">
+        <button type="button" class="btn" aria-haspopup="menu" [attr.aria-expanded]="insertOpen()" (click)="insertOpen.set(!insertOpen())">
+          <cad-icon name="imported" /> Insert drawing
+        </button>
+        @if (insertOpen()) {
+          <div class="menu-list" role="menu" aria-label="Imported drawings">
+            @for (d of store.importedDrawings(); track d.id) {
+              <button type="button" role="menuitem" (click)="insertOpen.set(false); store.insertDrawing(d.id)">{{ d.name }} ({{ d.format?.toUpperCase() }})</button>
+            }
+          </div>
+        }
+      </div>
+    }
     <button type="button" class="btn" title="Export for laser cutting" (click)="export('dxf')">
       <cad-icon name="download" /> DXF
     </button>

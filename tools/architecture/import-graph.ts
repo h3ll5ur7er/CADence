@@ -49,3 +49,26 @@ export function importGraph(root: string, dirs: readonly string[]): ImportEdge[]
 }
 
 export const repositoryRoot = fileURLToPath(new URL('../..', import.meta.url));
+
+/** Static imports that bring code along (not `import type`, not only type specifiers, not dynamic). */
+export function valueImports(root: string, dirs: readonly string[]): ImportEdge[] {
+  return dirs
+    .filter((dir) => existsSync(join(root, dir)))
+    .flatMap((dir) => listTypeScriptFiles(join(root, dir)))
+    .flatMap((file) => {
+      const from = relative(root, file).split('\\').join('/');
+      const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, false);
+      return source.statements.flatMap((statement): ImportEdge[] => {
+        const declaration = ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement) ? statement : undefined;
+        if (!declaration?.moduleSpecifier || !ts.isStringLiteral(declaration.moduleSpecifier)) return [];
+        if (ts.isImportDeclaration(declaration)) {
+          const clause = declaration.importClause;
+          const onlyTypes = clause?.isTypeOnly || (clause && !clause.name && clause.namedBindings && ts.isNamedImports(clause.namedBindings) && clause.namedBindings.elements.every((e) => e.isTypeOnly));
+          if (onlyTypes) return [];
+        } else if (declaration.isTypeOnly) return [];
+        const specifier = declaration.moduleSpecifier.text;
+        const local = resolveLocal(root, from, specifier);
+        return [local ? { from, to: local, local: true } : { from, to: specifier, local: false }];
+      });
+    });
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { importGraph, repositoryRoot } from './import-graph';
-import { checkImport, checkPackage, classify } from './rules';
+import { importGraph, repositoryRoot, valueImports } from './import-graph';
+import { checkImport, checkKernelImport, checkPackage, classify } from './rules';
 
 describe('architecture rules', () => {
   it('classifies files into iDesign layers', () => {
@@ -64,5 +64,22 @@ describe('the code base', () => {
       .map((e) => (e.local ? checkImport(e.from, e.to) : checkPackage(e.from, e.to)))
       .filter((v): v is string => v !== null);
     expect(violations).toEqual([]);
+  });
+
+  it('keeps the geometry kernel out of the main thread', () => {
+    const violations = valueImports(repositoryRoot, ['src'])
+      .map((e) => checkKernelImport(e.from, e.to))
+      .filter((v): v is string => v !== null);
+    expect(violations).toEqual([]);
+  });
+});
+
+describe('kernel imports', () => {
+  it('allows types and test code, refuses code on the main thread', () => {
+    expect(checkKernelImport('src/core/managers/project/a.ts', 'src/core/engines/interchange/index.ts')).toMatch(/import its types only/);
+    expect(checkKernelImport('src/app/x.ts', 'replicad')).toMatch(/import its types only/);
+    expect(checkKernelImport('src/core/managers/project/a.spec.ts', 'src/core/engines/interchange/index.ts')).toBeNull();
+    expect(checkKernelImport('src/workers/geometry.worker.ts', 'src/core/engines/modeling/index.ts')).toBeNull();
+    expect(checkKernelImport('src/core/managers/design/a.ts', 'src/core/engines/sketch/index.ts')).toBeNull();
   });
 });

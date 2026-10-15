@@ -4,6 +4,8 @@ import {
   isSketch,
   isToolFeature,
   type PlaneRef,
+  type Profile,
+  type ProfileLoop,
   type TopologyRef,
 } from '@core/contracts';
 import type { DesignState } from '@core/managers/design';
@@ -20,6 +22,7 @@ export interface FeatureDraft {
 }
 
 export const featureLabels: Readonly<Record<FeatureType, string>> = {
+  insert: 'Insert body',
   extrude: 'Extrude',
   revolve: 'Revolve',
   fillet: 'Fillet',
@@ -31,16 +34,26 @@ export const featureLabels: Readonly<Record<FeatureType, string>> = {
   mirror: 'Mirror',
 };
 
-/** Sensible starting values: the latest sketch's profiles, the latest extrude/revolve to repeat, and so on. */
-export function defaultFeature(type: FeatureType, id: string, state: DesignState): Feature {
+const loopKey = (loop: ProfileLoop) => loop.edges.map((e) => e.source).sort().join('|');
+
+/** All profiles except those that exactly fill a hole of another: a plate keeps its holes. */
+export function solidProfiles(profiles: readonly Profile[]): string[] {
+  const holes = new Set(profiles.flatMap((p) => p.holes.map(loopKey)));
+  return profiles.filter((p) => !holes.has(loopKey(p.outer))).map((p) => p.id);
+}
+
+/** Sensible starting values: the latest sketch's profiles, the latest extrude/revolve to repeat, the first imported model, and so on. */
+export function defaultFeature(type: FeatureType, id: string, state: DesignState, importedModels: readonly string[] = []): Feature {
   const base = { id, name: '', suppressed: false };
   const sketches = state.document.timeline.filter(isSketch).filter((s) => (state.sketches.get(s.id)?.profiles.length ?? 0) > 0);
   const sketch = sketches.at(-1);
-  const profiles = sketch ? (state.sketches.get(sketch.id)?.profiles.map((p) => p.id) ?? []) : [];
+  const profiles = sketch ? solidProfiles(state.sketches.get(sketch.id)?.profiles ?? []) : [];
   const operation = state.bodies.length ? ('join' as const) : ('new-body' as const);
   const lastTool = state.document.timeline.filter(isToolFeature).at(-1);
   const tools = lastTool ? [lastTool.id] : [];
   switch (type) {
+    case 'insert':
+      return { ...base, type, document: importedModels[0] ?? '' };
     case 'extrude':
       return { ...base, type, sketch: sketch?.id ?? '', profiles, distance: '10', direction: 'normal', operation };
     case 'revolve': {
@@ -116,6 +129,8 @@ export function selectionOf(draft: FeatureDraft): Pick[] {
       return f.direction.kind === 'edge' ? [pickOf(f.direction.edge)] : [];
     case 'circular-pattern':
       return f.axis.kind === 'edge' ? [pickOf(f.axis.edge)] : [];
+    case 'insert':
+      return [];
   }
 }
 

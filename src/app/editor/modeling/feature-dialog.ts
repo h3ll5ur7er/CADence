@@ -19,6 +19,7 @@ const operations: readonly { value: BodyOperation; label: string }[] = [
 ];
 
 const hints: Readonly<Record<Feature['type'], string>> = {
+  insert: 'Brings an imported STEP, STL, OBJ or 3MF file in as bodies you can sketch on, cut and round.',
   extrude: 'Click profiles in the view to add or remove them.',
   revolve: 'Click profiles in the view; the axis can be a construction line of the sketch or an edge.',
   fillet: 'Click the edges to round.',

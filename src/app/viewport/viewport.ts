@@ -71,6 +71,8 @@ export class Viewport {
   readonly selection = input<readonly Pick[]>([]);
   /** Faces to flag, such as those a manufacturability check found. */
   readonly flagged = input<readonly { readonly body: string; readonly name: string }[]>([]);
+  /** A box to frame whenever it changes (imported files of any size). */
+  readonly fit = input<{ readonly min: Vec3; readonly max: Vec3 } | undefined>(undefined);
   /** The two closest points of a distance measurement. */
   readonly measureLine = input<readonly [Vec3, Vec3] | undefined>(undefined);
   readonly backendReady = output<RendererBackend>();
@@ -129,6 +131,10 @@ export class Viewport {
     effect(() => this.scene()?.setSelection(this.selection()));
     effect(() => this.scene()?.setFlagged(this.flagged()));
     effect(() => this.scene()?.setMeasureLine(this.measureLine()));
+    effect(() => {
+      const box = this.fit();
+      if (box) this.scene()?.fitTo(box.min, box.max);
+    });
   }
 
   /** The rendered picture as a video stream, for recording animations. */

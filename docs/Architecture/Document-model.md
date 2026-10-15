@@ -107,6 +107,7 @@ Each feature type is its own interface in [[src/core/contracts/feature.ts]]. All
 
 | Type | Inputs | Values |
 | --- | --- | --- |
+| `insert` | an imported STEP, STL, OBJ or 3MF document | (its solids become new bodies) |
 | `extrude` | sketch, profile ids | distance; direction (normal, reverse, symmetric); operation |
 | `revolve` | sketch, profile ids, axis (origin axis, sketch construction line or edge) | angle; operation |
 | `fillet`, `chamfer` | edges (`TopologyRef`) | radius / distance |

@@ -8,24 +8,32 @@ import { DesignStore } from './design-store';
 import { linearPatternCommand } from './sketch-patterns';
 import { type ConstraintTool, constraintFor, type Tool } from './sketch-tools';
 
-const tools: readonly { tool: Tool; icon: IconName; label: string; key?: string }[] = [
+interface ToolButton { readonly tool: Tool; readonly icon: IconName; readonly label: string; readonly key?: string }
+
+/** Always in view. */
+const tools: readonly ToolButton[] = [
   { tool: 'select', icon: 'select', label: 'Select and drag', key: 'S' },
   { tool: 'line', icon: 'line', label: 'Line', key: 'L' },
   { tool: 'rectangle', icon: 'rectangle', label: 'Rectangle', key: 'R' },
-  { tool: 'center-rectangle', icon: 'centerRectangle', label: 'Centre rectangle' },
   { tool: 'circle', icon: 'circle', label: 'Circle', key: 'C' },
   { tool: 'arc', icon: 'arc', label: 'Arc (centre, start, end)', key: 'A' },
+  { tool: 'point', icon: 'point', label: 'Point', key: 'P' },
+  { tool: 'dimension', icon: 'dimension', label: 'Dimension', key: 'D' },
+];
+
+/** The Shapes menu. */
+const shapeTools: readonly ToolButton[] = [
+  { tool: 'center-rectangle', icon: 'centerRectangle', label: 'Centre rectangle' },
   { tool: 'three-point-arc', icon: 'threePointArc', label: 'Three-point arc' },
   { tool: 'slot', icon: 'slot', label: 'Slot' },
   { tool: 'polygon', icon: 'polygon', label: 'Polygon' },
   { tool: 'ellipse', icon: 'ellipse', label: 'Ellipse' },
   { tool: 'spline', icon: 'spline', label: 'Spline' },
-  { tool: 'point', icon: 'point', label: 'Point', key: 'P' },
   { tool: 'project', icon: 'project', label: 'Project edges or faces of bodies' },
-  { tool: 'dimension', icon: 'dimension', label: 'Dimension', key: 'D' },
 ];
 
-const editingTools: readonly { tool: Tool; icon: IconName; label: string; key?: string }[] = [
+/** The Modify menu: tools that change or copy existing geometry. */
+const modifyTools: readonly ToolButton[] = [
   { tool: 'trim', icon: 'trim', label: 'Trim', key: 'T' },
   { tool: 'extend', icon: 'extend', label: 'Extend' },
   { tool: 'split', icon: 'split', label: 'Split' },
@@ -89,7 +97,13 @@ const hints: Readonly<Record<Tool, string>> = {
 export class SketchToolbar {
   protected readonly store = inject(DesignStore);
   protected readonly tools = tools;
-  protected readonly editingTools = editingTools;
+  protected readonly shapeTools = shapeTools;
+  protected readonly modifyTools = modifyTools;
+  /** The open tool menu. */
+  protected readonly menu = signal<'shapes' | 'modify' | undefined>(undefined);
+  /** The tool of a menu that is active, shown on the menu's button. */
+  protected readonly activeShape = computed(() => shapeTools.find((t) => t.tool === this.store.tool()));
+  protected readonly activeModify = computed(() => modifyTools.find((t) => t.tool === this.store.tool()));
   /** The linear pattern form, while it is open. */
   protected readonly linearOpen = signal(false);
   /** Distance of the offset form, while it is open. */
@@ -125,6 +139,11 @@ export class SketchToolbar {
   constructor() {
     const stop = inject(Shortcuts).register('sketch', { 'sketch-offset': () => this.canOffset() && this.offsetDistance.set(2) });
     inject(DestroyRef).onDestroy(stop);
+  }
+
+  protected choose(tool: Tool): void {
+    this.menu.set(undefined);
+    this.store.tool.set(tool);
   }
 
   protected setCornerSize(value: string): void {

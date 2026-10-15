@@ -126,7 +126,7 @@ test('conflicting constraints are refused with an explanation', async ({ page })
   await page.getByRole('button', { name: 'Select and drag', exact: true }).click();
   const line = await center(page.locator('.curve').first());
   await page.mouse.click(line.x, line.y);
-  await page.getByRole('button', { name: 'Vertical (a line)' }).click();
+  await page.getByRole('button', { name: /^Vertical \(a line/ }).click();
   await expect(page.getByRole('alert')).toContainText('shrink a line, circle or arc to nothing');
 
   // Two length dimensions on one line contradict each other.

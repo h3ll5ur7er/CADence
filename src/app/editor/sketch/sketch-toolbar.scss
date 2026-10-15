@@ -173,3 +173,38 @@
     font-size: 12px;
   }
 }
+
+.tool.wide {
+  display: flex;
+  gap: 2px;
+  width: auto;
+  padding: 0 var(--space-1);
+
+  .caret {
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+}
+
+.menu-list.start {
+  right: auto;
+  left: 0;
+
+  button[role='menuitem'] {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    white-space: nowrap;
+
+    &:disabled {
+      opacity: 0.45;
+      cursor: default;
+    }
+  }
+}
+
+.offset .actions {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}

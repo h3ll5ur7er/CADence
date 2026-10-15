@@ -2,12 +2,14 @@
 id: CAD-38
 title: Sketch editing tools
 type: feature
-status: todo
+status: done
 priority: medium
 ---
 
-- [ ] Trim
-- [ ] Extend
-- [ ] Split
-- [ ] Offset of a chain of curves
-- [ ] Sketch fillet and chamfer of a corner
+- [x] Trim
+- [x] Extend
+- [x] Split
+- [x] Offset of a chain of curves
+- [x] Sketch fillet and chamfer of a corner
+
+Pure functions in [[src/core/engines/sketch/editing.ts]], applied as one undoable `edit-sketch` command. Lines, circles and arcs.

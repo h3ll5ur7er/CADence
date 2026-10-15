@@ -283,14 +283,16 @@ export class SketchEditor {
         if (clicks.length < 2) return this.pending.set(clicks);
         const [from, to] = clicks as [PointRef, PointRef];
         if (from.id && from.id === to.id) return;
+        const chain = this.pending();
         let drawn = lineCommand(sketchId, from, to, newId);
         let ok = await this.store.run(drawn.command);
         if (!ok && drawn.command.constraints.length) {
           drawn = lineCommand(sketchId, from, to, newId, false); // the inferred axis may conflict
           ok = await this.store.run(drawn.command);
         }
-        // Keep drawing from the new end, unless the chain just closed on an existing point.
-        this.pending.set(ok && !to.id ? [{ id: drawn.end, at: to.at }] : []);
+        // Keep drawing from the new end, unless the chain just closed on an existing point, or Escape
+        // (or another tool) ended the chain while the line was being added.
+        if (this.pending() === chain) this.pending.set(ok && !to.id ? [{ id: drawn.end, at: to.at }] : []);
         return;
       }
       case 'rectangle':

@@ -34,14 +34,14 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 
 ## Sketching
 
-- [X] **Project body edges into a sketch** as reference geometry that follows the body. *([[CAD-29]])* → [[CAD-29]]
-- [X] **Pattern and mirror sketch geometry.** *([[CAD-29]])* → [[CAD-29]]
+- [X] **Project body edges into a sketch** as reference geometry that follows the body. *([[CAD-29]])* → [[CAD-29]] ✅
+- [X] **Pattern and mirror sketch geometry.** *([[CAD-29]])* → [[CAD-29]] ✅
 - [X] **More drawing tools:** slot, polygon, center rectangle, three-point arc, ellipse, spline, text. *(new; the sketcher has line, rectangle, circle, arc, point)* → [[CAD-37]] [[CAD-41]]
-- [X] **Editing tools:** trim, extend, split, offset, sketch fillet and chamfer. *(new)* → [[CAD-38]]
-- [X] **More relations:** symmetric, concentric, collinear, horizontal/vertical alignment of two points. *(new)* → [[CAD-39]]
-- [X] **Box selection, copy and paste, move and rotate** of sketch geometry. *(new)* → [[CAD-40]]
+- [X] **Editing tools:** trim, extend, split, offset, sketch fillet and chamfer. *(new)* → [[CAD-38]] ✅
+- [X] **More relations:** symmetric, concentric, collinear, horizontal/vertical alignment of two points. *(new)* → [[CAD-39]] ✅
+- [X] **Box selection, copy and paste, move and rotate** of sketch geometry. *(new)* → [[CAD-40]] ✅
 - [X] **Constraints for imported drawings** (fix them, or infer horizontal, vertical, tangent). Imported curves arrive unconstrained. *(phase 6, ADR-22)* → [[CAD-42]]
-- [X] **Snap to existing geometry** e.g. if a point is placed on a line, a coincidence relation shall be created automatically. → [[CAD-39]]
+- [X] **Snap to existing geometry** e.g. if a point is placed on a line, a coincidence relation shall be created automatically. → [[CAD-39]] ✅
 
 ## Part modeling
 

@@ -8,7 +8,7 @@ import type { AxisInput, BodyState, ModelingEngine, ModelingOutcome, ModelingReq
 import { nameShape, namedSurfaces } from './naming';
 import { readSnapshot, snapshotOf } from './results';
 import { tessellate } from './tessellation';
-import { extrudeTool, revolveTool } from './tools';
+import { extrudeTool, loftTool, revolveTool, sweepTool } from './tools';
 
 /** A failure the user can act on, as opposed to a defect. */
 class FeatureError extends Error {}
@@ -132,6 +132,22 @@ export class OcctModelingEngine implements ModelingEngine {
         this.shapes.put(toolKey, tool);
         return { ...this.store(combine(bodies, tool, request.operation, request.feature, request.key)), toolKey };
       }
+      case 'loft':
+      case 'sweep': {
+        const tool =
+          request.type === 'loft'
+            ? loftTool(request.feature, request.sections, request.ruled)
+            : sweepTool(request.feature, request.frame, request.profiles, request.path, request.closed);
+        const toolKey = `${request.key}:tool`;
+        this.shapes.put(toolKey, tool);
+        return { ...this.store(combine(bodies, tool, request.operation, request.feature, request.key)), toolKey };
+      }
+      case 'path-pattern':
+        return this.repeat(request.feature, request.key, bodies, request.tools, request.placements.length + 1, (shape, i) => {
+          const place = request.placements[i - 1] as (typeof request.placements)[number];
+          const turned = place.rotation ? shape.rotate((place.rotation.angle * 180) / Math.PI, [...place.rotation.origin], [...place.rotation.direction]) : shape;
+          return turned.translate([...place.translation]);
+        });
       case 'insert':
         return this.insert(request.feature, request.key, request.bodies, request.sources);
       case 'fillet':
@@ -185,7 +201,7 @@ export class OcctModelingEngine implements ModelingEngine {
     copies: number,
     transform: (shape: Shape3D, i: number) => Shape3D,
   ): ModelingOutcome {
-    if (tools.length === 0) throw new FeatureError('Select at least one extrude or revolve to repeat.');
+    if (tools.length === 0) throw new FeatureError('Select at least one feature to repeat.');
     let current = bodies;
     let step = 0;
     for (const input of tools) {

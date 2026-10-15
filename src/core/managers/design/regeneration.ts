@@ -12,6 +12,7 @@ import {
   originFrames,
   type PlaneFrame,
   type PlaneRef,
+  type Profile,
   generatorOf,
   type Result,
   type Sketch,
@@ -25,9 +26,9 @@ import {
 import type { AssetAccess } from '@core/access/asset';
 import type { DocumentAccess } from '@core/access/document';
 import type { DrawingEntities, InterchangeEngine } from '@core/engines/interchange';
-import type { AxisInput, BodyState, ModelingEngine, ModelingRequest, ToolInput } from '@core/engines/modeling';
+import type { AxisInput, BodyState, ModelingEngine, ModelingRequest, PathPiece, Placement, ToolInput } from '@core/engines/modeling';
 import type { ParameterEngine, ParameterError, Quantity, ValueKind } from '@core/engines/parameter';
-import type { DragTarget, SketchEngine } from '@core/engines/sketch';
+import { type DragTarget, placesAlong, type SketchEngine, type SketchPath, sketchPath } from '@core/engines/sketch';
 import { contentHash } from '@core/utilities/identity';
 import { references } from './commands';
 import type { ItemStatus, ParameterView, SketchView } from './design-manager';
@@ -371,6 +372,40 @@ export class Regeneration {
         if (!thickness.ok) return thickness;
         return withKey({ ...base, type: 'shell', faces: feature.faces, thickness: thickness.value });
       }
+      case 'loft': {
+        if (feature.sections.length < 2) return fail({ code: 'missing-input', message: 'Pick profiles of at least two sketches.' });
+        const sections: { frame: PlaneFrame; profile: Profile }[] = [];
+        for (const section of feature.sections) {
+          const view = this.sketches.get(section.sketch);
+          const profile = view?.profiles.find((p) => p.id === section.profile);
+          if (!view || view.error || !profile) return fail({ code: 'missing-input', message: 'A section is missing, later in the timeline or no longer a profile. Edit the loft and pick it again.' });
+          sections.push({ frame: view.frame, profile });
+        }
+        return withKey({ ...base, type: 'loft', sections, ruled: feature.ruled, operation: feature.operation });
+      }
+      case 'sweep': {
+        const view = this.sketches.get(feature.sketch);
+        if (!view || view.error) return fail({ code: 'missing-input', message: 'Its sketch is missing, later in the timeline or does not solve.' });
+        const profiles = view.profiles.filter((p) => feature.profiles.includes(p.id));
+        if (profiles.length < feature.profiles.length || profiles.length === 0) {
+          return fail({ code: 'missing-input', message: 'Some of its profiles no longer exist. Edit the feature and pick them again.' });
+        }
+        const path = this.path(feature.path);
+        if (!path.ok) return path;
+        return withKey({ ...base, type: 'sweep', frame: view.frame, profiles, path: path.value.pieces, closed: path.value.flat.closed, operation: feature.operation });
+      }
+      case 'path-pattern': {
+        const tools = feature.features.map((id) => this.tools.get(id));
+        if (tools.some((t) => !t) || tools.length === 0) {
+          return fail({ code: 'missing-input', message: 'It repeats features that are missing, failed or come later in the timeline.' });
+        }
+        const count = this.value(feature.count, 'scalar', 'Count');
+        if (!count.ok) return count;
+        if (!Number.isInteger(count.value) || count.value < 2) return fail({ code: 'invalid-input', message: 'A pattern needs a whole number of at least 2 copies.' });
+        const path = this.path(feature.path);
+        if (!path.ok) return path;
+        return withKey({ ...base, type: 'path-pattern', tools: tools as ToolInput[], placements: placementsAlong(path.value.flat, path.value.frame, count.value, feature.align) });
+      }
       case 'combine':
         return withKey({ ...base, type: 'combine', target: feature.target, tools: feature.tools, operation: feature.operation, keepTools: feature.keepTools });
       case 'split': {
@@ -424,6 +459,23 @@ export class Regeneration {
         return withKey({ ...base, type: 'circular-pattern', tools: inputs, axis: axis.value, count: count.value, angle: angle.value });
       }
     }
+  }
+
+  /** The curves of a sketch as a path in world coordinates, in order. */
+  private path(sketchId: string): Result<{ readonly flat: SketchPath; readonly frame: PlaneFrame; readonly pieces: readonly PathPiece[] }> {
+    const view = this.sketches.get(sketchId);
+    if (!view || view.error) return fail({ code: 'missing-input', message: 'Its path sketch is missing, later in the timeline or does not solve.' });
+    const path = sketchPath(view.sketch);
+    if (!path.ok) return path;
+    const world = (p: Vec2): Vec3 => add(view.frame.origin, add(scale(view.frame.u, p[0]), scale(view.frame.v, p[1])));
+    const pieces = path.value.pieces.map((p): PathPiece =>
+      p.kind === 'bezier'
+        ? { kind: 'bezier', points: p.points.map(world) as unknown as [Vec3, Vec3, Vec3, Vec3] }
+        : p.kind === 'arc'
+          ? { kind: 'arc', start: world(p.start), mid: world(p.mid), end: world(p.end) }
+          : { kind: 'line', start: world(p.start), end: world(p.end) },
+    );
+    return ok({ flat: path.value, frame: view.frame, pieces });
   }
 
   /** Where a construction plane lies, by its mode. */
@@ -514,6 +566,25 @@ export class Regeneration {
     const end = point(line.end);
     return ok({ origin: start, direction: add(end, scale(start, -1)) });
   }
+}
+
+/**
+ * Where each copy of a path pattern goes, relative to the path's start: shifted along it and, when
+ * aligned, turned in the path's plane as the path turns.
+ */
+function placementsAlong(path: SketchPath, frame: PlaneFrame, count: number, align: boolean): Placement[] {
+  const places = placesAlong(path, count);
+  const world = (p: Vec2): Vec3 => add(frame.origin, add(scale(frame.u, p[0]), scale(frame.v, p[1])));
+  const [first, ...rest] = places;
+  if (!first) return [];
+  const start = world(first.point);
+  const normal = cross(frame.u, frame.v);
+  const heading = (d: Vec2) => Math.atan2(d[1], d[0]);
+  return rest.map((place): Placement => {
+    const translation = sub(world(place.point), start);
+    const angle = heading(place.direction) - heading(first.direction);
+    return align && Math.abs(angle) > 1e-12 ? { translation, rotation: { origin: start, direction: normal, angle } } : { translation };
+  });
 }
 
 /** Solvable but meaningless: a curve of (almost) zero size, e.g. a line both horizontal and vertical. */

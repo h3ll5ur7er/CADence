@@ -224,6 +224,62 @@
           </select>
         </label>
       }
+      @case ('loft') {
+        <ol class="sections" aria-label="Sections">
+          @for (section of f.sections; track section.sketch; let i = $index) {
+            <li>
+              <span>{{ sectionLabel(section) }}</span>
+              <button type="button" class="icon-btn" [attr.aria-label]="'Remove ' + sectionLabel(section)" (click)="removeSection(i)">×</button>
+            </li>
+          } @empty {
+            <li class="hint">Click a profile in each sketch.</li>
+          }
+        </ol>
+        <p class="count" data-testid="section-count">{{ f.sections.length }} section{{ f.sections.length === 1 ? '' : 's' }}</p>
+        <label class="check"><input type="checkbox" id="feature-ruled" [checked]="f.ruled" (change)="set({ ruled: $any($event.target).checked })" /> Straight between sections</label>
+      }
+      @case ('sweep') {
+        <label class="field">
+          Sketch
+          <select id="feature-sketch" [value]="f.sketch" (change)="set({ sketch: value($event), profiles: [] })">
+            @for (s of sketches(); track s.id) {
+              <option [value]="s.id">{{ s.name }}</option>
+            }
+          </select>
+        </label>
+        <p class="count" data-testid="profile-selection">{{ f.profiles.length }} profile{{ f.profiles.length === 1 ? '' : 's' }} selected</p>
+        <label class="field">
+          Path
+          <select id="feature-path" (change)="set({ path: value($event) })">
+            @for (s of pathSketches(); track s.id) {
+              <option [value]="s.id" [selected]="s.id === f.path">{{ s.name }}</option>
+            }
+          </select>
+        </label>
+      }
+      @case ('path-pattern') {
+        <fieldset class="tools">
+          <legend>Repeat</legend>
+          @for (t of tools(); track t.id) {
+            <label><input type="checkbox" [checked]="f.features.includes(t.id)" (change)="toggleTool(t.id, $any($event.target).checked)" /> {{ t.name }}</label>
+          } @empty {
+            <p class="hint">Add an extrude, revolve, loft or sweep first.</p>
+          }
+        </fieldset>
+        <label class="field">
+          Path
+          <select id="feature-path" (change)="set({ path: value($event) })">
+            @for (s of pathSketches(); track s.id) {
+              <option [value]="s.id" [selected]="s.id === f.path">{{ s.name }}</option>
+            }
+          </select>
+        </label>
+        <label class="field">
+          Count
+          <input id="feature-count" autocomplete="off" [value]="f.count" (change)="set({ count: value($event) })" />
+        </label>
+        <label class="check"><input type="checkbox" id="feature-align" [checked]="f.align" (change)="set({ align: $any($event.target).checked })" /> Turn the copies with the path</label>
+      }
       @case ('combine') {
         <label class="field">
           Target
@@ -317,7 +373,7 @@
       }
     }
 
-    @if (f.type === 'extrude' || f.type === 'revolve') {
+    @if (isToolFeature(f)) {
       <label class="field">
         Operation
         <select id="feature-operation" [value]="f.operation" (change)="set({ operation: $any(value($event)) })">

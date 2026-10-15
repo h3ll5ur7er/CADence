@@ -11,6 +11,7 @@ import {
   type DomainEvents,
   type ImportFormat,
   type PlaneFrame,
+  type PlaneRef,
   type Result,
   type SketchPoint,
   sketchOriginId,
@@ -439,6 +440,38 @@ describe('DesignManager', () => {
       unwrap(await session.execute({ type: 'add-feature', feature: { id: 't1', type: 'plane', name: '', suppressed: false, mode: 'points', points: [corner('ab', 'da'), corner('ab', 'bc'), corner('bc', 'cd')] } }));
       expect(close(frame('t1')?.origin ?? [])).toEqual([0, 0, 6]);
       expect(close(cross3((frame('t1') as PlaneFrame).u, (frame('t1') as PlaneFrame).v))).toEqual([0, 0, 1]);
+    });
+
+    it('lofts between sketches, sweeps along a sketch and patterns along a path', async () => {
+      /** A sketch with a w × h rectangle (or open line chain) from (x, y). */
+      const sketch = async (id: string, plane: PlaneRef, points: readonly [number, number][], closed = true) => {
+        unwrap(await session.execute({ type: 'create-sketch', id, plane }));
+        const ids = points.map((_, i) => `${id}p${i}`);
+        const lines = points.slice(0, closed ? undefined : -1).map((_, i) => ({ id: `${id}l${i}`, kind: 'line' as const, start: ids[i] as string, end: ids[(i + 1) % ids.length] as string, construction: false }));
+        unwrap(await session.execute({ type: 'add-sketch-geometry', sketchId: id, entities: [...points.map(([x, y], i) => ({ id: ids[i] as string, kind: 'point' as const, x, y })), ...lines], constraints: [] }));
+        return session.state().sketches.get(id)?.profiles[0]?.id as string;
+      };
+      const square = (x: number, y: number, w: number): [number, number][] => [[x, y], [x + w, y], [x + w, y + w], [x, y + w]];
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'top', type: 'plane', name: '', suppressed: false, base: 'XY', offset: '20' } }));
+      const bottom = await sketch('s1', 'XY', square(0, 0, 20));
+      const upper = await sketch('s2', { plane: 'top' }, square(5, 5, 10));
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'l1', type: 'loft', name: '', suppressed: false, sections: [{ sketch: 's1', profile: bottom }, { sketch: 's2', profile: upper }], ruled: true, operation: 'new-body' } }));
+      // A ruled loft between squares is a frustum: h/3 (A1 + A2 + √(A1·A2)).
+      expect(await volume()).toBeCloseTo((20 / 3) * (400 + 100 + 200), 3);
+
+      // A 4 × 4 bar swept along an L on the XY plane at y = 50: 30 along X, then 20 along Y.
+      const bar = await sketch('s3', 'YZ', square(48, 0, 4));
+      await sketch('s4', 'XY', [[0, 50], [30, 50], [30, 70]], false);
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'w1', type: 'sweep', name: '', suppressed: false, sketch: 's3', profiles: [bar], path: 's4', operation: 'new-body' } }));
+      expect(session.state().bodies.map((b) => b.body)).toEqual(['l1', 'w1']);
+
+      // A 2 × 2 post on the frustum's base, repeated 3 times along the bottom edge.
+      const post = await sketch('s5', 'XY', square(-1, -1, 2));
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'e9', type: 'extrude', name: '', suppressed: false, sketch: 's5', profiles: [post], distance: '5', direction: 'reverse', operation: 'new-body' } }));
+      await sketch('s6', 'XY', [[0, -10], [40, -10]], false);
+      const before = (await session.properties()).length;
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'pp', type: 'path-pattern', name: '', suppressed: false, features: ['e9'], path: 's6', count: '3', align: false } }));
+      expect((await session.properties()).length).toBe(before + 2);
     });
 
     it('refuses parameter changes that would break the model', async () => {

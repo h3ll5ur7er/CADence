@@ -169,3 +169,9 @@ export async function rimOf(page: Page, instance: number, side: 'top' | 'bottom'
     { instance, side },
   );
 }
+
+/** A feature from one of the model toolbar's menus (Create, Pattern, Bodies). */
+export async function fromModelMenu(page: Page, menu: 'Create' | 'Pattern' | 'Bodies', item: string): Promise<void> {
+  await page.getByRole('toolbar', { name: 'Model tools' }).getByRole('button', { name: menu, exact: true }).click();
+  await page.getByRole('menuitem', { name: item, exact: true }).click();
+}

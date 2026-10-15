@@ -1,6 +1,6 @@
 import { readFileSync, statSync } from 'node:fs';
 import { expect, type Page, test } from '@playwright/test';
-import { evidence } from './support';
+import { evidence, fromModelMenu } from './support';
 
 /** Phase 6 (Import) user journey: STEP and SVG files viewed, converted, and used in parts and assemblies. */
 test.setTimeout(180_000);
@@ -57,7 +57,7 @@ test('import STEP and SVG, convert them, build with them', async ({ page }) => {
   expect(await number(page, 'body-volume')).toBeCloseTo(area * 10, 0);
 
   // The STEP bracket as a body of the same component.
-  await page.getByRole('button', { name: 'Insert body' }).click();
+  await fromModelMenu(page, 'Create', 'Insert body');
   await expect(page.locator('#feature-document')).toHaveValue(/.+/);
   await page.getByRole('button', { name: 'OK' }).click();
   await expect(page.getByTestId('body-count')).toHaveText('2');

@@ -34,6 +34,9 @@ const hints: Readonly<Record<Feature['type'], string>> = {
   split: 'Cuts a body in two along a plane; the piece behind the plane becomes a new body.',
   move: 'Turns the bodies about an axis, then shifts them. Click bodies in the view to add or remove them.',
   scale: 'Scales the bodies about the origin, the same in every direction.',
+  loft: 'Click one profile in each sketch, in order; the loft blends through their outlines.',
+  sweep: 'Click the profiles to sweep; the path is the curves of another sketch, starting at the profile.',
+  'path-pattern': 'Repeats the selected features along the curves of a sketch, evenly spaced.',
 };
 
 /** Creates or edits one feature. Values are expressions; references are picked in the 3D view. */
@@ -66,6 +69,27 @@ export class FeatureDialog {
   protected readonly sketches = computed(() =>
     (this.store.state()?.document.timeline ?? []).filter(isSketch).filter((s) => (this.store.state()?.sketches.get(s.id)?.profiles.length ?? 0) > 0),
   );
+  /** All sketches before the marker, as paths. */
+  protected readonly pathSketches = computed(() => {
+    const document = this.store.state()?.document;
+    return (document?.timeline ?? []).slice(0, (document?.timeline.length ?? 0) - (document?.rollbackIndex ?? 0)).filter(isSketch);
+  });
+
+  /** A loft section as a label: its sketch's name and which of its profiles. */
+  protected sectionLabel(section: { readonly sketch: string; readonly profile: string }): string {
+    const state = this.store.state();
+    const sketch = state?.document.timeline.find((i) => i.id === section.sketch);
+    const index = state?.sketches.get(section.sketch)?.profiles.findIndex((p) => p.id === section.profile) ?? -1;
+    return `${sketch?.name ?? 'Missing sketch'}, profile ${index + 1}`;
+  }
+
+  protected removeSection(index: number): void {
+    const f = this.feature();
+    if (f?.type === 'loft') this.set({ sections: f.sections.filter((_, i) => i !== index) });
+  }
+
+  protected readonly isToolFeature = isToolFeature;
+
   /** Construction lines of the chosen sketch, as revolve axes. */
   protected readonly axisLines = computed(() => {
     const f = this.feature();
@@ -126,7 +150,7 @@ export class FeatureDialog {
 
   protected toggleTool(id: string, on: boolean): void {
     const f = this.feature();
-    if (f?.type !== 'linear-pattern' && f?.type !== 'circular-pattern' && f?.type !== 'mirror') return;
+    if (f?.type !== 'linear-pattern' && f?.type !== 'circular-pattern' && f?.type !== 'mirror' && f?.type !== 'path-pattern') return;
     this.set({ features: on ? [...f.features, id] : f.features.filter((x) => x !== id) });
   }
 

@@ -296,6 +296,70 @@ describe('component results and joint frames', () => {
       expect(await volume(scaled)).toBeCloseTo(8 * 80 * 40 * 5);
     });
   });
+
+  describe('lofts and sweeps', () => {
+    const square = profile(rectangleLoop(-10, -10, 20, 20, 'sq'));
+    const top = { ...XY, origin: [0, 0, 30] as const };
+
+    async function squareToCircle(): Promise<readonly BodyState[]> {
+      return ok(await engine.apply({ type: 'loft', feature: 'loft', key: 'loft', bodies: [], sections: [{ frame: XY, profile: square }, { frame: top, profile: profile(circleLoop(0, 0, 8, 'round')) }], ruled: false, operation: 'new-body' }));
+    }
+
+    it('lofts between sections, naming caps and the sides after the first section', async () => {
+      const bodies = await squareToCircle();
+      const v = await volume(bodies);
+      expect(v).toBeGreaterThan(Math.PI * 64 * 30);
+      expect(v).toBeLessThan(400 * 30);
+      // The circle's two edges meet the square's four: the kernel splits the left and right sides in two.
+      const faces = (await names(bodies)).faces;
+      expect(faces.filter((f) => !f.startsWith('f:loft:side:'))).toEqual(['f:loft:end', 'f:loft:start']);
+      expect(new Set(faces.filter((f) => f.startsWith('f:loft:side:')).map((f) => f.split('~')[0]))).toEqual(
+        new Set(['f:loft:side:sq-bottom', 'f:loft:side:sq-left', 'f:loft:side:sq-right', 'f:loft:side:sq-top']),
+      );
+    });
+
+    it('keeps the names of freeform faces cut by later features', async () => {
+      const bodies = await squareToCircle();
+      // A hole through the loft's -Y side, from the XZ plane outwards.
+      const side = { origin: [0, 0, 0] as const, u: [1, 0, 0] as const, v: [0, 0, 1] as const };
+      const cut = ok(await engine.apply({ type: 'extrude', feature: 'hole', key: 'loft-hole', bodies, frame: side, profiles: [profile(circleLoop(0, 12, 2, 'h'))], distance: 20, direction: 'normal', operation: 'cut' }));
+      const faces = (await names(cut)).faces;
+      expect(faces).toContain('f:loft:side:sq-bottom');
+      expect(faces.filter((f) => f.startsWith('f:loft:side:'))).toHaveLength(6);
+      expect(faces.some((f) => f.includes(':new:'))).toBe(false);
+    });
+
+    it('names loft and sweep faces the same when their profiles change size', async () => {
+      const loftOf = async (size: number) => {
+        const sq = profile(rectangleLoop(-size / 2, -size / 2, size, size, 'sq'));
+        const lofted = ok(await engine.apply({ type: 'loft', feature: 'loft', key: `loft-${size}`, bodies: [], sections: [{ frame: XY, profile: sq }, { frame: top, profile: profile(rectangleLoop(-5, -5, 10, 10, 'up')) }], ruled: false, operation: 'new-body' }));
+        return (await names(lofted)).faces;
+      };
+      expect(await loftOf(24)).toEqual(await loftOf(20));
+      const sweepOf = async (radius: number) => {
+        const across = { origin: [0, 0, 0] as const, u: [0, 1, 0] as const, v: [0, 0, 1] as const };
+        const path = [{ kind: 'arc' as const, start: [0, 0, 0] as const, mid: [10 * Math.SQRT1_2, 10 - 10 * Math.SQRT1_2, 0] as const, end: [10, 10, 0] as const }];
+        const swept = ok(await engine.apply({ type: 'sweep', feature: 'tube', key: `sweep-${radius}`, bodies: [], frame: across, profiles: [profile(circleLoop(0, 0, radius, 'ring'))], path, closed: false, operation: 'new-body' }));
+        return (await names(swept)).faces;
+      };
+      expect(await sweepOf(3)).toEqual(await sweepOf(2));
+    });
+
+    it('sweeps a profile along a path of a line and an arc', async () => {
+      const ring = profile(circleLoop(0, 0, 2, 'ring'));
+      const across = { origin: [0, 0, 0] as const, u: [0, 1, 0] as const, v: [0, 0, 1] as const }; // facing +X
+      const path = [
+        { kind: 'line' as const, start: [0, 0, 0] as const, end: [30, 0, 0] as const },
+        { kind: 'arc' as const, start: [30, 0, 0] as const, mid: [30 + 10 * Math.SQRT1_2, 10 - 10 * Math.SQRT1_2, 0] as const, end: [40, 10, 0] as const },
+      ];
+      const bodies = ok(await engine.apply({ type: 'sweep', feature: 'tube', key: 'sweep', bodies: [], frame: across, profiles: [ring], path, closed: false, operation: 'new-body' }));
+      expect(await volume(bodies)).toBeCloseTo(Math.PI * 4 * (30 + (Math.PI / 2) * 10), 0);
+      const faces = (await names(bodies)).faces;
+      expect(faces).toContain('f:tube:start');
+      expect(faces).toContain('f:tube:end');
+      expect(faces.filter((f) => f.includes(':new:'))).toEqual([]);
+    });
+  });
 });
 
 const normal = (f: { u: readonly number[]; v: readonly number[] }) => [

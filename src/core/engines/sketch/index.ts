@@ -6,6 +6,7 @@ import { findProfiles } from './profiles';
 export type { DragTarget } from './planegcs-solver';
 export { chamfer, type EditResult, extend, fillet, offset, type SketchEdit, split, trim } from './editing';
 export { type DrawingRelations, inferRelations } from './relations';
+export { type PathPiece2, placesAlong, type SketchPath, sketchPath } from './path';
 
 export interface SketchSolution extends SolveOutcome {
   /** Closed regions of the solved sketch, for features such as extrude. */

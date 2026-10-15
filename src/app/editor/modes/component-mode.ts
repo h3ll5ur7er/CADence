@@ -52,20 +52,37 @@ const statusLabels = {
 } as const;
 
 const featureTools: readonly { type: FeatureType; icon: IconName }[] = [
-  { type: 'insert', icon: 'imported' },
   { type: 'extrude', icon: 'extrude' },
   { type: 'revolve', icon: 'revolve' },
   { type: 'fillet', icon: 'fillet' },
   { type: 'chamfer', icon: 'chamfer' },
   { type: 'shell', icon: 'shell' },
   { type: 'plane', icon: 'planeAdd' },
-  { type: 'linear-pattern', icon: 'pattern' },
-  { type: 'circular-pattern', icon: 'circular' },
-  { type: 'mirror', icon: 'mirror' },
 ];
 
 /** Less frequent features, in menus of the model toolbar. */
 const featureMenus: readonly { id: string; label: string; icon: IconName; items: readonly { type: FeatureType; icon: IconName }[] }[] = [
+  {
+    id: 'create',
+    label: 'Create',
+    icon: 'create',
+    items: [
+      { type: 'loft', icon: 'loft' },
+      { type: 'sweep', icon: 'sweep' },
+      { type: 'insert', icon: 'imported' },
+    ],
+  },
+  {
+    id: 'pattern',
+    label: 'Pattern',
+    icon: 'pattern',
+    items: [
+      { type: 'linear-pattern', icon: 'pattern' },
+      { type: 'circular-pattern', icon: 'circular' },
+      { type: 'path-pattern', icon: 'pathPattern' },
+      { type: 'mirror', icon: 'mirror' },
+    ],
+  },
   {
     id: 'bodies',
     label: 'Bodies',
@@ -95,6 +112,9 @@ const itemIcons: Readonly<Record<TimelineItem['type'], IconName>> = {
   split: 'split',
   move: 'move',
   scale: 'scale',
+  loft: 'loft',
+  sweep: 'sweep',
+  'path-pattern': 'pathPattern',
 };
 
 const exportFormats: readonly { format: SolidFormat; label: string }[] = [

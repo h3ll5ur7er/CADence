@@ -5,6 +5,18 @@ export type { BodyState };
 /** An axis given in world coordinates, or by a straight edge of a body. */
 export type AxisInput = { readonly origin: Vec3; readonly direction: Vec3 } | { readonly edge: TopologyRef };
 
+/** A piece of a sweep path in world coordinates: a line, an arc through `mid`, or a cubic Bézier. */
+export type PathPiece =
+  | { readonly kind: 'line'; readonly start: Vec3; readonly end: Vec3 }
+  | { readonly kind: 'arc'; readonly start: Vec3; readonly mid: Vec3; readonly end: Vec3 }
+  | { readonly kind: 'bezier'; readonly points: readonly [Vec3, Vec3, Vec3, Vec3] };
+
+/** Where one copy of a pattern goes: turned about an axis (radians), then shifted. */
+export interface Placement {
+  readonly translation: Vec3;
+  readonly rotation?: { readonly origin: Vec3; readonly direction: Vec3; readonly angle: number };
+}
+
 /** The tool solid an earlier extrude/revolve made, to repeat it in patterns and mirrors. */
 export interface ToolInput {
   readonly feature: string;
@@ -56,6 +68,21 @@ export type ModelingRequest = RequestBase &
         readonly angle: number;
       }
     | { readonly type: 'mirror'; readonly tools: readonly ToolInput[]; readonly plane: PlaneFrame }
+    | { readonly type: 'path-pattern'; readonly tools: readonly ToolInput[]; readonly placements: readonly Placement[] }
+    | {
+        readonly type: 'loft';
+        readonly sections: readonly { readonly frame: PlaneFrame; readonly profile: Profile }[];
+        readonly ruled: boolean;
+        readonly operation: BodyOperation;
+      }
+    | {
+        readonly type: 'sweep';
+        readonly frame: PlaneFrame;
+        readonly profiles: readonly Profile[];
+        readonly path: readonly PathPiece[];
+        readonly closed: boolean;
+        readonly operation: BodyOperation;
+      }
     /** Solids read by the Interchange Engine (stored without names) become new bodies, named by this feature. */
     | { readonly type: 'insert'; readonly sources: readonly string[] }
     | {

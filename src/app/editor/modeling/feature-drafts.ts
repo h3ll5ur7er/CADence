@@ -36,6 +36,9 @@ export const featureLabels: Readonly<Record<FeatureType, string>> = {
   split: 'Split body',
   move: 'Move or copy bodies',
   scale: 'Scale bodies',
+  loft: 'Loft',
+  sweep: 'Sweep',
+  'path-pattern': 'Pattern along a path',
 };
 
 /** A loop by its pieces, whichever way round it runs: the curve each comes from and where it ends (a text's letters share one source). */
@@ -95,6 +98,20 @@ export function defaultFeature(type: FeatureType, id: string, state: DesignState
       return { ...base, type, bodies: bodyIds.slice(-1), translate: ['10', '0', '0'], axis: { kind: 'origin', axis: 'Z' }, angle: '0 deg', copy: false };
     case 'scale':
       return { ...base, type, bodies: bodyIds.slice(-1), factor: '2' };
+    case 'loft': {
+      // The first outline of each of the two latest sketches.
+      const sections = sketches.slice(-2).map((s) => ({ sketch: s.id, profile: solidProfiles(state.sketches.get(s.id)?.profiles ?? [])[0] ?? '' }));
+      return { ...base, type, sections, ruled: false, operation };
+    }
+    case 'sweep': {
+      // The profiles of the latest sketch with profiles, along the curves of the latest other sketch.
+      const path = active.filter(isSketch).filter((s) => s.id !== sketch?.id).at(-1);
+      return { ...base, type, sketch: sketch?.id ?? '', profiles, path: path?.id ?? '', operation };
+    }
+    case 'path-pattern': {
+      const path = active.filter(isSketch).at(-1);
+      return { ...base, type, features: tools, path: path?.id ?? '', count: '4', align: false };
+    }
   }
 }
 
@@ -117,6 +134,8 @@ export function pickableFor(draft: FeatureDraft | undefined): ReadonlySet<PickKi
   switch (f.type) {
     case 'extrude':
     case 'revolve':
+    case 'loft':
+    case 'sweep':
       return new Set<PickKind>(['profile']);
     case 'fillet':
     case 'chamfer':
@@ -160,9 +179,14 @@ export function selectionOf(draft: FeatureDraft): Pick[] {
       return planeFace(f.plane);
     case 'move':
       return f.axis.kind === 'edge' ? [pickOf(f.axis.edge)] : [];
+    case 'loft':
+      return f.sections.map((s): Pick => ({ kind: 'profile', sketch: s.sketch, profile: s.profile }));
+    case 'sweep':
+      return f.profiles.map((profile): Pick => ({ kind: 'profile', sketch: f.sketch, profile }));
     case 'insert':
     case 'combine':
     case 'scale':
+    case 'path-pattern':
       return [];
   }
 }
@@ -193,6 +217,24 @@ export function applyPick(draft: FeatureDraft, pick: Pick): FeatureDraft {
       if (pick.kind !== 'profile') return draft;
       const profiles = pick.sketch === f.sketch ? toggle(f.profiles, pick.profile, (a, b) => a === b) : [pick.profile];
       return { ...draft, feature: { ...f, sketch: pick.sketch, profiles } };
+    }
+    case 'sweep': {
+      if (pick.kind !== 'profile') return draft;
+      const profiles = pick.sketch === f.sketch ? toggle(f.profiles, pick.profile, (a, b) => a === b) : [pick.profile];
+      return { ...draft, feature: { ...f, sketch: pick.sketch, profiles } };
+    }
+    case 'loft': {
+      // One section per sketch: picking a profile of a sketch already in the loft swaps it, or removes it when it is the same.
+      if (pick.kind !== 'profile') return draft;
+      const index = f.sections.findIndex((s) => s.sketch === pick.sketch);
+      const section = { sketch: pick.sketch, profile: pick.profile };
+      const sections =
+        index < 0
+          ? [...f.sections, section]
+          : f.sections[index]?.profile === pick.profile
+            ? f.sections.filter((_, i) => i !== index)
+            : f.sections.map((s, i) => (i === index ? section : s));
+      return { ...draft, feature: { ...f, sections } };
     }
     case 'fillet':
     case 'chamfer':

@@ -3,6 +3,8 @@ import type { ModelingEngine } from './modeling-engine';
 import { OcctModelingEngine } from './occt-modeling-engine';
 
 export type {
+  PathPiece,
+  Placement,
   AxisInput,
   BodyState,
   ModelingEngine,

@@ -43,6 +43,9 @@ const featureLabels: Readonly<Record<FeatureType, string>> = {
   split: 'Split',
   move: 'Move',
   scale: 'Scale',
+  loft: 'Loft',
+  sweep: 'Sweep',
+  'path-pattern': 'Path pattern',
 };
 
 const invalid = (message: string) => fail({ code: 'invalid-command', message });
@@ -120,7 +123,7 @@ export function itemDependencies(item: TimelineItem, timeline: readonly Timeline
   const found = new Set<string>();
   const visit = (value: unknown, key?: string): void => {
     if (typeof value === 'string') {
-      if (key === 'sketch' || key === 'plane' || key === 'features') found.add(value);
+      if (key === 'sketch' || key === 'plane' || key === 'features' || key === 'path') found.add(value);
       if (key === 'body' || key === 'target' || key === 'tools' || key === 'bodies') found.add(value.split(':')[0] as string);
       if (key === 'name') {
         for (const m of value.matchAll(/(?:^|[|&:])f:([^:|&~@]+)/g)) found.add(m[1] as string);

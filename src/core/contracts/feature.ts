@@ -62,6 +62,35 @@ export interface RevolveFeature extends FeatureBase {
   readonly operation: BodyOperation;
 }
 
+/** Blends between profiles of two or more sketches, in order (their outer outlines). */
+export interface LoftFeature extends FeatureBase {
+  readonly type: 'loft';
+  readonly sections: readonly { readonly sketch: string; readonly profile: string }[];
+  /** Straight between the sections instead of smooth through them. */
+  readonly ruled: boolean;
+  readonly operation: BodyOperation;
+}
+
+/** Sweeps sketch profiles along a path: the curves of another sketch, joined end to end. */
+export interface SweepFeature extends FeatureBase {
+  readonly type: 'sweep';
+  readonly sketch: string;
+  readonly profiles: readonly string[];
+  /** The sketch whose curves are the path. */
+  readonly path: string;
+  readonly operation: BodyOperation;
+}
+
+/** Repeats the effect of earlier features along a path (the curves of a sketch), evenly spaced. */
+export interface PathPatternFeature extends FeatureBase {
+  readonly type: 'path-pattern';
+  readonly features: readonly string[];
+  readonly path: string;
+  readonly count: string;
+  /** Turn the copies with the path, as it changes direction. */
+  readonly align: boolean;
+}
+
 /** Rounds (fillet) or bevels (chamfer) edges. */
 export interface EdgeTreatmentFeature extends FeatureBase {
   readonly type: 'fillet' | 'chamfer';
@@ -156,6 +185,9 @@ export interface ScaleFeature extends FeatureBase {
 
 export type Feature =
   | InsertFeature
+  | LoftFeature
+  | SweepFeature
+  | PathPatternFeature
   | CombineFeature
   | SplitFeature
   | MoveFeature
@@ -172,8 +204,9 @@ export type Feature =
 export type FeatureType = Feature['type'];
 
 /** Features that make a tool solid and combine it with the bodies, and can therefore be patterned. */
-export type ToolFeature = ExtrudeFeature | RevolveFeature;
-export const isToolFeature = (f: { readonly type: string }): f is ToolFeature => f.type === 'extrude' || f.type === 'revolve';
+export type ToolFeature = ExtrudeFeature | RevolveFeature | LoftFeature | SweepFeature;
+export const isToolFeature = (f: { readonly type: string }): f is ToolFeature =>
+  f.type === 'extrude' || f.type === 'revolve' || f.type === 'loft' || f.type === 'sweep';
 
 /** A plane in space: origin and orthonormal in-plane axes (u, v); the normal is u × v. */
 export interface PlaneFrame {

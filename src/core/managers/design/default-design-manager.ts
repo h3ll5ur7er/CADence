@@ -1,5 +1,6 @@
 import type { AssetAccess } from '@core/access/asset';
 import type { DocumentAccess } from '@core/access/document';
+import type { ProjectAccess } from '@core/access/project';
 import type { ExternalFileAccess } from '@core/access/external-file';
 import {
   type BodyMesh,
@@ -10,13 +11,15 @@ import {
   type DomainEvents,
   fail,
   isSketch,
-  manufacturingProfiles,
   type ManufacturingProfile,
+  manufacturingProfiles,
   type Material,
   materials,
   type Measurement,
   ok,
+  type Parameter,
   type Result,
+  resultStamp,
   type TopologyRef,
   type ValidationReport,
 } from '@core/contracts';
@@ -24,6 +27,7 @@ import type { AnalysisEngine } from '@core/engines/analysis';
 import type { InterchangeEngine } from '@core/engines/interchange';
 import type { ModelingEngine } from '@core/engines/modeling';
 import type { ParameterEngine } from '@core/engines/parameter';
+import { flatPattern } from '@core/engines/sheet-metal';
 import { inferRelations, type SketchEngine } from '@core/engines/sketch';
 import type { Clock } from '@core/utilities/clock';
 import type { EventBus } from '@core/utilities/messaging';
@@ -39,9 +43,11 @@ import type {
   SketchView,
   SolidFormat,
 } from './design-manager';
-import { type Derived, Regeneration } from './regeneration';
+import { type Derived, Regeneration, type RegenerationContext } from './regeneration';
 
 export interface DesignManagerDependencies {
+  /** Where project parameters are read. */
+  readonly projects: ProjectAccess;
   readonly documents: DocumentAccess;
   readonly externalFiles: ExternalFileAccess;
   readonly sketches: SketchEngine;
@@ -77,13 +83,24 @@ class Session implements DesignSession {
   private readonly meshCache = new Map<string, BodyMesh>();
   private queue: Promise<unknown> = Promise.resolve();
 
+  /** Listening for project parameter changes, while the session has listeners. */
+  private projectWatch: (() => void) | undefined;
+
   constructor(
     private readonly deps: DesignManagerDependencies,
     initial: Snapshot,
     private readonly results: ResultPublisher,
+    private context: RegenerationContext,
   ) {
     this.current = initial;
     for (const mesh of initial.meshes) this.meshCache.set(mesh.key, mesh);
+  }
+
+  /** Regenerates with the project's new parameters; the document itself does not change. */
+  private async projectChanged(): Promise<void> {
+    this.context = { ...this.context, projectParameters: await projectParametersOf(this.deps, this.current.document) };
+    const derived = await new Regeneration(this.deps).run(this.current.document, this.context);
+    await this.commit({ document: this.current.document, derived, meshes: await this.meshes(derived) });
   }
 
   state(): DesignState {
@@ -95,6 +112,7 @@ class Session implements DesignSession {
       planes: derived.planes,
       bodies: meshes,
       threads: derived.threads,
+      sheetMetal: derived.sheet !== undefined,
       parameters: derived.parameters,
       canUndo: this.undoStack.length > 0,
       canRedo: this.redoStack.length > 0,
@@ -103,7 +121,17 @@ class Session implements DesignSession {
 
   subscribe(listener: (state: DesignState) => void): () => void {
     this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    const { projectId } = this.current.document;
+    this.projectWatch ??= this.deps.events.subscribe('projectParametersChanged', (event) =>
+      event.projectId === projectId ? void this.serialized(() => this.projectChanged()) : undefined,
+    );
+    return () => {
+      this.listeners.delete(listener);
+      if (this.listeners.size === 0) {
+        this.projectWatch?.();
+        this.projectWatch = undefined;
+      }
+    };
   }
 
   /** Commands run one after another, so fast input (drags, typing) can never interleave. */
@@ -176,14 +204,28 @@ class Session implements DesignSession {
     return this.execute({ type: 'add-sketch-geometry', sketchId, entities, constraints: inferRelations(entities, options.relations ?? 'none', idPrefix) });
   }
 
-  async exportBodies(format: SolidFormat, options: ExportOptions = {}): Promise<Result<void>> {
+  async exportFlatPattern(format: DrawingFormat): Promise<Result<void>> {
     const { document, derived } = this.current;
-    const bodies = this.namedBodies().filter((b) => !options.bodies || options.bodies.includes(b.id));
+    if (!derived.sheet) return fail({ code: 'not-sheet-metal', message: 'Only sheet metal parts (with a base flange) can be laid flat.' });
+    const pattern = flatPattern(derived.sheet.frame, derived.sheet.profiles, derived.flanges, derived.sheet.rules);
+    if (!pattern.ok) return pattern;
+    const bytes = await this.deps.interchange.exportOutlines(pattern.value.cuts, pattern.value.bends, format);
+    await this.deps.externalFiles.deliver({ name: `${document.name} - flat pattern.${format}`, mediaType: drawingTypes[format], bytes });
+    return ok(undefined);
+  }
+
+  async exportBodies(format: SolidFormat, options: ExportOptions = {}): Promise<Result<void>> {
+    const { document } = this.current;
+    // Another configuration is built for the export only; the session keeps showing its own.
+    const other = options.configuration !== undefined && options.configuration !== (document.configuration ?? '');
+    const derived = other ? await new Regeneration(this.deps).run(document, { ...this.context, configuration: options.configuration }) : this.current.derived;
+    const bodies = this.namedBodies(derived).filter((b) => !options.bodies || options.bodies.includes(b.id));
     if (derived.bodies.length === 0) return fail({ code: 'nothing-to-export', message: 'There are no bodies to export yet.' });
     if (bodies.length === 0) return fail({ code: 'nothing-to-export', message: 'Select at least one body to export.' });
+    const variant = document.configurations?.find((c) => c.id === (other ? options.configuration : document.configuration))?.name;
     try {
       const bytes = await this.deps.interchange.exportBodies(bodies, format, options.quality);
-      await this.deps.externalFiles.deliver({ name: `${document.name}.${format}`, mediaType: solidTypes[format], bytes });
+      await this.deps.externalFiles.deliver({ name: `${document.name}${variant ? ` (${variant})` : ''}.${format}`, mediaType: solidTypes[format], bytes });
       return ok(undefined);
     } catch (error) {
       return fail({ code: 'export-failed', message: error instanceof Error ? error.message : String(error) });
@@ -207,8 +249,8 @@ class Session implements DesignSession {
   }
 
   /** Bodies with the names of the features that made them. */
-  private namedBodies() {
-    const { document, derived } = this.current;
+  private namedBodies(derived: Derived = this.current.derived) {
+    const { document } = this.current;
     return derived.bodies.map((b) => ({ ...b, name: document.timeline.find((item) => item.id === b.id)?.name ?? b.id }));
   }
 
@@ -219,7 +261,7 @@ class Session implements DesignSession {
     const applied = applyCommand(this.current.document, command);
     if (!applied.ok) return applied;
     const { document, target, drag } = applied.value;
-    const derived = await new Regeneration(this.deps, drag).run(document);
+    const derived = await new Regeneration(this.deps, drag).run(document, this.context);
     if (applied.value.parameters) {
       if (derived.parameterError) return fail(derived.parameterError);
       // A parameter change must not break anything that worked before.
@@ -261,7 +303,7 @@ class Session implements DesignSession {
     await this.deps.documents.store(snapshot.document);
     const state = this.state();
     for (const listener of this.listeners) listener(state);
-    await this.results.publish(snapshot.document, snapshot.derived.bodies);
+    await this.results.publish(snapshot.document, snapshot.derived.bodies, this.context.projectParameters, snapshot.document.configuration);
   }
 
   private serialized<T>(work: () => Promise<T>): Promise<T> {
@@ -269,6 +311,11 @@ class Session implements DesignSession {
     this.queue = run.catch(() => undefined);
     return run;
   }
+}
+
+/** The parameters of the component's project. */
+async function projectParametersOf(deps: DesignManagerDependencies, document: ComponentDocument): Promise<readonly Parameter[]> {
+  return (await deps.projects.find(document.projectId))?.parameters ?? [];
 }
 
 const materialOf = (document: ComponentDocument): Material => document.material ?? (materials[0] as Material);
@@ -292,16 +339,17 @@ class ResultPublisher {
 
   constructor(private readonly deps: DesignManagerDependencies) {}
 
-  async publish(document: ComponentDocument, bodies: readonly BodyState[]): Promise<void> {
+  async publish(document: ComponentDocument, bodies: readonly BodyState[], projectParameters: readonly Parameter[] = [], configuration?: string): Promise<void> {
     const keys = bodies.map((b) => b.key).join('|');
     if (this.last?.keys !== keys) this.last = { keys, bytes: await this.deps.modeling.snapshot(bodies) };
-    await this.deps.assets.publishResult({ documentId: document.id, projectId: document.projectId, stamp: document.modifiedAt, bytes: this.last.bytes });
+    const stamp = resultStamp(document.modifiedAt, projectParameters);
+    await this.deps.assets.publishResult({ documentId: document.id, projectId: document.projectId, stamp, bytes: this.last.bytes, ...(configuration ? { configuration } : {}) });
   }
 }
 
 export class DefaultDesignManager implements DesignManager {
   constructor(private readonly deps: DesignManagerDependencies) {
-    deps.events.subscribe('regenerateComponent', ({ documentId }) => this.regenerate(documentId));
+    deps.events.subscribe('regenerateComponent', ({ documentId, configuration }) => this.regenerate(documentId, configuration));
     deps.events.subscribe('documentDeleted', ({ documentId }) => deps.assets.discardResult(documentId));
   }
 
@@ -310,20 +358,20 @@ export class DefaultDesignManager implements DesignManager {
     if (document?.kind !== 'component') {
       return fail({ code: 'unknown-document', message: `Component ${documentId} does not exist.` });
     }
-    const derived = await new Regeneration(this.deps).run(document);
+    const context = { projectParameters: await projectParametersOf(this.deps, document) };
+    const derived = await new Regeneration(this.deps).run(document, context);
     const meshes = derived.bodies.length ? await this.deps.modeling.tessellate(derived.bodies) : [];
-    return ok(new Session(this.deps, { document, derived, meshes }, new ResultPublisher(this.deps)));
+    return ok(new Session(this.deps, { document, derived, meshes }, new ResultPublisher(this.deps), context));
   }
 
-  /** Answers a queued `regenerateComponent` request with `componentRegenerated`. */
-  private async regenerate(documentId: DocumentId): Promise<void> {
+  /** Answers a queued `regenerateComponent` request (for one configuration) with `componentRegenerated`. */
+  private async regenerate(documentId: DocumentId, configuration?: string): Promise<void> {
+    const answer = (ok: boolean) => this.deps.events.publish('componentRegenerated', { documentId, ...(configuration ? { configuration } : {}), ok });
     const document = await this.deps.documents.load(documentId);
-    if (document?.kind !== 'component') {
-      this.deps.events.publish('componentRegenerated', { documentId, ok: false });
-      return;
-    }
-    const derived = await new Regeneration(this.deps).run(document);
-    await new ResultPublisher(this.deps).publish(document, derived.bodies);
-    this.deps.events.publish('componentRegenerated', { documentId, ok: true });
+    if (document?.kind !== 'component' || (configuration && !document.configurations?.some((c) => c.id === configuration))) return answer(false);
+    const projectParameters = await projectParametersOf(this.deps, document);
+    const derived = await new Regeneration(this.deps).run(document, { projectParameters, configuration: configuration ?? '' });
+    await new ResultPublisher(this.deps).publish(document, derived.bodies, projectParameters, configuration);
+    answer(true);
   }
 }

@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/c
 import { Icon } from '../../shared/icon';
 import { bodyNames } from '../modeling/body-names';
 import { DesignStore } from '../sketch/design-store';
-import { degrees, millimetres } from './units';
+import { degrees, lengthIn } from './units';
 
 /** The measure tool: picks faces and edges in the 3D view and shows what lies between them. */
 @Component({
@@ -73,7 +73,7 @@ import { degrees, millimetres } from './units';
 })
 export class MeasurePanel {
   protected readonly store = inject(DesignStore);
-  protected readonly mm = millimetres;
+  protected readonly mm = (value: number, power: 1 | 2 | 3 = 1) => lengthIn(this.store.units(), value, power);
   protected readonly deg = degrees;
 
   protected readonly picks = computed(() => {

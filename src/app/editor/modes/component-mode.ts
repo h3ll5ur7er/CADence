@@ -15,6 +15,8 @@ import {
   type Appearance,
   type DocumentSummary,
   type FeatureType,
+  type LengthUnit,
+  lengthUnitNames,
   generatorOf,
   isCurve,
   isSketch,
@@ -29,7 +31,7 @@ import type { SolidFormat } from '@core/managers/design';
 import { NameDialog } from '../../shared/dialogs';
 import { CheckPanel } from '../analysis/check-panel';
 import { MeasurePanel } from '../analysis/measure-panel';
-import { grams, millimetres, point } from '../analysis/units';
+import { grams, lengthIn, point, pointIn } from '../analysis/units';
 import { relativeTime } from '../../shared/format';
 import { Icon, type IconName } from '../../shared/icon';
 import { Shortcuts } from '../../shared/shortcuts';
@@ -73,6 +75,8 @@ const featureMenus: readonly { id: string; label: string; icon: IconName; items:
       { type: 'hole', icon: 'hole' },
       { type: 'rib', icon: 'rib' },
       { type: 'thread', icon: 'thread' },
+      { type: 'base-flange', icon: 'sheet' },
+      { type: 'edge-flange', icon: 'flange' },
       { type: 'insert', icon: 'imported' },
     ],
   },
@@ -123,6 +127,8 @@ const itemIcons: Readonly<Record<TimelineItem['type'], IconName>> = {
   thread: 'thread',
   draft: 'draft',
   rib: 'rib',
+  'base-flange': 'sheet',
+  'edge-flange': 'flange',
 };
 
 const exportFormats: readonly { format: SolidFormat; label: string }[] = [
@@ -144,6 +150,11 @@ const exportFormats: readonly { format: SolidFormat; label: string }[] = [
 export class ComponentMode {
   readonly document = input.required<DocumentSummary>();
   protected readonly status = inject(EditorStatus);
+  private readonly unitsInStatus = effect(() => this.status.units.set(this.store.units()));
+
+  protected setUnits(units: LengthUnit): void {
+    void this.store.run({ type: 'set-units', units });
+  }
   protected readonly store = inject(DesignStore);
   protected readonly originVisible = signal(true);
   /** The open toolbar menu: sketch, export, or one of the feature menus. */
@@ -156,7 +167,10 @@ export class ComponentMode {
   protected readonly exportFormats = exportFormats;
   protected readonly relativeTime = relativeTime;
   protected readonly materials = materials;
-  protected readonly mm = millimetres;
+  protected readonly mm = (value: number, power: 1 | 2 | 3 = 1) => lengthIn(this.store.units(), value, power);
+  protected readonly at = (p: readonly number[]) => pointIn(this.store.units(), p);
+  protected readonly unitNames = lengthUnitNames;
+  protected readonly unitList = Object.keys(lengthUnitNames) as LengthUnit[];
   protected readonly grams = grams;
   protected readonly point = point;
   private readonly nameDialog = viewChild.required(NameDialog);
@@ -297,14 +311,19 @@ export class ComponentMode {
   }
 
   /** The export form: one format, the bodies to include and the mesh quality. */
-  protected readonly exportDraft = signal<{ format: SolidFormat; bodies: readonly string[]; quality: MeshQuality } | undefined>(undefined);
+  protected exportFlat(format: 'dxf' | 'svg'): void {
+    this.menu.set(undefined);
+    void this.store.exportFlatPattern(format);
+  }
+
+  protected readonly exportDraft = signal<{ format: SolidFormat; bodies: readonly string[]; quality: MeshQuality; configuration: string } | undefined>(undefined);
 
   protected openExport(): void {
     this.menu.set(undefined);
-    this.exportDraft.set({ format: 'stl', bodies: this.bodies().map((b) => b.body), quality: 'normal' });
+    this.exportDraft.set({ format: 'stl', bodies: this.bodies().map((b) => b.body), quality: 'normal', configuration: this.store.state()?.document.configuration ?? '' });
   }
 
-  protected changeExport(changes: Partial<{ format: SolidFormat; quality: MeshQuality }>): void {
+  protected changeExport(changes: Partial<{ format: SolidFormat; quality: MeshQuality; configuration: string }>): void {
     const draft = this.exportDraft();
     if (draft) this.exportDraft.set({ ...draft, ...changes });
   }
@@ -318,7 +337,7 @@ export class ComponentMode {
     const draft = this.exportDraft();
     if (!draft) return;
     this.exportDraft.set(undefined);
-    await this.store.exportBodies(draft.format, { bodies: draft.bodies, quality: draft.quality });
+    await this.store.exportBodies(draft.format, { bodies: draft.bodies, quality: draft.quality, configuration: draft.configuration });
   }
 
   /** The number of items before the rollback marker. */

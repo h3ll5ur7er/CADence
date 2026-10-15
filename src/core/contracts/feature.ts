@@ -153,6 +153,41 @@ export interface ThreadMarker {
   readonly internal: boolean;
 }
 
+/**
+ * The flat sheet a sheet metal part starts from: sketch profiles extruded by the sheet's thickness. It
+ * holds the component's sheet metal rules, which its edge flanges and flat pattern use.
+ */
+export interface BaseFlangeFeature extends FeatureBase {
+  readonly type: 'base-flange';
+  readonly sketch: string;
+  readonly profiles: readonly string[];
+  readonly direction: 'normal' | 'reverse';
+  readonly thickness: string;
+  readonly bendRadius: string;
+  /** Where the neutral layer lies in the sheet, from the inside of a bend (0) to the outside (1). */
+  readonly kFactor: string;
+}
+
+/** Flanges bent up from straight edges of the base flange: a bend, then a straight piece. */
+export interface EdgeFlangeFeature extends FeatureBase {
+  readonly type: 'edge-flange';
+  readonly edges: readonly TopologyRef[];
+  readonly length: string;
+  readonly angle: string;
+}
+
+/** Where an edge flange stands, for unfolding: its edge, the directions away from and above the sheet. */
+export interface FlangeMarker {
+  readonly feature: string;
+  readonly start: Vec3;
+  readonly end: Vec3;
+  readonly away: Vec3;
+  readonly up: Vec3;
+  readonly length: number;
+  /** Radians. */
+  readonly angle: number;
+}
+
 /** Rounds (fillet) or bevels (chamfer) edges. */
 export interface EdgeTreatmentFeature extends FeatureBase {
   readonly type: 'fillet' | 'chamfer';
@@ -266,6 +301,8 @@ export interface ScaleFeature extends FeatureBase {
 
 export type Feature =
   | InsertFeature
+  | BaseFlangeFeature
+  | EdgeFlangeFeature
   | DraftFeature
   | RibFeature
   | HoleFeature

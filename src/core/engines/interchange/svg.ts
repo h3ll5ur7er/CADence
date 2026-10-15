@@ -35,9 +35,12 @@ function element(curve: DrawingCurve): string {
   }
 }
 
-/** SVG sized in millimetres, hairline strokes and no fill, as laser cutter software expects. */
-export function writeSvg(curves: readonly DrawingCurve[]): string {
-  const { min, max } = boundsOf(curves);
+/**
+ * SVG sized in millimetres, hairline strokes and no fill, as laser cutter software expects. `marks`
+ * (bend lines) go in a group of their own, blue and dashed, so they are scored or left out, not cut.
+ */
+export function writeSvg(curves: readonly DrawingCurve[], marks: readonly DrawingCurve[] = []): string {
+  const { min, max } = boundsOf([...curves, ...marks]);
   const width = num(max[0] - min[0]);
   const height = num(max[1] - min[1]);
   return [
@@ -46,6 +49,7 @@ export function writeSvg(curves: readonly DrawingCurve[]): string {
     '<g fill="none" stroke="#000" stroke-width="0.1">',
     ...curves.map(element),
     '</g>',
+    ...(marks.length ? ['<g id="bend-lines" fill="none" stroke="#1971c2" stroke-width="0.1" stroke-dasharray="1 1">', ...marks.map(element), '</g>'] : []),
     '</svg>',
     '',
   ].join('\n');

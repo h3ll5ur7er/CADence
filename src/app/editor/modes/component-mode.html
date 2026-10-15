@@ -214,6 +214,10 @@
                 <button type="button" role="menuitem" (click)="exportAs(f.format)">{{ f.label }}</button>
               }
               <button type="button" role="menuitem" (click)="openExport()">With options…</button>
+              @if (store.state()?.sheetMetal) {
+                <button type="button" role="menuitem" (click)="exportFlat('dxf')">Flat pattern (DXF)</button>
+                <button type="button" role="menuitem" (click)="exportFlat('svg')">Flat pattern (SVG)</button>
+              }
             </div>
           }
           @if (exportDraft(); as draft) {
@@ -226,6 +230,17 @@
                   }
                 </select>
               </label>
+              @if (store.state()?.document?.configurations?.length) {
+                <label class="field">
+                  Configuration
+                  <select id="export-configuration" (change)="changeExport({ configuration: $any($event.target).value })">
+                    <option value="" [selected]="!draft.configuration">The parameters' own values</option>
+                    @for (c of store.state()?.document?.configurations ?? []; track c.id) {
+                      <option [value]="c.id" [selected]="c.id === draft.configuration">{{ c.name }}</option>
+                    }
+                  </select>
+                </label>
+              }
               <fieldset>
                 <legend>Bodies</legend>
                 @for (body of bodyRows(); track body.id) {
@@ -304,7 +319,7 @@
       <p class="eyebrow">Profile areas</p>
       <ul class="areas">
         @for (profile of view.profiles; track profile.id) {
-          <li class="mono">{{ profile.area.toFixed(2) }} mm²</li>
+          <li class="mono">{{ mm(profile.area, 2) }}</li>
         }
       </ul>
     }
@@ -313,7 +328,13 @@
     <h2>{{ document().name }}</h2>
     <dl>
       <dt>Units</dt>
-      <dd>Millimetres</dd>
+      <dd>
+        <select id="component-units" aria-label="Units" (change)="setUnits($any($event.target).value)">
+          @for (u of unitList; track u) {
+            <option [value]="u" [selected]="u === store.units()">{{ unitNames[u] }}</option>
+          }
+        </select>
+      </dd>
       <dt>Timeline</dt>
       <dd>{{ timeline().length }} items</dd>
       <dt>Modified</dt>
@@ -342,9 +363,9 @@
                 <dt>Surface</dt>
                 <dd class="mono">{{ mm(p.area, 2) }}</dd>
                 <dt>Size</dt>
-                <dd class="mono" data-testid="body-size">{{ point([p.box.max[0] - p.box.min[0], p.box.max[1] - p.box.min[1], p.box.max[2] - p.box.min[2]]) }} mm</dd>
+                <dd class="mono" data-testid="body-size">{{ at([p.box.max[0] - p.box.min[0], p.box.max[1] - p.box.min[1], p.box.max[2] - p.box.min[2]]) }} {{ store.units() }}</dd>
                 <dt>Centre of mass</dt>
-                <dd class="mono">{{ point(p.centerOfMass) }}</dd>
+                <dd class="mono">{{ at(p.centerOfMass) }}</dd>
               </dl>
               <div class="look">
                 <input

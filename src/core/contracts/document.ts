@@ -13,6 +13,20 @@ export const documentKinds: readonly DocumentKind[] = ['component', 'assembly', 
 export type CreatableDocumentKind = Exclude<DocumentKind, 'imported'>;
 
 export type LengthUnit = 'mm' | 'cm' | 'in';
+
+/** Millimetres in one unit. Geometry is always stored and computed in millimetres. */
+export const lengthUnitSize: Readonly<Record<LengthUnit, number>> = { mm: 1, cm: 10, in: 25.4 };
+
+export const lengthUnitNames: Readonly<Record<LengthUnit, string>> = { mm: 'Millimetres', cm: 'Centimetres', in: 'Inches' };
+
+/**
+ * A length as typed in a document's unit: a plain number gets the unit written out, so the stored
+ * expression means the same length whatever the document's unit is later (plain numbers are millimetres).
+ */
+export function lengthExpression(typed: string, unit: LengthUnit): string {
+  const text = typed.trim();
+  return unit !== 'mm' && /^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(text) ? `${text} ${unit}` : text;
+}
 export type ImportFormat = 'step' | 'stl' | 'obj' | '3mf' | 'dxf' | 'svg';
 
 export interface DocumentSummary {
@@ -43,10 +57,22 @@ export type TimelineItem = Sketch | Feature;
 
 export const isSketch = (item: TimelineItem): item is Sketch => item.type === 'sketch';
 
+/** A named variant of a component: other values for some of its (or its project's) parameters. */
+export interface Configuration {
+  readonly id: string;
+  readonly name: string;
+  /** Expressions by parameter name. */
+  readonly values: Readonly<Record<string, string>>;
+}
+
 export interface ComponentDocument extends DocumentBase {
   readonly kind: 'component';
   readonly units: LengthUnit;
   readonly parameters: readonly Parameter[];
+  /** The component's configuration table. */
+  readonly configurations?: readonly Configuration[];
+  /** The configuration being edited and shown (absent: the parameters' own values). */
+  readonly configuration?: string;
   readonly timeline: readonly TimelineItem[];
   /**
    * How many items at the end of the timeline are rolled back: they are kept but not run, and new

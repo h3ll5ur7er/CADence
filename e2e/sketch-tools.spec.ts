@@ -132,7 +132,7 @@ test('projects the outline of a face into a sketch', async ({ page }) => {
   await page.mouse.click(origin.x + 40, origin.y - 20);
   await expect(page.locator('.curve.projected')).toHaveCount(4);
   await expect(page.getByTestId('profile-count')).toHaveText('1');
-  await expect(page.locator('.areas')).toContainText('1800.00 mm²');
+  await expect(page.locator('.areas')).toContainText('1,800 mm²');
   await expect(page.getByTestId('sketch-status')).toHaveText('Fully constrained');
   await evidence(page, '41-projected-face');
 });

@@ -1,11 +1,14 @@
-import type {
-  TextWeight,
-  Dimension,
-  GeometricConstraint,
-  Sketch,
-  SketchConstraint,
-  SketchEntity,
-  Vec2,
+import {
+  type Dimension,
+  type GeometricConstraint,
+  type LengthUnit,
+  lengthExpression,
+  lengthUnitSize,
+  type Sketch,
+  type SketchConstraint,
+  type SketchEntity,
+  type TextWeight,
+  type Vec2,
 } from '@core/contracts';
 import type { DesignCommand } from '@core/managers/design';
 import { pointsOf } from '../../viewport/sketch-display';
@@ -242,7 +245,9 @@ export function constraintFor(
  * line → length, circle → diameter, arc → radius, ellipse → minor radius, two points → distance,
  * point and line → distance, two lines → angle.
  */
-export function dimensionFor(selected: readonly SketchEntity[], id: string, sketch: Sketch): Dimension | undefined {
+export function dimensionFor(selected: readonly SketchEntity[], id: string, sketch: Sketch, unit: LengthUnit = 'mm'): Dimension | undefined {
+  // Lengths start at their current value in the document's unit.
+  const formatValue = (mm: number) => lengthExpression(String(Math.round((mm / lengthUnitSize[unit]) * 100) / 100), unit);
   const points = pointsOf(sketch);
   const at = (pointId: string) => points.get(pointId) ?? ([0, 0] as Vec2);
   const dist = (p: string, q: string) => Math.hypot(at(p)[0] - at(q)[0], at(p)[1] - at(q)[1]);
@@ -260,7 +265,7 @@ export function dimensionFor(selected: readonly SketchEntity[], id: string, sket
     const direction = (l: typeof a) => Math.atan2(at(l.end)[1] - at(l.start)[1], at(l.end)[0] - at(l.start)[0]);
     let angle = Math.abs(direction(b) - direction(a)) % Math.PI;
     if (angle > Math.PI / 2) angle = Math.PI - angle;
-    return { id, kind: 'angle', lines: [a.id, b.id], expression: `${formatValue((angle * 180) / Math.PI)} deg` };
+    return { id, kind: 'angle', lines: [a.id, b.id], expression: `${String(Math.round(((angle * 180) / Math.PI) * 100) / 100)} deg` };
   }
   const point = selected.find((e) => e.kind === 'point');
   const line = selected.find((e) => e.kind === 'line');

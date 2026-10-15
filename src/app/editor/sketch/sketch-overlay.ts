@@ -1,6 +1,8 @@
 import {
   type Dimension,
   isDimension,
+  type LengthUnit,
+  lengthUnitSize,
   type Profile,
   type ProfileEdge,
   type Sketch,
@@ -91,7 +93,7 @@ export interface ScreenLabel {
 }
 
 const degrees = (radians: number) => (radians * 180) / Math.PI;
-const formatLength = (v: number) => String(Math.round(v * 100) / 100);
+
 
 /** Where to anchor a constraint's glyph: a quarter along a line (its middle holds dimensions), top of a circle, or its point. */
 function anchorOf(sketch: Sketch, id: string, points: ReadonlyMap<string, Vec2>): Vec2 | undefined {
@@ -195,7 +197,9 @@ export function glyphs(sketch: Sketch, matrix: Affine): ScreenLabel[] {
 }
 
 /** Dimension labels with the evaluated value, placed beside what they measure. */
-export function dimensionLabels(sketch: Sketch, values: ReadonlyMap<string, number>, matrix: Affine): ScreenLabel[] {
+export function dimensionLabels(sketch: Sketch, values: ReadonlyMap<string, number>, matrix: Affine, unit: LengthUnit = 'mm'): ScreenLabel[] {
+  // Lengths in the document's unit, without it; angles in degrees.
+  const formatLength = (v: number) => String(Math.round((v / lengthUnitSize[unit]) * 100) / 100);
   const points = pointsOf(sketch);
   const at = (id: string): Vec2 => points.get(id) ?? [0, 0];
   const screen = (p: Vec2): Vec2 => applyAffine(matrix, p[0], p[1]);

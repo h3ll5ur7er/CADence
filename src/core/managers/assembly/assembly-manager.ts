@@ -24,6 +24,8 @@ export type AssemblyCommand =
   | { readonly type: 'ground-instance'; readonly instanceId: string; readonly grounded: boolean }
   /** How an instance is shown; an appearance of defaults only removes it. */
   | { readonly type: 'set-instance-appearance'; readonly instanceId: string; readonly appearance: Appearance }
+  /** Shows a configuration of the instance's component (absent: its parameters' own values). */
+  | { readonly type: 'set-instance-configuration'; readonly instanceId: string; readonly configuration?: string }
   /** An empty name gets the next default ("Revolute 2"). */
   | { readonly type: 'add-joint'; readonly joint: Joint }
   | { readonly type: 'edit-joint'; readonly joint: Joint }
@@ -37,6 +39,10 @@ export type AssemblyCommand =
 /** A component used in the assembly, as its published result. */
 export interface ComponentView {
   readonly id: DocumentId;
+  /** The configuration shown (absent: the component's parameters' own values). */
+  readonly configuration?: string;
+  /** The configurations the component has, to choose from. */
+  readonly configurations?: readonly { readonly id: string; readonly name: string }[];
   readonly name: string;
   /** `loading` while the Design Manager regenerates it; `missing` when the document is gone. */
   readonly status: 'loading' | 'ready' | 'missing';
@@ -47,7 +53,8 @@ export interface ComponentView {
 
 export interface AssemblyState {
   readonly document: AssemblyDocument;
-  readonly components: ReadonlyMap<DocumentId, ComponentView>;
+  /** By source: the component, or `<component>@<configuration>` (`sourceKey`). */
+  readonly components: ReadonlyMap<string, ComponentView>;
   /** Where each instance is. */
   readonly poses: ReadonlyMap<string, Matrix4>;
   /** Instances a joint places (the others can be moved). */

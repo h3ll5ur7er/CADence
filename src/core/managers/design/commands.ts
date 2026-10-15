@@ -7,6 +7,7 @@ import {
   type FeatureType,
   isDefaultAppearance,
   isSketch,
+  lengthUnitSize,
   ok,
   type Result,
   type Sketch,
@@ -50,6 +51,8 @@ const featureLabels: Readonly<Record<FeatureType, string>> = {
   thread: 'Thread',
   draft: 'Draft',
   rib: 'Rib',
+  'base-flange': 'Base flange',
+  'edge-flange': 'Edge flange',
 };
 
 const invalid = (message: string) => fail({ code: 'invalid-command', message });
@@ -161,6 +164,12 @@ function orderProblem(timeline: readonly TimelineItem[]): string | undefined {
     seen.add(item.id);
   }
   return undefined;
+}
+
+/** The document with `configuration` as the one edited and shown (none: the parameters' own values). */
+function withConfiguration(document: ComponentDocument, configuration: string | undefined): ComponentDocument {
+  if (configuration) return { ...document, configuration };
+  return Object.fromEntries(Object.entries(document).filter(([key]) => key !== 'configuration')) as unknown as ComponentDocument;
 }
 
 function nextName(document: ComponentDocument, label: string): string {
@@ -426,6 +435,19 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
       });
     case 'delete-parameter':
       return ok({ document: { ...document, parameters: document.parameters.filter((p) => p.id !== command.id) }, parameters: true });
+    case 'set-configurations': {
+      const names = command.configurations.map((c) => c.name.trim());
+      if (names.some((n) => !n)) return invalid('Every configuration needs a name.');
+      if (new Set(names).size < names.length || new Set(command.configurations.map((c) => c.id)).size < names.length) return invalid('Configuration names must differ.');
+      const active = document.configuration && command.configurations.some((c) => c.id === document.configuration) ? document.configuration : undefined;
+      return ok({ document: withConfiguration({ ...document, configurations: command.configurations }, active), parameters: true });
+    }
+    case 'activate-configuration':
+      if (command.configuration && !document.configurations?.some((c) => c.id === command.configuration)) return invalid('That configuration does not exist.');
+      return ok({ document: withConfiguration(document, command.configuration), parameters: true });
+    case 'set-units':
+      if (!(command.units in lengthUnitSize)) return invalid(`${command.units} is not a unit lengths can be shown in.`);
+      return ok({ document: { ...document, units: command.units } });
     case 'set-material':
       if (!command.material.name.trim() || !(command.material.density > 0)) return invalid('A material needs a name and a density above zero.');
       return ok({ document: { ...document, material: command.material } });

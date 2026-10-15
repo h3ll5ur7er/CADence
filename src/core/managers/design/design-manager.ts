@@ -3,12 +3,14 @@ import type {
   BodyMesh,
   BodyProperties,
   ComponentDocument,
+  Configuration,
   DocumentId,
   Feature,
+  LengthUnit,
   ManufacturingProfile,
-  MeshQuality,
   Material,
   Measurement,
+  MeshQuality,
   Parameter,
   PlaneFrame,
   PlaneRef,
@@ -18,12 +20,12 @@ import type {
   SketchConstraint,
   SketchEntity,
   SketchStatus,
-  TopologyRef,
-  ValidationReport,
-  Vec2,
   TextOutlines,
   TextWeight,
   ThreadMarker,
+  TopologyRef,
+  ValidationReport,
+  Vec2,
 } from '@core/contracts';
 
 /** Every change to a component is one of these commands (docs/Architecture/Decisions.md#adr-10). Ids come from the caller. */
@@ -73,6 +75,12 @@ export type DesignCommand =
   | { readonly type: 'set-parameter'; readonly parameter: Parameter }
   | { readonly type: 'delete-parameter'; readonly id: string }
   | { readonly type: 'set-material'; readonly material: Material }
+  /** Replaces the configuration table; the configuration being edited must stay in it. */
+  | { readonly type: 'set-configurations'; readonly configurations: readonly Configuration[] }
+  /** Edits and shows a configuration (absent: the parameters' own values). */
+  | { readonly type: 'activate-configuration'; readonly configuration?: string }
+  /** The unit lengths are shown and typed in; nothing stored changes. */
+  | { readonly type: 'set-units'; readonly units: LengthUnit }
   /** The machine the component is made on (print or laser profile), for validation and kerf compensation. */
   | { readonly type: 'set-process'; readonly process: ManufacturingProfile }
   /** How a body is shown; an appearance of defaults only removes the entry. */
@@ -111,6 +119,8 @@ export interface ParameterView {
   readonly parameter: Parameter;
   /** Evaluated value with a unit label, e.g. "12 mm" or "30°". */
   readonly display?: string;
+  /** A project parameter (edited in the project, used here). */
+  readonly project?: boolean;
 }
 
 export interface DesignState {
@@ -122,6 +132,8 @@ export interface DesignState {
   readonly bodies: readonly BodyMesh[];
   /** Threads, for showing on their faces. */
   readonly threads: readonly ThreadMarker[];
+  /** Whether the component is a sheet metal part (it has a base flange), which can be laid flat. */
+  readonly sheetMetal: boolean;
   readonly parameters: readonly ParameterView[];
   readonly canUndo: boolean;
   readonly canRedo: boolean;
@@ -135,6 +147,8 @@ export type SolidFormat = 'step' | 'stl' | 'obj' | '3mf';
 export interface ExportOptions {
   readonly bodies?: readonly string[];
   readonly quality?: MeshQuality;
+  /** A configuration to export (`''`: the parameters' own values); the shown one by default. */
+  readonly configuration?: string;
 }
 
 /** How a drawing goes into a sketch: as one piece, or as separate curves held by the relations it shows, fixed, or free. */
@@ -160,6 +174,8 @@ export interface DesignSession {
    * the drawing keeps its proportions and moves, turns and scales by two handle points.
    */
   insertDrawing(sketchId: string, documentId: DocumentId, idPrefix: string, options?: InsertDrawingOptions): Promise<Result<void>>;
+  /** The sheet metal part laid flat (cut outlines, bend lines apart), for laser cutting and bending. */
+  exportFlatPattern(format: DrawingFormat): Promise<Result<void>>;
   /** All bodies, one file. */
   exportBodies(format: SolidFormat, options?: ExportOptions): Promise<Result<void>>;
   /** Area, length, radius, distance and angle of picked faces and edges. */

@@ -9,7 +9,7 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
-import { isCurve, isDimension, generatorOf, type SketchEntity, sketchOriginId, type Vec2 } from '@core/contracts';
+import { isCurve, isDimension, generatorOf, lengthExpression, type SketchEntity, sketchOriginId, type Vec2 } from '@core/contracts';
 import type { SketchView } from '@core/managers/design';
 import { newId } from '@core/utilities/identity';
 import { pointsOf } from '../../viewport/sketch-display';
@@ -154,7 +154,7 @@ export class SketchEditor {
   });
   protected readonly dimensions = computed(() => {
     const m = this.matrix();
-    return m ? dimensionLabels(this.sketch(), this.view().values, m) : [];
+    return m ? dimensionLabels(this.sketch(), this.view().values, m, this.store.units()) : [];
   });
   protected readonly inline = computed((): InlineEdit | undefined => {
     const id = this.editingDimension();
@@ -259,7 +259,10 @@ export class SketchEditor {
     const edit = this.inline();
     if (!edit) return;
     if (expression.trim() === edit.expression) return this.editingDimension.set(undefined);
-    const ok = await this.store.run({ type: 'set-dimension', sketchId: this.sketch().id, constraintId: edit.id, expression });
+    // Lengths typed as plain numbers are in the document's unit.
+    const angle = this.sketch().constraints.find((c) => c.id === edit.id)?.kind === 'angle';
+    const typed = angle ? expression : lengthExpression(expression, this.store.units());
+    const ok = await this.store.run({ type: 'set-dimension', sketchId: this.sketch().id, constraintId: edit.id, expression: typed });
     if (ok) this.editingDimension.set(undefined);
   }
 
@@ -420,7 +423,7 @@ export class SketchEditor {
     }
     this.picked.set([]);
     const id = newId();
-    const dimension = dimensionFor(selection, id, this.sketch());
+    const dimension = dimensionFor(selection, id, this.sketch(), this.store.units());
     if (!dimension) return;
     if (await this.store.run({ type: 'add-constraint', sketchId: this.sketch().id, constraint: dimension })) {
       this.openInline(id);

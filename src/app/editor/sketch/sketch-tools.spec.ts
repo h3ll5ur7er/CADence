@@ -83,6 +83,8 @@ describe('sketch tools', () => {
       expect(dimensionFor([get(c)], 'd', sketch)).toMatchObject({ kind: 'diameter', expression: '6' });
       expect(dimensionFor([get(l1), get(l2)], 'd', sketch)).toMatchObject({ kind: 'angle', expression: '5.71 deg' });
       expect(dimensionFor([get('p4'), get(l1)], 'd', sketch)).toMatchObject({ kind: 'point-line-distance', expression: '5' });
+      // In an inch document, lengths start in inches.
+      expect(dimensionFor([get(l1)], 'd', sketch, 'in')).toMatchObject({ kind: 'distance', expression: '0.39 in' });
     });
   });
 });

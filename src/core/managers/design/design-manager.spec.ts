@@ -1,6 +1,7 @@
 import { InMemoryAssetAccess } from '@core/access/asset';
 import { InMemoryDocumentAccess } from '@core/access/document';
 import { InMemoryExternalFileAccess } from '@core/access/external-file';
+import { InMemoryProjectAccess } from '@core/access/project';
 import { createShapeAccess } from '@core/access/shape';
 import {
   asAssetId,
@@ -10,6 +11,7 @@ import {
   currentSchemaVersion,
   type DomainEvents,
   type ImportFormat,
+  lengthExpression,
   type PlaneFrame,
   type PlaneRef,
   type Result,
@@ -66,10 +68,13 @@ describe('DesignManager', () => {
   let files: InMemoryExternalFileAccess;
   let assets: InMemoryAssetAccess;
   let events: EventBus<DomainEvents>;
+  let projects: InMemoryProjectAccess;
   let session: DesignSession;
   let documentId: ComponentDocument['id'];
 
   beforeEach(async () => {
+    projects = new InMemoryProjectAccess();
+    await projects.establish({ id: asProjectId('p1'), name: 'Project', createdAt: '2026-10-14T10:00:00.000Z', modifiedAt: '2026-10-14T10:00:00.000Z' });
     documents = new InMemoryDocumentAccess();
     files = new InMemoryExternalFileAccess();
     assets = new InMemoryAssetAccess();
@@ -89,6 +94,7 @@ describe('DesignManager', () => {
       rollbackIndex: 0,
     });
     const manager = createDesignManager({
+      projects,
       documents,
       externalFiles: files,
       sketches: sketchEngine,
@@ -472,6 +478,89 @@ describe('DesignManager', () => {
       const before = (await session.properties()).length;
       unwrap(await session.execute({ type: 'add-feature', feature: { id: 'pp', type: 'path-pattern', name: '', suppressed: false, features: ['e9'], path: 's6', count: '3', align: false } }));
       expect((await session.properties()).length).toBe(before + 2);
+    });
+
+    it('shows lengths in the document unit without changing the model', async () => {
+      await plate();
+      unwrap(await session.execute({ type: 'set-units', units: 'in' }));
+      expect(session.state().document.units).toBe('in');
+      expect(session.state().parameters.map((p) => p.display)).toEqual([`${Math.round((60 / 25.4) * 1000) / 1000} in`, `${Math.round((6 / 25.4) * 1000) / 1000} in`]);
+      expect(await volume()).toBeCloseTo(60 * 30 * 6);
+      // Typed plain numbers are inches: written out, they keep their meaning in any unit.
+      expect(lengthExpression('2', 'in')).toBe('2 in');
+      expect(lengthExpression('width / 2', 'in')).toBe('width / 2');
+      expect(lengthExpression('5', 'mm')).toBe('5');
+      unwrap(await session.execute({ type: 'set-dimension', sketchId: 's1', constraintId: 'h', expression: lengthExpression('1', 'in') }));
+      unwrap(await session.execute({ type: 'set-units', units: 'mm' }));
+      expect(await volume()).toBeCloseTo(60 * 25.4 * 6);
+    });
+
+    it('uses project parameters, follows their changes, and lets its own win', async () => {
+      await plate();
+      /** Sets the project's parameters as the Project Manager does, and waits for the session to regenerate. */
+      const setShared = async (parameters: { id: string; name: string; expression: string }[]) => {
+        const updated = new Promise<void>((resolve) => {
+          const stop = session.subscribe(() => {
+            stop();
+            resolve();
+          });
+        });
+        const project = await projects.find(asProjectId('p1'));
+        await projects.revise({ ...(project as NonNullable<typeof project>), parameters });
+        events.publish('projectParametersChanged', { projectId: asProjectId('p1') });
+        await updated;
+      };
+      const stop = session.subscribe(() => undefined);
+      await setShared([{ id: 'g', name: 'gap', expression: '10 mm' }, { id: 'w', name: 'width', expression: '999 mm' }]);
+      expect(session.state().parameters.filter((p) => p.project).map((p) => p.parameter.name)).toEqual(['gap']);
+      unwrap(await session.execute({ type: 'set-dimension', sketchId: 's1', constraintId: 'h', expression: 'gap * 3' }));
+      expect(await volume()).toBeCloseTo(60 * 30 * 6);
+      await setShared([{ id: 'g', name: 'gap', expression: '5 mm' }]);
+      expect(await volume()).toBeCloseTo(60 * 15 * 6);
+      expect((await assets.latestResult(documentId))?.stamp).toContain('#');
+      stop();
+    });
+
+    it('keeps configurations: variants it shows, exports and publishes results of', async () => {
+      await plate();
+      const big = { id: 'big', name: 'Big', values: { width: '80 mm' } };
+      unwrap(await session.execute({ type: 'set-configurations', configurations: [big, { id: 'thin', name: 'Thin', values: { thickness: '2 mm' } }] }));
+      expect(await session.execute({ type: 'set-configurations', configurations: [big, { ...big, id: 'b2' }] })).toMatchObject({ ok: false });
+      unwrap(await session.execute({ type: 'activate-configuration', configuration: 'big' }));
+      expect(await volume()).toBeCloseTo(80 * 30 * 8); // thickness = width / 10 follows
+      unwrap(await session.execute({ type: 'activate-configuration', configuration: 'thin' }));
+      expect(await volume()).toBeCloseTo(60 * 30 * 2);
+      expect((await assets.latestResult(documentId, 'thin'))?.configuration).toBe('thin');
+      // Another configuration exported, without changing what is shown.
+      unwrap(await session.exportBodies('stl', { configuration: 'big' }));
+      expect(files.delivered.at(-1)?.name).toBe('Component 1 (Big).stl');
+      expect(await volume()).toBeCloseTo(60 * 30 * 2);
+      unwrap(await session.execute({ type: 'activate-configuration' }));
+      expect(await volume()).toBeCloseTo(60 * 30 * 6);
+      // Assemblies ask for a configuration's result.
+      const answered = new Promise<boolean>((resolve) => events.subscribe('componentRegenerated', ({ configuration, ok }) => resolve(configuration === 'big' && ok)));
+      events.publish('regenerateComponent', { documentId, configuration: 'big' });
+      expect(await answered).toBe(true);
+      expect((await assets.latestResult(documentId, 'big'))?.bytes.length).toBeGreaterThan(0);
+    });
+
+    it('makes sheet metal parts: a base flange, edge flanges, and the flat pattern', async () => {
+      await drawRectangle(); // 28 × 15 from (2, 1)
+      const profile = session.state().sketches.get('s1')?.profiles[0]?.id as string;
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'bf', type: 'base-flange', name: '', suppressed: false, sketch: 's1', profiles: [profile], direction: 'normal', thickness: '1.5 mm', bendRadius: '1 mm', kFactor: '0.4' } }));
+      expect(session.state().sheetMetal).toBe(true);
+      expect(await volume()).toBeCloseTo(28 * 15 * 1.5);
+      const edge = session.state().bodies[0]?.edges.find((e) => e.name.includes('f:bf:end') && e.name.includes(':side:bc'));
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'ef', type: 'edge-flange', name: '', suppressed: false, edges: [{ kind: 'edge', body: 'bf', name: edge?.name as string, hint: [30, 8.5, 1.5] }], length: '10', angle: '90 deg' } }));
+      expect(await volume()).toBeGreaterThan(28 * 15 * 1.5 + 10 * 1.5 * 15);
+      unwrap(await session.exportFlatPattern('dxf'));
+      const file = files.delivered.at(-1);
+      expect(file?.name).toBe('Component 1 - flat pattern.dxf');
+      const text = new TextDecoder().decode(file?.bytes);
+      expect(text).toContain('\nBEND\n');
+      // The flange lies flat: the bend allowance (π/2 × (1 + 0.4 × 1.5)) and 10 mm beyond x = 30.
+      const allowance = (Math.PI / 2) * (1 + 0.4 * 1.5);
+      expect(text).toContain(String(Math.round((30 + allowance + 10) * 1e6) / 1e6).slice(0, 6));
     });
 
     it('refuses parameter changes that would break the model', async () => {

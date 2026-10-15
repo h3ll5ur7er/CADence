@@ -5,23 +5,27 @@ import {
   type Dimension,
   fail,
   type Feature,
+  type FlangeMarker,
+  generatorOf,
   isDimension,
   isSketch,
   isToolFeature,
+  type LengthUnit,
+  lengthUnitSize,
+  metricThreads,
   ok,
   originFrames,
+  type Parameter,
   type PlaneFrame,
-  metricThreads,
   type PlaneRef,
   type Profile,
-  type ThreadMarker,
-  generatorOf,
   type Result,
   type Sketch,
-  sketchOriginId,
   type SketchDrawing,
   type SketchEntity,
+  sketchOriginId,
   type SketchProjection,
+  type ThreadMarker,
   type Vec2,
   type Vec3,
 } from '@core/contracts';
@@ -50,6 +54,20 @@ function handlesMoved(before: Sketch, after: Sketch): boolean {
   });
 }
 
+/** What a component is regenerated with, beyond its own document. */
+export interface RegenerationContext {
+  readonly projectParameters?: readonly Parameter[];
+  /** A configuration to build instead of the document's own (`''`: the parameters' own values). */
+  readonly configuration?: string;
+}
+
+/** A sheet metal part as regenerated: the base flange's sketch plane and profiles, and the rules. */
+export interface SheetView {
+  readonly frame: PlaneFrame;
+  readonly profiles: readonly Profile[];
+  readonly rules: { readonly thickness: number; readonly bendRadius: number; readonly kFactor: number };
+}
+
 export interface RegenerationEngines {
   readonly sketches: SketchEngine;
   readonly parameters: ParameterEngine;
@@ -68,6 +86,9 @@ export interface Derived {
   readonly bodies: readonly BodyState[];
   readonly tools: Map<string, ToolInput>;
   readonly threads: readonly ThreadMarker[];
+  /** The component's sheet (its base flange) and edge flanges, for the flat pattern. */
+  readonly sheet?: SheetView;
+  readonly flanges: readonly FlangeMarker[];
   readonly parameters: ParameterView[];
   readonly parameterError?: ParameterError;
 }
@@ -110,6 +131,8 @@ export class Regeneration {
   private readonly planes = new Map<string, PlaneFrame>();
   private readonly tools = new Map<string, ToolInput>();
   private readonly threads: ThreadMarker[] = [];
+  private readonly flanges: FlangeMarker[] = [];
+  private sheet: SheetView | undefined;
   private bodies: readonly BodyState[] = [];
   /** The layer left over counterbored holes for printing: the printer's layer height. */
   private layer = 0.2;
@@ -120,14 +143,22 @@ export class Regeneration {
     private readonly drag?: DragTarget & { readonly sketch: string },
   ) {}
 
-  async run(document: ComponentDocument): Promise<Derived> {
+  /** Runs the timeline with the project's parameters (the component's own of the same name win). */
+  async run(document: ComponentDocument, context: RegenerationContext = {}): Promise<Derived> {
     if (document.process?.kind === 'print') this.layer = document.process.layerHeight;
-    const evaluated = this.engines.parameters.evaluateAll(document.parameters);
+    // A configuration's values replace the parameters' expressions, by name.
+    const chosen = context.configuration ?? document.configuration;
+    const values = document.configurations?.find((c) => c.id === chosen)?.values ?? {};
+    const configured = (p: Parameter): Parameter => (p.name in values ? { ...p, expression: values[p.name] as string } : p);
+    const own = new Set(document.parameters.map((p) => p.name));
+    const shared = (context.projectParameters ?? []).filter((p) => !own.has(p.name));
+    const evaluated = this.engines.parameters.evaluateAll([...shared, ...document.parameters].map(configured));
     if (evaluated.ok) this.scope = evaluated.value;
-    const parameters = document.parameters.map((parameter): ParameterView => {
+    const view = (parameter: Parameter, project: boolean): ParameterView => {
       const value = this.scope.get(parameter.name);
-      return value ? { parameter, display: display(value) } : { parameter };
-    });
+      return { parameter, ...(value ? { display: display(value, document.units) } : {}), ...(project ? { project } : {}) };
+    };
+    const parameters = [...shared.map((p) => view(p, true)), ...document.parameters.map((p) => view(p, false))];
     const marker = document.timeline.length - document.rollbackIndex;
     for (const [index, item] of document.timeline.entries()) {
       if (index >= marker) {
@@ -148,6 +179,8 @@ export class Regeneration {
       bodies: this.bodies,
       tools: this.tools,
       threads: this.threads,
+      ...(this.sheet ? { sheet: this.sheet } : {}),
+      flanges: this.flanges,
       parameters,
       ...(evaluated.ok ? {} : { parameterError: evaluated.error }),
     };
@@ -332,6 +365,7 @@ export class Regeneration {
     if (outcome.toolKey && feature.type === 'hole') this.tools.set(feature.id, { feature: feature.id, toolKey: outcome.toolKey, operation: 'cut' });
     if (outcome.toolKey && feature.type === 'rib') this.tools.set(feature.id, { feature: feature.id, toolKey: outcome.toolKey, operation: 'join' });
     if (outcome.thread) this.threads.push(outcome.thread);
+    if (outcome.flanges) this.flanges.push(...outcome.flanges);
     return ok(undefined);
   }
 
@@ -352,6 +386,29 @@ export class Regeneration {
         const sources = await this.engines.interchange.readSolids(original.bytes, format, `import:${document.assetId}`);
         if (!sources.ok) return fail({ code: 'feature-failed', message: sources.error.message });
         return withKey({ ...base, type: 'insert', sources: sources.value });
+      }
+      case 'base-flange': {
+        const rules = this.sheetRules(feature);
+        if (!rules.ok) return rules;
+        if (!(rules.value.thickness > 0)) return fail({ code: 'invalid-input', message: 'The sheet thickness must be greater than zero.' });
+        if (rules.value.bendRadius < 0) return fail({ code: 'invalid-input', message: 'The bend radius cannot be negative.' });
+        if (!(rules.value.kFactor >= 0 && rules.value.kFactor <= 1)) return fail({ code: 'invalid-input', message: 'The K-factor lies between 0 and 1.' });
+        const view = this.sketches.get(feature.sketch);
+        if (!view || view.error) return fail({ code: 'missing-input', message: 'Its sketch is missing, later in the timeline or does not solve.' });
+        const profiles = view.profiles.filter((p) => feature.profiles.includes(p.id));
+        if (profiles.length < feature.profiles.length || profiles.length === 0) {
+          return fail({ code: 'missing-input', message: 'Some of its profiles no longer exist. Edit the feature and pick them again.' });
+        }
+        this.sheet = { frame: view.frame, profiles, rules: rules.value };
+        return withKey({ ...base, type: 'extrude', frame: view.frame, profiles, distance: rules.value.thickness, direction: feature.direction, operation: 'new-body' });
+      }
+      case 'edge-flange': {
+        if (!this.sheet) return fail({ code: 'missing-input', message: 'Edge flanges need a base flange earlier in the timeline.' });
+        const [length, angle] = [this.value(feature.length, 'length', 'Length'), this.value(feature.angle, 'angle', 'Angle')];
+        if (!length.ok) return length;
+        if (!angle.ok) return angle;
+        const { thickness, bendRadius } = this.sheet.rules;
+        return withKey({ ...base, type: 'edge-flange', edges: feature.edges, length: length.value, angle: angle.value, thickness, bendRadius });
       }
       case 'extrude':
       case 'revolve': {
@@ -539,6 +596,17 @@ export class Regeneration {
     }
   }
 
+  /** A base flange's rules, evaluated. */
+  private sheetRules(feature: Extract<Feature, { type: 'base-flange' }>): Result<SheetView['rules']> {
+    const thickness = this.value(feature.thickness, 'length', 'Sheet thickness');
+    if (!thickness.ok) return thickness;
+    const bendRadius = this.value(feature.bendRadius, 'length', 'Bend radius');
+    if (!bendRadius.ok) return bendRadius;
+    const kFactor = this.value(feature.kFactor, 'scalar', 'K-factor');
+    if (!kFactor.ok) return kFactor;
+    return ok({ thickness: thickness.value, bendRadius: bendRadius.value, kFactor: kFactor.value });
+  }
+
   /** The curves of a sketch as a path in world coordinates, in order. */
   private path(sketchId: string): Result<{ readonly flat: SketchPath; readonly frame: PlaneFrame; readonly pieces: readonly PathPiece[] }> {
     const view = this.sketches.get(sketchId);
@@ -684,10 +752,12 @@ function collapses(sketch: Sketch): boolean {
   );
 }
 
-function display(q: Quantity): string {
+/** A parameter's value as shown: lengths (and their powers) in the document's unit. */
+function display(q: Quantity, unit: LengthUnit): string {
   const round = (v: number) => String(Math.round(v * 1000) / 1000);
-  if (q.length === 1 && q.angle === 0) return `${round(q.value)} mm`;
+  const value = q.value / lengthUnitSize[unit] ** q.length;
+  if (q.length === 1 && q.angle === 0) return `${round(value)} ${unit}`;
   if (q.length === 0 && q.angle === 1) return `${round((q.value * 180) / Math.PI)}°`;
   if (q.length === 0 && q.angle === 0) return round(q.value);
-  return `${round(q.value)} mm^${q.length}`;
+  return `${round(value)} ${unit}^${q.length}`;
 }

@@ -34,11 +34,13 @@ function entity(curve: DrawingCurve): string {
 }
 
 /** ASCII DXF (R12 entities) in millimetres ($INSUNITS 4); arcs are counter-clockwise as DXF expects. */
-export function writeDxf(curves: readonly DrawingCurve[]): string {
+/** `marks` (bend lines) go on the layer BEND, so cutting software can score them or leave them out. */
+export function writeDxf(curves: readonly DrawingCurve[], marks: readonly DrawingCurve[] = []): string {
   return [
     pairs(0, 'SECTION', 2, 'HEADER', 9, '$ACADVER', 1, 'AC1009', 9, '$INSUNITS', 70, 4, 0, 'ENDSEC'),
     pairs(0, 'SECTION', 2, 'ENTITIES'),
     ...curves.map(entity),
+    ...marks.map((m) => entity(m).replace('\n8\n0\n', '\n8\nBEND\n')),
     pairs(0, 'ENDSEC', 0, 'EOF'),
     '',
   ].join('\n');

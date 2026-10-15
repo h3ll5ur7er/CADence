@@ -184,3 +184,14 @@ Imported SVG `<text>` and DXF `TEXT`/`MTEXT` become editable sketch texts in thi
 
 *Why:* the builders' history is the only exact link between a sketch curve and the face it made once surfaces are freeform; geometric guesses only work for analytic surfaces.
 *Trade-off:* a rib goes a set depth rather than up to the next face; holes are flat-bottomed (no drill point); modelled threads are slow to build and can fail on long threads; scaling per axis waits for a kernel build with `GTransform`.
+
+## ADR-29
+
+**Parameters and sheet metal: millimetres stored, units at the edges; parameters from the project and configurations replace expressions before evaluation; sheet metal as features with an analytic flat pattern.**
+- *Units.* Geometry and plain numbers stay millimetres. The app formats lengths in the component's unit and writes the unit out when a plain number is typed in another unit (`lengthExpression`), so `set-units` changes nothing stored and no migration or expression rewriting is ever needed.
+- *Project parameters* live on the project record. The Project Manager checks them (the Parameter Engine) and publishes `projectParametersChanged`; open design sessions regenerate, and component results carry a stamp that includes them (`resultStamp`), so assemblies see stale results and ask again.
+- *Configurations* are rows of expressions by parameter name, applied to the parameter list before evaluation (component and project parameters alike). A configuration change is a parameter change: refused if it would break the model. Results are kept per configuration (`resultKey`, stored under the same key path, so IndexedDB needed no upgrade), and assemblies load each `component@configuration` source separately.
+- *Sheet metal.* The base flange is an extrude by the sheet thickness that also holds the rules (one sheet per component). Edge flanges are built from their cross-section (a bend ring around the inside radius, then the flange) extruded along the edge and joined, which keeps the geometry exact and their faces named. The flat pattern is computed from the features, not by unfolding the solid: the base outline with each flange laid flat beyond its edge by the bend allowance θ(r + K·t), and one bend line in the middle of each bend, on its own layer.
+
+*Why:* converting stored numbers on a unit change would rewrite the model's history; keeping one internal unit makes the change a display setting. An analytic flat pattern is exact for the flanges this phase builds and needs no unfolding algorithm in the kernel.
+*Trade-off:* only flanges standing on the base flange unfold; no corner relief; one sheet per component. Assemblies show millimetres.

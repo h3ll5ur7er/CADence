@@ -9,6 +9,7 @@ Put components together, connect them with joints, move them, and play and recor
 Create an assembly with **Assembly** in the documents panel, then **Insert** a component from the toolbar. Insert the same component as often as you need: every copy is an *instance* (*Bracket 1*, *Bracket 2*, …).
 
 - The first instance is **grounded** (a pin in the browser): it never moves. Ground or unground any instance in its properties.
+- A component with configurations offers them in the instance's properties: each instance can show another variant (*Bracket (Long)*).
 - New instances start to the right of the others. An instance that no joint places can be moved with its **Position** fields (X, Y, Z in mm and a turn about Z).
 - While a component is being rebuilt, its instances show *loading*. When you change a component, its instances update the next time the assembly is opened. A deleted component shows *missing*.
 

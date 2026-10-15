@@ -12,6 +12,7 @@ classDiagram
     id: ProjectId
     name: string
     createdAt, modifiedAt
+    parameters?: Parameter[]
   }
   class DocumentSummary {
     id: DocumentId
@@ -49,11 +50,11 @@ classDiagram
   AssemblyDocument --> "*" ComponentDocument : instances reference
 ```
 
-All lengths are stored **in millimetres**, and `units` controls display only. Angles are stored in degrees in expressions and in radians internally.
+All lengths are stored **in millimetres**, and `units` controls display only. Angles are stored in degrees in expressions and in radians internally. Plain numbers in expressions are millimetres; a plain number typed in a document of another unit is saved with the unit written out (`lengthExpression`), so changing `units` never changes the model.
 
 ## Component results
 
-The one exception to "geometry is never stored" is the **published result** of a component: the B-rep of each body (OCCT text) with its face and edge names in topological order, written by the Design Manager after every change and stamped with the component's `modifiedAt`. It is a cache, so deleting it is always safe; assemblies request a regeneration when it is missing or its stamp is not the component's `modifiedAt` ([[Architecture/Decisions#ADR-11]]).
+The one exception to "geometry is never stored" is the **published result** of a component: the B-rep of each body (OCCT text) with its face and edge names in topological order, written by the Design Manager after every change and stamped with the component's `modifiedAt`. It is a cache, so deleting it is always safe; assemblies request a regeneration when it is missing or its stamp is not the component's `modifiedAt` ([[Architecture/Decisions#ADR-11]]). The stamp also covers the project parameters (`resultStamp`: `modifiedAt#<hash>`), and every configuration has a result of its own, kept under `<component>@<configuration>` (`resultKey`).
 
 ## Material and manufacturing profile
 
@@ -75,6 +76,9 @@ interface Parameter { id: ParameterId; name: string; expression: string; comment
 ```
 
 Expressions may reference other parameters by name, use units (`10 mm + 0.5 in`) and functions (`sin`, `max`, ...). Feature and constraint values are expressions too, so `"height / 2"` works everywhere a number does.
+
+- **Project parameters** (`Project.parameters`) are in scope in every component of the project; a component parameter of the same name wins. Changing them publishes `projectParametersChanged`.
+- **Configurations** (`ComponentDocument.configurations`): `{ id, name, values: Record<parameter name, expression> }`. `configuration` is the one shown and edited; regeneration replaces the named parameters' expressions with its values. An assembly `Instance.configuration` shows another one (`sourceKey`: `<component>@<configuration>`).
 
 ## Timeline items
 
@@ -127,6 +131,8 @@ Each feature type is its own interface in [[src/core/contracts/feature.ts]]. All
 | `split` | body, plane | |
 | `move` | bodies, axis | translation (x, y, z); angle; copy |
 | `scale` | bodies | factor (about the origin) |
+| `base-flange` | sketch, profile ids | direction; the sheet's rules: thickness, bend radius, K-factor |
+| `edge-flange` | straight edges of the sheet | length; angle |
 
 Construction `plane`s have a `mode`: `offset` (the default, from a base plane), `angle` (about an axis in the base plane), `midplane` (between the base and a parallel second plane) or `points` (three vertices).
 
@@ -170,6 +176,7 @@ The Modeling Engine names every face after each feature (*generative naming*, [[
 | Drafted face | its old name: it is the same face, tilted (from the kernel's history) |
 | Thread groove | `f:<feature>:flank` |
 | Rib | `f:<feature>:side`, `start`, `end` |
+| Edge flange | `f:<feature>:bend:<edge>` (round), `f:<feature>:flange:<edge>` (flat) |
 | Anything else new | `f:<feature>:new:<n>`, in order of position |
 
 - **Inherited names.** A face that lies on the same exact surface as a face of the feature's inputs keeps that face's name, however it was trimmed. Planes also match with the other side facing (a hole's wall faces the other way to the tool face that cut it). Freeform faces (B-splines, and cones and tori, whose parameters the kernel build cannot read) match when probe points of the earlier face's surface lie on the new face's surface. This is why changing an upstream dimension keeps downstream references valid: the names follow the design intent, not the kernel's numbering.

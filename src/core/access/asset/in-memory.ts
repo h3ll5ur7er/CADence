@@ -1,9 +1,9 @@
 import type { AssetId, DocumentId } from '@core/contracts';
-import type { Asset, AssetAccess, ComponentResult } from './asset-access';
+import { type Asset, type AssetAccess, type ComponentResult, resultKey } from './asset-access';
 
 export class InMemoryAssetAccess implements AssetAccess {
   private readonly assets = new Map<AssetId, Asset>();
-  private readonly results = new Map<DocumentId, ComponentResult>();
+  private readonly results = new Map<string, ComponentResult>();
 
   async keep(asset: Asset): Promise<void> {
     this.assets.set(asset.id, structuredClone(asset));
@@ -19,15 +19,15 @@ export class InMemoryAssetAccess implements AssetAccess {
   }
 
   async publishResult(result: ComponentResult): Promise<void> {
-    this.results.set(result.documentId, structuredClone(result));
+    this.results.set(resultKey(result.documentId, result.configuration), structuredClone(result));
   }
 
-  async latestResult(documentId: DocumentId): Promise<ComponentResult | undefined> {
-    const result = this.results.get(documentId);
+  async latestResult(documentId: DocumentId, configuration?: string): Promise<ComponentResult | undefined> {
+    const result = this.results.get(resultKey(documentId, configuration));
     return result && structuredClone(result);
   }
 
   async discardResult(documentId: DocumentId): Promise<void> {
-    this.results.delete(documentId);
+    for (const key of [...this.results.keys()]) if (key === documentId || key.startsWith(`${documentId}@`)) this.results.delete(key);
   }
 }

@@ -172,6 +172,17 @@
       <input type="checkbox" [checked]="row.instance.grounded" (change)="store.run({ type: 'ground-instance', instanceId: row.instance.id, grounded: !row.instance.grounded })" />
       Grounded (never moves)
     </label>
+    @if (row.configurations.length) {
+      <label class="field">
+        <span class="eyebrow">Configuration</span>
+        <select id="instance-configuration" (change)="setConfiguration(row.instance.id, $any($event.target).value)">
+          <option value="" [selected]="!row.instance.configuration">The parameters' own values</option>
+          @for (c of row.configurations; track c.id) {
+            <option [value]="c.id" [selected]="c.id === row.instance.configuration">{{ c.name }}</option>
+          }
+        </select>
+      </label>
+    }
     <p class="eyebrow">Look</p>
     <div class="look">
       <input

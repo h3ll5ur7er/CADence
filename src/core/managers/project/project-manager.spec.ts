@@ -6,6 +6,7 @@ import { asDocumentId, asProjectId, type DomainEvents, type ImportedDocument, ty
 import { createInterchangeEngine } from '@core/engines/interchange';
 import { steppingClock } from '@core/utilities/clock';
 import { EventBus } from '@core/utilities/messaging';
+import { createParameterEngine } from '@core/engines/parameter';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createProjectManager, type ProjectManager } from './index';
 
@@ -33,6 +34,7 @@ describe('ProjectManager', () => {
       documents,
       assets,
       externalFiles: files,
+      parameters: createParameterEngine(),
       // Meshes and drawings need no geometry kernel.
       interchange: createInterchangeEngine(),
       events,
@@ -69,6 +71,22 @@ describe('ProjectManager', () => {
         ['A', 2],
         ['B', 1],
       ]);
+    });
+
+    it('keeps project parameters, checked, and tells components about changes', async () => {
+      const created = await manager.createProject('Shared');
+      if (!created.ok) throw new Error(created.error.message);
+      const projectId = created.value.project.id;
+      const seen: string[] = [];
+      events.subscribe('projectParametersChanged', ({ projectId: id }) => {
+        seen.push(id);
+      });
+      expect(await manager.setProjectParameters(projectId, [{ id: 'a', name: 'wall', expression: '2 mm' }, { id: 'b', name: 'gap', expression: 'wall * 3' }])).toEqual({ ok: true, value: undefined });
+      expect((await manager.findProject(projectId))?.parameters?.map((p) => p.name)).toEqual(['wall', 'gap']);
+      expect(seen).toEqual([projectId]);
+      const cycle = await manager.setProjectParameters(projectId, [{ id: 'a', name: 'wall', expression: 'gap' }, { id: 'b', name: 'gap', expression: 'wall' }]);
+      expect(cycle).toMatchObject({ ok: false, error: { code: 'cycle' } });
+      expect(seen).toHaveLength(1);
     });
 
     it('renames a project', async () => {

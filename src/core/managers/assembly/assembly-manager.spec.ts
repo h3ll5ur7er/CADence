@@ -1,5 +1,6 @@
 import { InMemoryAssetAccess } from '@core/access/asset';
 import { InMemoryDocumentAccess } from '@core/access/document';
+import { InMemoryProjectAccess } from '@core/access/project';
 import { InMemoryExternalFileAccess } from '@core/access/external-file';
 import { createShapeAccess } from '@core/access/shape';
 import {
@@ -13,6 +14,7 @@ import {
   type DomainEvents,
   type Joint,
   type Matrix4,
+  sourceKey,
   originFrames,
   type Result,
 } from '@core/contracts';
@@ -57,7 +59,7 @@ async function snapshotOfPlate(feature: string, width: number, depth: number, ho
   const outcome = await modeling.apply({
     type: 'extrude',
     feature,
-    key: `assembly-${feature}`,
+    key: `assembly-${feature}-${width}`,
     bodies: [],
     frame: originFrames.XY,
     profiles: [profile(rectangleLoop(0, 0, width, depth, feature), [circleLoop(hole[0], hole[1], 3, `${feature}-hole`, false)])],
@@ -97,7 +99,7 @@ describe('AssemblyManager', () => {
     files = new InMemoryExternalFileAccess();
     events = new EventBus<DomainEvents>();
     await documents.store(component('base', 'Base'));
-    await documents.store(component('link', 'Link'));
+    await documents.store({ ...component('link', 'Link'), configurations: [{ id: 'long', name: 'Long', values: {} }] });
     await documents.store({
       id: asDocumentId('asm'),
       projectId: project,
@@ -112,11 +114,14 @@ describe('AssemblyManager', () => {
     } satisfies AssemblyDocument);
     // Base has a published result; Link must be requested from the "Design Manager", played here.
     await assets.publishResult({ documentId: base, projectId: project, stamp, bytes: await snapshotOfPlate('base', 60, 20, [10, 10]) });
-    events.subscribe('regenerateComponent', async ({ documentId }) => {
-      if (documentId === link) await assets.publishResult({ documentId, projectId: project, stamp, bytes: await snapshotOfPlate('link', 40, 10, [5, 5]) });
-      events.publish('componentRegenerated', { documentId, ok: documentId === link });
+    events.subscribe('regenerateComponent', async ({ documentId, configuration }) => {
+      // The link's "Long" configuration is twice as long.
+      const bytes = await snapshotOfPlate('link', configuration ? 80 : 40, 10, [5, 5]);
+      if (documentId === link) await assets.publishResult({ documentId, projectId: project, stamp, bytes, ...(configuration ? { configuration } : {}) });
+      events.publish('componentRegenerated', { documentId, ...(configuration ? { configuration } : {}), ok: documentId === link });
     });
     const manager = createAssemblyManager({
+      projects: new InMemoryProjectAccess(),
       documents,
       assets,
       externalFiles: files,
@@ -165,6 +170,21 @@ describe('AssemblyManager', () => {
     await until(() => session.state().components.get(link)?.status === 'ready');
     expect(session.state().document.instances.map((i) => i.name)).toEqual(['Base 1', 'Link 1']);
     expect((await documents.load(asDocumentId('asm')))?.kind).toBe('assembly');
+  });
+
+  it('shows a configuration of a component, requested from the Design Manager', async () => {
+    unwrap(await insert('l1', link));
+    await until(() => session.state().components.get(link)?.status === 'ready');
+    unwrap(await session.execute({ type: 'set-instance-configuration', instanceId: 'l1', configuration: 'long' }));
+    await until(() => session.state().components.get(sourceKey(link, 'long'))?.status === 'ready');
+    expect(session.state().components.get(sourceKey(link, 'long'))).toMatchObject({ name: 'Link (Long)', configuration: 'long' });
+    const width = (key: string) => {
+      const positions = session.state().components.get(key)?.bodies[0]?.positions ?? [];
+      const xs = Array.from(positions).filter((_, i) => i % 3 === 0);
+      return Math.max(...xs) - Math.min(...xs);
+    };
+    expect(width(sourceKey(link, 'long'))).toBeCloseTo(80);
+    expect(width(link)).toBeCloseTo(40);
   });
 
   it('keeps how instances look: hidden, colour and transparency', async () => {

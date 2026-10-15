@@ -70,6 +70,15 @@ export function applyCommand(document: AssemblyDocument, command: AssemblyComman
         command.type === 'rename-instance' ? { name: command.name.trim() } : command.type === 'move-instance' ? { transform: command.transform } : { grounded: command.grounded };
       return ok({ document: { ...document, instances: document.instances.map((i) => (i.id === command.instanceId ? { ...i, ...change } : i)) } });
     }
+    case 'set-instance-configuration': {
+      if (!instance(command.instanceId)) return invalid(`Instance ${command.instanceId} does not exist.`);
+      const instances = document.instances.map((i): Instance => {
+        if (i.id !== command.instanceId) return i;
+        if (command.configuration) return { ...i, configuration: command.configuration };
+        return Object.fromEntries(Object.entries(i).filter(([key]) => key !== 'configuration')) as unknown as Instance;
+      });
+      return ok({ document: { ...document, instances } });
+    }
     case 'set-instance-appearance': {
       if (!instance(command.instanceId)) return invalid(`Instance ${command.instanceId} does not exist.`);
       const problem = appearanceProblem(command.appearance);

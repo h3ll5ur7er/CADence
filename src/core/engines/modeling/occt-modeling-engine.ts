@@ -58,6 +58,20 @@ export class OcctModelingEngine implements ModelingEngine {
     }
   }
 
+  async pointOf(bodies: readonly BodyState[], ref: TopologyRef): Promise<Result<Vec3>> {
+    await this.shapes.ready();
+    try {
+      const body = this.load(bodies).find((b) => b.state.id === ref.body);
+      if (!body) throw new FeatureError(`The body of ${ref.name} no longer exists.`);
+      const found = find(body.named, ref);
+      if (!found) throw new FeatureError(`The ${ref.kind} ${ref.name} no longer exists. Pick it again.`);
+      if (found instanceof Vertex) return ok(found.asTuple());
+      return ok('normalAt' in found ? (found.center.toTuple() as Vec3) : (found.boundingBox.center as Vec3));
+    } catch (error) {
+      return fail({ code: 'lost-reference', message: describe(error) });
+    }
+  }
+
   async planeOf(bodies: readonly BodyState[], ref: TopologyRef): Promise<Result<PlaneFrame>> {
     await this.shapes.ready();
     try {

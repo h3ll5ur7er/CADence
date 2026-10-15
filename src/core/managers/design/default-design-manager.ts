@@ -32,6 +32,7 @@ import type {
   DesignCommand,
   DesignManager,
   DesignSession,
+  ExportOptions,
   InsertDrawingOptions,
   DesignState,
   DrawingFormat,
@@ -174,11 +175,13 @@ class Session implements DesignSession {
     return this.execute({ type: 'add-sketch-geometry', sketchId, entities, constraints: inferRelations(entities, options.relations ?? 'none', idPrefix) });
   }
 
-  async exportBodies(format: SolidFormat): Promise<Result<void>> {
+  async exportBodies(format: SolidFormat, options: ExportOptions = {}): Promise<Result<void>> {
     const { document, derived } = this.current;
+    const bodies = this.namedBodies().filter((b) => !options.bodies || options.bodies.includes(b.id));
     if (derived.bodies.length === 0) return fail({ code: 'nothing-to-export', message: 'There are no bodies to export yet.' });
+    if (bodies.length === 0) return fail({ code: 'nothing-to-export', message: 'Select at least one body to export.' });
     try {
-      const bytes = await this.deps.interchange.exportBodies(this.namedBodies(), format);
+      const bytes = await this.deps.interchange.exportBodies(bodies, format, options.quality);
       await this.deps.externalFiles.deliver({ name: `${document.name}.${format}`, mediaType: solidTypes[format], bytes });
       return ok(undefined);
     } catch (error) {

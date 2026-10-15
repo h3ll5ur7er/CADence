@@ -72,3 +72,37 @@ test('copies, turns, scales and combines bodies', async ({ page }) => {
   await page.waitForTimeout(600);
   await evidence(page, '47-bodies');
 });
+
+test('places planes at an angle and midway, and exports chosen bodies with a mesh quality', async ({ page }) => {
+  await plateProject(page, 'Planes');
+  const plane = async (kind: string, fill: (page: Page) => Promise<void>) => {
+    await page.getByRole('button', { name: 'Construction plane', exact: true }).click();
+    await page.locator('#feature-plane-mode').selectOption(kind);
+    await fill(page);
+    await page.getByRole('button', { name: 'OK' }).click();
+  };
+  await plane('angle', async (p) => {
+    await p.locator('#feature-angle').fill('30 deg');
+    await p.locator('#feature-angle').press('Tab');
+  });
+  await plane('offset', async (p) => {
+    await p.locator('#feature-offset').fill('40');
+    await p.locator('#feature-offset').press('Tab');
+  });
+  await plane('midplane', async (p) => {
+    await p.locator('#feature-second').selectOption({ label: 'Plane 2' });
+  });
+  await expect(page.locator('.item.failed')).toHaveCount(0);
+  await expect(page.getByRole('list', { name: 'Timeline' })).toContainText('Plane 3');
+  await page.getByRole('button', { name: 'Home view' }).click();
+  await page.waitForTimeout(600);
+  await evidence(page, '48-planes');
+
+  await page.getByRole('button', { name: 'Export' }).click();
+  await page.getByRole('menuitem', { name: 'With options…' }).click();
+  const form = page.getByRole('form', { name: 'Export options' });
+  await form.locator('#export-quality').selectOption('fine');
+  const download = page.waitForEvent('download');
+  await form.getByRole('button', { name: 'Export' }).click();
+  expect((await download).suggestedFilename()).toBe('Component 1.stl');
+});

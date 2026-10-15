@@ -76,12 +76,17 @@ export interface ShellFeature extends FeatureBase {
   readonly thickness: string;
 }
 
-/** A construction plane offset from an origin plane, a planar face or another construction plane. */
-export interface PlaneFeature extends FeatureBase {
-  readonly type: 'plane';
-  readonly base: PlaneRef;
-  readonly offset: string;
-}
+/**
+ * A construction plane: offset from a base plane (an origin plane, a flat face or another construction
+ * plane), turned about an axis in the base plane by an angle, halfway between two parallel planes, or
+ * through three vertices. Planes without a `mode` are offset planes.
+ */
+export type PlaneFeature = FeatureBase & { readonly type: 'plane' } & (
+    | { readonly mode?: 'offset'; readonly base: PlaneRef; readonly offset: string }
+    | { readonly mode: 'angle'; readonly base: PlaneRef; readonly axis: AxisRef; readonly angle: string }
+    | { readonly mode: 'midplane'; readonly base: PlaneRef; readonly second: PlaneRef }
+    | { readonly mode: 'points'; readonly points: readonly TopologyRef[] }
+  );
 
 /** Repeats the effect of earlier extrudes/revolves (holes, bosses) along a direction. */
 export interface LinearPatternFeature extends FeatureBase {

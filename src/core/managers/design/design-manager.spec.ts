@@ -10,9 +10,12 @@ import {
   currentSchemaVersion,
   type DomainEvents,
   type ImportFormat,
+  type PlaneFrame,
   type Result,
   type SketchPoint,
   sketchOriginId,
+  type Vec3,
+  vertexName,
 } from '@core/contracts';
 import { createAnalysisEngine } from '@core/engines/analysis';
 import { createInterchangeEngine } from '@core/engines/interchange';
@@ -54,6 +57,8 @@ const shapes = createShapeAccess();
 const modeling = createModelingEngine(shapes);
 const interchange = createInterchangeEngine(shapes);
 const analysis = createAnalysisEngine(shapes);
+
+const cross3 = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 
 describe('DesignManager', () => {
   let documents: InMemoryDocumentAccess;
@@ -416,6 +421,24 @@ describe('DesignManager', () => {
       expect((await session.properties()).map((p) => Math.round(p.volume))).toEqual([40 * 60 * 6, 20 * 60 * 6]);
       // The combine uses the copy, so it cannot move before the move.
       expect(await session.execute({ type: 'reorder-item', itemId: 'c1', index: 2 })).toMatchObject({ ok: false });
+    });
+
+    it('places construction planes at an angle, midway and through three points', async () => {
+      await plate();
+      const frame = (id: string) => session.state().planes.get(id);
+      const close = (v: readonly number[]) => v.map((x) => Math.round(x * 1e6) / 1e6 + 0);
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'a1', type: 'plane', name: '', suppressed: false, mode: 'angle', base: 'XY', axis: { kind: 'origin', axis: 'X' }, angle: '90 deg' } }));
+      const turned = frame('a1') as PlaneFrame;
+      expect(close(cross3(turned.u, turned.v))).toEqual([0, -1, 0]); // XY turned up about X: the XZ plane, facing -Y
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'o1', type: 'plane', name: '', suppressed: false, base: 'XY', offset: '20' } }));
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'm1', type: 'plane', name: '', suppressed: false, mode: 'midplane', base: 'XY', second: { plane: 'o1' } } }));
+      expect(close(frame('m1')?.origin ?? [])).toEqual([0, 0, 10]);
+      const midTop = await session.execute({ type: 'add-feature', feature: { id: 'm2', type: 'plane', name: '', suppressed: false, mode: 'midplane', base: 'XY', second: 'XZ' } });
+      expect(midTop).toMatchObject({ ok: false, error: { message: expect.stringContaining('parallel') } });
+      const corner = (x: string, y: string) => ({ kind: 'vertex' as const, body: 'e1', name: vertexName([`e:f:e1:end|f:e1:side:${x}`, `e:f:e1:end|f:e1:side:${y}`, `e:f:e1:side:${[x, y].sort().join('|f:e1:side:')}`]) });
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 't1', type: 'plane', name: '', suppressed: false, mode: 'points', points: [corner('ab', 'da'), corner('ab', 'bc'), corner('bc', 'cd')] } }));
+      expect(close(frame('t1')?.origin ?? [])).toEqual([0, 0, 6]);
+      expect(close(cross3((frame('t1') as PlaneFrame).u, (frame('t1') as PlaneFrame).v))).toEqual([0, 0, 1]);
     });
 
     it('refuses parameter changes that would break the model', async () => {

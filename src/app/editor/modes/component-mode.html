@@ -212,7 +212,38 @@
               @for (f of exportFormats; track f.format) {
                 <button type="button" role="menuitem" (click)="exportAs(f.format)">{{ f.label }}</button>
               }
+              <button type="button" role="menuitem" (click)="openExport()">With options…</button>
             </div>
+          }
+          @if (exportDraft(); as draft) {
+            <form class="menu-list end export-form" aria-label="Export options" (submit)="$event.preventDefault(); exportWithOptions()">
+              <label class="field">
+                Format
+                <select id="export-format" [value]="draft.format" (change)="changeExport({ format: $any($event.target).value })">
+                  @for (f of exportFormats; track f.format) {
+                    <option [value]="f.format">{{ f.label }}</option>
+                  }
+                </select>
+              </label>
+              <fieldset>
+                <legend>Bodies</legend>
+                @for (body of bodyRows(); track body.id) {
+                  <label><input type="checkbox" [checked]="draft.bodies.includes(body.id)" (change)="toggleExportBody(body.id, $any($event.target).checked)" /> {{ body.name }}</label>
+                }
+              </fieldset>
+              <label class="field">
+                Mesh quality
+                <select id="export-quality" [value]="draft.quality" [disabled]="draft.format === 'step'" (change)="changeExport({ quality: $any($event.target).value })">
+                  <option value="draft">Draft (small files)</option>
+                  <option value="normal">Normal</option>
+                  <option value="fine">Fine (smooth curves)</option>
+                </select>
+              </label>
+              <div class="actions">
+                <button type="button" class="btn" (click)="exportDraft.set(undefined)">Cancel</button>
+                <button type="submit" class="btn btn-primary" [disabled]="draft.bodies.length === 0"><cad-icon name="download" /> Export</button>
+              </div>
+            </form>
           }
         </div>
         <button type="button" class="icon-btn" aria-label="Undo" title="Undo (Ctrl+Z)" [disabled]="!store.state()?.canUndo" (click)="store.undo()">

@@ -6,6 +6,7 @@ import type {
   DocumentId,
   Feature,
   ManufacturingProfile,
+  MeshQuality,
   Material,
   Measurement,
   Parameter,
@@ -127,6 +128,12 @@ export type DrawingFormat = 'dxf' | 'svg';
 export type SolidFormat = 'step' | 'stl' | 'obj' | '3mf';
 
 /** An editing session on one component document. */
+/** Which bodies to export (all by default), and how finely meshes are made. */
+export interface ExportOptions {
+  readonly bodies?: readonly string[];
+  readonly quality?: MeshQuality;
+}
+
 /** How a drawing goes into a sketch: as one piece, or as separate curves held by the relations it shows, fixed, or free. */
 export interface InsertDrawingOptions {
   readonly onePiece?: boolean;
@@ -151,7 +158,7 @@ export interface DesignSession {
    */
   insertDrawing(sketchId: string, documentId: DocumentId, idPrefix: string, options?: InsertDrawingOptions): Promise<Result<void>>;
   /** All bodies, one file. */
-  exportBodies(format: SolidFormat): Promise<Result<void>>;
+  exportBodies(format: SolidFormat, options?: ExportOptions): Promise<Result<void>>;
   /** Area, length, radius, distance and angle of picked faces and edges. */
   measure(refs: readonly TopologyRef[]): Promise<Result<Measurement>>;
   /** Volume, mass (from the material), centre of mass and bounding box per body. */

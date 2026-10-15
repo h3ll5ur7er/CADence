@@ -94,6 +94,10 @@ type WithoutKey<T> = T extends unknown ? Omit<T, 'key'> : never;
 const add = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const scale = (a: Vec3, s: number): Vec3 => [a[0] * s, a[1] * s, a[2] * s];
 const cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const dot = (a: Vec3, b: Vec3): number => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const length = (a: Vec3): number => Math.hypot(a[0], a[1], a[2]);
+const unit = (a: Vec3): Vec3 => scale(a, 1 / (length(a) || 1));
 
 /** Runs a component's timeline: parameters, then each sketch and feature in order. */
 export class Regeneration {
@@ -303,12 +307,9 @@ export class Regeneration {
 
   private async feature(feature: Feature): Promise<Result<void>> {
     if (feature.type === 'plane') {
-      const base = await this.frame(feature.base);
-      if (!base.ok) return base;
-      const offset = this.value(feature.offset, 'length', 'Offset');
-      if (!offset.ok) return offset;
-      const normal = cross(base.value.u, base.value.v);
-      this.planes.set(feature.id, { ...base.value, origin: add(base.value.origin, scale(normal, offset.value)) });
+      const frame = await this.constructionPlane(feature);
+      if (!frame.ok) return frame;
+      this.planes.set(feature.id, frame.value);
       return ok(undefined);
     }
     const request = await this.request(feature);
@@ -423,6 +424,64 @@ export class Regeneration {
         return withKey({ ...base, type: 'circular-pattern', tools: inputs, axis: axis.value, count: count.value, angle: angle.value });
       }
     }
+  }
+
+  /** Where a construction plane lies, by its mode. */
+  private async constructionPlane(feature: Extract<Feature, { type: 'plane' }>): Promise<Result<PlaneFrame>> {
+    if (feature.mode === 'points') {
+      if (feature.points.length !== 3) return fail({ code: 'missing-input', message: 'Pick three vertices.' });
+      const points: Vec3[] = [];
+      for (const ref of feature.points) {
+        const point = await this.engines.modeling.pointOf(this.bodies, ref);
+        if (!point.ok) return point;
+        points.push(point.value);
+      }
+      const [p, q, r] = points as [Vec3, Vec3, Vec3];
+      const u = sub(q, p);
+      const n = cross(u, sub(r, p));
+      if (length(n) < 1e-9 * Math.max(1, length(u) ** 2)) return fail({ code: 'invalid-input', message: 'The three points lie on one line.' });
+      const normal = unit(n);
+      return ok({ origin: p, u: unit(u), v: cross(normal, unit(u)) });
+    }
+    const base = await this.frame(feature.base);
+    if (!base.ok) return base;
+    const { origin, u, v } = base.value;
+    const normal = cross(u, v);
+    if (feature.mode === 'midplane') {
+      const second = await this.frame(feature.second);
+      if (!second.ok) return second;
+      const other = cross(second.value.u, second.value.v);
+      if (Math.abs(Math.abs(dot(normal, other)) - 1) > 1e-6) return fail({ code: 'invalid-input', message: 'A midplane lies between two parallel planes.' });
+      const gap = dot(sub(second.value.origin, origin), normal);
+      return ok({ ...base.value, origin: add(origin, scale(normal, gap / 2)) });
+    }
+    if (feature.mode === 'angle') {
+      const angle = this.value(feature.angle, 'angle', 'Angle');
+      if (!angle.ok) return angle;
+      const axis = await this.axisLine(feature.axis);
+      if (!axis.ok) return axis;
+      // The axis, laid into the base plane, is the hinge the plane turns about.
+      const along = sub(axis.value.direction, scale(normal, dot(axis.value.direction, normal)));
+      if (length(along) < 1e-9) return fail({ code: 'invalid-input', message: 'The axis must lie in the base plane or run along it.' });
+      const hinge = unit(along);
+      const across = cross(normal, hinge);
+      const turned = add(scale(normal, Math.cos(angle.value)), scale(across, -Math.sin(angle.value)));
+      const point = add(axis.value.origin, scale(normal, -dot(sub(axis.value.origin, origin), normal)));
+      return ok({ origin: point, u: hinge, v: cross(turned, hinge) });
+    }
+    const offset = this.value(feature.offset, 'length', 'Offset');
+    if (!offset.ok) return offset;
+    return ok({ ...base.value, origin: add(origin, scale(normal, offset.value)) });
+  }
+
+  /** An axis as a point and direction, with edges resolved on the bodies made so far. */
+  private async axisLine(ref: AxisRef): Promise<Result<{ origin: Vec3; direction: Vec3 }>> {
+    const axis = this.axis(ref);
+    if (!axis.ok) return axis;
+    if (!('edge' in axis.value)) return ok(axis.value);
+    const frame = await this.engines.modeling.frameOf(this.bodies, axis.value.edge);
+    if (!frame.ok) return frame;
+    return ok({ origin: frame.value.origin, direction: cross(frame.value.u, frame.value.v) });
   }
 
   private async frame(ref: PlaneRef): Promise<Result<PlaneFrame>> {

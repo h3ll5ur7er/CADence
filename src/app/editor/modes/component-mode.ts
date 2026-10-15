@@ -19,6 +19,7 @@ import {
   isCurve,
   isSketch,
   type Material,
+  type MeshQuality,
   materials,
   type PlaneRef,
   type SketchText,
@@ -265,6 +266,31 @@ export class ComponentMode {
   protected exportAs(format: SolidFormat): void {
     this.menu.set(undefined);
     void this.store.exportBodies(format);
+  }
+
+  /** The export form: one format, the bodies to include and the mesh quality. */
+  protected readonly exportDraft = signal<{ format: SolidFormat; bodies: readonly string[]; quality: MeshQuality } | undefined>(undefined);
+
+  protected openExport(): void {
+    this.menu.set(undefined);
+    this.exportDraft.set({ format: 'stl', bodies: this.bodies().map((b) => b.body), quality: 'normal' });
+  }
+
+  protected changeExport(changes: Partial<{ format: SolidFormat; quality: MeshQuality }>): void {
+    const draft = this.exportDraft();
+    if (draft) this.exportDraft.set({ ...draft, ...changes });
+  }
+
+  protected toggleExportBody(id: string, on: boolean): void {
+    const draft = this.exportDraft();
+    if (draft) this.exportDraft.set({ ...draft, bodies: on ? [...draft.bodies, id] : draft.bodies.filter((b) => b !== id) });
+  }
+
+  protected async exportWithOptions(): Promise<void> {
+    const draft = this.exportDraft();
+    if (!draft) return;
+    this.exportDraft.set(undefined);
+    await this.store.exportBodies(draft.format, { bodies: draft.bodies, quality: draft.quality });
   }
 
   /** The number of items before the rollback marker. */

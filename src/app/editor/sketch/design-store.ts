@@ -18,7 +18,7 @@ import {
   type TopologyRef,
   type ValidationReport,
 } from '@core/contracts';
-import type { DesignCommand, DesignSession, DesignState, DrawingFormat, InsertDrawingOptions, SketchView, SolidFormat } from '@core/managers/design';
+import type { DesignCommand, DesignSession, DesignState, DrawingFormat, ExportOptions, InsertDrawingOptions, SketchView, SolidFormat } from '@core/managers/design';
 import { newId } from '@core/utilities/identity';
 import { DESIGN_MANAGER, PROJECT_MANAGER } from '../../core.providers';
 import type { Pick, PickKind, TopologyPick } from '../../viewport/picking';
@@ -223,8 +223,8 @@ export class DesignStore {
     return this.run(isNew ? { type: 'add-parameter', parameter } : { type: 'set-parameter', parameter });
   }
 
-  async exportBodies(format: SolidFormat): Promise<void> {
-    const result = await this.session?.exportBodies(format);
+  async exportBodies(format: SolidFormat, options?: ExportOptions): Promise<void> {
+    const result = await this.session?.exportBodies(format, options);
     if (result && !result.ok) this.error.set(result.error.message);
   }
 

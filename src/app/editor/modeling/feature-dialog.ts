@@ -57,7 +57,8 @@ export class FeatureDialog {
     const draft = this.draft();
     if (!draft) return '';
     if (draft.target === 'axis') return 'Click a straight edge in the view.';
-    if (draft.target === 'plane') return 'Click a flat face in the view.';
+    if (draft.target === 'plane' || draft.target === 'second') return 'Click a flat face in the view.';
+    if (draft.feature.type === 'plane' && draft.feature.mode === 'points') return 'Click three vertices (corners) in the view.';
     return hints[draft.feature.type];
   });
 
@@ -117,8 +118,8 @@ export class FeatureDialog {
   }
 
   /** Plane from a select value; "face" waits for a flat face to be picked. */
-  protected setPlane(value: string, key: 'base' | 'plane'): void {
-    if (value === 'face') return this.set({}, 'plane');
+  protected setPlane(value: string, key: 'base' | 'plane' | 'second'): void {
+    if (value === 'face') return this.set({}, key === 'second' ? 'second' : 'plane');
     const plane: PlaneRef = value.startsWith('plane:') ? { plane: value.slice(6) } : (value as 'XY' | 'XZ' | 'YZ');
     this.set({ [key]: plane } as Partial<Feature>);
   }
@@ -142,6 +143,23 @@ export class FeatureDialog {
     const translate = [...f.translate] as [string, string, string];
     translate[i] = expression;
     this.set({ translate });
+  }
+
+  /** Switches a construction plane's mode, keeping its base plane where the new mode has one. */
+  protected setPlaneMode(mode: string): void {
+    const f = this.feature();
+    if (f?.type !== 'plane') return;
+    const base = f.mode === 'points' ? 'XY' : f.base;
+    const common = { id: f.id, name: f.name, suppressed: f.suppressed, type: 'plane' as const };
+    const next: Feature =
+      mode === 'angle'
+        ? { ...common, mode, base, axis: { kind: 'origin', axis: 'X' }, angle: '45 deg' }
+        : mode === 'midplane'
+          ? { ...common, mode, base, second: 'XY' }
+          : mode === 'points'
+            ? { ...common, mode, points: [] }
+            : { ...common, base, offset: '10' };
+    this.store.updateDraft(next);
   }
 
   protected value(event: Event): string {

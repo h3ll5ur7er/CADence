@@ -100,6 +100,8 @@ export interface ModelingEngine {
   apply(request: ModelingRequest): Promise<ModelingOutcome>;
   /** Edges (or the outlines of faces) projected straight onto a plane, in its (u, v) coordinates. */
   project(bodies: readonly BodyState[], refs: readonly TopologyRef[], frame: PlaneFrame): Promise<Result<ProjectedCurve[]>>;
+  /** Where a vertex is (or the centre of an edge or face), for construction planes through points. */
+  pointOf(bodies: readonly BodyState[], ref: TopologyRef): Promise<Result<Vec3>>;
   /** The plane of a planar face, for sketches and construction planes on faces. */
   planeOf(bodies: readonly BodyState[], face: TopologyRef): Promise<Result<PlaneFrame>>;
   tessellate(bodies: readonly BodyState[]): Promise<BodyMesh[]>;

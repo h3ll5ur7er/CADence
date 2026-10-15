@@ -2,9 +2,9 @@
 id: CAD-30
 title: More construction planes and export options
 type: improvement
-status: todo
+status: done
 priority: low
 ---
 
-- [ ] Planes at an angle, midplanes, planes through three points
-- [ ] Export dialog: choose bodies, mesh quality for STL/3MF/OBJ
+- [x] Planes at an angle (about an axis in the base plane), midplanes (between parallel planes), planes through three vertices
+- [x] Export dialog (Export → With options…): choose bodies, mesh quality (draft, normal, fine) for STL/3MF/OBJ

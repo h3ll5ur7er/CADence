@@ -90,8 +90,18 @@
       }
       @case ('plane') {
         <label class="field">
-          Base
-          <select id="feature-base" [value]="planeValue(f.base)" (change)="setPlane(value($event), 'base')">
+          Kind
+          <select id="feature-plane-mode" [value]="f.mode ?? 'offset'" (change)="setPlaneMode(value($event))">
+            <option value="offset">Offset from a plane</option>
+            <option value="angle">At an angle, about an axis</option>
+            <option value="midplane">Midway between two planes</option>
+            <option value="points">Through three points</option>
+          </select>
+        </label>
+        @if (f.mode !== 'points') {
+          <label class="field">
+            Base
+            <select id="feature-base" [value]="planeValue(f.base)" (change)="setPlane(value($event), 'base')">
             <option value="XY">XY plane</option>
             <option value="XZ">XZ plane</option>
             <option value="YZ">YZ plane</option>
@@ -99,12 +109,44 @@
               <option [value]="'plane:' + p.id">{{ p.name }}</option>
             }
             <option value="face">A flat face (pick in the view)…</option>
-          </select>
-        </label>
-        <label class="field">
-          Offset
-          <input id="feature-offset" autocomplete="off" [value]="f.offset" (change)="set({ offset: value($event) })" />
-        </label>
+            </select>
+          </label>
+        }
+        @if (f.mode === 'angle') {
+          <label class="field">
+            Axis in the base plane
+            <select id="feature-axis" [value]="axisValue(f.axis)" (change)="setAxis(value($event), 'axis')">
+              <option value="origin:X">X axis</option>
+              <option value="origin:Y">Y axis</option>
+              <option value="origin:Z">Z axis</option>
+              <option value="edge">An edge (pick in the view)…</option>
+            </select>
+          </label>
+          <label class="field">
+            Angle
+            <input id="feature-angle" autocomplete="off" [value]="f.angle" (change)="set({ angle: value($event) })" />
+          </label>
+        } @else if (f.mode === 'midplane') {
+          <label class="field">
+            Second plane
+            <select id="feature-second" [value]="planeValue(f.second)" (change)="setPlane(value($event), 'second')">
+            <option value="XY">XY plane</option>
+            <option value="XZ">XZ plane</option>
+            <option value="YZ">YZ plane</option>
+            @for (p of planeFeatures(); track p.id) {
+              <option [value]="'plane:' + p.id">{{ p.name }}</option>
+            }
+            <option value="face">A flat face (pick in the view)…</option>
+            </select>
+          </label>
+        } @else if (f.mode === 'points') {
+          <p class="count" data-testid="point-selection">{{ f.points.length }} of 3 points picked</p>
+        } @else {
+          <label class="field">
+            Offset
+            <input id="feature-offset" autocomplete="off" [value]="f.offset" (change)="set({ offset: value($event) })" />
+          </label>
+        }
       }
       @case ('linear-pattern') {
         <fieldset class="tools">

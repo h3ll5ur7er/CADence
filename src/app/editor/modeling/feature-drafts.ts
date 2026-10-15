@@ -12,7 +12,7 @@ import type { DesignState } from '@core/managers/design';
 import type { Pick, PickKind } from '../../viewport/picking';
 
 /** Which kind of pick the dialog is waiting for, beyond its main selection. */
-export type PickTarget = 'axis' | 'plane';
+export type PickTarget = 'axis' | 'plane' | 'second';
 
 /** A feature being created or edited in the dialog. */
 export interface FeatureDraft {
@@ -98,11 +98,11 @@ export function defaultFeature(type: FeatureType, id: string, state: DesignState
   }
 }
 
-const refOf = (pick: Extract<Pick, { kind: 'face' | 'edge' }>): TopologyRef => ({ kind: pick.kind, body: pick.body, name: pick.name, hint: pick.hint });
+const refOf = (pick: Extract<Pick, { kind: 'face' | 'edge' | 'vertex' }>): TopologyRef => ({ kind: pick.kind, body: pick.body, name: pick.name, hint: pick.hint });
 const pickOf = (ref: TopologyRef): Pick =>
   ref.kind === 'face'
     ? { kind: 'face', body: ref.body, name: ref.name, hint: ref.hint ?? [0, 0, 0], planar: true }
-    : { kind: 'edge', body: ref.body, name: ref.name, hint: ref.hint ?? [0, 0, 0] };
+    : { kind: ref.kind, body: ref.body, name: ref.name, hint: ref.hint ?? [0, 0, 0] };
 const toggle = <T>(list: readonly T[], item: T, same: (a: T, b: T) => boolean): T[] =>
   list.some((x) => same(x, item)) ? list.filter((x) => !same(x, item)) : [...list, item];
 const sameRef = (a: TopologyRef, b: TopologyRef) => a.body === b.body && a.name === b.name;
@@ -112,7 +112,8 @@ export function pickableFor(draft: FeatureDraft | undefined): ReadonlySet<PickKi
   if (!draft) return new Set<PickKind>(['face']);
   const f = draft.feature;
   if (draft.target === 'axis') return new Set<PickKind>(['edge']);
-  if (draft.target === 'plane') return new Set<PickKind>(['face']);
+  if (draft.target === 'plane' || draft.target === 'second') return new Set<PickKind>(['face']);
+  if (f.type === 'plane' && f.mode === 'points') return new Set<PickKind>(['vertex']);
   switch (f.type) {
     case 'extrude':
     case 'revolve':
@@ -147,7 +148,8 @@ export function selectionOf(draft: FeatureDraft): Pick[] {
     case 'shell':
       return f.faces.map(pickOf);
     case 'plane':
-      return planeFace(f.base);
+      if (f.mode === 'points') return f.points.map(pickOf);
+      return [...planeFace(f.base), ...(f.mode === 'midplane' ? planeFace(f.second) : []), ...(f.mode === 'angle' && f.axis.kind === 'edge' ? [pickOf(f.axis.edge)] : [])];
     case 'mirror':
       return planeFace(f.plane);
     case 'linear-pattern':
@@ -174,10 +176,14 @@ export function applyPick(draft: FeatureDraft, pick: Pick): FeatureDraft {
     if (f.type === 'circular-pattern') return { mode: draft.mode, feature: { ...f, axis: edge } };
     if (f.type === 'linear-pattern') return { mode: draft.mode, feature: { ...f, direction: edge } };
     if (f.type === 'move') return { mode: draft.mode, feature: { ...f, axis: edge } };
+    if (f.type === 'plane' && f.mode === 'angle') return { mode: draft.mode, feature: { ...f, axis: edge } };
+  }
+  if (draft.target === 'second' && pick.kind === 'face' && pick.planar && f.type === 'plane' && f.mode === 'midplane') {
+    return { mode: draft.mode, feature: { ...f, second: { face: refOf(pick) } } };
   }
   if (draft.target === 'plane' && pick.kind === 'face' && pick.planar) {
     const face = { face: refOf(pick) };
-    if (f.type === 'plane') return { mode: draft.mode, feature: { ...f, base: face } };
+    if (f.type === 'plane' && f.mode !== 'points') return { mode: draft.mode, feature: { ...f, base: face } };
     if (f.type === 'mirror') return { mode: draft.mode, feature: { ...f, plane: face } };
     if (f.type === 'split') return { mode: draft.mode, feature: { ...f, plane: face } };
   }
@@ -193,6 +199,11 @@ export function applyPick(draft: FeatureDraft, pick: Pick): FeatureDraft {
       return pick.kind === 'edge' ? { ...draft, feature: { ...f, edges: toggle(f.edges, refOf(pick), sameRef) } } : draft;
     case 'shell':
       return pick.kind === 'face' ? { ...draft, feature: { ...f, faces: toggle(f.faces, refOf(pick), sameRef) } } : draft;
+    case 'plane': {
+      if (f.mode !== 'points' || pick.kind !== 'vertex') return draft;
+      const points = toggle(f.points, refOf(pick), sameRef);
+      return points.length <= 3 ? { ...draft, feature: { ...f, points } } : draft;
+    }
     // Clicking a body picks it: the body to split, or one more (or one less) to combine, move or scale.
     case 'split':
       return pick.kind === 'face' ? { ...draft, feature: { ...f, body: pick.body } } : draft;

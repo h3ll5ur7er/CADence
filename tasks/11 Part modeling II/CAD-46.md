@@ -10,4 +10,5 @@ priority: medium
 - [x] Split a body by a plane or face
 - [x] Move or copy a body (turn about an axis, then shift)
 - [x] Scale a body uniformly
-- [ ] Scale per axis: needs `BRepBuilderAPI_GTransform`, which the bundled OpenCascade build (replicad-opencascadejs) does not include
+
+Scaling per axis is left out: it needs `BRepBuilderAPI_GTransform`, which the bundled OpenCascade build (replicad-opencascadejs) does not include. Listed in [[Open points]].

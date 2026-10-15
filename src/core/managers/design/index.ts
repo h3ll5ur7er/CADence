@@ -8,7 +8,10 @@ export type {
   DesignSession,
   DesignState,
   DrawingFormat,
+  ItemStatus,
+  ParameterView,
   SketchView,
+  SolidFormat,
 } from './design-manager';
 
 export function createDesignManager(dependencies: DesignManagerDependencies): DesignManager {

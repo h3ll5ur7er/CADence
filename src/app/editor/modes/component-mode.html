@@ -3,7 +3,12 @@
     #viewport
     [showOrigin]="originVisible()"
     [sketches]="displays()"
+    [bodies]="bodies()"
+    [planes]="planeFrames()"
     [editPlane]="editPlane()"
+    [pickable]="store.pickable()"
+    [selection]="store.picks()"
+    (picked)="store.pick($event)"
     (backendReady)="status.renderer.set($event)"
   >
     @if (editedSketch(); as view) {
@@ -21,14 +26,11 @@
             <input type="checkbox" [checked]="originVisible()" (change)="originVisible.set(!originVisible())" aria-label="Show origin" />
           </label>
         </div>
-        <ul>
-          <li class="node"><span class="swatch" style="color: var(--axis-z)"></span> XY plane</li>
-          <li class="node"><span class="swatch" style="color: var(--axis-y)"></span> XZ plane</li>
-          <li class="node"><span class="swatch" style="color: var(--axis-x)"></span> YZ plane</li>
-        </ul>
       </li>
       <li>
-        <div class="node"><cad-icon name="variable" /> Parameters <span class="count">0</span></div>
+        <button type="button" class="node node-button" (click)="store.cancelDraft(); store.finishEditing(); store.parametersOpen.set(true)">
+          <cad-icon name="variable" /> Parameters <span class="count">{{ store.state()?.parameters?.length ?? 0 }}</span>
+        </button>
       </li>
       <li>
         <div class="node"><cad-icon name="timeline" /> Timeline <span class="count">{{ timeline().length }}</span></div>
@@ -37,16 +39,38 @@
         }
         <ul aria-label="Timeline">
           @for (item of timeline(); track item.id) {
-            @let view = viewOf(item);
-            <li class="node item" [class.active]="store.editing() === item.id">
-              <button type="button" class="item-main" [title]="'Edit ' + item.name" [attr.aria-label]="'Edit ' + item.name" (dblclick)="store.edit(item.id)" (click)="store.edit(item.id)">
-                <cad-icon name="sketch" />
+            @let itemStatus = statusOf(item);
+            <li
+              class="node item"
+              [class.active]="store.editing() === item.id || store.draft()?.feature?.id === item.id"
+              [class.suppressed]="item.suppressed"
+              [class.failed]="itemStatus?.state === 'error'"
+            >
+              <button
+                type="button"
+                class="item-main"
+                [title]="itemStatus?.error ?? 'Edit ' + item.name"
+                [attr.aria-label]="'Edit ' + item.name"
+                (click)="open(item)"
+              >
+                <cad-icon [name]="itemIcons[item.type]" />
                 <span class="item-name">{{ item.name }}</span>
-                @if (view) {
-                  <span class="dot" [attr.data-status]="view.status" [title]="statusLabels[view.status]"></span>
+                @if (itemStatus?.state === 'error') {
+                  <span class="dot" data-status="failed"></span>
+                } @else if (sketchStatus(item); as sketchState) {
+                  <span class="dot" [attr.data-status]="sketchState" [title]="statusLabels[sketchState]"></span>
                 }
               </button>
               <span class="item-actions">
+                <button
+                  type="button"
+                  class="icon-btn"
+                  [attr.aria-label]="(item.suppressed ? 'Unsuppress ' : 'Suppress ') + item.name"
+                  [title]="item.suppressed ? 'Unsuppress' : 'Suppress'"
+                  (click)="suppress(item)"
+                >
+                  <cad-icon [name]="item.suppressed ? 'eyeOff' : 'eye'" [size]="14" />
+                </button>
                 <button type="button" class="icon-btn" [attr.aria-label]="'Rename ' + item.name" title="Rename" (click)="rename(item)">
                   <cad-icon name="pencil" [size]="14" />
                 </button>
@@ -58,6 +82,9 @@
           }
         </ul>
       </li>
+      <li>
+        <div class="node"><cad-icon name="body" /> Bodies <span class="count" data-testid="body-count">{{ bodies().length }}</span></div>
+      </li>
     </ul>
   </section>
 
@@ -67,18 +94,42 @@
     } @else {
       <div class="model-bar" role="toolbar" aria-label="Model tools">
         <div class="menu">
-          <button type="button" class="btn btn-primary" aria-haspopup="menu" [attr.aria-expanded]="planeMenu()" (click)="planeMenu.set(!planeMenu())">
+          <button type="button" class="btn btn-primary" aria-haspopup="menu" [attr.aria-expanded]="menu() === 'sketch'" (click)="toggleMenu('sketch')">
             <cad-icon name="sketch" /> New sketch
           </button>
-          @if (planeMenu()) {
+          @if (menu() === 'sketch') {
             <div class="menu-list" role="menu" aria-label="Sketch plane">
-              @for (p of planes; track p.plane) {
-                <button type="button" role="menuitem" (click)="startSketch(p.plane)">{{ p.label }}</button>
+              <button type="button" role="menuitem" (click)="startSketch('XY')">XY plane (top)</button>
+              <button type="button" role="menuitem" (click)="startSketch('XZ')">XZ plane (front)</button>
+              <button type="button" role="menuitem" (click)="startSketch('YZ')">YZ plane (right)</button>
+              @for (p of planeFeatures(); track p.id) {
+                <button type="button" role="menuitem" (click)="startSketch({ plane: p.id })">{{ p.name }}</button>
               }
+              <button type="button" role="menuitem" [disabled]="!store.pickedFace()?.planar" (click)="sketchOnPickedFace()">
+                {{ store.pickedFace()?.planar ? 'Selected face' : 'Selected face (click a flat face first)' }}
+              </button>
             </div>
           }
         </div>
         <span class="divider"></span>
+        @for (tool of featureTools; track tool.type) {
+          <button type="button" class="icon-btn tool" [attr.aria-label]="featureLabels[tool.type]" [title]="featureLabels[tool.type]" (click)="store.startFeature(tool.type)">
+            <cad-icon [name]="tool.icon" [size]="18" />
+          </button>
+        }
+        <span class="divider"></span>
+        <div class="menu">
+          <button type="button" class="btn" aria-haspopup="menu" [attr.aria-expanded]="menu() === 'export'" [disabled]="bodies().length === 0" (click)="toggleMenu('export')">
+            <cad-icon name="download" /> Export
+          </button>
+          @if (menu() === 'export') {
+            <div class="menu-list end" role="menu" aria-label="Export format">
+              @for (f of exportFormats; track f.format) {
+                <button type="button" role="menuitem" (click)="exportAs(f.format)">{{ f.label }}</button>
+              }
+            </div>
+          }
+        </div>
         <button type="button" class="icon-btn" aria-label="Undo" title="Undo (Ctrl+Z)" [disabled]="!store.state()?.canUndo" (click)="store.undo()">
           <cad-icon name="undo" [size]="18" />
         </button>
@@ -90,20 +141,24 @@
   </div>
 
   @if (store.error(); as error) {
-    <p class="toast" role="alert">
-      {{ error }}
-      <button type="button" class="icon-btn" aria-label="Dismiss" (click)="store.error.set(undefined)">×</button>
-    </p>
+    @if (!store.draft() && !store.parametersOpen()) {
+      <p class="toast" role="alert">
+        {{ error }}
+        <button type="button" class="icon-btn" aria-label="Dismiss" (click)="store.error.set(undefined)">×</button>
+      </p>
+    }
   }
 </div>
 
 <aside class="properties" aria-label="Properties">
-  @if (editedSketch(); as view) {
+  @if (store.draft()) {
+    <cad-feature-dialog />
+  } @else if (store.parametersOpen()) {
+    <cad-parameters-panel />
+  } @else if (editedSketch(); as view) {
     <p class="eyebrow">Sketch</p>
     <h2>{{ view.sketch.name }}</h2>
     <dl>
-      <dt>Plane</dt>
-      <dd>{{ view.sketch.plane }}</dd>
       <dt>Status</dt>
       <dd>{{ statusLabels[view.status] }}</dd>
       <dt>Freedom</dt>
@@ -129,15 +184,26 @@
     <dl>
       <dt>Units</dt>
       <dd>Millimetres</dd>
-      <dt>Sketches</dt>
-      <dd>{{ timeline().length }}</dd>
-      <dt>Bodies</dt>
-      <dd>None yet</dd>
-      <dt>Created</dt>
-      <dd>{{ relativeTime(document().createdAt) }}</dd>
+      <dt>Timeline</dt>
+      <dd>{{ timeline().length }} items</dd>
       <dt>Modified</dt>
       <dd>{{ relativeTime(document().modifiedAt) }}</dd>
     </dl>
+    @if (bodyRows().length) {
+      <p class="eyebrow">Bodies</p>
+      <ul class="areas" aria-label="Bodies">
+        @for (body of bodyRows(); track body.id) {
+          <li>
+            <span>{{ body.name }}</span>
+            <span class="mono" data-testid="body-volume">{{ body.volume === undefined ? '…' : body.volume.toFixed(1) + ' mm³' }}</span>
+          </li>
+        }
+      </ul>
+    }
+    @if (store.pickedFace(); as face) {
+      <p class="eyebrow">Selected face</p>
+      <p class="mono picked">{{ face.name }}</p>
+    }
   }
 </aside>
 

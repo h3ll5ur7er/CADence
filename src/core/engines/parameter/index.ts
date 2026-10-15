@@ -1,5 +1,5 @@
-import { fail, ok, type Result } from '@core/contracts';
-import { describeDimension, evaluateQuantity, ExpressionError, type Quantity } from './expression';
+import { type DomainError, fail, ok, type Parameter, type Result } from '@core/contracts';
+import { describeDimension, evaluateQuantity, ExpressionError, type Quantity, referencedNames, reservedNames } from './expression';
 
 export type { Quantity } from './expression';
 
@@ -12,6 +12,15 @@ export type ValueKind = 'length' | 'angle' | 'scalar';
  */
 export interface ParameterEngine {
   evaluate(expression: string, kind: ValueKind, scope?: ReadonlyMap<string, Quantity>): Result<number>;
+  /** All parameters, each evaluated after the ones it uses; errors name the parameter. */
+  evaluateAll(parameters: readonly Pick<Parameter, 'id' | 'name' | 'expression'>[]): Result<Map<string, Quantity>, ParameterError>;
+  /** Parameter names an expression uses. */
+  namesIn(expression: string): string[];
+}
+
+export interface ParameterError extends DomainError {
+  /** Id of the parameter at fault, when there is one. */
+  readonly parameter?: string;
 }
 
 const expected: Readonly<Record<ValueKind, { length: number; angle: number; label: string }>> = {
@@ -22,7 +31,57 @@ const expected: Readonly<Record<ValueKind, { length: number; angle: number; labe
 
 const degree = Math.PI / 180;
 
+const validName = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
 class DefaultParameterEngine implements ParameterEngine {
+  namesIn(expression: string): string[] {
+    return referencedNames(expression);
+  }
+
+  evaluateAll(parameters: readonly Pick<Parameter, 'id' | 'name' | 'expression'>[]): Result<Map<string, Quantity>, ParameterError> {
+    const byName = new Map<string, Pick<Parameter, 'id' | 'name' | 'expression'>>();
+    for (const p of parameters) {
+      const problem = !validName.test(p.name)
+        ? 'must start with a letter and use only letters, digits and _'
+        : reservedNames.has(p.name)
+          ? 'is reserved for a unit, constant or function'
+          : byName.has(p.name)
+            ? 'is used twice'
+            : undefined;
+      if (problem) return fail({ code: 'invalid-name', message: `The name "${p.name}" ${problem}.`, parameter: p.id });
+      byName.set(p.name, p);
+    }
+    const values = new Map<string, Quantity>();
+    const visiting: string[] = [];
+    const visit = (p: Pick<Parameter, 'id' | 'name' | 'expression'>): ParameterError | undefined => {
+      if (values.has(p.name)) return undefined;
+      if (visiting.includes(p.name)) {
+        const cycle = [...visiting.slice(visiting.indexOf(p.name)), p.name].join(' → ');
+        return { code: 'cycle', message: `These parameters depend on each other: ${cycle}.`, parameter: p.id };
+      }
+      visiting.push(p.name);
+      for (const name of referencedNames(p.expression)) {
+        const dependency = byName.get(name);
+        if (!dependency) continue; // reported as an unknown name below
+        const error = visit(dependency);
+        if (error) return error;
+      }
+      visiting.pop();
+      try {
+        values.set(p.name, evaluateQuantity(p.expression, values));
+      } catch (error) {
+        const message = error instanceof ExpressionError ? error.message : String(error);
+        return { code: 'invalid-expression', message: `${p.name} = ${p.expression}: ${message}`, parameter: p.id };
+      }
+      return undefined;
+    };
+    for (const p of parameters) {
+      const error = visit(p);
+      if (error) return fail(error);
+    }
+    return ok(values);
+  }
+
   evaluate(expression: string, kind: ValueKind, scope: ReadonlyMap<string, Quantity> = new Map()): Result<number> {
     try {
       const quantity = evaluateQuantity(expression, scope);

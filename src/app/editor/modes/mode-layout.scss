@@ -1,7 +1,7 @@
 /* Shared layout of the editor modes: viewport with a floating model browser, properties on the right. */
 :host {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 260px;
+  grid-template-columns: minmax(0, 1fr) 290px;
   min-height: 0;
 }
 

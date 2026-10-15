@@ -1,0 +1,195 @@
+@if (feature(); as f) {
+  <form class="dialog" (submit)="$event.preventDefault(); store.commitDraft()">
+    <p class="eyebrow">Feature</p>
+    <h2>{{ title() }}</h2>
+    <p class="hint" [class.waiting]="draft()?.target">{{ hint() }}</p>
+
+    @switch (f.type) {
+      @case ('extrude') {
+        <label class="field">
+          Sketch
+          <select id="feature-sketch" [value]="f.sketch" (change)="set({ sketch: value($event), profiles: [] })">
+            @for (s of sketches(); track s.id) {
+              <option [value]="s.id">{{ s.name }}</option>
+            }
+          </select>
+        </label>
+        <p class="count" data-testid="profile-selection">{{ f.profiles.length }} profile{{ f.profiles.length === 1 ? '' : 's' }} selected</p>
+        <label class="field">
+          Distance
+          <input id="feature-distance" autocomplete="off" [value]="f.distance" (change)="set({ distance: value($event) })" />
+        </label>
+        <label class="field">
+          Direction
+          <select id="feature-direction" [value]="f.direction" (change)="set({ direction: $any(value($event)) })">
+            <option value="normal">Along the normal</option>
+            <option value="reverse">Reversed</option>
+            <option value="symmetric">Symmetric</option>
+          </select>
+        </label>
+      }
+      @case ('revolve') {
+        <label class="field">
+          Sketch
+          <select id="feature-sketch" [value]="f.sketch" (change)="set({ sketch: value($event), profiles: [] })">
+            @for (s of sketches(); track s.id) {
+              <option [value]="s.id">{{ s.name }}</option>
+            }
+          </select>
+        </label>
+        <p class="count" data-testid="profile-selection">{{ f.profiles.length }} profile{{ f.profiles.length === 1 ? '' : 's' }} selected</p>
+        <label class="field">
+          Axis
+          <select id="feature-axis" [value]="axisValue(f.axis)" (change)="setAxis(value($event), 'axis')">
+            <option value="origin:X">X axis</option>
+            <option value="origin:Y">Y axis</option>
+            <option value="origin:Z">Z axis</option>
+            @for (line of axisLines(); track line.id) {
+              <option [value]="'line:' + line.id">{{ line.label }}</option>
+            }
+            <option value="edge">An edge (pick in the view)…</option>
+          </select>
+        </label>
+        <label class="field">
+          Angle
+          <input id="feature-angle" autocomplete="off" [value]="f.angle" (change)="set({ angle: value($event) })" />
+        </label>
+      }
+      @case ('fillet') {
+        <p class="count" data-testid="edge-selection">{{ f.edges.length }} edge{{ f.edges.length === 1 ? '' : 's' }} selected</p>
+        <label class="field">
+          Radius
+          <input id="feature-size" autocomplete="off" [value]="f.size" (change)="set({ size: value($event) })" />
+        </label>
+      }
+      @case ('chamfer') {
+        <p class="count" data-testid="edge-selection">{{ f.edges.length }} edge{{ f.edges.length === 1 ? '' : 's' }} selected</p>
+        <label class="field">
+          Distance
+          <input id="feature-size" autocomplete="off" [value]="f.size" (change)="set({ size: value($event) })" />
+        </label>
+      }
+      @case ('shell') {
+        <p class="count" data-testid="face-selection">{{ f.faces.length }} face{{ f.faces.length === 1 ? '' : 's' }} to open</p>
+        <label class="field">
+          Wall thickness
+          <input id="feature-thickness" autocomplete="off" [value]="f.thickness" (change)="set({ thickness: value($event) })" />
+        </label>
+      }
+      @case ('plane') {
+        <label class="field">
+          Base
+          <select id="feature-base" [value]="planeValue(f.base)" (change)="setPlane(value($event), 'base')">
+            <option value="XY">XY plane</option>
+            <option value="XZ">XZ plane</option>
+            <option value="YZ">YZ plane</option>
+            @for (p of planeFeatures(); track p.id) {
+              <option [value]="'plane:' + p.id">{{ p.name }}</option>
+            }
+            <option value="face">A flat face (pick in the view)…</option>
+          </select>
+        </label>
+        <label class="field">
+          Offset
+          <input id="feature-offset" autocomplete="off" [value]="f.offset" (change)="set({ offset: value($event) })" />
+        </label>
+      }
+      @case ('linear-pattern') {
+        <fieldset class="tools">
+          <legend>Repeat</legend>
+          @for (t of tools(); track t.id) {
+            <label><input type="checkbox" [checked]="f.features.includes(t.id)" (change)="toggleTool(t.id, $any($event.target).checked)" /> {{ t.name }}</label>
+          } @empty {
+            <p class="hint">Add an extrude or revolve first.</p>
+          }
+        </fieldset>
+        <label class="field">
+          Direction
+          <select id="feature-direction" [value]="axisValue(f.direction)" (change)="setAxis(value($event), 'direction')">
+            <option value="origin:X">X axis</option>
+            <option value="origin:Y">Y axis</option>
+            <option value="origin:Z">Z axis</option>
+            <option value="edge">An edge (pick in the view)…</option>
+          </select>
+        </label>
+        <label class="field">
+          Count
+          <input id="feature-count" autocomplete="off" [value]="f.count" (change)="set({ count: value($event) })" />
+        </label>
+        <label class="field">
+          Spacing
+          <input id="feature-spacing" autocomplete="off" [value]="f.spacing" (change)="set({ spacing: value($event) })" />
+        </label>
+      }
+      @case ('circular-pattern') {
+        <fieldset class="tools">
+          <legend>Repeat</legend>
+          @for (t of tools(); track t.id) {
+            <label><input type="checkbox" [checked]="f.features.includes(t.id)" (change)="toggleTool(t.id, $any($event.target).checked)" /> {{ t.name }}</label>
+          } @empty {
+            <p class="hint">Add an extrude or revolve first.</p>
+          }
+        </fieldset>
+        <label class="field">
+          Axis
+          <select id="feature-axis" [value]="axisValue(f.axis)" (change)="setAxis(value($event), 'axis')">
+            <option value="origin:X">X axis</option>
+            <option value="origin:Y">Y axis</option>
+            <option value="origin:Z">Z axis</option>
+            <option value="edge">An edge (pick in the view)…</option>
+          </select>
+        </label>
+        <label class="field">
+          Count
+          <input id="feature-count" autocomplete="off" [value]="f.count" (change)="set({ count: value($event) })" />
+        </label>
+        <label class="field">
+          Angle
+          <input id="feature-angle" autocomplete="off" [value]="f.angle" (change)="set({ angle: value($event) })" />
+        </label>
+      }
+      @case ('mirror') {
+        <fieldset class="tools">
+          <legend>Mirror</legend>
+          @for (t of tools(); track t.id) {
+            <label><input type="checkbox" [checked]="f.features.includes(t.id)" (change)="toggleTool(t.id, $any($event.target).checked)" /> {{ t.name }}</label>
+          } @empty {
+            <p class="hint">Add an extrude or revolve first.</p>
+          }
+        </fieldset>
+        <label class="field">
+          Plane
+          <select id="feature-plane" [value]="planeValue(f.plane)" (change)="setPlane(value($event), 'plane')">
+            <option value="XY">XY plane</option>
+            <option value="XZ">XZ plane</option>
+            <option value="YZ">YZ plane</option>
+            @for (p of planeFeatures(); track p.id) {
+              <option [value]="'plane:' + p.id">{{ p.name }}</option>
+            }
+            <option value="face">A flat face (pick in the view)…</option>
+          </select>
+        </label>
+      }
+    }
+
+    @if (f.type === 'extrude' || f.type === 'revolve') {
+      <label class="field">
+        Operation
+        <select id="feature-operation" [value]="f.operation" (change)="set({ operation: $any(value($event)) })">
+          @for (op of operations; track op.value) {
+            <option [value]="op.value">{{ op.label }}</option>
+          }
+        </select>
+      </label>
+    }
+
+    @if (store.error(); as error) {
+      <p class="error" role="alert">{{ error }}</p>
+    }
+
+    <div class="actions">
+      <button type="button" class="btn" (click)="store.cancelDraft()">Cancel</button>
+      <button type="submit" class="btn btn-primary"><cad-icon name="check" /> OK</button>
+    </div>
+  </form>
+}

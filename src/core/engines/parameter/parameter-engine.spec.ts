@@ -71,3 +71,28 @@ describe('ParameterEngine', () => {
     expect(error('foo(2)')).toMatch(/Unknown function "foo"/);
   });
 });
+
+describe('ParameterEngine.evaluateAll', () => {
+  const p = (name: string, expression: string) => ({ id: name, name, expression });
+
+  it('evaluates parameters in dependency order, whatever their listed order', () => {
+    const result = engine.evaluateAll([p('height', 'wall * 4'), p('wall', '2 mm'), p('angle', '30 deg'), p('count', '3')]);
+    if (!result.ok) throw new Error(result.error.message);
+    expect(result.value.get('height')).toEqual({ value: 8, length: 1, angle: 0 });
+    expect(result.value.get('angle')?.value).toBeCloseTo(Math.PI / 6);
+    expect(result.value.get('count')).toEqual({ value: 3, length: 0, angle: 0 });
+  });
+
+  it('reports cycles, unknown names and invalid names', () => {
+    expect(engine.evaluateAll([p('a', 'b + 1'), p('b', 'a * 2')])).toMatchObject({ ok: false, error: { message: expect.stringMatching(/a → b → a|b → a → b/) } });
+    expect(engine.evaluateAll([p('a', 'missing * 2')])).toMatchObject({ ok: false, error: { message: expect.stringContaining('Unknown name "missing"'), parameter: 'a' } });
+    expect(engine.evaluateAll([p('mm', '2')])).toMatchObject({ ok: false, error: { message: expect.stringContaining('reserved') } });
+    expect(engine.evaluateAll([p('2x', '2')])).toMatchObject({ ok: false, error: { message: expect.stringContaining('letter') } });
+    expect(engine.evaluateAll([p('a', '1'), p('a', '2')])).toMatchObject({ ok: false, error: { message: expect.stringContaining('twice') } });
+  });
+
+  it('lists the names an expression uses', () => {
+    expect(engine.namesIn('max(wall, 2 mm) * count + sin(30)')).toEqual(['wall', 'count']);
+    expect(engine.namesIn('2 +')).toEqual([]);
+  });
+});

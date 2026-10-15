@@ -214,8 +214,8 @@ function toProfileEdge(h: HalfEdge, vertices: Vec2[]): ProfileEdge {
   const s = h.edge.segment;
   const start = vertices[h.from] as Vec2;
   const end = vertices[h.to] as Vec2;
-  if (s.kind === 'line') return { kind: 'line', start, end };
-  return { kind: 'arc', start, end, center: s.c, radius: s.r, ccw: h.forward };
+  if (s.kind === 'line') return { kind: 'line', start, end, source: s.source };
+  return { kind: 'arc', source: s.source, start, end, center: s.c, radius: s.r, ccw: h.forward };
 }
 
 /** Exact signed area: polygon of the vertices plus the circular segment each arc adds or removes. */

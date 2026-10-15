@@ -37,3 +37,4 @@ export class EventBus<Events extends object> {
     return this.pending;
   }
 }
+export { expose, type Port, remote, type Remote, transferables } from './rpc';

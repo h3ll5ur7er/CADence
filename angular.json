@@ -32,6 +32,11 @@
                 "glob": "planegcs.wasm",
                 "input": "node_modules/@salusoft89/planegcs/dist/planegcs_dist",
                 "output": "wasm"
+              },
+              {
+                "glob": "replicad_single.wasm",
+                "input": "node_modules/replicad-opencascadejs/dist",
+                "output": "wasm"
               }
             ],
             "styles": [
@@ -39,7 +44,8 @@
             ],
             "externalDependencies": [
               "node:module"
-            ]
+            ],
+            "webWorkerTsConfig": "tsconfig.worker.json"
           },
           "configurations": {
             "production": {

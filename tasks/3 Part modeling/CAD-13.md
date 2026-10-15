@@ -2,14 +2,13 @@
 id: CAD-13
 title: Parameter Engine and parameters table
 type: feature
-status: todo
+status: done
 priority: high
 ---
 
 Variables and expressions with units ([[Architecture/Document model#Parameters]]).
 
-- [ ] Expression parser and evaluator: arithmetic, functions, units, references
-- [ ] Dependency ordering; cycle and unit-mismatch errors
-- [ ] Parameters table in the component editor; expressions accepted in every numeric input
-
-Already done in [[CAD-8]]: the expression evaluator (arithmetic, functions, units, names from a scope) in [[src/core/engines/parameter/expression.ts]]. What remains here is the parameters table and evaluating parameters in dependency order.
+- [x] Expression parser and evaluator: arithmetic, functions, units, references (pulled into [[CAD-8]])
+- [x] Dependency ordering; cycle, unknown-name, reserved-name and duplicate errors ([[src/core/engines/parameter/index.ts]])
+- [x] Parameters panel in the component editor; expressions accepted in every dimension and feature value
+- [x] Parameter changes that would break the model are refused ([[Architecture/Decisions#ADR-17]])

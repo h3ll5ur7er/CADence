@@ -1,6 +1,8 @@
 export * from './document';
+export * from './feature';
 export type * from './events';
 export * from './ids';
+export type * from './mesh';
 export type * from './project';
 export * from './result';
 export * from './sketch';

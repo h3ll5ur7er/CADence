@@ -17,7 +17,6 @@
         <path class="profile" fill-rule="evenodd" [attr.d]="profile.d" />
       }
       @for (curve of curves(); track curve.id) {
-        <path class="hit" data-kind="curve" [attr.data-id]="curve.id" [attr.d]="curve.d" />
         <path
           class="curve"
           [class.construction]="curve.construction"
@@ -37,7 +36,6 @@
       }
     }
     @for (point of screenPoints(); track point.id) {
-      <circle class="point-hit" data-kind="point" [attr.data-id]="point.id" [attr.cx]="point.x" [attr.cy]="point.y" r="9" />
       <circle
         class="point"
         [class.origin]="point.origin"

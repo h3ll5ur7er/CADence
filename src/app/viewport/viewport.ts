@@ -11,7 +11,8 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
-import type { SketchPlane } from '@core/contracts';
+import type { BodyMesh, PlaneFrame } from '@core/contracts';
+import type { Pick, PickKind } from './picking';
 import type { SketchDisplay } from './sketch-display';
 import type { Affine } from './sketch-planes';
 import { ViewCube } from './view-cube';
@@ -28,6 +29,10 @@ function readTheme(element: HTMLElement): ViewportTheme {
     axisZ: token('--axis-z'),
     sketch: token('--sketch'),
     construction: token('--text-muted'),
+    body: token('--body'),
+    edge: token('--edge'),
+    hover: token('--hover'),
+    selection: token('--selection'),
   };
 }
 
@@ -53,9 +58,16 @@ function readTheme(element: HTMLElement): ViewportTheme {
 export class Viewport {
   readonly showOrigin = input(true);
   readonly sketches = input<readonly SketchDisplay[]>([]);
+  readonly bodies = input<readonly BodyMesh[]>([]);
+  /** Construction planes to show. */
+  readonly planes = input<readonly PlaneFrame[]>([]);
   /** The sketch plane being edited: the camera looks straight at it and rotation is locked. */
-  readonly editPlane = input<SketchPlane | undefined>(undefined);
+  readonly editPlane = input<PlaneFrame | undefined>(undefined);
+  /** What a click may pick, and what is shown as selected. */
+  readonly pickable = input<ReadonlySet<PickKind>>(new Set());
+  readonly selection = input<readonly Pick[]>([]);
   readonly backendReady = output<RendererBackend>();
+  readonly picked = output<Pick>();
 
   /** Plane-to-pixel map of the edited plane, updated as the camera pans and zooms. */
   readonly planeMatrix = signal<Affine | undefined>(undefined);
@@ -74,6 +86,7 @@ export class Viewport {
       const scene = new ViewportScene(canvas, host, readTheme(host), { forceWebGL });
       scene.onCameraChange = (view) => this.cube().setCamera(view);
       scene.onPlaneMatrix = (matrix) => this.planeMatrix.set(matrix);
+      scene.onPick = (pick) => this.picked.emit(pick);
       // Resizing in the next frame keeps layout changes out of the observer callback.
       let pending = 0;
       const resize = new ResizeObserver(([entry]) => {
@@ -102,6 +115,10 @@ export class Viewport {
     effect(() => this.scene()?.setOriginVisible(this.showOrigin()));
     effect(() => this.scene()?.setSketches(this.sketches()));
     effect(() => this.scene()?.editPlane(this.editPlane()));
+    effect(() => this.scene()?.setBodies(this.bodies()));
+    effect(() => this.scene()?.setPlanes(this.planes()));
+    effect(() => this.scene()?.setPickable(this.pickable()));
+    effect(() => this.scene()?.setSelection(this.selection()));
   }
 
   showView(view: StandardView): void {

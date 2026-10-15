@@ -1,0 +1,58 @@
+import type { BodyMesh, Vec3 } from '@core/contracts';
+import type { Intersection, Object3D, Raycaster } from 'three/webgpu';
+
+/** Something the user clicked in the 3D view. Faces and edges carry their persistent names. */
+export type Pick =
+  | { readonly kind: 'face'; readonly body: string; readonly name: string; readonly hint: Vec3; readonly planar: boolean }
+  | { readonly kind: 'edge'; readonly body: string; readonly name: string; readonly hint: Vec3 }
+  | { readonly kind: 'profile'; readonly sketch: string; readonly profile: string };
+
+export type PickKind = Pick['kind'];
+
+export const pickKey = (p: Pick): string => (p.kind === 'profile' ? `profile:${p.sketch}:${p.profile}` : `${p.kind}:${p.body}:${p.name}`);
+
+function edgeCenter(mesh: BodyMesh, start: number, count: number): Vec3 {
+  let x = 0;
+  let y = 0;
+  let z = 0;
+  for (let i = start; i < start + count; i++) {
+    x += mesh.edgePositions[i * 3] as number;
+    y += mesh.edgePositions[i * 3 + 1] as number;
+    z += mesh.edgePositions[i * 3 + 2] as number;
+  }
+  return [x / count, y / count, z / count];
+}
+
+function toPick(hit: Intersection, kinds: ReadonlySet<PickKind>): Pick | undefined {
+  const data = hit.object.userData as { body?: BodyMesh; pick?: Pick };
+  if (data.pick?.kind === 'profile') return kinds.has('profile') ? data.pick : undefined;
+  const mesh = data.body;
+  if (!mesh) return undefined;
+  if ((hit.object as { isLineSegments?: boolean }).isLineSegments) {
+    if (!kinds.has('edge') || hit.index === undefined) return undefined;
+    const index = hit.index;
+    const edge = mesh.edges.find((e) => index >= e.start && index < e.start + e.count);
+    return edge && { kind: 'edge', body: mesh.body, name: edge.name, hint: edgeCenter(mesh, edge.start, edge.count) };
+  }
+  if (!kinds.has('face') || hit.faceIndex === undefined || hit.faceIndex === null) return undefined;
+  const index = hit.faceIndex * 3;
+  const face = mesh.faces.find((f) => index >= f.start && index < f.start + f.count);
+  return face && { kind: 'face', body: mesh.body, name: face.name, hint: face.center, planar: face.planar };
+}
+
+/**
+ * The nearest pickable thing under the ray. Edges win over the face they bound, since a click near an
+ * edge rarely means the face.
+ */
+export function pickAt(raycaster: Raycaster, roots: readonly Object3D[], kinds: ReadonlySet<PickKind>): Pick | undefined {
+  if (kinds.size === 0) return undefined;
+  const hits = raycaster.intersectObjects([...roots], true);
+  let best: { pick: Pick; distance: number } | undefined;
+  for (const hit of hits) {
+    const pick = toPick(hit, kinds);
+    if (!pick) continue;
+    const distance = pick.kind === 'edge' ? hit.distance - 1 : hit.distance;
+    if (!best || distance < best.distance) best = { pick, distance };
+  }
+  return best?.pick;
+}

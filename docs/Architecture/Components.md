@@ -58,11 +58,20 @@ interface DesignSession {
   redo(): Promise<void>;
   previewDrag(sketchId, pointId, x, y): Promise<SketchView | undefined>;  // solves without committing
   exportSketch(sketchId, format: 'dxf' | 'svg'): Promise<Result<void>>;
-  // later: measure, validate, exportBodies (STEP / STL / OBJ / 3MF)
+  exportBodies(format: 'step' | 'stl' | 'obj' | '3mf'): Promise<Result<void>>;
+  volumes(): Promise<Record<string, number>>;  // mm³ per body
+  // later: measure, validate
 }
 ```
 
-`DesignCommand` is a discriminated union, and the caller supplies the ids of new elements. Sketch commands so far: `create-sketch`, `add-sketch-geometry`, `add-constraint`, `set-dimension`, `move-point`, `toggle-construction` and `delete-sketch-elements`, plus `rename-item` and `delete-item` for timeline items. Features join them in phase 3.
+`DesignCommand` is a discriminated union, and the caller supplies the ids of new elements. The commands:
+
+- **Sketches:** `create-sketch` (on any `PlaneRef`), `add-sketch-geometry`, `add-constraint`, `set-dimension`, `move-point`, `toggle-construction`, `delete-sketch-elements`.
+- **Features:** `add-feature`, `edit-feature`.
+- **Timeline items:** `suppress-item`, `rename-item`, `delete-item`.
+- **Parameters:** `add-parameter`, `set-parameter`, `delete-parameter`.
+
+The state also carries each item's status (ok, error with reason, suppressed), construction planes, body meshes and evaluated parameters.
 
 **A command is atomic.** The manager applies it to a copy of the document (pure functions in [[src/core/managers/design/commands.ts]]), evaluates the sketch's dimension expressions and solves the sketch. It **rejects** the command and leaves the document untouched in three cases:
 
@@ -106,7 +115,7 @@ Engines encapsulate the volatility of an *activity*: an algorithm or a set of bu
 | --- | --- | --- |
 | **Parameter** | `evaluate(expression, kind, scope) → Result<number>` (mm, radians); later `evaluate(parameters)` with dependency ordering | Own recursive-descent parser: arithmetic, `^`, functions (`sin`, `sqrt`, `min`, …), constants, names from the scope, and units (`mm cm m in ft`, `deg rad`) with dimensional analysis. Plain numbers are read as mm or degrees. It is pure and fast, so it is the one **synchronous** engine. |
 | **Sketch** | `solve(sketch, values, drag?) → SketchSolution`: solved geometry, status (under / fully / over-constrained / failed), degrees of freedom, conflicting constraint ids, profiles | planegcs (WASM, loaded lazily on the first solve). Drags pull a point with temporary constraints. For profiles, curves are split at intersections and faces are traced in the planar graph (tangent and curvature order at each vertex). Areas are exact (with circular-segment corrections), and islands become holes. Profile ids derive from the bounding curves, so they survive dimension changes. |
-| **Modeling** | `resolvePlane(planeRef) → Plane`; `applyFeature(feature, inputs) → FeatureResult` (body keys, topology map, errors); `tessellate(bodyKeys, quality) → MeshDTO[]`; `snapshotBodies(keys) → bytes`; `restoreBodies(bytes, placement) → keys` | OCCT in the geometry worker. Persistent naming via OCCT generation history (see [[Architecture/Document model#Persistent references]]). |
+| **Modeling** | `apply(request) → { bodies, toolKey?, error? }` for extrude, revolve, fillet, chamfer, shell, linear/circular pattern, mirror; `planeOf(bodies, face) → PlaneFrame`; `tessellate(bodies) → BodyMesh[]`; `volumes(bodies)`; later `snapshotBodies`, `restoreBodies` | OCCT (`replicad-opencascadejs`, through `replicad`) in the geometry worker. Generative naming ([[Architecture/Decisions#ADR-15]]); results validated with `BRepCheck_Analyzer`; outcomes cached by request content hash. |
 | **Analysis** | `measure(refs)`; `massProperties(bodyKey, density)`; `checkManufacturability(bodyKey, profile) → ValidationReport` | Geometric checks with OCCT; mesh-based printability checks (overhang, thin walls) are Rust/WASM candidates. |
 | **Kinematics** | `solve(assemblyModel, drivers) → InstanceTransforms`; `step(state, dt)` | Joint graph and constraint solver (Newton-Raphson on joint equations); rigid body motion first. |
 | **Interchange** | `exportDrawing(sketch, 'dxf' \| 'svg') → Uint8Array`; later `export(bodies, format)` and `import(bytes, format)` | DXF: ASCII with R12 entities (LINE, CIRCLE, ARC) and `$INSUNITS` set to mm. SVG: sized in mm, Y up, hairline strokes, no fill, which is what laser software expects. Construction geometry is left out. STEP goes through OCCT; STL, OBJ and 3MF are written in TypeScript. One writer per format, in a registry. |
@@ -123,7 +132,7 @@ Atomic business verbs over a resource. Implementations vary by host and are chos
 > [!NOTE]
 > Choosing a file to import needs a user gesture, so the **client** shows the picker (or accepts a drop) and passes the file's name and bytes to the Project Manager as an `ExternalFile`. External File Access only delivers files *out* of the app.
 | **Asset Access** | `keep(bytes, meta) → AssetId`, `fetch(assetId)`, `release(assetId)`; `publishResult(documentId, hash, bytes)`, `latestResult(documentId)` | IndexedDB blobs | `projects/<id>/assets/*`, `projects/<id>/results/*` |
-| **Shape Access** | `put(key, shape)`, `get(key)`, `evict(keys)`, `retainOnly(keys)` | in-worker OCCT shape cache | same |
+| **Shape Access** | `ready()` (loads OCCT once), `put(key, named shape)`, `get(key)`, `has(key)` | in-worker OCCT shapes with their face and edge names; least recently used ones are evicted and their memory freed | same |
 | **External File Access** | `deliver(bytes, suggestedName)` (exports) | download | Tauri dialog and fs plugins |
 
 ## Utilities

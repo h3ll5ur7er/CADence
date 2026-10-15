@@ -1,9 +1,9 @@
-import { type Profile, type Sketch, type SketchPlane, sketchOriginId, type Vec2 } from '@core/contracts';
+import { type PlaneFrame, type Profile, type Sketch, sketchOriginId, type Vec2 } from '@core/contracts';
 
 /** What the 3D scene draws of a sketch that is not being edited: polylines in plane coordinates. */
 export interface SketchDisplay {
   readonly id: string;
-  readonly plane: SketchPlane;
+  readonly frame: PlaneFrame;
   readonly curves: readonly (readonly Vec2[])[];
   readonly construction: readonly (readonly Vec2[])[];
   readonly profiles: readonly Profile[];
@@ -38,7 +38,7 @@ export function sampleCircle(center: Vec2, radius: number): Vec2[] {
   });
 }
 
-export function sketchDisplay(sketch: Sketch, profiles: readonly Profile[]): SketchDisplay {
+export function sketchDisplay(sketch: Sketch, profiles: readonly Profile[], frame: PlaneFrame): SketchDisplay {
   const points = pointsOf(sketch);
   const at = (id: string): Vec2 => points.get(id) ?? [0, 0];
   const curves: Vec2[][] = [];
@@ -49,5 +49,5 @@ export function sketchDisplay(sketch: Sketch, profiles: readonly Profile[]): Ske
       e.kind === 'line' ? [at(e.start), at(e.end)] : e.kind === 'circle' ? sampleCircle(at(e.center), e.radius) : sampleArc(at(e.center), at(e.start), at(e.end));
     (e.construction ? construction : curves).push(polyline);
   }
-  return { id: sketch.id, plane: sketch.plane, curves, construction, profiles };
+  return { id: sketch.id, frame, curves, construction, profiles };
 }

@@ -27,12 +27,6 @@ path {
   pointer-events: none;
 }
 
-.hit {
-  fill: none;
-  stroke: transparent;
-  stroke-width: 12px;
-}
-
 .curve {
   fill: none;
   stroke: var(--sketch);
@@ -65,10 +59,6 @@ path {
   stroke-width: 1.4px;
   stroke-dasharray: 5 4;
   pointer-events: none;
-}
-
-.point-hit {
-  fill: transparent;
 }
 
 .point {

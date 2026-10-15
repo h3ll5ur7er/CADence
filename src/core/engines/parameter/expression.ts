@@ -260,3 +260,23 @@ export function evaluateQuantity(source: string, scope: ReadonlyMap<string, Quan
   if (source.trim() === '') throw new ExpressionError('Enter a value.');
   return new Parser(tokenize(source), scope).parse();
 }
+
+/** Reserved words: units, constants and functions cannot name parameters. */
+export const reservedNames: ReadonlySet<string> = new Set([...Object.keys(lengthUnits), ...Object.keys(angleUnits), ...Object.keys(constants), ...Object.keys(functions)]);
+
+/** Names an expression refers to (excluding units, constants and functions); empty if it does not parse. */
+export function referencedNames(source: string): string[] {
+  try {
+    const tokens = tokenize(source);
+    const names: string[] = [];
+    tokens.forEach((token, i) => {
+      if (token.type !== 'name' || reservedNames.has(token.value)) return;
+      const next = tokens[i + 1];
+      if (next?.type === 'symbol' && next.value === '(') return;
+      if (!names.includes(token.value)) names.push(token.value);
+    });
+    return names;
+  } catch {
+    return [];
+  }
+}

@@ -5,26 +5,32 @@ import {
   effect,
   inject,
   input,
+  resource,
   signal,
   untracked,
   viewChild,
 } from '@angular/core';
-import { type DocumentSummary, isCurve, type Sketch, type SketchPlane } from '@core/contracts';
+import {
+  type DocumentSummary,
+  type FeatureType,
+  isCurve,
+  isSketch,
+  type PlaneRef,
+  type TimelineItem,
+} from '@core/contracts';
+import type { SolidFormat } from '@core/managers/design';
 import { NameDialog } from '../../shared/dialogs';
 import { relativeTime } from '../../shared/format';
-import { Icon } from '../../shared/icon';
+import { Icon, type IconName } from '../../shared/icon';
 import { sketchDisplay } from '../../viewport/sketch-display';
 import { Viewport } from '../../viewport/viewport';
 import { EditorStatus } from '../editor-status';
+import { featureLabels } from '../modeling/feature-drafts';
+import { FeatureDialog } from '../modeling/feature-dialog';
+import { ParametersPanel } from '../modeling/parameters-panel';
 import { DesignStore } from '../sketch/design-store';
 import { SketchEditor } from '../sketch/sketch-editor';
 import { SketchToolbar } from '../sketch/sketch-toolbar';
-
-const planes: readonly { plane: SketchPlane; label: string }[] = [
-  { plane: 'XY', label: 'XY plane (top)' },
-  { plane: 'XZ', label: 'XZ plane (front)' },
-  { plane: 'YZ', label: 'YZ plane (right)' },
-];
 
 const statusLabels = {
   'fully-constrained': 'Fully constrained',
@@ -33,10 +39,42 @@ const statusLabels = {
   failed: 'Does not solve',
 } as const;
 
-/** Part modeling mode: sketches on origin planes now; features arrive in phase 3. */
+const featureTools: readonly { type: FeatureType; icon: IconName }[] = [
+  { type: 'extrude', icon: 'extrude' },
+  { type: 'revolve', icon: 'revolve' },
+  { type: 'fillet', icon: 'fillet' },
+  { type: 'chamfer', icon: 'chamfer' },
+  { type: 'shell', icon: 'shell' },
+  { type: 'plane', icon: 'planeAdd' },
+  { type: 'linear-pattern', icon: 'pattern' },
+  { type: 'circular-pattern', icon: 'circular' },
+  { type: 'mirror', icon: 'mirror' },
+];
+
+const itemIcons: Readonly<Record<TimelineItem['type'], IconName>> = {
+  sketch: 'sketch',
+  extrude: 'extrude',
+  revolve: 'revolve',
+  fillet: 'fillet',
+  chamfer: 'chamfer',
+  shell: 'shell',
+  plane: 'planeAdd',
+  'linear-pattern': 'pattern',
+  'circular-pattern': 'circular',
+  mirror: 'mirror',
+};
+
+const exportFormats: readonly { format: SolidFormat; label: string }[] = [
+  { format: 'step', label: 'STEP (exact, for CAD)' },
+  { format: 'stl', label: 'STL (for slicers)' },
+  { format: '3mf', label: '3MF (for slicers)' },
+  { format: 'obj', label: 'OBJ (mesh)' },
+];
+
+/** Part modeling mode: sketches, features, parameters and bodies. */
 @Component({
   selector: 'cad-component-mode',
-  imports: [Viewport, Icon, SketchEditor, SketchToolbar, NameDialog],
+  imports: [Viewport, Icon, SketchEditor, SketchToolbar, NameDialog, FeatureDialog, ParametersPanel],
   providers: [DesignStore],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './component-mode.html',
@@ -50,9 +88,12 @@ export class ComponentMode {
   protected readonly status = inject(EditorStatus);
   protected readonly store = inject(DesignStore);
   protected readonly originVisible = signal(true);
-  protected readonly planeMenu = signal(false);
-  protected readonly planes = planes;
+  protected readonly menu = signal<'sketch' | 'export' | undefined>(undefined);
   protected readonly statusLabels = statusLabels;
+  protected readonly featureTools = featureTools;
+  protected readonly featureLabels = featureLabels;
+  protected readonly itemIcons = itemIcons;
+  protected readonly exportFormats = exportFormats;
   protected readonly relativeTime = relativeTime;
   private readonly nameDialog = viewChild.required(NameDialog);
 
@@ -61,13 +102,30 @@ export class ComponentMode {
     const state = this.store.state();
     if (!state) return [];
     const editing = this.store.editing();
-    return [...state.sketches.values()].filter((v) => v.sketch.id !== editing).map((v) => sketchDisplay(v.sketch, v.profiles));
+    return [...state.sketches.values()]
+      .filter((v) => v.sketch.id !== editing && !v.error && state.items.get(v.sketch.id)?.state === 'ok')
+      .map((v) => sketchDisplay(v.sketch, v.profiles, v.frame));
   });
-  protected readonly editPlane = computed(() => this.store.editedView()?.sketch.plane);
+  protected readonly planeFrames = computed(() => [...(this.store.state()?.planes.values() ?? [])]);
+  protected readonly planeFeatures = computed(() => this.timeline().filter((i) => !isSketch(i) && i.type === 'plane'));
+  protected readonly bodies = computed(() => this.store.state()?.bodies ?? []);
+  protected readonly editPlane = computed(() => this.store.editedView()?.frame);
   protected readonly editedSketch = computed(() => this.store.editedView());
   protected readonly counts = computed(() => {
     const sketch = this.editedSketch()?.sketch;
     return sketch && { curves: sketch.entities.filter(isCurve).length, constraints: sketch.constraints.length };
+  });
+  protected readonly volumes = resource({
+    params: () => this.bodies().map((b) => b.key).join(','),
+    loader: () => this.store.volumes(),
+  });
+  protected readonly bodyRows = computed(() => {
+    const volumes = this.volumes.value() ?? {};
+    return this.bodies().map((b) => ({
+      id: b.body,
+      name: this.timeline().find((i) => i.id === b.body)?.name ?? b.body,
+      volume: volumes[b.body],
+    }));
   });
 
   constructor() {
@@ -77,26 +135,63 @@ export class ComponentMode {
     });
   }
 
-  protected async startSketch(plane: SketchPlane): Promise<void> {
-    this.planeMenu.set(false);
+  protected toggleMenu(menu: 'sketch' | 'export'): void {
+    this.menu.set(this.menu() === menu ? undefined : menu);
+  }
+
+  protected async startSketch(plane: PlaneRef): Promise<void> {
+    this.menu.set(undefined);
     await this.store.createSketch(plane);
+    this.store.pickedFace.set(undefined);
   }
 
-  protected viewOf(sketch: Sketch) {
-    return this.store.state()?.sketches.get(sketch.id);
+  protected sketchOnPickedFace(): void {
+    const face = this.store.pickedFace();
+    if (face?.planar) void this.startSketch({ face: { kind: 'face', body: face.body, name: face.name, hint: face.hint } });
   }
 
-  protected async rename(sketch: Sketch): Promise<void> {
-    const name = await this.nameDialog().ask({ heading: 'Rename sketch', confirmLabel: 'Rename', initial: sketch.name });
-    if (name && name !== sketch.name) await this.store.run({ type: 'rename-item', itemId: sketch.id, name });
+  protected exportAs(format: SolidFormat): void {
+    this.menu.set(undefined);
+    void this.store.exportBodies(format);
   }
 
-  protected async remove(sketch: Sketch): Promise<void> {
-    await this.store.run({ type: 'delete-item', itemId: sketch.id });
+  protected open(item: TimelineItem): void {
+    if (isSketch(item)) {
+      this.store.cancelDraft();
+      this.store.edit(item.id);
+    } else {
+      this.store.editFeature(item.id);
+    }
+  }
+
+  protected statusOf(item: TimelineItem) {
+    return this.store.state()?.items.get(item.id);
+  }
+
+  protected sketchStatus(item: TimelineItem): keyof typeof statusLabels | undefined {
+    return isSketch(item) ? this.store.state()?.sketches.get(item.id)?.status : undefined;
+  }
+
+  protected async rename(item: TimelineItem): Promise<void> {
+    const name = await this.nameDialog().ask({ heading: 'Rename', confirmLabel: 'Rename', initial: item.name });
+    if (name && name !== item.name) await this.store.run({ type: 'rename-item', itemId: item.id, name });
+  }
+
+  protected async remove(item: TimelineItem): Promise<void> {
+    if (this.store.editing() === item.id) this.store.finishEditing();
+    await this.store.run({ type: 'delete-item', itemId: item.id });
+  }
+
+  protected suppress(item: TimelineItem): void {
+    void this.store.run({ type: 'suppress-item', itemId: item.id, suppressed: !item.suppressed });
   }
 
   protected shortcut(event: KeyboardEvent): void {
-    if ((event.target as HTMLElement | null)?.closest('input, textarea, dialog')) return;
+    if ((event.target as HTMLElement | null)?.closest('input, textarea, select, dialog')) return;
+    if (event.key === 'Escape' && this.store.draft()) {
+      this.store.cancelDraft();
+      return;
+    }
     if (!(event.ctrlKey || event.metaKey)) return;
     const key = event.key.toLowerCase();
     if (key === 'z' && !event.shiftKey) {

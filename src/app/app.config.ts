@@ -7,8 +7,14 @@ import { provideCore } from './core.providers';
 import { TauriFileDelivery } from './platform/tauri-file-delivery';
 import { TauriFileSystem } from './platform/tauri-file-system';
 
-/** The solver's WebAssembly is copied to /wasm by the build (angular.json assets). */
-const options = { solverWasmUrl: new URL('wasm/planegcs.wasm', document.baseURI).href };
+/**
+ * The sketch solver's WebAssembly is copied to /wasm by the build (angular.json assets); the geometry
+ * kernel runs in its own worker (docs/Architecture.md#deployment-and-threads).
+ */
+const options = {
+  solverWasmUrl: new URL('wasm/planegcs.wasm', document.baseURI).href,
+  geometry: new Worker(new URL('../workers/geometry.worker', import.meta.url), { type: 'module' }),
+};
 
 /** The host decides where projects live and how exports are saved. */
 const core = isTauri()

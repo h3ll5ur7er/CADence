@@ -1,6 +1,9 @@
 import {
   type ComponentDocument,
   fail,
+  type Feature,
+  type FeatureType,
+  isSketch,
   ok,
   type Result,
   type Sketch,
@@ -10,13 +13,27 @@ import {
 } from '@core/contracts';
 import type { DesignCommand } from './design-manager';
 
-/** The document a command produces, plus what must be solved before it can be accepted. */
+/** The document a command produces, plus what must come out of regeneration intact for it to be accepted. */
 export interface Applied {
   readonly document: ComponentDocument;
-  /** The sketch to solve (and to reject the command for when it does not solve). */
-  readonly sketchId?: string;
-  readonly drag?: { readonly point: string; readonly x: number; readonly y: number };
+  /** The timeline item the command is about: the command is refused when this item fails. */
+  readonly target?: string;
+  /** Parameter commands are refused when any expression stops evaluating. */
+  readonly parameters?: boolean;
+  readonly drag?: { readonly sketch: string; readonly point: string; readonly x: number; readonly y: number };
 }
+
+const featureLabels: Readonly<Record<FeatureType, string>> = {
+  extrude: 'Extrude',
+  revolve: 'Revolve',
+  fillet: 'Fillet',
+  chamfer: 'Chamfer',
+  shell: 'Shell',
+  plane: 'Plane',
+  'linear-pattern': 'Linear pattern',
+  'circular-pattern': 'Circular pattern',
+  mirror: 'Mirror',
+};
 
 const invalid = (message: string) => fail({ code: 'invalid-command', message });
 
@@ -59,9 +76,12 @@ function references(item: SketchEntity | SketchConstraint): string[] {
   }
 }
 
-function nextName(document: ComponentDocument): string {
-  const numbers = document.timeline.map((item) => Number(/^Sketch (\d+)$/.exec(item.name)?.[1] ?? 0));
-  return `Sketch ${Math.max(0, ...numbers) + 1}`;
+/** "Extrude 3": one more than the highest number already used with that label. */
+function nextName(document: ComponentDocument, label: string): string {
+  const numbers = document.timeline.map((item) =>
+    item.name.startsWith(`${label} `) ? Number(item.name.slice(label.length + 1)) || 0 : 0,
+  );
+  return `${label} ${Math.max(0, ...numbers) + 1}`;
 }
 
 function withSketch(
@@ -69,13 +89,13 @@ function withSketch(
   sketchId: string,
   change: (sketch: Sketch) => Result<Sketch>,
 ): Result<Applied> {
-  const sketch = document.timeline.find((item) => item.id === sketchId);
+  const sketch = document.timeline.find((item): item is Sketch => item.id === sketchId && isSketch(item));
   if (!sketch) return invalid(`Sketch ${sketchId} does not exist.`);
   const changed = change(sketch);
   if (!changed.ok) return changed;
   return ok({
     document: { ...document, timeline: document.timeline.map((item) => (item.id === sketchId ? changed.value : item)) },
-    sketchId,
+    target: sketchId,
   });
 }
 
@@ -116,13 +136,13 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
       const sketch: Sketch = {
         id: command.id,
         type: 'sketch',
-        name: nextName(document),
+        name: nextName(document, 'Sketch'),
         suppressed: false,
         plane: command.plane,
         entities: [],
         constraints: [],
       };
-      return ok({ document: { ...document, timeline: [...document.timeline, sketch] }, sketchId: sketch.id });
+      return ok({ document: { ...document, timeline: [...document.timeline, sketch] }, target: sketch.id });
     }
     case 'add-sketch-geometry':
       return withSketch(document, command.sketchId, (s) => extend(s, command.entities, command.constraints));
@@ -141,7 +161,9 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
       const applied = withSketch(document, command.sketchId, (s) =>
         s.entities.some((e) => e.id === command.pointId && e.kind === 'point') ? ok(s) : invalid(`Point ${command.pointId} does not exist.`),
       );
-      return applied.ok ? ok({ ...applied.value, drag: { point: command.pointId, x: command.x, y: command.y } }) : applied;
+      return applied.ok
+        ? ok({ ...applied.value, drag: { sketch: command.sketchId, point: command.pointId, x: command.x, y: command.y } })
+        : applied;
     }
     case 'toggle-construction':
       return withSketch(document, command.sketchId, (s) =>
@@ -161,5 +183,41 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
     case 'delete-item':
       if (!document.timeline.some((item) => item.id === command.itemId)) return invalid(`Item ${command.itemId} does not exist.`);
       return ok({ document: { ...document, timeline: document.timeline.filter((item) => item.id !== command.itemId) } });
+    case 'add-feature': {
+      if (document.timeline.some((item) => item.id === command.feature.id)) return invalid(`Id ${command.feature.id} is already in use.`);
+      const name = command.feature.name.trim() || nextName(document, featureLabels[command.feature.type]);
+      const feature = { ...command.feature, name } as Feature;
+      return ok({ document: { ...document, timeline: [...document.timeline, feature] }, target: feature.id });
+    }
+    case 'edit-feature': {
+      const existing = document.timeline.find((item) => item.id === command.feature.id);
+      if (!existing || isSketch(existing) || existing.type !== command.feature.type) {
+        return invalid(`Feature ${command.feature.id} does not exist.`);
+      }
+      const feature = { ...command.feature, name: command.feature.name.trim() || existing.name } as Feature;
+      return ok({
+        document: { ...document, timeline: document.timeline.map((item) => (item.id === feature.id ? feature : item)) },
+        target: feature.id,
+      });
+    }
+    case 'suppress-item':
+      if (!document.timeline.some((item) => item.id === command.itemId)) return invalid(`Item ${command.itemId} does not exist.`);
+      return ok({
+        document: {
+          ...document,
+          timeline: document.timeline.map((item) => (item.id === command.itemId ? { ...item, suppressed: command.suppressed } : item)),
+        },
+      });
+    case 'add-parameter':
+      if (document.parameters.some((p) => p.id === command.parameter.id)) return invalid(`Id ${command.parameter.id} is already in use.`);
+      return ok({ document: { ...document, parameters: [...document.parameters, command.parameter] }, parameters: true });
+    case 'set-parameter':
+      if (!document.parameters.some((p) => p.id === command.parameter.id)) return invalid(`Parameter ${command.parameter.id} does not exist.`);
+      return ok({
+        document: { ...document, parameters: document.parameters.map((p) => (p.id === command.parameter.id ? command.parameter : p)) },
+        parameters: true,
+      });
+    case 'delete-parameter':
+      return ok({ document: { ...document, parameters: document.parameters.filter((p) => p.id !== command.id) }, parameters: true });
   }
 }

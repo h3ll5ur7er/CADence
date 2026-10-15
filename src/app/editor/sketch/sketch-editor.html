@@ -3,11 +3,12 @@
   class="overlay"
   [class.fully]="fully()"
   [attr.data-tool]="store.tool()"
+  [class.passthrough]="store.tool() === 'project'"
   role="application"
   aria-label="Sketch canvas"
   (pointerdown)="down($event)"
   (pointermove)="move($event)"
-  (pointerup)="up()"
+  (pointerup)="up($event)"
   (pointerleave)="leave()"
   (dblclick)="doubleClick()"
 >
@@ -20,6 +21,7 @@
         <path
           class="curve"
           [class.construction]="curve.construction"
+          [class.projected]="curve.projected"
           [class.selected]="highlighted().has(curve.id)"
           [class.hovered]="hovered() === curve.id"
           [attr.d]="curve.d"
@@ -56,6 +58,9 @@
           <path [attr.d]="'M ' + (mark.x - 5) + ' ' + (mark.y - 5) + ' l 10 10 m 0 -10 l -10 10'" />
         }
       </g>
+    }
+    @if (boxRect(); as box) {
+      <rect class="box" [class.crossing]="box.crossing" [attr.x]="box.x" [attr.y]="box.y" [attr.width]="box.width" [attr.height]="box.height" />
     }
     @for (glyph of glyphs(); track glyph.id) {
       <g class="glyph" data-kind="constraint" [attr.data-id]="glyph.id" [class.selected]="highlighted().has(glyph.id)">

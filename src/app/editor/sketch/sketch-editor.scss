@@ -87,6 +87,25 @@ path {
   }
 }
 
+.overlay.passthrough {
+  pointer-events: none;
+}
+
+.curve.projected {
+  stroke: var(--flag);
+}
+
+.box {
+  fill: color-mix(in srgb, var(--selection) 10%, transparent);
+  stroke: var(--selection);
+  stroke-width: 1px;
+  pointer-events: none;
+
+  &.crossing {
+    stroke-dasharray: 4 3;
+  }
+}
+
 .snap-mark path {
   fill: none;
   stroke: var(--sketch);

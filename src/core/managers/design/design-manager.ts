@@ -31,6 +31,17 @@ export type DesignCommand =
   | { readonly type: 'move-point'; readonly sketchId: string; readonly pointId: string; readonly x: number; readonly y: number }
   | { readonly type: 'toggle-construction'; readonly sketchId: string; readonly ids: readonly string[] }
   | { readonly type: 'delete-sketch-elements'; readonly sketchId: string; readonly ids: readonly string[] }
+  /**
+   * Moves sketch elements (and the points of curves among them), then turns them about `rotate.center`.
+   * A turn drops their horizontal and vertical relations, which would undo it.
+   */
+  | {
+      readonly type: 'transform-sketch-elements';
+      readonly sketchId: string;
+      readonly ids: readonly string[];
+      readonly translate: Vec2;
+      readonly rotate?: { readonly center: Vec2; readonly angle: number };
+    }
   /** Trim, extend, split, offset, fillet or chamfer sketch curves; new ids start with `idPrefix`. */
   | { readonly type: 'edit-sketch'; readonly sketchId: string; readonly operation: SketchOperation; readonly idPrefix: string }
   /** Adds a feature at the end of the timeline; an empty name gets the next default ("Extrude 2"). */

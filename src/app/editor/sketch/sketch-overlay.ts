@@ -21,6 +21,7 @@ export function curvePath(entity: SketchEntity, points: ReadonlyMap<string, Vec2
   const at = (id: string): Vec2 => points.get(id) ?? [0, 0];
   switch (entity.kind) {
     case 'point':
+    case 'projection':
       return '';
     case 'line': {
       const [s, e] = [at(entity.start), at(entity.end)];
@@ -79,7 +80,7 @@ function anchorOf(sketch: Sketch, id: string, points: ReadonlyMap<string, Vec2>)
   const point = points.get(id);
   if (point) return point;
   const e = sketch.entities.find((x) => x.id === id);
-  if (!e || e.kind === 'point') return undefined;
+  if (!e || e.kind === 'point' || e.kind === 'projection') return undefined;
   const at = (p: string): Vec2 => points.get(p) ?? [0, 0];
   if (e.kind === 'line') {
     const [s, t] = [at(e.start), at(e.end)];
@@ -262,7 +263,7 @@ export function hitTest(sketch: Sketch, at: Vec2, tolerance: number): SketchHit 
   const point = (id: string): Vec2 => points.get(id) ?? [0, 0];
   for (const e of sketch.entities) {
     let d: number;
-    if (e.kind === 'point') continue;
+    if (e.kind === 'point' || e.kind === 'projection') continue;
     if (e.kind === 'line') {
       d = segmentDistance(at, point(e.start), point(e.end));
     } else if (e.kind === 'circle') {

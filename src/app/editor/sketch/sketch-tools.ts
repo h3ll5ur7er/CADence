@@ -15,7 +15,13 @@ export type EditTool = 'trim' | 'extend' | 'split' | 'fillet' | 'chamfer';
 export const editTools: readonly EditTool[] = ['trim', 'extend', 'split', 'fillet', 'chamfer'];
 export const isEditTool = (tool: string): tool is EditTool => (editTools as readonly string[]).includes(tool);
 
-export type Tool = 'select' | 'line' | 'rectangle' | 'circle' | 'arc' | 'point' | 'dimension' | ShapeTool | EditTool;
+/** Tools that move the selection: by a base point and a target, or turned about a centre. */
+export type TransformTool = 'move' | 'rotate';
+
+/** Tools that copy the selection: across a line clicked next, or around a point clicked next. */
+export type CopyTool = 'mirror' | 'circular-pattern';
+
+export type Tool = 'select' | 'line' | 'rectangle' | 'circle' | 'arc' | 'point' | 'dimension' | 'project' | ShapeTool | EditTool | TransformTool | CopyTool;
 
 /**
  * A position a tool clicked: snapped to an existing point (`id`), or free; a free position snapped onto

@@ -3,7 +3,7 @@
  * Points are entities of their own; curves reference them, so a shared corner is one point.
  */
 
-import type { PlaneRef } from './feature';
+import type { PlaneRef, TopologyRef } from './feature';
 
 /** Origin planes, planar faces or construction planes. */
 export type SketchPlane = PlaneRef;
@@ -67,7 +67,27 @@ export interface SketchSpline {
 }
 
 export type SketchCurve = SketchLine | SketchCircle | SketchArc | SketchEllipse | SketchSpline;
-export type SketchEntity = SketchPoint | SketchCurve;
+
+/**
+ * Edges of bodies (or the outline of a face) projected straight onto the sketch plane: reference
+ * geometry that follows the body. Its points and curves live in the sketch with ids
+ * `<projection id>:<n>`, are refreshed on every regeneration and cannot be moved.
+ */
+export interface SketchProjection {
+  readonly id: string;
+  readonly kind: 'projection';
+  readonly refs: readonly TopologyRef[];
+  readonly construction: boolean;
+}
+
+export type SketchEntity = SketchPoint | SketchCurve | SketchProjection;
+
+/** The projection an entity was made by, if any. */
+export function projectionOf(sketch: Pick<Sketch, 'entities'>, id: string): SketchProjection | undefined {
+  const owner = id.includes(':') ? id.slice(0, id.lastIndexOf(':')) : undefined;
+  const found = owner === undefined ? undefined : sketch.entities.find((e) => e.id === owner);
+  return found?.kind === 'projection' ? found : undefined;
+}
 
 /** Geometric constraints: relations without a value. */
 export type GeometricConstraint =
@@ -110,7 +130,7 @@ export type SketchConstraint = GeometricConstraint | Dimension;
 export type DimensionKind = Dimension['kind'];
 
 export const isDimension = (c: SketchConstraint): c is Dimension => 'expression' in c;
-export const isCurve = (e: SketchEntity): e is SketchCurve => e.kind !== 'point';
+export const isCurve = (e: SketchEntity): e is SketchCurve => e.kind !== 'point' && e.kind !== 'projection';
 
 /** A sketch as stored in a component's timeline. Points hold the last solved positions. */
 export interface Sketch {

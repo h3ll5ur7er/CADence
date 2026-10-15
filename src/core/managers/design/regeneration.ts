@@ -12,9 +12,12 @@ import {
   originFrames,
   type PlaneFrame,
   type PlaneRef,
+  projectionOf,
   type Result,
   type Sketch,
   sketchOriginId,
+  type SketchProjection,
+  type Vec2,
   type Vec3,
 } from '@core/contracts';
 import type { AssetAccess } from '@core/access/asset';
@@ -24,6 +27,7 @@ import type { AxisInput, BodyState, ModelingEngine, ModelingRequest, ToolInput }
 import type { ParameterEngine, ParameterError, Quantity, ValueKind } from '@core/engines/parameter';
 import type { DragTarget, SketchEngine } from '@core/engines/sketch';
 import { contentHash } from '@core/utilities/identity';
+import { references } from './commands';
 import type { ItemStatus, ParameterView, SketchView } from './design-manager';
 
 export interface RegenerationEngines {
@@ -120,13 +124,16 @@ export class Regeneration {
     return value.ok ? value : fail({ code: 'invalid-expression', message: `${what} "${expression}": ${value.error.message}` });
   }
 
-  private async sketch(sketch: Sketch): Promise<Result<void>> {
-    const frame = await this.frame(sketch.plane);
+  private async sketch(stored: Sketch): Promise<Result<void>> {
+    const frame = await this.frame(stored.plane);
     const unsolved = (error: string, f: PlaneFrame = originFrames.XY) => {
-      this.sketches.set(sketch.id, { sketch, frame: f, status: 'failed', degreesOfFreedom: 0, profiles: [], values: new Map(), error });
+      this.sketches.set(stored.id, { sketch: stored, frame: f, status: 'failed', degreesOfFreedom: 0, profiles: [], values: new Map(), error });
       return fail({ code: 'unsolvable', message: error });
     };
     if (!frame.ok) return unsolved(frame.error.message);
+    const projected = await this.projected(stored, frame.value);
+    if (!projected.ok) return unsolved(projected.error.message, frame.value);
+    const sketch = projected.value;
     const values = new Map<string, number>();
     for (const dimension of sketch.constraints.filter(isDimension)) {
       const value = this.dimension(dimension);
@@ -143,6 +150,46 @@ export class Regeneration {
     if (collapses(solution.sketch)) return unsolved('This would shrink a line, circle or arc to nothing.', frame.value);
     this.sketches.set(sketch.id, { ...solution, frame: frame.value, values });
     return ok(undefined);
+  }
+
+  /**
+   * The sketch with its projections refreshed from the bodies made so far: their points and curves
+   * (ids `<projection>:<n>`) are replaced; relations to ones that no longer exist are dropped.
+   */
+  private async projected(sketch: Sketch, frame: PlaneFrame): Promise<Result<Sketch>> {
+    const projections = sketch.entities.filter((e): e is SketchProjection => e.kind === 'projection');
+    if (!projections.length) return ok(sketch);
+    const entities = sketch.entities.filter((e) => !projectionOf(sketch, e.id));
+    for (const projection of projections) {
+      const curves = await this.engines.modeling.project(this.bodies, projection.refs, frame);
+      if (!curves.ok) return fail({ code: 'lost-reference', message: `A projected edge no longer exists. Delete the projection and project again. (${curves.error.message})` });
+      let n = 0;
+      const points: { at: Vec2; id: string }[] = [];
+      const pointAt = (p: Vec2): string => {
+        const found = points.find((q) => Math.hypot(q.at[0] - p[0], q.at[1] - p[1]) < 1e-7);
+        if (found) return found.id;
+        const id = `${projection.id}:${++n}`;
+        points.push({ at: p, id });
+        entities.push({ id, kind: 'point', x: p[0], y: p[1] });
+        return id;
+      };
+      const construction = projection.construction;
+      for (const c of curves.value) {
+        if (c.kind === 'line') {
+          const [start, end] = [pointAt(c.start), pointAt(c.end)];
+          entities.push({ id: `${projection.id}:${++n}`, kind: 'line', start, end, construction });
+        } else if (c.kind === 'circle') {
+          const center = pointAt(c.center);
+          entities.push({ id: `${projection.id}:${++n}`, kind: 'circle', center, radius: c.radius, construction });
+        } else {
+          const [center, start, end] = [pointAt(c.center), pointAt(c.start), pointAt(c.end)];
+          entities.push({ id: `${projection.id}:${++n}`, kind: 'arc', center, start, end, construction });
+        }
+      }
+    }
+    const ids = new Set([sketchOriginId, ...entities.map((e) => e.id)]);
+    const constraints = sketch.constraints.filter((c) => references(c).every((r) => ids.has(r)));
+    return ok({ ...sketch, entities, constraints });
   }
 
   private dimension(d: Dimension): Result<number> {

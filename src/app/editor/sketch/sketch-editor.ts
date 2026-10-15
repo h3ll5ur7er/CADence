@@ -9,7 +9,7 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
-import { isCurve, isDimension, type SketchEntity, sketchOriginId, type Vec2 } from '@core/contracts';
+import { isCurve, isDimension, projectionOf, type SketchEntity, sketchOriginId, type Vec2 } from '@core/contracts';
 import type { SketchView } from '@core/managers/design';
 import { newId } from '@core/utilities/identity';
 import { pointsOf } from '../../viewport/sketch-display';
@@ -19,6 +19,8 @@ import { Shortcuts } from '../../shared/shortcuts';
 import { DesignStore } from './design-store';
 import { isShapeTool, shapeClicks, shapeCommand } from './shape-tools';
 import { curvePath, dimensionLabels, glyphs, hitTest, profilePath } from './sketch-overlay';
+import { boxSelect, copySelection, pasted } from './selection';
+import { circularPatternCommand, mirrorCommand } from './sketch-patterns';
 import { snap } from './snapping';
 import {
   arcCommand,
@@ -86,6 +88,16 @@ export class SketchEditor {
   private readonly editingDimension = signal<string | undefined>(undefined);
   private readonly picked = signal<readonly string[]>([]);
   private drag: DragState | undefined;
+  /** A selection box being dragged, in sketch coordinates. */
+  private readonly box = signal<{ from: Vec2; to: Vec2; screen: Vec2 } | undefined>(undefined);
+  /** The selection box on screen: solid when it selects what lies inside, dashed when what it touches. */
+  protected readonly boxRect = computed(() => {
+    const box = this.box();
+    const m = this.matrix();
+    if (!box || !m) return undefined;
+    const [a, b] = [applyAffine(m, box.from[0], box.from[1]), applyAffine(m, box.to[0], box.to[1])];
+    return { x: Math.min(a[0], b[0]), y: Math.min(a[1], b[1]), width: Math.abs(b[0] - a[0]), height: Math.abs(b[1] - a[1]), crossing: box.to[0] < box.from[0] };
+  });
 
   constructor() {
     const stop = inject(Shortcuts).register('sketch', {
@@ -100,6 +112,10 @@ export class SketchEditor {
       'sketch-dimension': () => this.setTool('dimension'),
       'sketch-construction': () => void this.toggleConstruction(),
       'sketch-trim': () => this.setTool('trim'),
+      'sketch-move': () => this.setTool('move'),
+      'sketch-copy': () => this.copy(false),
+      'sketch-cut': () => this.copy(true),
+      'sketch-paste': () => void this.paste(),
       'finish-sketch': () => this.store.finishEditing(),
     });
     inject(DestroyRef).onDestroy(stop);
@@ -114,7 +130,7 @@ export class SketchEditor {
   protected readonly curves = computed(() =>
     this.sketch()
       .entities.filter(isCurve)
-      .map((e) => ({ id: e.id, d: curvePath(e, this.points()), construction: e.construction })),
+      .map((e) => ({ id: e.id, d: curvePath(e, this.points()), construction: e.construction, projected: projectionOf(this.sketch(), e.id) !== undefined })),
   );
   protected readonly profiles = computed(() => this.view().profiles.map((p) => ({ id: p.id, d: profilePath(p) })));
   protected readonly screenPoints = computed(() => {
@@ -159,9 +175,18 @@ export class SketchEditor {
         (event.target as Element).setPointerCapture?.(event.pointerId);
         this.drag = { pointId: target.id, start: [event.clientX, event.clientY], moved: false };
       }
-      this.selectTarget(target?.id, event.shiftKey || event.ctrlKey);
+      if (!target) {
+        // A drag on empty space draws a selection box; a click clears the selection.
+        (event.target as Element).setPointerCapture?.(event.pointerId);
+        this.box.set({ from: at, to: at, screen: [event.clientX, event.clientY] });
+        if (!(event.shiftKey || event.ctrlKey)) this.store.select([]);
+        return;
+      }
+      this.selectTarget(target.id, event.shiftKey || event.ctrlKey);
       return;
     }
+    if (tool === 'move' || tool === 'rotate') return void this.transformClick(tool, this.snapRef(at));
+    if (tool === 'mirror' || tool === 'circular-pattern') return void this.copyClick(tool, target);
     if (tool === 'dimension') return void this.dimensionClick(target);
     if (isEditTool(tool)) return void this.editClick(tool, target, at);
     void this.toolClick(this.snapRef(at));
@@ -173,6 +198,8 @@ export class SketchEditor {
     this.cursor.set(at);
     this.snapped.set(this.snapRef(at));
     this.hovered.set(this.targetOf(event)?.id);
+    const box = this.box();
+    if (box) this.box.set({ ...box, to: at });
     const drag = this.drag;
     if (!drag) return;
     if (!drag.moved && Math.hypot(event.clientX - drag.start[0], event.clientY - drag.start[1]) < dragThreshold) return;
@@ -181,7 +208,13 @@ export class SketchEditor {
     this.store.drag(drag.pointId, at[0], at[1]);
   }
 
-  protected up(): void {
+  protected up(event?: PointerEvent): void {
+    const box = this.box();
+    this.box.set(undefined);
+    if (box && event && Math.hypot(event.clientX - box.screen[0], event.clientY - box.screen[1]) >= dragThreshold) {
+      const found = boxSelect(this.sketch(), box.from, box.to);
+      this.store.select([...new Set([...this.store.selection(), ...found])]);
+    }
     const drag = this.drag;
     this.drag = undefined;
     if (drag?.moved && drag.last) void this.store.drop(drag.pointId, drag.last[0], drag.last[1]);
@@ -297,6 +330,53 @@ export class SketchEditor {
     }
   }
 
+  // ---- selection: copy and paste, move and rotate ------------------------------------------
+
+  private copy(cut: boolean): void {
+    const clipboard = copySelection(this.sketch(), this.store.selection());
+    if (!clipboard) return;
+    this.store.sketchClipboard.set(clipboard);
+    if (cut) void this.deleteSelection();
+  }
+
+  /** Pastes at the pointer (or beside the original), with new ids; the copy is selected. */
+  private async paste(): Promise<void> {
+    const clipboard = this.store.sketchClipboard();
+    if (!clipboard) return;
+    const points = clipboard.entities.flatMap((e) => (e.kind === 'point' ? [[e.x, e.y] as Vec2] : []));
+    const beside: Vec2 = points.length ? [Math.max(...points.map((p) => p[0])) + 10, Math.max(...points.map((p) => p[1])) + 10] : [0, 0];
+    const copy = pasted(clipboard, this.cursor() ?? beside, newId);
+    if (await this.store.run({ type: 'add-sketch-geometry', sketchId: this.sketch().id, entities: copy.entities, constraints: copy.constraints })) {
+      this.store.select(copy.entities.filter((e) => e.kind !== 'point').map((e) => e.id));
+    }
+  }
+
+  /** Mirror: click the line to mirror across. Circular pattern: click the centre point. */
+  private async copyClick(tool: 'mirror' | 'circular-pattern', target: { id: string; kind: string } | undefined): Promise<void> {
+    const ids = this.store.selection().filter((id) => id !== sketchOriginId);
+    if (!target || !ids.length) return;
+    const command =
+      tool === 'mirror'
+        ? target.kind === 'curve' && mirrorCommand(this.sketch(), ids, target.id, newId)
+        : target.kind === 'point' && circularPatternCommand(this.sketch(), ids, this.store.patternCount(), target.id, newId);
+    if (!command) return;
+    if (await this.store.run(command)) {
+      this.store.select([]);
+      this.store.tool.set('select');
+    }
+  }
+
+  /** Move: a base point, then where it goes. Rotate: the centre, a direction, then the direction it turns to. */
+  private async transformClick(tool: 'move' | 'rotate', ref: PointRef): Promise<void> {
+    const ids = this.store.selection().filter((id) => id !== sketchOriginId);
+    if (!ids.length) return;
+    const clicks = [...this.pending(), ref];
+    if (clicks.length < (tool === 'move' ? 2 : 3)) return this.pending.set(clicks);
+    this.pending.set([]);
+    const command = transformOf(tool, clicks);
+    if (command) await this.store.run({ type: 'transform-sketch-elements', sketchId: this.sketch().id, ids, ...command });
+  }
+
   /** An editing tool's click: on a curve for trim, extend and split; on a corner point for fillet and chamfer. */
   private async editClick(tool: EditTool, target: { id: string; kind: string } | undefined, at: Vec2): Promise<void> {
     if (!target) return;
@@ -408,9 +488,33 @@ export class SketchEditor {
         while (sweep <= 0) sweep += 2 * Math.PI;
         return `M ${start[0]} ${start[1]} A ${r} ${r} 0 ${sweep > Math.PI ? 1 : 0} 1 ${e[0]} ${e[1]}`;
       }
+      case 'move':
+      case 'rotate':
+        return this.transformPreview(this.store.tool() as 'move' | 'rotate', [...clicks, { at: end }]);
       default:
         return this.shapePreview(clicks, end);
     }
+  }
+
+  /** The selection where a move or turn would put it, with the line it follows. */
+  private transformPreview(tool: 'move' | 'rotate', clicks: readonly PointRef[]): string | undefined {
+    const [base] = clicks;
+    const last = clicks.at(-1);
+    if (!base || !last) return undefined;
+    const guide = clicks.map((c, i) => `${i === 0 ? 'M' : 'L'} ${c.at[0]} ${c.at[1]}`).join(' ');
+    const command = transformOf(tool, clicks);
+    if (!command) return guide;
+    const chosen = new Set(this.store.selection());
+    const [dx, dy] = command.translate;
+    const turn = command.rotate;
+    const moved = new Map<string, Vec2>();
+    for (const [id, p] of this.points()) {
+      const [x, y] = [p[0] + dx - (turn?.center[0] ?? 0), p[1] + dy - (turn?.center[1] ?? 0)];
+      const [cos, sin] = turn ? [Math.cos(turn.angle), Math.sin(turn.angle)] : [1, 0];
+      moved.set(id, [x * cos - y * sin + (turn?.center[0] ?? 0), x * sin + y * cos + (turn?.center[1] ?? 0)]);
+    }
+    const paths = this.sketch().entities.filter((e) => e.kind !== 'point' && chosen.has(e.id)).map((e) => curvePath(e, moved));
+    return [guide, ...paths].join(' ');
   }
 
   /** What a shape tool would draw if the pointer were its next click: its own geometry, drawn as such. */
@@ -429,4 +533,13 @@ export class SketchEditor {
       .map((e) => curvePath(e, points))
       .join(' ');
   }
+}
+
+/** The move or turn three clicks describe: move by base → target; turn about the first click from the second towards the third. */
+function transformOf(tool: 'move' | 'rotate', clicks: readonly PointRef[]): { translate: Vec2; rotate?: { center: Vec2; angle: number } } | undefined {
+  const [a, b, c] = clicks;
+  if (tool === 'move') return a && b ? { translate: [b.at[0] - a.at[0], b.at[1] - a.at[1]] } : undefined;
+  if (!a || !b || !c) return undefined;
+  const angle = Math.atan2(c.at[1] - a.at[1], c.at[0] - a.at[0]) - Math.atan2(b.at[1] - a.at[1], b.at[0] - a.at[0]);
+  return { translate: [0, 0], rotate: { center: a.at, angle } };
 }

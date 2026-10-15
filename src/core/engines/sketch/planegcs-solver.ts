@@ -1,4 +1,5 @@
 import {
+  projectionOf,
   type Sketch,
   type SketchConstraint,
   type SketchEntity,
@@ -44,7 +45,8 @@ class Translator {
     this.entities = new Map(sketch.entities.map((e) => [e.id, e]));
     this.primitives.push({ id: sketchOriginId, type: 'point', x: 0, y: 0, fixed: true });
     // planegcs requires referenced primitives to be pushed first: points, then curves.
-    for (const e of sketch.entities) if (e.kind === 'point') this.primitives.push({ id: e.id, type: 'point', x: e.x, y: e.y, fixed: false });
+    // Points of projected geometry follow the body, not the solver.
+    for (const e of sketch.entities) if (e.kind === 'point') this.primitives.push({ id: e.id, type: 'point', x: e.x, y: e.y, fixed: projectionOf(sketch, e.id) !== undefined });
     for (const e of sketch.entities) if (e.kind !== 'point') this.pushCurve(e);
     for (const c of sketch.constraints) this.pushConstraint(c);
   }
@@ -105,6 +107,7 @@ class Translator {
       // dimension after solving); the solver needs no curve for them.
       case 'ellipse':
       case 'spline':
+      case 'projection':
         return;
       case 'line':
         this.primitives.push({ id: e.id, type: 'line', p1_id: e.start, p2_id: e.end });

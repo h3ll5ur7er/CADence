@@ -75,7 +75,7 @@ function segmentsOf(sketch: Sketch): Segment[] {
   const at = (id: string): Vec2 => points.get(id) ?? [0, 0];
   const segments: Segment[] = [];
   for (const e of sketch.entities) {
-    if (e.kind === 'point' || e.construction) continue;
+    if (e.kind === 'point' || e.kind === 'projection' || e.construction) continue;
     if (e.kind === 'line') {
       segments.push({ kind: 'line', a: at(e.start), b: at(e.end), source: e.id });
     } else if (e.kind === 'circle') {

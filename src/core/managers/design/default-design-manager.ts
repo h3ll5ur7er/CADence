@@ -193,6 +193,9 @@ class Session implements DesignSession {
   }
 
   private async apply(command: DesignCommand): Promise<Result<void>> {
+    if (command.type === 'set-appearance' && !this.current.derived.bodies.some((b) => b.id === command.body)) {
+      return fail({ code: 'invalid-command', message: `There is no body ${command.body}.` });
+    }
     const applied = applyCommand(this.current.document, command);
     if (!applied.ok) return applied;
     const { document, target, drag } = applied.value;

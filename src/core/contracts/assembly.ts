@@ -1,3 +1,4 @@
+import type { Appearance } from './appearance';
 import type { DocumentId } from './ids';
 import type { PlaneFrame, TopologyRef, Vec3 } from './feature';
 
@@ -13,6 +14,8 @@ export interface Instance {
   readonly transform: Matrix4;
   /** Grounded instances never move; joints position the others relative to them. */
   readonly grounded: boolean;
+  /** Absent: shown in its bodies' own appearance. */
+  readonly appearance?: Appearance;
 }
 
 export type JointType = 'rigid' | 'revolute' | 'slider' | 'cylindrical' | 'pin-slot' | 'planar' | 'ball';

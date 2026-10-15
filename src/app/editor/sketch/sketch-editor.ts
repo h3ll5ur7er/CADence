@@ -2,6 +2,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   computed,
+  DestroyRef,
   type ElementRef,
   inject,
   input,
@@ -14,6 +15,7 @@ import { newId } from '@core/utilities/identity';
 import { pointsOf } from '../../viewport/sketch-display';
 import { type Affine, affineScale, applyAffine, invertAffine } from '../../viewport/sketch-planes';
 import { Autofocus } from '../../shared/autofocus';
+import { Shortcuts } from '../../shared/shortcuts';
 import { DesignStore } from './design-store';
 import { curvePath, dimensionLabels, glyphs, hitTest, profilePath } from './sketch-overlay';
 import {
@@ -54,9 +56,6 @@ interface InlineEdit {
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './sketch-editor.html',
   styleUrl: './sketch-editor.scss',
-  host: {
-    '(document:keydown)': 'key($event)',
-  },
 })
 export class SketchEditor {
   readonly view = input.required<SketchView>();
@@ -74,6 +73,23 @@ export class SketchEditor {
   private readonly editingDimension = signal<string | undefined>(undefined);
   private readonly picked = signal<readonly string[]>([]);
   private drag: DragState | undefined;
+
+  constructor() {
+    const stop = inject(Shortcuts).register('sketch', {
+      cancel: () => this.escape(),
+      'sketch-delete': () => void this.deleteSelection(),
+      'sketch-select': () => this.setTool('select'),
+      'sketch-line': () => this.setTool('line'),
+      'sketch-rectangle': () => this.setTool('rectangle'),
+      'sketch-circle': () => this.setTool('circle'),
+      'sketch-arc': () => this.setTool('arc'),
+      'sketch-point': () => this.setTool('point'),
+      'sketch-dimension': () => this.setTool('dimension'),
+      'sketch-construction': () => void this.toggleConstruction(),
+      'finish-sketch': () => this.store.finishEditing(),
+    });
+    inject(DestroyRef).onDestroy(stop);
+  }
 
   protected readonly sketch = computed(() => this.view().sketch);
   protected readonly points = computed(() => pointsOf(this.sketch()));
@@ -166,32 +182,13 @@ export class SketchEditor {
     this.pending.set([]);
   }
 
-  protected key(event: KeyboardEvent): void {
-    if ((event.target as HTMLElement | null)?.closest('input, textarea')) return;
-    const shortcuts: Record<string, () => void> = {
-      Escape: () => {
-        if (this.pending().length || this.picked().length) {
-          this.pending.set([]);
-          this.picked.set([]);
-        } else if (this.store.tool() !== 'select') this.store.tool.set('select');
-        else this.store.select([]);
-      },
-      Delete: () => void this.deleteSelection(),
-      Backspace: () => void this.deleteSelection(),
-      s: () => this.setTool('select'),
-      l: () => this.setTool('line'),
-      r: () => this.setTool('rectangle'),
-      c: () => this.setTool('circle'),
-      a: () => this.setTool('arc'),
-      p: () => this.setTool('point'),
-      d: () => this.setTool('dimension'),
-      x: () => void this.toggleConstruction(),
-    };
-    if (event.ctrlKey || event.metaKey || event.altKey) return;
-    const action = shortcuts[event.key];
-    if (!action) return;
-    event.preventDefault();
-    action();
+  /** Escape steps back: drops the clicks of the tool, then the tool, then the selection. */
+  private escape(): void {
+    if (this.pending().length || this.picked().length) {
+      this.pending.set([]);
+      this.picked.set([]);
+    } else if (this.store.tool() !== 'select') this.store.tool.set('select');
+    else this.store.select([]);
   }
 
   // ---- inline dimension editing -----------------------------------------------------------

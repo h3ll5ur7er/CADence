@@ -19,7 +19,7 @@ CADence is a parametric 3D CAD application for makers. It covers the things you 
   - [[Architecture/Use cases and call chains]]
   - [[Architecture/Document model]]
   - [[Architecture/Decisions]]
-- [[User guide]]: how to use CADence: [[User guide/Sketching]], [[User guide/Part modeling]], [[User guide/Measuring and checking]], [[User guide/Assemblies]], [[User guide/Importing]]
+- [[User guide]]: how to use CADence: [[User guide/Sketching]], [[User guide/Part modeling]], [[User guide/Measuring and checking]], [[User guide/Assemblies]], [[User guide/Importing]], [[User guide/Viewing and controls]]
 - [[Roadmap]]: the phases and their tasks
 - [[Open points]]: what the phases left out, to choose the next work from
 - [[Development]]: run, test and build the web and desktop apps

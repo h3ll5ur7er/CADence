@@ -1,8 +1,10 @@
 import {
+  appearanceProblem,
   type ComponentDocument,
   fail,
   type Feature,
   type FeatureType,
+  isDefaultAppearance,
   isSketch,
   ok,
   type Result,
@@ -223,6 +225,13 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
     case 'set-material':
       if (!command.material.name.trim() || !(command.material.density > 0)) return invalid('A material needs a name and a density above zero.');
       return ok({ document: { ...document, material: command.material } });
+    case 'set-appearance': {
+      const problem = appearanceProblem(command.appearance);
+      if (problem) return invalid(problem);
+      const others = Object.entries(document.appearances ?? {}).filter(([body]) => body !== command.body);
+      const appearances = Object.fromEntries(isDefaultAppearance(command.appearance) ? others : [...others, [command.body, command.appearance]]);
+      return ok({ document: { ...document, appearances } });
+    }
     case 'set-process': {
       const { process } = command;
       const sizes = process.kind === 'print' ? [...process.bed, process.nozzle, process.layerHeight] : [...process.bed, process.kerf, process.thickness];

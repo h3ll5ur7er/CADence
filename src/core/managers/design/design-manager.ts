@@ -1,4 +1,5 @@
 import type {
+  Appearance,
   BodyMesh,
   BodyProperties,
   ComponentDocument,
@@ -41,7 +42,9 @@ export type DesignCommand =
   | { readonly type: 'delete-parameter'; readonly id: string }
   | { readonly type: 'set-material'; readonly material: Material }
   /** The machine the component is made on (print or laser profile), for validation and kerf compensation. */
-  | { readonly type: 'set-process'; readonly process: ManufacturingProfile };
+  | { readonly type: 'set-process'; readonly process: ManufacturingProfile }
+  /** How a body is shown; an appearance of defaults only removes the entry. */
+  | { readonly type: 'set-appearance'; readonly body: string; readonly appearance: Appearance };
 
 /** A solved sketch as the editor shows it. */
 export interface SketchView {

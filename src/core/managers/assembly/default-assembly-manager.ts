@@ -243,13 +243,14 @@ class Session implements AssemblySession {
       return;
     }
     this.requests.delete(id);
+    const appearances = document.appearances ?? {};
     if (previous?.stamp === result.stamp && previous.view.status === 'ready') {
-      this.components.set(id, { ...previous, view: { ...previous.view, name: document.name } });
+      this.components.set(id, { ...previous, view: { ...previous.view, name: document.name, appearances } });
       return;
     }
     const bodies = await this.deps.modeling.restore(result.bytes, `result:${id}:${result.stamp}`);
     const meshes = bodies.length ? await this.deps.modeling.tessellate(bodies) : [];
-    this.components.set(id, { view: { id, name: document.name, status: 'ready', bodies: meshes }, bodies, stamp: result.stamp });
+    this.components.set(id, { view: { id, name: document.name, status: 'ready', bodies: meshes, appearances }, bodies, stamp: result.stamp });
   }
 
   /**

@@ -6,15 +6,19 @@
 export type Vec3 = readonly [number, number, number];
 
 /**
- * A face or edge, named by how it was made (feature, role, source curve) rather than by kernel index.
- * `hint` is where it was when picked; it settles ties and helps repair lost references.
+ * A face, edge or vertex, named by how it was made (feature, role, source curve) rather than by kernel
+ * index; a vertex is named by the edges that meet there ({@link vertexName}). `hint` is where it was
+ * when picked; it settles ties and helps repair lost references.
  */
 export interface TopologyRef {
-  readonly kind: 'face' | 'edge';
+  readonly kind: 'face' | 'edge' | 'vertex';
   readonly body: string;
   readonly name: string;
   readonly hint?: Vec3;
 }
+
+/** The persistent name of a vertex: the names of the edges that meet there, in a fixed order. */
+export const vertexName = (edgeNames: readonly string[]): string => `v:${[...new Set(edgeNames)].sort().join('&')}`;
 
 /** Where a sketch or a construction plane lies. */
 export type PlaneRef =

@@ -14,6 +14,9 @@
       <span class="mode-chip" [attr.data-kind]="doc.kind">{{ kindLabels[doc.kind] }}</span>
     }
   </nav>
+  <button type="button" class="icon-btn settings" aria-label="Settings and shortcuts" title="Settings and shortcuts (?)" (click)="settings.open()">
+    <cad-icon name="settings" />
+  </button>
 </header>
 
 <aside class="sidebar" aria-label="Project">
@@ -79,4 +82,5 @@
 </footer>
 
 <cad-name-dialog />
+<cad-settings-dialog #settings />
 <cad-confirm-dialog />

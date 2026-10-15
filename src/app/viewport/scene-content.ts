@@ -1,5 +1,6 @@
 import type { BodyMesh, PlaneFrame, Vec2 } from '@core/contracts';
 import {
+  BackSide,
   BufferAttribute,
   BufferGeometry,
   Color,
@@ -16,6 +17,7 @@ import {
   Shape,
   ShapeGeometry,
 } from 'three/webgpu';
+import type { Look } from './looks';
 import type { SketchDisplay } from './sketch-display';
 
 /** Colours resolved from the CSS design tokens, so the 3D scene follows the app theme. */
@@ -33,6 +35,8 @@ export interface ViewportTheme {
   readonly selection: string;
   /** Faces a check flags. */
   readonly flag: string;
+  /** Where a section view cuts through bodies. */
+  readonly section: string;
 }
 
 /** Placement matrix of a plane frame: sketch (u, v, 0) to world. */
@@ -87,22 +91,40 @@ export function createSketch(display: SketchDisplay, theme: ViewportTheme): Grou
   return group;
 }
 
-/** A solid body: shaded faces, pushed back slightly so its edge lines stay visible on top. */
-export function createBody(mesh: BodyMesh, theme: ViewportTheme, color = theme.body): Group {
+/**
+ * A solid body: shaded faces, pushed back slightly so its edge lines stay visible on top, in its look
+ * (colour, transparency). Its inside faces, drawn flat in the section colour, show only in a section
+ * view: where the cut opens the body they read as its cut surface.
+ */
+export function createBody(mesh: BodyMesh, theme: ViewportTheme, look: Look = { color: theme.body, opacity: 1 }): Group {
   const group = new Group();
   group.name = `body-${mesh.body}`;
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new BufferAttribute(mesh.positions, 3));
   geometry.setAttribute('normal', new BufferAttribute(mesh.normals, 3));
   geometry.setIndex(new BufferAttribute(mesh.indices, 1));
+  const clear = look.opacity < 1;
   const faces = new Mesh(
     geometry,
-    new MeshStandardMaterial({ color: new Color(color), roughness: 0.55, metalness: 0.05, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }),
+    new MeshStandardMaterial({
+      color: new Color(look.color),
+      roughness: 0.55,
+      metalness: 0.05,
+      polygonOffset: true,
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 1,
+      transparent: clear,
+      opacity: look.opacity,
+      depthWrite: !clear,
+    }),
   );
   faces.userData = { body: mesh };
-  const edges = lines(mesh.edgePositions, theme.edge);
+  const edges = lines(mesh.edgePositions, theme.edge, clear ? Math.max(look.opacity, 0.3) : 1);
   edges.userData = { body: mesh };
-  group.add(faces, edges);
+  const cut = new Mesh(geometry, new MeshBasicMaterial({ color: new Color(theme.section), side: BackSide }));
+  cut.name = 'cut';
+  cut.visible = false;
+  group.add(faces, edges, cut);
   return group;
 }
 

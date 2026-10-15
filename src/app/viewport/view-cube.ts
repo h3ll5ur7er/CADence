@@ -55,6 +55,7 @@ function faceTransform({ right: r, down: d, normal: n }: Face): string {
     <button type="button" class="home icon-btn" aria-label="Home view" title="Home view" (click)="viewSelected.emit('home')">
       <cad-icon name="home" />
     </button>
+    <ng-content />
   `,
   styleUrl: './view-cube.scss',
 })

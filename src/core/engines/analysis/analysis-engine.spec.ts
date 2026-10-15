@@ -1,5 +1,5 @@
 import { createShapeAccess, type NamedShape } from '@core/access/shape';
-import { type Check, type LaserProfile, type PrintProfile, type TopologyRef, type Vec3 } from '@core/contracts';
+import { type Check, type LaserProfile, type PrintProfile, type TopologyRef, type Vec3, vertexName } from '@core/contracts';
 import { SketchBuilder } from '@core/contracts/testing/sketch-builder';
 import { circleLoop, profile, rectangleLoop } from '@core/contracts/testing/profiles';
 import { drawCircle, drawRectangle, type Edge, type Face, makeBaseBox, type Shape3D, weldShellsAndFaces } from 'replicad';
@@ -57,6 +57,27 @@ describe('AnalysisEngine measure', () => {
     const hole = await engine.measure([b], [faceRef(b, (f) => f.geomType === 'CYLINDRE')]);
     expect(hole.ok && hole.value).toMatchObject({ radius: 4 });
     expect(hole.ok && hole.value.area).toBeCloseTo(2 * Math.PI * 4 * 10, 6);
+  });
+
+  it('measures from vertices, named by the edges that meet there', async () => {
+    const b = block();
+    const cornerEdges = (p: Vec3) =>
+      b.named.shape.edges
+        .filter((e) => [e.startPoint, e.endPoint].some((v) => Math.hypot(v.x - p[0], v.y - p[1], v.z - p[2]) < 1e-9))
+        .map((e) => b.named.edges.get(e.hashCode) as string);
+    const corner = (p: Vec3): TopologyRef => ({ kind: 'vertex', body: b.id, name: vertexName(cornerEdges(p)), hint: p });
+    const bottom = faceRef(b, (f) => at(f, 2, 0) && f.geomType === 'PLANE');
+    const toFace = await engine.measure([b], [corner([20, 10, 10]), bottom]);
+    expect(toFace.ok && toFace.value.distance).toBeCloseTo(10, 9);
+    expect(toFace.ok && toFace.value.area).toBeCloseTo(800 - Math.PI * 16, 6);
+    const across = await engine.measure([b], [corner([20, 10, 10]), corner([-20, -10, 0])]);
+    expect(across.ok && across.value).toMatchObject({ distance: expect.closeTo(Math.hypot(40, 20, 10), 9) });
+    expect(across.ok && across.value.angle).toBeUndefined();
+    // A name that no longer matches still finds the vertex where it was picked.
+    const moved = await engine.measure([b], [{ kind: 'vertex', body: b.id, name: 'v:gone', hint: [20, 10, 10] }, bottom]);
+    expect(moved.ok && moved.value.distance).toBeCloseTo(10, 9);
+    const nowhere = await engine.measure([b], [{ kind: 'vertex', body: b.id, name: 'v:gone', hint: [5, 5, 5] }]);
+    expect(nowhere).toMatchObject({ ok: false, error: { code: 'missing-reference' } });
   });
 
   it('measures length and radius of edges', async () => {

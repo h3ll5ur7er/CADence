@@ -1,11 +1,39 @@
-import type { BodyMesh, Vec3 } from '@core/contracts';
-import type { Intersection, Object3D, Raycaster } from 'three/webgpu';
+import { type BodyMesh, type Vec3, vertexName } from '@core/contracts';
+import type { Intersection, Object3D, Raycaster, Vector3 } from 'three/webgpu';
 
-/** Something the user clicked in the 3D view. Faces and edges carry their persistent names. */
+/** Something the user clicked in the 3D view. Faces, edges and vertices carry their persistent names. */
 export type Pick =
   | { readonly kind: 'face'; readonly body: string; readonly name: string; readonly hint: Vec3; readonly planar: boolean; readonly instance?: string }
   | { readonly kind: 'edge'; readonly body: string; readonly name: string; readonly hint: Vec3; readonly instance?: string }
+  | { readonly kind: 'vertex'; readonly body: string; readonly name: string; readonly hint: Vec3; readonly instance?: string }
   | { readonly kind: 'profile'; readonly sketch: string; readonly profile: string };
+
+/** A pick on a body (not a sketch profile). */
+export type TopologyPick = Exclude<Pick, { kind: 'profile' }>;
+
+const vertexCache = new WeakMap<BodyMesh, readonly { readonly name: string; readonly point: Vec3 }[]>();
+
+/**
+ * The vertices of a body: the ends of its edges, each named by the edges that meet there, as the
+ * kernel names them ({@link vertexName}).
+ */
+export function meshVertices(mesh: BodyMesh): readonly { readonly name: string; readonly point: Vec3 }[] {
+  const cached = vertexCache.get(mesh);
+  if (cached) return cached;
+  const corners: { point: Vec3; edges: string[] }[] = [];
+  const p = mesh.edgePositions;
+  for (const edge of mesh.edges) {
+    for (const index of [edge.start, edge.start + edge.count - 1]) {
+      const point: Vec3 = [p[index * 3] as number, p[index * 3 + 1] as number, p[index * 3 + 2] as number];
+      let corner = corners.find((c) => Math.hypot(c.point[0] - point[0], c.point[1] - point[1], c.point[2] - point[2]) < 1e-3);
+      if (!corner) corners.push((corner = { point, edges: [] }));
+      corner.edges.push(edge.name);
+    }
+  }
+  const vertices = corners.map((c) => ({ name: vertexName(c.edges), point: c.point }));
+  vertexCache.set(mesh, vertices);
+  return vertices;
+}
 
 export type PickKind = Pick['kind'];
 
@@ -56,11 +84,12 @@ function toPick(hit: Intersection, kinds: ReadonlySet<PickKind>): Pick | undefin
  * The nearest pickable thing under the ray. Edges win over the face they bound, since a click near an
  * edge rarely means the face.
  */
-export function pickAt(raycaster: Raycaster, roots: readonly Object3D[], kinds: ReadonlySet<PickKind>): Pick | undefined {
+export function pickAt(raycaster: Raycaster, roots: readonly Object3D[], kinds: ReadonlySet<PickKind>, keep: (point: Vector3) => boolean = () => true): Pick | undefined {
   if (kinds.size === 0) return undefined;
   const hits = raycaster.intersectObjects([...roots], true);
   let best: { pick: Pick; distance: number } | undefined;
   for (const hit of hits) {
+    if (!keep(hit.point)) continue;
     const pick = toPick(hit, kinds);
     if (!pick) continue;
     const distance = pick.kind === 'edge' ? hit.distance - 1 : hit.distance;

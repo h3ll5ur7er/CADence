@@ -1,10 +1,11 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal, untracked, viewChild } from '@angular/core';
-import { type DocumentId, type DocumentSummary, type Matrix4 } from '@core/contracts';
+import { ChangeDetectionStrategy, Component, computed, DestroyRef, effect, inject, input, signal, untracked, viewChild } from '@angular/core';
+import { type Appearance, type DocumentId, type DocumentSummary, type Matrix4 } from '@core/contracts';
 import type { AssemblyFormat } from '@core/managers/assembly';
 import { newId } from '@core/utilities/identity';
 import { compose, rotation, translation } from '@core/utilities/math';
 import { relativeTime } from '../../shared/format';
 import { Icon } from '../../shared/icon';
+import { Shortcuts } from '../../shared/shortcuts';
 import { Viewport } from '../../viewport/viewport';
 import { millimetres } from '../analysis/units';
 import { AssemblyStore } from '../assembly/assembly-store';
@@ -36,9 +37,6 @@ const positionOf = (m: Matrix4): Position => {
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './assembly-mode.html',
   styleUrls: ['./mode-layout.scss', './editor-tools.scss', './assembly-mode.scss'],
-  host: {
-    '(document:keydown)': 'shortcut($event)',
-  },
 })
 export class AssemblyMode {
   readonly document = input.required<DocumentSummary>();
@@ -54,6 +52,8 @@ export class AssemblyMode {
     { label: 'Z (mm)', index: 2 },
     { label: 'Turn (°)', index: 3 },
   ] as const;
+  /** The theme's body colour, for the colour field of instances that have none of their own. */
+  protected readonly defaultColor = getComputedStyle(document.documentElement).getPropertyValue('--body').trim() || '#a9b6c2';
   private readonly viewport = viewChild.required(Viewport);
   protected readonly capture = (fps: number) => this.viewport().captureStream(fps);
 
@@ -81,6 +81,12 @@ export class AssemblyMode {
       const { id, projectId } = this.document();
       untracked(() => void this.store.open(id, projectId));
     });
+    const stop = inject(Shortcuts).register('document', {
+      undo: () => void this.store.undo(),
+      redo: () => void this.store.redo(),
+      cancel: () => this.store.cancelJoint(),
+    });
+    inject(DestroyRef).onDestroy(stop);
   }
 
   protected isSelected(kind: 'instance' | 'joint' | 'study', id: string): boolean {
@@ -124,20 +130,14 @@ export class AssemblyMode {
     void this.store.run({ type: 'move-instance', instanceId: id, transform: compose(translation([x, y, z]), rotation([0, 0, 1], (turn * Math.PI) / 180)) });
   }
 
-  protected shortcut(event: KeyboardEvent): void {
-    if ((event.target as HTMLElement | null)?.closest('input, textarea, select, dialog')) return;
-    if (event.key === 'Escape') {
-      this.store.cancelJoint();
-      return;
-    }
-    if (!(event.ctrlKey || event.metaKey)) return;
-    const key = event.key.toLowerCase();
-    if (key === 'z' && !event.shiftKey) {
-      event.preventDefault();
-      void this.store.undo();
-    } else if (key === 'y' || (key === 'z' && event.shiftKey)) {
-      event.preventDefault();
-      void this.store.redo();
-    }
+  /** Back to the component's own look; a hidden instance stays hidden. */
+  protected resetLook(instanceId: string, current: Appearance | undefined): void {
+    void this.store.run({ type: 'set-instance-appearance', instanceId, appearance: current?.hidden ? { hidden: true } : {} });
+  }
+
+  /** Changes how an instance is shown; one undoable step. */
+  protected setAppearance(instanceId: string, current: Appearance | undefined, change: Partial<Appearance>): void {
+    const { hidden, ...look } = { ...current, ...change };
+    void this.store.run({ type: 'set-instance-appearance', instanceId, appearance: hidden ? { ...look, hidden } : look });
   }
 }

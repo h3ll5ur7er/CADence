@@ -28,6 +28,7 @@ classDiagram
     rollbackIndex: number
     material?: Material
     process?: ManufacturingProfile
+    appearances?: Record~bodyId, Appearance~
   }
   class AssemblyDocument {
     schemaVersion: number
@@ -151,6 +152,7 @@ The Modeling Engine names every face after each feature (*generative naming*, [[
 
 - **Inherited names.** A face that lies on the same exact surface as a face of the feature's inputs keeps that face's name, however it was trimmed. This is why changing an upstream dimension keeps downstream references valid: the names follow the design intent, not the kernel's numbering.
 - **Edges** are named after the faces they separate: `e:<face A>|<face B>`.
+- **Vertices** are named after the edges that meet there: `v:<edge>&<edge>&…`, sorted. A vertex reference that no longer matches resolves only where it was picked.
 - **Repeated names.** When a name occurs more than once (a face split in two), `~1`, `~2` … are appended in order of position.
 - **Resolution.** A reference resolves by exact name, then among the split pieces of that name (nearest to the hint). A reference that cannot be resolved makes its feature fail with "… no longer exists. Pick it again". It is never silently re-bound to a different face.
 
@@ -160,7 +162,8 @@ As implemented in [[src/core/contracts/assembly.ts]]:
 
 ```ts
 interface AssemblyDocument { instances: Instance[]; joints: Joint[]; motionStudies: MotionStudy[] }
-interface Instance { id: string; component: DocumentId; name: string; transform: Matrix4; grounded: boolean }
+interface Instance { id: string; component: DocumentId; name: string; transform: Matrix4; grounded: boolean; appearance?: Appearance }
+interface Appearance { hidden?: boolean; color?: string /* #rrggbb */; opacity?: number /* 0.1 to 1 */ }  // display only, never geometry
 interface Joint {
   id: string; name: string;
   type: 'rigid' | 'revolute' | 'slider' | 'cylindrical' | 'pin-slot' | 'planar' | 'ball';

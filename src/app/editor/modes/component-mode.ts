@@ -2,6 +2,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   computed,
+  DestroyRef,
   effect,
   inject,
   input,
@@ -11,6 +12,7 @@ import {
   viewChild,
 } from '@angular/core';
 import {
+  type Appearance,
   type DocumentSummary,
   type FeatureType,
   isCurve,
@@ -27,6 +29,7 @@ import { MeasurePanel } from '../analysis/measure-panel';
 import { grams, millimetres, point } from '../analysis/units';
 import { relativeTime } from '../../shared/format';
 import { Icon, type IconName } from '../../shared/icon';
+import { Shortcuts } from '../../shared/shortcuts';
 import { sketchDisplay } from '../../viewport/sketch-display';
 import { Viewport } from '../../viewport/viewport';
 import { EditorStatus } from '../editor-status';
@@ -87,9 +90,6 @@ const exportFormats: readonly { format: SolidFormat; label: string }[] = [
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './component-mode.html',
   styleUrls: ['./mode-layout.scss', './editor-tools.scss', './component-mode.scss'],
-  host: {
-    '(document:keydown)': 'shortcut($event)',
-  },
 })
 export class ComponentMode {
   readonly document = input.required<DocumentSummary>();
@@ -135,12 +135,18 @@ export class ComponentMode {
   protected readonly bodyRows = computed(() => {
     const properties = this.properties.value() ?? [];
     const names = bodyNames(this.bodies().map((b) => b.body), this.timeline());
+    const appearances = this.appearances();
     return this.bodies().map((b) => ({
       id: b.body,
       name: names.get(b.body) ?? b.body,
       properties: properties.find((p) => p.body === b.body),
+      appearance: appearances[b.body] ?? {},
     }));
   });
+  /** How bodies are shown, from the document. */
+  protected readonly appearances = computed(() => this.store.state()?.document.appearances ?? {});
+  /** The theme's body colour, for colour fields of bodies that have none of their own. */
+  protected readonly defaultColor = getComputedStyle(document.documentElement).getPropertyValue('--body').trim() || '#a9b6c2';
   /** The measured distance, drawn in the view. */
   protected readonly measureLine = computed(() => {
     const result = this.store.panel() === 'measure' ? this.store.measurement.value() : undefined;
@@ -152,6 +158,38 @@ export class ComponentMode {
       const { id, projectId } = this.document();
       untracked(() => void this.store.open(id, projectId));
     });
+    const shortcuts = inject(Shortcuts);
+    const feature = (type: FeatureType) => () => this.store.startFeature(type);
+    const stops = [
+      shortcuts.register('document', {
+        undo: () => void this.store.undo(),
+        redo: () => void this.store.redo(),
+        cancel: () => (this.store.draft() ? this.store.cancelDraft() : this.menu.set(undefined)),
+      }),
+      shortcuts.register('modeling', {
+        'new-sketch': () => this.menu.set('sketch'),
+        extrude: feature('extrude'),
+        revolve: feature('revolve'),
+        fillet: feature('fillet'),
+        chamfer: feature('chamfer'),
+        shell: feature('shell'),
+        plane: feature('plane'),
+        measure: () => this.togglePanel('measure'),
+        parameters: () => this.store.openPanel('parameters'),
+      }),
+    ];
+    inject(DestroyRef).onDestroy(() => stops.forEach((stop) => stop()));
+  }
+
+  /** Back to the theme's colour, opaque; a hidden body stays hidden. */
+  protected resetLook(body: string): void {
+    void this.store.run({ type: 'set-appearance', body, appearance: this.appearances()[body]?.hidden ? { hidden: true } : {} });
+  }
+
+  /** Changes how a body is shown; one undoable step. */
+  protected setAppearance(body: string, change: Partial<Appearance>): void {
+    const { hidden, ...look } = { ...this.appearances()[body], ...change };
+    void this.store.run({ type: 'set-appearance', body, appearance: hidden ? { ...look, hidden } : look });
   }
 
   protected setMaterial(name: string): void {
@@ -214,20 +252,4 @@ export class ComponentMode {
     void this.store.run({ type: 'suppress-item', itemId: item.id, suppressed: !item.suppressed });
   }
 
-  protected shortcut(event: KeyboardEvent): void {
-    if ((event.target as HTMLElement | null)?.closest('input, textarea, select, dialog')) return;
-    if (event.key === 'Escape' && this.store.draft()) {
-      this.store.cancelDraft();
-      return;
-    }
-    if (!(event.ctrlKey || event.metaKey)) return;
-    const key = event.key.toLowerCase();
-    if (key === 'z' && !event.shiftKey) {
-      event.preventDefault();
-      void this.store.undo();
-    } else if (key === 'y' || (key === 'z' && event.shiftKey)) {
-      event.preventDefault();
-      void this.store.redo();
-    }
-  }
 }

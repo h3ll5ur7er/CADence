@@ -15,7 +15,7 @@ import { degrees, millimetres } from './units';
       <h2>Measure</h2>
       <button type="button" class="icon-btn" aria-label="Close measure" (click)="store.openPanel(undefined)">×</button>
     </div>
-    <p class="hint">Click faces and edges in the view. One pick gives its size; two give the distance and angle between them.</p>
+    <p class="hint">Click faces, edges and corners in the view. One pick gives its size; two give the distance and angle between them.</p>
     @if (picks().length) {
       <ul class="picks" aria-label="Measured elements">
         @for (pick of picks(); track pick.key) {
@@ -81,7 +81,7 @@ export class MeasurePanel {
     const names = bodyNames(state?.bodies.map((b) => b.body) ?? [], state?.document.timeline ?? []);
     return this.store.measurePicks().map((pick) => ({
       key: `${pick.kind}:${pick.body}:${pick.name}`,
-      label: `${pick.kind === 'face' ? 'Face' : 'Edge'} of ${names.get(pick.body) ?? pick.body}`,
+      label: `${{ face: 'Face', edge: 'Edge', vertex: 'Vertex' }[pick.kind]} of ${names.get(pick.body) ?? pick.body}`,
       name: pick.name,
     }));
   });

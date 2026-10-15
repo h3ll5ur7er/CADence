@@ -347,6 +347,22 @@ describe('DesignManager', () => {
       expect(session.state().bodies).toHaveLength(1);
     });
 
+    it('keeps how bodies look: hidden, colour and transparency, undoable; resetting removes the entry', async () => {
+      await plate();
+      const keys = session.state().bodies.map((b) => b.key);
+      unwrap(await session.execute({ type: 'set-appearance', body: 'e1', appearance: { hidden: true, color: '#d9480f', opacity: 0.5 } }));
+      expect(session.state().document.appearances).toEqual({ e1: { hidden: true, color: '#d9480f', opacity: 0.5 } });
+      expect(session.state().bodies.map((b) => b.key)).toEqual(keys); // the geometry is untouched
+      unwrap(await session.execute({ type: 'set-appearance', body: 'e1', appearance: {} }));
+      expect(session.state().document.appearances).toEqual({});
+      await session.undo();
+      expect(session.state().document.appearances?.['e1']?.hidden).toBe(true);
+      for (const appearance of [{ color: 'red' }, { opacity: 0 }, { opacity: 1.5 }]) {
+        expect(await session.execute({ type: 'set-appearance', body: 'e1', appearance })).toMatchObject({ ok: false, error: { code: 'invalid-command' } });
+      }
+      expect(await session.execute({ type: 'set-appearance', body: 'nope', appearance: { hidden: true } })).toMatchObject({ ok: false, error: { code: 'invalid-command' } });
+    });
+
     it('measures picked faces and weighs bodies in the chosen material', async () => {
       await plate();
       const between = unwrap(await session.measure([{ kind: 'face', body: 'e1', name: 'f:e1:end' }, { kind: 'face', body: 'e1', name: 'f:e1:start' }]));

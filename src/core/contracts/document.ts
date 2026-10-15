@@ -1,3 +1,4 @@
+import type { Appearance } from './appearance';
 import type { AssetId, DocumentId, ProjectId } from './ids';
 import type { Timestamp } from './project';
 import type { Material, ManufacturingProfile } from './analysis';
@@ -52,6 +53,8 @@ export interface ComponentDocument extends DocumentBase {
   readonly material?: Material;
   /** The machine the component is made on, for validation; `manufacturingProfiles[0]` when absent. */
   readonly process?: ManufacturingProfile;
+  /** How bodies are shown, by body id; bodies without an entry use the defaults. */
+  readonly appearances?: Readonly<Record<string, Appearance>>;
 }
 
 export interface AssemblyDocument extends DocumentBase {

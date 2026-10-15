@@ -167,6 +167,16 @@ describe('AssemblyManager', () => {
     expect((await documents.load(asDocumentId('asm')))?.kind).toBe('assembly');
   });
 
+  it('keeps how instances look: hidden, colour and transparency', async () => {
+    unwrap(await insert('b1', base, identity(), true));
+    unwrap(await session.execute({ type: 'set-instance-appearance', instanceId: 'b1', appearance: { hidden: true, color: '#1971c2', opacity: 0.4 } }));
+    expect(session.state().document.instances[0]?.appearance).toEqual({ hidden: true, color: '#1971c2', opacity: 0.4 });
+    unwrap(await session.execute({ type: 'set-instance-appearance', instanceId: 'b1', appearance: {} }));
+    expect(session.state().document.instances[0]).not.toHaveProperty('appearance');
+    expect(await session.execute({ type: 'set-instance-appearance', instanceId: 'b1', appearance: { opacity: 2 } })).toMatchObject({ ok: false });
+    expect(await session.execute({ type: 'set-instance-appearance', instanceId: 'x', appearance: {} })).toMatchObject({ ok: false });
+  });
+
   it('hinges a link on the base: hole axes line up and the angle turns it', async () => {
     await arm([90]);
     expect(session.state().document.joints[0]?.name).toBe('Revolute 1');

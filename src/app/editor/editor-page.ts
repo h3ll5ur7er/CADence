@@ -18,6 +18,7 @@ import {
 import { PROJECT_MANAGER, STORAGE_KIND } from '../core.providers';
 import { ConfirmDialog, NameDialog } from '../shared/dialogs';
 import { Icon } from '../shared/icon';
+import { SettingsDialog } from '../shared/settings-dialog';
 import { DocumentsPanel } from './documents-panel';
 import { EditorStatus } from './editor-status';
 import { AssemblyMode } from './modes/assembly-mode';
@@ -29,7 +30,7 @@ const storageLabels = { browser: 'This browser', 'project-folders': 'Project fol
 
 @Component({
   selector: 'cad-editor-page',
-  imports: [RouterLink, Icon, DocumentsPanel, ComponentMode, AssemblyMode, ImportedMode, NameDialog, ConfirmDialog],
+  imports: [RouterLink, Icon, DocumentsPanel, ComponentMode, AssemblyMode, ImportedMode, NameDialog, ConfirmDialog, SettingsDialog],
   providers: [EditorStatus],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './editor-page.html',

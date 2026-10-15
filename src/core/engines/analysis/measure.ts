@@ -1,9 +1,10 @@
 import type { Measurement, Vec3 } from '@core/contracts';
-import { type Edge, type Face, getOC, measureArea, measureLength } from 'replicad';
+import { type Edge, type Face, getOC, measureArea, measureLength, Vertex } from 'replicad';
 
-type Element = Face | Edge;
+type Element = Face | Edge | Vertex;
 
 const isFace = (element: Element): element is Face => 'normalAt' in element;
+const isEdge = (element: Element): element is Edge => !isFace(element) && !(element instanceof Vertex);
 const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const unit = (a: Vec3): Vec3 => {
   const length = Math.hypot(...a) || 1;
@@ -13,7 +14,7 @@ const unit = (a: Vec3): Vec3 => {
 /** Everything that can be measured on the picked elements: totals for one or many, relations for two. */
 export function measureElements(elements: readonly Element[]): Measurement {
   const faces = elements.filter(isFace);
-  const edges = elements.filter((e): e is Edge => !isFace(e));
+  const edges = elements.filter(isEdge);
   const [first, second] = elements;
   const radius = elements.length === 1 && first ? radiusOf(first) : undefined;
   const between = elements.length === 2 && first && second ? relation(first, second) : {};
@@ -26,6 +27,7 @@ export function measureElements(elements: readonly Element[]): Measurement {
 }
 
 function radiusOf(element: Element): number | undefined {
+  if (element instanceof Vertex) return undefined;
   const oc = getOC();
   if (isFace(element)) {
     if (element.geomType !== 'CYLINDRE' && element.geomType !== 'SPHERE') return undefined;
@@ -73,6 +75,7 @@ function relation(a: Element, b: Element): Pick<Measurement, 'distance' | 'point
 }
 
 function directionOf(element: Element): { kind: 'normal' | 'line'; vector: Vec3 } | undefined {
+  if (element instanceof Vertex) return undefined;
   if (isFace(element)) {
     return element.geomType === 'PLANE' ? { kind: 'normal', vector: unit(element.normalAt(element.center).toTuple() as Vec3) } : undefined;
   }

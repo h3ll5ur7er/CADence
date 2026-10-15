@@ -53,6 +53,12 @@ const paths = {
   eyeOff: 'M3 3l18 18M10.6 6.1A10 10 0 0 1 12 6c6 0 10 6 10 6a17 17 0 0 1-3.2 3.7M6.6 6.6A17 17 0 0 0 2 12s4 7 10 7a9.6 9.6 0 0 0 4.4-1.1',
   body: 'M5 8l7-4 7 4v8l-7 4-7-4z',
   undo: 'M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3',
+  fit: 'M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5M9 9h6v6H9z',
+  perspective: 'M3 20L8 4h8l5 16zM5.5 12h13M10 4l-1 16M14 4l1 16',
+  orthographic: 'M4 4h16v16H4zM4 12h16M12 4v16',
+  section: 'M5 8l7-4 7 4v8l-7 4-7-4zM3 15l18-6',
+  keyboard: 'M3 6h18v12H3zM7 10h.01M11 10h.01M15 10h.01M7 14h10',
+  settings: 'M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6zM12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1',
   redo: 'M15 14l5-5-5-5M20 9H10a6 6 0 0 0 0 12h3',
 } as const;
 

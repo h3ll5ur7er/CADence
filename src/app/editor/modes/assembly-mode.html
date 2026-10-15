@@ -18,7 +18,7 @@
         }
         <ul aria-label="Instances">
           @for (row of instances(); track row.instance.id) {
-            <li class="node item" [class.active]="isSelected('instance', row.instance.id)" [class.failed]="row.status === 'missing'">
+            <li class="node item" [class.active]="isSelected('instance', row.instance.id)" [class.failed]="row.status === 'missing'" [class.suppressed]="row.instance.appearance?.hidden">
               <button type="button" class="item-main" [attr.aria-label]="'Select ' + row.instance.name" (click)="store.select({ kind: 'instance', id: row.instance.id })">
                 <cad-icon name="component" />
                 <span class="item-name">{{ row.instance.name }}</span>
@@ -29,7 +29,16 @@
                   <cad-icon name="pin" [size]="13" title="Grounded" />
                 }
               </button>
-              <span class="item-actions">
+              <span class="item-actions" [class.pinned]="row.instance.appearance?.hidden">
+                <button
+                  type="button"
+                  class="icon-btn"
+                  [attr.aria-label]="(row.instance.appearance?.hidden ? 'Show ' : 'Hide ') + row.instance.name"
+                  [title]="row.instance.appearance?.hidden ? 'Show' : 'Hide'"
+                  (click)="setAppearance(row.instance.id, row.instance.appearance, { hidden: !row.instance.appearance?.hidden })"
+                >
+                  <cad-icon [name]="row.instance.appearance?.hidden ? 'eyeOff' : 'eye'" [size]="14" />
+                </button>
                 <button type="button" class="icon-btn" [attr.aria-label]="'Delete ' + row.instance.name" title="Delete" (click)="removeInstance(row.instance.id)">
                   <cad-icon name="trash" [size]="14" />
                 </button>
@@ -163,6 +172,27 @@
       <input type="checkbox" [checked]="row.instance.grounded" (change)="store.run({ type: 'ground-instance', instanceId: row.instance.id, grounded: !row.instance.grounded })" />
       Grounded (never moves)
     </label>
+    <p class="eyebrow">Look</p>
+    <div class="look">
+      <input
+        type="color"
+        [attr.aria-label]="'Colour of ' + row.instance.name"
+        [value]="row.instance.appearance?.color ?? defaultColor"
+        (change)="setAppearance(row.instance.id, row.instance.appearance, { color: $any($event.target).value })"
+      />
+      <input
+        type="range"
+        min="0.1"
+        max="1"
+        step="0.05"
+        [attr.aria-label]="'Opacity of ' + row.instance.name"
+        [value]="row.instance.appearance?.opacity ?? 1"
+        (change)="setAppearance(row.instance.id, row.instance.appearance, { opacity: +$any($event.target).value })"
+      />
+      @if (row.instance.appearance?.color || row.instance.appearance?.opacity) {
+        <button type="button" class="btn btn-ghost" (click)="resetLook(row.instance.id, row.instance.appearance)">Reset</button>
+      }
+    </div>
     @if (row.placed) {
       <p class="hint">A joint places this instance. Move it with the joint's values.</p>
     } @else {

@@ -20,7 +20,7 @@ The material is saved with the component and can be undone like any change.
 
 ## Measure
 
-Click the ruler in the toolbar, then click faces and edges in the view. Click a picked element again to drop it; **Clear** starts over.
+Click the ruler in the toolbar (or press **M**), then click faces, edges and corners in the view. Corners light up as the pointer comes near them. Click a picked element again to drop it; **Clear** starts over.
 
 - **One face:** its area, and its radius if it is a cylinder or sphere (with the diameter).
 - **One edge:** its length, and its radius if it is a circle or arc.

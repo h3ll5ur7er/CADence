@@ -12,7 +12,7 @@ import {
   type TopologyRef,
   type Vec3,
 } from '@core/contracts';
-import { type Edge, type Face, measureShapeSurfaceProperties, measureShapeVolumeProperties, measureVolume, type Shape3D } from 'replicad';
+import { type Edge, type Face, measureShapeSurfaceProperties, measureShapeVolumeProperties, measureVolume, type Shape3D, type Vertex } from 'replicad';
 import type { AnalysisEngine, PlacedPart, ValidationSubject } from './index';
 import { laserChecks } from './laser';
 import { measureElements } from './measure';
@@ -28,8 +28,8 @@ export class OcctAnalysisEngine implements AnalysisEngine {
 
   async measure(bodies: readonly BodyState[], refs: readonly TopologyRef[]): Promise<Result<Measurement>> {
     await this.shapes.ready();
-    if (refs.length === 0) return fail({ code: 'nothing-picked', message: 'Pick faces or edges to measure.' });
-    const elements: (Face | Edge)[] = [];
+    if (refs.length === 0) return fail({ code: 'nothing-picked', message: 'Pick faces, edges or vertices to measure.' });
+    const elements: (Face | Edge | Vertex)[] = [];
     for (const ref of refs) {
       const body = bodies.find((b) => b.id === ref.body);
       const named = body && this.shapes.get(body.key);

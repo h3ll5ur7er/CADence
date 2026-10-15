@@ -21,14 +21,14 @@ import {
 import type { DesignCommand, DesignSession, DesignState, DrawingFormat, SketchView, SolidFormat } from '@core/managers/design';
 import { newId } from '@core/utilities/identity';
 import { DESIGN_MANAGER, PROJECT_MANAGER } from '../../core.providers';
-import type { Pick, PickKind } from '../../viewport/picking';
+import type { Pick, PickKind, TopologyPick } from '../../viewport/picking';
 import { applyPick, defaultFeature, type FeatureDraft, type PickTarget, pickableFor, selectionOf } from '../modeling/feature-drafts';
 import type { Tool } from './sketch-tools';
 
 /** What the properties column shows besides feature dialogs and sketch info. */
 export type SidePanel = 'parameters' | 'measure' | 'check';
 
-const toRef = (pick: Extract<Pick, { kind: 'face' | 'edge' }>): TopologyRef => ({ kind: pick.kind, body: pick.body, name: pick.name, hint: pick.hint });
+const toRef = (pick: TopologyPick): TopologyRef => ({ kind: pick.kind, body: pick.body, name: pick.name, hint: pick.hint });
 
 /**
  * Client-side state of one component editor: the Design session as signals, plus pure UI state
@@ -58,14 +58,14 @@ export class DesignStore {
   readonly projectDocuments = signal<readonly DocumentSummary[]>([]);
   readonly importedModels = computed(() => this.projectDocuments().filter(isImportedModel));
   readonly importedDrawings = computed(() => this.projectDocuments().filter(isImportedDrawing));
-  /** Faces and edges picked with the measure tool. */
-  readonly measurePicks = signal<readonly Extract<Pick, { kind: 'face' | 'edge' }>[]>([]);
+  /** Faces, edges and vertices picked with the measure tool. */
+  readonly measurePicks = signal<readonly TopologyPick[]>([]);
   /** The check whose faces are highlighted; the first one with faces when unset. */
   readonly focusedCheck = signal<string | undefined>(undefined);
 
   readonly pickable = computed((): ReadonlySet<PickKind> => {
     if (this.editing()) return new Set();
-    if (!this.draft() && this.panel() === 'measure') return new Set<PickKind>(['face', 'edge']);
+    if (!this.draft() && this.panel() === 'measure') return new Set<PickKind>(['face', 'edge', 'vertex']);
     return pickableFor(this.draft());
   });
   readonly picks = computed((): readonly Pick[] => {

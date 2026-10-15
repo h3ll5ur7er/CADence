@@ -1,6 +1,8 @@
-import type { BodyMesh, Matrix4 as Placement, PlaneFrame, Vec3 } from '@core/contracts';
+import type { Appearance, BodyMesh, Matrix4 as Placement, PlaneFrame, Vec3 } from '@core/contracts';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
+  Box3,
+  ClippingGroup,
   Color,
   DirectionalLight,
   DoubleSide,
@@ -8,10 +10,14 @@ import {
   HemisphereLight,
   LineSegments,
   type Matrix4,
+  Matrix3,
   Mesh,
   MeshBasicMaterial,
+  MOUSE,
   type Object3D,
+  OrthographicCamera,
   PerspectiveCamera,
+  Plane,
   PlaneGeometry,
   Quaternion,
   Raycaster,
@@ -21,7 +27,9 @@ import {
   Vector3,
   WebGPURenderer,
 } from 'three/webgpu';
-import { type Pick, pickAt, type PickKind, pickKey } from './picking';
+import type { DragAction, MouseBindings } from '../shared/keymap';
+import { lookOf, type SectionPlane } from './looks';
+import { meshVertices, type Pick, pickAt, type PickKind, pickKey, type TopologyPick } from './picking';
 import { createBody, createPlane, createSketch, edgeHighlight, faceHighlight, lines, type ViewportTheme } from './scene-content';
 import type { SketchDisplay } from './sketch-display';
 import type { Affine } from './sketch-planes';
@@ -35,9 +43,14 @@ export interface PartDisplay {
   readonly transform: Placement;
   /** Shown in the flag colour (e.g. interfering parts). */
   readonly flagged?: boolean;
+  /** How the component shows its bodies, by body id. */
+  readonly bodyAppearances?: Readonly<Record<string, Appearance>>;
+  /** The instance's own appearance, over its bodies'. */
+  readonly appearance?: Appearance;
 }
 export type StandardView = 'front' | 'back' | 'top' | 'bottom' | 'left' | 'right' | 'home';
 export type RendererBackend = 'WebGPU' | 'WebGL 2';
+export type Projection = 'perspective' | 'orthographic';
 
 /** Direction from the target to the camera, Z up. Polar views are nudged off the pole for the orbit controls. */
 const viewDirections: Readonly<Record<StandardView, Vector3>> = {
@@ -59,10 +72,14 @@ const homeTarget = new Vector3(20, 20, 10);
 const transitionMs = 350;
 const worldUp = new Vector3(0, 0, 1);
 const clickTolerance = 4; // px between press and release
+const vertexReach = 8; // px from the cursor to a vertex
+const fov = 35;
+const mouseActions: Readonly<Record<Exclude<DragAction, null>, MOUSE>> = { orbit: MOUSE.ROTATE, pan: MOUSE.PAN, zoom: MOUSE.DOLLY };
 
 /**
- * The three.js scene behind a viewport: WebGPU renderer (WebGL 2 fallback), Z-up camera, orbit
- * navigation, grid, origin, bodies, sketches and construction planes, with picking. Renders on demand.
+ * The three.js scene behind a viewport: WebGPU renderer (WebGL 2 fallback), Z-up perspective or
+ * orthographic camera, orbit navigation, grid, origin, bodies, sketches and construction planes, a
+ * section plane, with picking. Renders on demand.
  */
 export class ViewportScene {
   /** Called with the camera's view matrix whenever the camera moves (drives the view cube). */
@@ -73,10 +90,14 @@ export class ViewportScene {
   onPick: ((pick: Pick) => void) | undefined;
 
   private readonly scene = new Scene();
-  private readonly camera = new PerspectiveCamera(35, 1, 0.5, 20_000);
+  private readonly perspective = new PerspectiveCamera(fov, 1, 0.5, 20_000);
+  private readonly orthographic = new OrthographicCamera(-1, 1, 1, -1, -20_000, 20_000);
+  private camera: PerspectiveCamera | OrthographicCamera = this.perspective;
   private readonly renderer: WebGPURenderer;
   private readonly controls: OrbitControls;
   private readonly origin: Group;
+  /** Bodies and parts: what a section view cuts. */
+  private readonly model = new ClippingGroup();
   private readonly bodies = new Group();
   private readonly sketches = new Group();
   private readonly planes = new Group();
@@ -86,10 +107,12 @@ export class ViewportScene {
   private partEntries = new Map<string, { readonly group: Group; readonly signature: string; readonly part: PartDisplay }>();
   private flagged: readonly { readonly body: string; readonly name: string }[] = [];
   private readonly raycaster = new Raycaster();
+  /** The component's shown bodies. */
   private meshes: readonly BodyMesh[] = [];
   private pickable: ReadonlySet<PickKind> = new Set();
   private selection: readonly Pick[] = [];
   private hovered: Pick | undefined;
+  private section: SectionPlane | undefined;
   private editedFrame: PlaneFrame | undefined;
   private size = { width: 1, height: 1 };
   private frame = 0;
@@ -105,7 +128,8 @@ export class ViewportScene {
     options: { forceWebGL?: boolean } = {},
   ) {
     this.renderer = new WebGPURenderer({ canvas, antialias: true, alpha: true, forceWebGL: options.forceWebGL ?? false });
-    this.camera.up.copy(worldUp);
+    this.perspective.up.copy(worldUp);
+    this.orthographic.up.copy(worldUp);
     this.controls = new OrbitControls(this.camera, eventTarget);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.15;
@@ -118,7 +142,9 @@ export class ViewportScene {
     this.scene.add(sun);
     this.scene.add(createGrid(theme));
     this.origin = createOrigin(theme);
-    this.scene.add(this.origin, this.bodies, this.parts, this.sketches, this.planes, this.highlights, this.annotations);
+    this.model.enabled = false;
+    this.model.add(this.bodies, this.parts);
+    this.scene.add(this.origin, this.model, this.sketches, this.planes, this.highlights, this.annotations);
     this.controls.target.copy(homeTarget);
     this.placeCamera(viewDirections.home, homeDistance);
 
@@ -138,8 +164,9 @@ export class ViewportScene {
     this.size = { width, height };
     this.renderer.setPixelRatio(pixelRatio);
     this.renderer.setSize(width, height, false);
-    this.camera.aspect = width / Math.max(height, 1);
-    this.camera.updateProjectionMatrix();
+    this.perspective.aspect = width / Math.max(height, 1);
+    this.perspective.updateProjectionMatrix();
+    this.setOrthographicHeight(this.orthographic.top - this.orthographic.bottom, false);
     this.requestRender();
   }
 
@@ -152,20 +179,28 @@ export class ViewportScene {
     this.replace(this.sketches, displays.map((d) => createSketch(d, this.theme)));
   }
 
-  setBodies(meshes: readonly BodyMesh[]): void {
-    this.meshes = meshes;
-    this.replace(this.bodies, meshes.map((m) => createBody(m, this.theme)));
+  /** The component's bodies, in their appearances; hidden ones are neither drawn nor picked. */
+  setBodies(meshes: readonly BodyMesh[], appearances: Readonly<Record<string, Appearance>> = {}): void {
+    const shown = meshes.flatMap((mesh) => {
+      const look = lookOf(this.theme.body, appearances[mesh.body]);
+      return look ? [{ mesh, look }] : [];
+    });
+    this.meshes = shown.map((s) => s.mesh);
+    this.replace(this.bodies, shown.map(({ mesh, look }) => createBody(mesh, this.theme, look)));
+    this.showCuts();
     this.updateHighlights();
   }
 
   /**
-   * Assembly instances. Parts whose bodies did not change keep their scene objects and only move,
-   * so playing a motion study costs one matrix per part and frame.
+   * Assembly instances. Parts whose bodies and looks did not change keep their scene objects and only
+   * move, so playing a motion study costs one matrix per part and frame. Hidden instances are left out.
    */
   setParts(parts: readonly PartDisplay[]): void {
     const next = new Map<string, { group: Group; signature: string; part: PartDisplay }>();
     for (const part of parts) {
-      const signature = `${part.bodies.map((b) => b.key).join('|')}:${part.flagged ? 'flag' : ''}`;
+      if (part.appearance?.hidden) continue;
+      const looks = part.bodies.map((b) => (part.flagged ? { color: this.theme.flag, opacity: 1 } : lookOf(this.theme.body, part.bodyAppearances?.[b.body], part.appearance)));
+      const signature = `${part.bodies.map((b) => b.key).join('|')}:${JSON.stringify(looks)}`;
       let entry = this.partEntries.get(part.id);
       if (!entry || entry.signature !== signature) {
         if (entry) this.drop(entry.group);
@@ -173,7 +208,10 @@ export class ViewportScene {
         group.name = `part-${part.id}`;
         group.userData = { instance: part.id };
         group.matrixAutoUpdate = false;
-        group.add(...part.bodies.map((m) => createBody(m, this.theme, part.flagged ? this.theme.flag : this.theme.body)));
+        part.bodies.forEach((mesh, i) => {
+          const look = looks[i];
+          if (look) group.add(createBody(mesh, this.theme, look));
+        });
         this.parts.add(group);
         entry = { group, signature, part };
       }
@@ -183,6 +221,7 @@ export class ViewportScene {
     }
     for (const [id, entry] of this.partEntries) if (!next.has(id)) this.drop(entry.group);
     this.partEntries = next;
+    this.showCuts();
     this.updateHighlights();
   }
 
@@ -225,15 +264,69 @@ export class ViewportScene {
       let extent = 10;
       for (const mesh of this.meshes) for (const v of mesh.positions) extent = Math.max(extent, Math.abs(v));
       const radius = extent / 100;
-      const ends = points.map((p) => {
-        const end = new Mesh(new SphereGeometry(radius, 12, 8), new MeshBasicMaterial({ color: new Color(this.theme.selection), depthTest: false }));
-        end.position.set(...p);
-        end.renderOrder = 5;
-        return end;
-      });
+      const ends = points.map((p) => this.marker(p, radius, this.theme.selection));
       children.push(line, ...ends);
     }
     this.replace(this.annotations, children);
+    this.requestRender();
+  }
+
+  /** Cuts the bodies and parts with a plane, or shows them whole again. */
+  setSection(plane: SectionPlane | undefined): void {
+    this.section = plane;
+    this.model.enabled = plane !== undefined;
+    this.model.clippingPlanes = plane ? [this.clippingPlane(plane)] : [];
+    this.showCuts();
+    this.hovered = undefined;
+    this.updateHighlights();
+  }
+
+  /** How far the bodies and parts reach along a direction, to bound a section offset. */
+  extentAlong(normal: Vec3): readonly [number, number] | undefined {
+    const box = new Box3().setFromObject(this.model);
+    if (box.isEmpty()) return undefined;
+    const n = new Vector3(...normal);
+    const values = [0, 1, 2, 3, 4, 5, 6, 7].map((i) =>
+      new Vector3(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z).dot(n),
+    );
+    return [Math.min(...values), Math.max(...values)];
+  }
+
+  /** The outward normal of a picked flat face, in world space. */
+  faceNormal(pick: Pick): Vec3 | undefined {
+    if (pick.kind !== 'face') return undefined;
+    const part = pick.instance ? this.partEntries.get(pick.instance) : undefined;
+    const mesh = (part ? part.part.bodies : this.meshes).find((m) => m.body === pick.body);
+    const face = mesh?.faces.find((f) => f.name === pick.name);
+    const vertex = mesh && face ? (mesh.indices[face.start] as number) : undefined;
+    if (!mesh || vertex === undefined) return undefined;
+    const normal = new Vector3(mesh.normals[vertex * 3], mesh.normals[vertex * 3 + 1], mesh.normals[vertex * 3 + 2]);
+    if (part) normal.applyMatrix3(new Matrix3().getNormalMatrix(part.group.matrix));
+    normal.normalize();
+    return [normal.x + 0, normal.y + 0, normal.z + 0];
+  }
+
+  /** Mouse buttons and wheel as the control scheme has them. */
+  setMouse(bindings: MouseBindings): void {
+    const action = (drag: DragAction) => (drag ? mouseActions[drag] : null);
+    this.controls.mouseButtons = { LEFT: action(bindings.left), MIDDLE: action(bindings.middle), RIGHT: action(bindings.right) };
+    this.controls.zoomToCursor = bindings.zoomToCursor;
+  }
+
+  /** Perspective, or orthographic (parallel lines stay parallel); the view keeps its direction and scale. */
+  setProjection(projection: Projection): void {
+    const orthographic = projection === 'orthographic';
+    if (orthographic === (this.camera === this.orthographic)) return;
+    const height = this.viewHeight();
+    const from = this.camera;
+    const to = orthographic ? this.orthographic : this.perspective;
+    const direction = from.position.clone().sub(this.controls.target).normalize();
+    to.up.copy(from.up);
+    this.camera = to;
+    if (orthographic) this.setOrthographicHeight(height, true);
+    this.placeCamera(direction, orthographic ? from.position.distanceTo(this.controls.target) : height / (2 * Math.tan((fov * Math.PI) / 360)));
+    this.controls.object = to;
+    this.controls.update();
     this.requestRender();
   }
 
@@ -257,21 +350,23 @@ export class ViewportScene {
 
   /** Looks at a box from the home direction, close enough that it fills most of the view. */
   fitTo(min: Vec3, max: Vec3): void {
-    const center = new Vector3((min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2);
-    const radius = Math.max(1, new Vector3(...max).distanceTo(new Vector3(...min)) / 2);
-    const distance = (radius / Math.sin((this.camera.fov * Math.PI) / 360)) * 1.15;
-    this.camera.near = Math.max(0.01, distance / 2000);
-    this.camera.far = distance * 100;
-    this.camera.updateProjectionMatrix();
-    this.controls.target.copy(center);
-    this.turnTo(viewDirections.home, distance);
+    this.frameBox(new Box3(new Vector3(...min), new Vector3(...max)), viewDirections.home);
+  }
+
+  /** Frames everything shown (bodies and parts, else sketches) from the current direction. */
+  zoomToFit(): void {
+    const box = new Box3().setFromObject(this.model);
+    if (box.isEmpty()) box.setFromObject(this.sketches);
+    if (box.isEmpty()) return this.showView('home');
+    this.frameBox(box, this.camera.position.clone().sub(this.controls.target).normalize());
   }
 
   /** Turns the camera to a standard view around the current target, keeping the distance. */
   showView(view: StandardView): void {
-    const distance = view === 'home' ? homeDistance : this.camera.position.distanceTo(this.controls.target);
-    if (view === 'home') this.controls.target.copy(homeTarget);
-    this.turnTo(viewDirections[view], distance);
+    const home = view === 'home';
+    const distance = home ? homeDistance : this.camera.position.distanceTo(this.controls.target);
+    if (home) this.controls.target.copy(homeTarget);
+    this.turnTo(viewDirections[view], distance, home);
   }
 
   dispose(): void {
@@ -282,6 +377,26 @@ export class ViewportScene {
     this.controls.dispose();
     disposeTree(this.scene);
     this.renderer.dispose();
+  }
+
+  // ---- section ------------------------------------------------------------------------------
+
+  /** Three.js keeps what lies on the positive side of a clipping plane: the side away from the normal. */
+  private clippingPlane(plane: SectionPlane): Plane {
+    const normal = new Vector3(...plane.normal).normalize();
+    return new Plane(normal.clone().negate(), normal.dot(new Vector3(...plane.point)));
+  }
+
+  /** False for points the section cuts away. */
+  private readonly kept = (point: Vector3): boolean =>
+    !this.section || new Vector3(...this.section.normal).dot(point.clone().sub(new Vector3(...this.section.point))) <= 1e-6;
+
+  /** The cut faces show only while a section cuts the model. */
+  private showCuts(): void {
+    this.model.traverse((object) => {
+      if (object.name === 'cut') object.visible = this.section !== undefined;
+    });
+    this.requestRender();
   }
 
   // ---- picking ------------------------------------------------------------------------------
@@ -312,10 +427,35 @@ export class ViewportScene {
     const ndc = new Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
     // Edges are picked within a few pixels of the cursor.
-    const distance = this.camera.position.distanceTo(this.controls.target);
-    const worldPerPixel = (2 * distance * Math.tan((this.camera.fov * Math.PI) / 360)) / Math.max(rect.height, 1);
+    const worldPerPixel = this.viewHeight() / Math.max(rect.height, 1);
     this.raycaster.params.Line = { threshold: worldPerPixel * 5 };
-    return pickAt(this.raycaster, [this.bodies, this.parts, this.sketches], this.pickable);
+    const vertex = this.pickable.has('vertex') ? this.vertexUnder(event.clientX - rect.left, event.clientY - rect.top, worldPerPixel) : undefined;
+    return vertex ?? pickAt(this.raycaster, [this.bodies, this.parts, this.sketches], this.pickable, this.kept);
+  }
+
+  /**
+   * The vertex nearest the cursor within a few pixels that is not hidden behind a surface: vertices
+   * are too small to hit with a ray, so they are found on screen.
+   */
+  private vertexUnder(x: number, y: number, worldPerPixel: number): TopologyPick | undefined {
+    const surface = this.raycaster.intersectObjects([this.bodies, this.parts], true).find((h) => h.object instanceof Mesh && h.object.name !== 'cut' && this.kept(h.point));
+    let best: { pick: TopologyPick; distance: number } | undefined;
+    const consider = (mesh: BodyMesh, matrix: Matrix4 | undefined, instance: string | undefined) => {
+      for (const vertex of meshVertices(mesh)) {
+        const world = new Vector3(...vertex.point);
+        if (matrix) world.applyMatrix4(matrix);
+        if (!this.kept(world)) continue;
+        const screen = world.clone().project(this.camera);
+        const distance = Math.hypot(((screen.x + 1) / 2) * this.size.width - x, ((1 - screen.y) / 2) * this.size.height - y);
+        if (distance > vertexReach || (best && distance >= best.distance)) continue;
+        // Behind the surface under the cursor: hidden.
+        if (surface && world.distanceTo(this.raycaster.ray.origin) > surface.distance + worldPerPixel * 10) continue;
+        best = { pick: { kind: 'vertex', body: mesh.body, name: vertex.name, hint: vertex.point, ...(instance ? { instance } : {}) }, distance };
+      }
+    };
+    for (const mesh of this.meshes) consider(mesh, undefined, undefined);
+    for (const [id, entry] of this.partEntries) for (const mesh of entry.part.bodies) consider(mesh, entry.group.matrix, id);
+    return best?.pick;
   }
 
   private updateHighlights(): void {
@@ -335,6 +475,12 @@ export class ViewportScene {
         return;
       }
       const part = pick.instance ? this.partEntries.get(pick.instance) : undefined;
+      if (pick.kind === 'vertex') {
+        const at = new Vector3(...pick.hint);
+        if (part) at.applyMatrix4(part.group.matrix);
+        this.highlights.add(this.marker([at.x, at.y, at.z], (this.viewHeight() / Math.max(this.size.height, 1)) * 5, color));
+        return;
+      }
       const mesh = (part ? part.part.bodies : this.meshes).find((m) => m.body === pick.body);
       const highlight = mesh && (pick.kind === 'face' ? faceHighlight(mesh, pick.name, color) : edgeHighlight(mesh, pick.name, color));
       if (!highlight) return;
@@ -352,6 +498,14 @@ export class ViewportScene {
     for (const pick of this.selection) add(pick, this.theme.selection);
     if (this.hovered && !this.selection.some((s) => pickKey(s) === pickKey(this.hovered as Pick))) add(this.hovered, this.theme.hover);
     this.requestRender();
+  }
+
+  /** A small sphere drawn over everything. */
+  private marker(point: Vec3, radius: number, color: string): Mesh {
+    const marker = new Mesh(new SphereGeometry(radius, 12, 8), new MeshBasicMaterial({ color: new Color(color), depthTest: false }));
+    marker.position.set(...point);
+    marker.renderOrder = 6;
+    return marker;
   }
 
   // ---- rendering and camera -----------------------------------------------------------------
@@ -378,7 +532,37 @@ export class ViewportScene {
     if (animating || moving) this.requestRender();
   }
 
-  private turnTo(direction: Vector3, distance: number): void {
+  /** The height of the view at the target, in millimetres. */
+  private viewHeight(): number {
+    if (this.camera === this.orthographic) return (this.orthographic.top - this.orthographic.bottom) / this.orthographic.zoom;
+    return 2 * this.camera.position.distanceTo(this.controls.target) * Math.tan((fov * Math.PI) / 360);
+  }
+
+  /** Sizes the orthographic view to show `height` millimetres (`reset`: at zoom 1). */
+  private setOrthographicHeight(height: number, reset: boolean): void {
+    const camera = this.orthographic;
+    const half = height / 2;
+    const aspect = this.size.width / Math.max(this.size.height, 1);
+    Object.assign(camera, { top: half, bottom: -half, left: -half * aspect, right: half * aspect });
+    if (reset) camera.zoom = 1;
+    camera.updateProjectionMatrix();
+  }
+
+  /** Looks at a box along `direction`, close enough that it fills most of the view. */
+  private frameBox(box: Box3, direction: Vector3): void {
+    const center = box.getCenter(new Vector3());
+    const radius = Math.max(1, box.max.distanceTo(box.min) / 2);
+    const distance = (radius / Math.sin((fov * Math.PI) / 360)) * 1.15;
+    this.perspective.near = Math.max(0.01, distance / 2000);
+    this.perspective.far = distance * 100;
+    this.perspective.updateProjectionMatrix();
+    this.controls.target.copy(center);
+    this.turnTo(direction, distance, true);
+  }
+
+  /** Turns to a direction at a distance; `rescale` also sizes an orthographic view to match that distance. */
+  private turnTo(direction: Vector3, distance: number, rescale = false): void {
+    if (rescale && this.camera === this.orthographic) this.setOrthographicHeight(2 * distance * Math.tan((fov * Math.PI) / 360), true);
     const offset = this.camera.position.clone().sub(this.controls.target).normalize();
     const from = new Quaternion().setFromUnitVectors(new Vector3(0, 0, 1), offset);
     const to = new Quaternion().setFromUnitVectors(new Vector3(0, 0, 1), direction.clone().normalize());

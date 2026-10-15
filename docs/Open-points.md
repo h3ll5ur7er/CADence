@@ -64,15 +64,15 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 
 ## Viewport and interaction
 
-- [X] **Zoom to fit** in component and assembly mode (only the imported viewer frames its contents). *(phase 6)* → [[CAD-34]]
-- [X] **Pick vertices**, not only faces and edges (for measuring and references). *(Architecture: Viewport client)* → [[CAD-35]]
-- [X] **Show and hide bodies and instances, transparency, colours per body.** *(new)* → [[CAD-35]]
-- [X] **Section view** (a cutting plane through the model). *(new)* → [[CAD-34]]
-- [X] **Orthographic camera** as an option to perspective. *(new)* → [[CAD-34]]
-- [X] **Keyboard shortcut reference** and more shortcuts. *(new)* → [[CAD-36]]
+- [X] **Zoom to fit** in component and assembly mode (only the imported viewer frames its contents). *(phase 6)* → [[CAD-34]] ✅
+- [X] **Pick vertices**, not only faces and edges (for measuring and references). *(Architecture: Viewport client)* → [[CAD-35]] ✅
+- [X] **Show and hide bodies and instances, transparency, colours per body.** *(new)* → [[CAD-35]] ✅
+- [X] **Section view** (a cutting plane through the model). *(new)* → [[CAD-34]] ✅
+- [X] **Orthographic camera** as an option to perspective. *(new)* → [[CAD-34]] ✅
+- [X] **Keyboard shortcut reference** and more shortcuts. *(new)* → [[CAD-36]] ✅
 - [ ] **Light and dark theme switch** in the app (today it follows the system). *(new)*
 - [ ] **Touch and tablet use.** *(new)*
-- [X] **Change control schema** CADence (default), Fusion360, Onshape → [[CAD-36]]
+- [X] **Change control schema** CADence (default), Fusion360, Onshape → [[CAD-36]] ✅
 
 ## Analysis and manufacturing
 

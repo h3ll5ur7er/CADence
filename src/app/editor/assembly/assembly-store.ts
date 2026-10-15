@@ -98,7 +98,8 @@ export class AssemblyStore {
       const component = state.components.get(instance.component);
       const transform = preview?.get(instance.id) ?? state.poses.get(instance.id);
       if (!component || !transform) return [];
-      return [{ id: instance.id, bodies: component.bodies, transform, flagged: flagged.has(instance.id) }];
+      const part: PartDisplay = { id: instance.id, bodies: component.bodies, transform, flagged: flagged.has(instance.id), bodyAppearances: component.appearances ?? {} };
+      return [instance.appearance ? { ...part, appearance: instance.appearance } : part];
     });
   });
 

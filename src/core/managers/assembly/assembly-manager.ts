@@ -1,4 +1,5 @@
 import type {
+  Appearance,
   AssemblyDocument,
   BodyMesh,
   DocumentId,
@@ -21,6 +22,8 @@ export type AssemblyCommand =
   /** Refused for instances a joint places. */
   | { readonly type: 'move-instance'; readonly instanceId: string; readonly transform: Matrix4 }
   | { readonly type: 'ground-instance'; readonly instanceId: string; readonly grounded: boolean }
+  /** How an instance is shown; an appearance of defaults only removes it. */
+  | { readonly type: 'set-instance-appearance'; readonly instanceId: string; readonly appearance: Appearance }
   /** An empty name gets the next default ("Revolute 2"). */
   | { readonly type: 'add-joint'; readonly joint: Joint }
   | { readonly type: 'edit-joint'; readonly joint: Joint }
@@ -38,6 +41,8 @@ export interface ComponentView {
   /** `loading` while the Design Manager regenerates it; `missing` when the document is gone. */
   readonly status: 'loading' | 'ready' | 'missing';
   readonly bodies: readonly BodyMesh[];
+  /** How the component shows its bodies, by body id. */
+  readonly appearances?: Readonly<Record<string, Appearance>>;
 }
 
 export interface AssemblyState {

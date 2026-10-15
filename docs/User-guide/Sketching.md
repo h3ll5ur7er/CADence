@@ -25,6 +25,8 @@ To change a sketch later, click it in the **Timeline** in the browser panel. **F
 
 Clicking near an existing point (including the **origin**) snaps to it, so the new geometry shares that point. That is the quickest way to anchor a shape at the origin.
 
+The keys are those of the CADence control style; other styles and the full list are under **?** ([[User guide/Viewing and controls]]). Press **Enter** to finish the sketch.
+
 Select curves and press **X** to turn them into **construction geometry** (dashed). Construction curves help with constraints but are not part of profiles or exports. **Delete** removes the selection along with the relations on it.
 
 ## Constrain and dimension

@@ -1,4 +1,4 @@
-import { type AssemblyDocument, fail, type Joint, jointDofs, type JointType, ok, type Result } from '@core/contracts';
+import { appearanceProblem, type AssemblyDocument, fail, type Instance, isDefaultAppearance, type Joint, jointDofs, type JointType, ok, type Result } from '@core/contracts';
 import type { AssemblyCommand } from './assembly-manager';
 
 /** The document a command produces, and the joint whose solution decides whether it is accepted. */
@@ -69,6 +69,17 @@ export function applyCommand(document: AssemblyDocument, command: AssemblyComman
       const change =
         command.type === 'rename-instance' ? { name: command.name.trim() } : command.type === 'move-instance' ? { transform: command.transform } : { grounded: command.grounded };
       return ok({ document: { ...document, instances: document.instances.map((i) => (i.id === command.instanceId ? { ...i, ...change } : i)) } });
+    }
+    case 'set-instance-appearance': {
+      if (!instance(command.instanceId)) return invalid(`Instance ${command.instanceId} does not exist.`);
+      const problem = appearanceProblem(command.appearance);
+      if (problem) return invalid(problem);
+      const instances = document.instances.map((i): Instance => {
+        if (i.id !== command.instanceId) return i;
+        if (!isDefaultAppearance(command.appearance)) return { ...i, appearance: command.appearance };
+        return Object.fromEntries(Object.entries(i).filter(([key]) => key !== 'appearance')) as unknown as Instance;
+      });
+      return ok({ document: { ...document, instances } });
     }
     case 'add-joint': {
       if (document.joints.some((j) => j.id === command.joint.id)) return invalid(`Id ${command.joint.id} is already in use.`);

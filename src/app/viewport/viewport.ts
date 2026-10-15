@@ -2,6 +2,7 @@ import {
   afterNextRender,
   ChangeDetectionStrategy,
   Component,
+  computed,
   DestroyRef,
   ElementRef,
   effect,
@@ -9,9 +10,15 @@ import {
   input,
   output,
   signal,
+  untracked,
   viewChild,
 } from '@angular/core';
-import type { BodyMesh, PlaneFrame, Vec3 } from '@core/contracts';
+import type { Appearance, BodyMesh, PlaneFrame, Vec3 } from '@core/contracts';
+import { Icon } from '../shared/icon';
+import { mouseBindings } from '../shared/keymap';
+import { Shortcuts } from '../shared/shortcuts';
+import { UserSettings } from '../shared/user-settings';
+import { sectionAxis, sectionPlane, type SectionSetting } from './looks';
 import type { Pick, PickKind } from './picking';
 import type { SketchDisplay } from './sketch-display';
 import type { Affine } from './sketch-planes';
@@ -34,7 +41,24 @@ function readTheme(element: HTMLElement): ViewportTheme {
     hover: token('--hover'),
     selection: token('--selection'),
     flag: token('--flag'),
+    section: token('--section'),
   };
+}
+
+type SectionPlaneChoice = SectionSetting['plane'];
+
+/**
+ * True when WebGPU would run on the processor (a fallback adapter, such as SwiftShader on machines
+ * without a usable GPU). WebGL 2 is the proven path there: software WebGPU may render nothing.
+ */
+async function softwareWebGPU(): Promise<boolean> {
+  const gpu = (navigator as { gpu?: { requestAdapter(): Promise<{ isFallbackAdapter?: boolean; info?: { isFallbackAdapter?: boolean } } | null> } }).gpu;
+  try {
+    const adapter = await gpu?.requestAdapter();
+    return (adapter?.info?.isFallbackAdapter ?? adapter?.isFallbackAdapter) === true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -55,15 +79,65 @@ async function softwareWebGPU(): Promise<boolean> {
  * The 3D viewport shared by all editor modes. Pure presentation: it renders what it is given
  * and never talks to a manager. Rendering happens outside change detection, on demand.
  * Overlays (such as the sketch editor) are projected on top and share its navigation.
+ * How the view is seen (projection, section, framing) belongs to the viewport, not to the document.
  */
 @Component({
   selector: 'cad-viewport',
-  imports: [ViewCube],
+  imports: [ViewCube, Icon],
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: {
+    '[attr.data-projection]': 'settings.projection()',
+    '[attr.data-section]': 'section() ? "on" : "off"',
+  },
   template: `
     <canvas #canvas aria-label="3D viewport"></canvas>
     <ng-content />
-    <cad-view-cube class="cube" (viewSelected)="showView($event)" (pointerdown)="$event.stopPropagation()" />
+    <cad-view-cube class="cube" (viewSelected)="showView($event)" (pointerdown)="$event.stopPropagation()">
+      <button type="button" class="icon-btn tool" aria-label="Zoom to fit" title="Zoom to fit" (click)="zoomToFit()">
+        <cad-icon name="fit" />
+      </button>
+      <button
+        type="button"
+        class="icon-btn tool"
+        [attr.aria-label]="orthographic() ? 'Perspective view' : 'Orthographic view'"
+        [title]="orthographic() ? 'Switch to perspective' : 'Switch to orthographic'"
+        [attr.aria-pressed]="orthographic()"
+        [class.on]="orthographic()"
+        (click)="toggleProjection()"
+      >
+        <cad-icon [name]="orthographic() ? 'orthographic' : 'perspective'" />
+      </button>
+      <button type="button" class="icon-btn tool" aria-label="Section view" title="Section view" [attr.aria-pressed]="!!section()" [class.on]="!!section()" (click)="toggleSection()">
+        <cad-icon name="section" />
+      </button>
+    </cad-view-cube>
+    @if (section(); as s) {
+      <form class="section-panel" aria-label="Section view" (pointerdown)="$event.stopPropagation()" (submit)="$event.preventDefault()">
+        <p class="eyebrow">Section view</p>
+        <label class="field">
+          Plane
+          <select id="section-plane" [value]="s.plane" (change)="setSectionPlane($any($event.target).value)">
+            <option value="XY">XY plane (top)</option>
+            <option value="XZ">XZ plane (front)</option>
+            <option value="YZ">YZ plane (right)</option>
+            <option value="face" [disabled]="!selectedFaceNormal()">Parallel to the selected face</option>
+          </select>
+        </label>
+        <label class="field">
+          Offset <span class="value" data-testid="section-offset">{{ s.offset.toFixed(1) }} mm</span>
+          <input
+            id="section-offset"
+            type="range"
+            [min]="sectionRange()[0]"
+            [max]="sectionRange()[1]"
+            [step]="sectionStep()"
+            [value]="s.offset"
+            (input)="setSectionOffset(+$any($event.target).value)"
+          />
+        </label>
+        <label class="check"><input type="checkbox" [checked]="s.flipped" (change)="flipSection()" /> Flip the side that is cut away</label>
+      </form>
+    }
     @if (failed()) {
       <p class="failure" role="alert">3D graphics are unavailable in this browser.</p>
     }
@@ -74,6 +148,8 @@ export class Viewport {
   readonly showOrigin = input(true);
   readonly sketches = input<readonly SketchDisplay[]>([]);
   readonly bodies = input<readonly BodyMesh[]>([]);
+  /** How the component's bodies are shown, by body id. */
+  readonly appearances = input<Readonly<Record<string, Appearance>>>({});
   /** Assembly instances, each placed by its transform. */
   readonly parts = input<readonly PartDisplay[]>([]);
   /** Construction planes to show. */
@@ -94,11 +170,22 @@ export class Viewport {
 
   /** Plane-to-pixel map of the edited plane, updated as the camera pans and zooms. */
   readonly planeMatrix = signal<Affine | undefined>(undefined);
+  protected readonly settings = inject(UserSettings);
   protected readonly failed = signal(false);
+  protected readonly orthographic = computed(() => this.settings.projection() === 'orthographic');
+  protected readonly section = signal<SectionSetting | undefined>(undefined);
+  protected readonly sectionRange = signal<readonly [number, number]>([-50, 50]);
+  protected readonly sectionStep = computed(() => Math.max(0.01, Number(((this.sectionRange()[1] - this.sectionRange()[0]) / 200).toPrecision(1))));
   private readonly canvas = viewChild.required<ElementRef<HTMLCanvasElement>>('canvas');
   private readonly cube = viewChild.required(ViewCube);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly scene = signal<ViewportScene | undefined>(undefined);
+  /** The normal of the selected flat face, for a section parallel to it. */
+  protected readonly selectedFaceNormal = computed(() => {
+    const scene = this.scene();
+    const face = this.selection().find((p) => p.kind === 'face' && p.planar);
+    return scene && face ? scene.faceNormal(face) : undefined;
+  });
 
   constructor() {
     const destroyRef = inject(DestroyRef);
@@ -141,17 +228,36 @@ export class Viewport {
     effect(() => this.scene()?.setOriginVisible(this.showOrigin()));
     effect(() => this.scene()?.setSketches(this.sketches()));
     effect(() => this.scene()?.editPlane(this.editPlane()));
-    effect(() => this.scene()?.setBodies(this.bodies()));
+    effect(() => this.scene()?.setBodies(this.bodies(), this.appearances()));
     effect(() => this.scene()?.setParts(this.parts()));
     effect(() => this.scene()?.setPlanes(this.planes()));
     effect(() => this.scene()?.setPickable(this.pickable()));
     effect(() => this.scene()?.setSelection(this.selection()));
     effect(() => this.scene()?.setFlagged(this.flagged()));
     effect(() => this.scene()?.setMeasureLine(this.measureLine()));
+    effect(() => this.scene()?.setProjection(this.settings.projection()));
+    effect(() => this.scene()?.setMouse(mouseBindings[this.settings.controls()]));
+    effect(() => {
+      const setting = this.section();
+      this.scene()?.setSection(setting && sectionPlane(setting));
+    });
     effect(() => {
       const box = this.fit();
       if (box) this.scene()?.fitTo(box.min, box.max);
     });
+    const unregister = inject(Shortcuts).register('view', {
+      'zoom-fit': () => this.zoomToFit(),
+      'view-home': () => this.showView('home'),
+      'view-front': () => this.showView('front'),
+      'view-back': () => this.showView('back'),
+      'view-left': () => this.showView('left'),
+      'view-right': () => this.showView('right'),
+      'view-top': () => this.showView('top'),
+      'view-bottom': () => this.showView('bottom'),
+      'toggle-projection': () => this.toggleProjection(),
+      'toggle-section': () => this.toggleSection(),
+    });
+    destroyRef.onDestroy(unregister);
   }
 
   /** The rendered picture as a video stream, for recording animations. */
@@ -161,5 +267,44 @@ export class Viewport {
 
   showView(view: StandardView): void {
     this.scene()?.showView(view);
+  }
+
+  zoomToFit(): void {
+    this.scene()?.zoomToFit();
+  }
+
+  toggleProjection(): void {
+    this.settings.projection.update((p) => (p === 'orthographic' ? 'perspective' : 'orthographic'));
+  }
+
+  /** Turns the section view on, through the middle of the model, or off. */
+  toggleSection(): void {
+    if (this.section()) return this.section.set(undefined);
+    this.startSection({ plane: 'XZ', offset: 0, flipped: false });
+  }
+
+  protected setSectionPlane(plane: SectionPlaneChoice): void {
+    const flipped = this.section()?.flipped ?? false;
+    const normal = this.selectedFaceNormal();
+    if (plane === 'face') {
+      if (normal) this.startSection({ plane, normal, offset: 0, flipped });
+    } else {
+      this.startSection({ plane, offset: 0, flipped });
+    }
+  }
+
+  protected setSectionOffset(offset: number): void {
+    this.section.update((s) => s && { ...s, offset });
+  }
+
+  protected flipSection(): void {
+    this.section.update((s) => s && { ...s, flipped: !s.flipped });
+  }
+
+  /** A new section plane, placed halfway through what is shown along its axis. */
+  private startSection(setting: SectionSetting): void {
+    const range = untracked(() => this.scene()?.extentAlong(sectionAxis(setting))) ?? [-50, 50];
+    this.sectionRange.set(range);
+    this.section.set({ ...setting, offset: Number(((range[0] + range[1]) / 2).toFixed(3)) });
   }
 }

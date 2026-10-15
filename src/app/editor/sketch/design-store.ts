@@ -242,6 +242,11 @@ export class DesignStore {
     return result.ok;
   }
 
+  async exportFlatPattern(format: DrawingFormat): Promise<void> {
+    const result = await this.session?.exportFlatPattern(format);
+    if (result && !result.ok) this.error.set(result.error.message);
+  }
+
   async exportBodies(format: SolidFormat, options?: ExportOptions): Promise<void> {
     const result = await this.session?.exportBodies(format, options);
     if (result && !result.ok) this.error.set(result.error.message);

@@ -1,4 +1,16 @@
-import type { BodyMesh, BodyOperation, BodyState, PlaneFrame, Profile, Result, ThreadMarker, TopologyRef, Vec2, Vec3 } from '@core/contracts';
+import type {
+  BodyMesh,
+  BodyOperation,
+  BodyState,
+  FlangeMarker,
+  PlaneFrame,
+  Profile,
+  Result,
+  ThreadMarker,
+  TopologyRef,
+  Vec2,
+  Vec3,
+} from '@core/contracts';
 import type { HoleSpec } from './holes';
 
 export type { HoleSpec };
@@ -54,6 +66,15 @@ export type ModelingRequest = RequestBase &
         readonly operation: BodyOperation;
       }
     | { readonly type: 'fillet' | 'chamfer'; readonly edges: readonly TopologyRef[]; readonly size: number; readonly endSize?: number }
+    | {
+        readonly type: 'edge-flange';
+        readonly edges: readonly TopologyRef[];
+        readonly length: number;
+        /** Radians. */
+        readonly angle: number;
+        readonly thickness: number;
+        readonly bendRadius: number;
+      }
     | { readonly type: 'draft'; readonly faces: readonly TopologyRef[]; readonly plane: PlaneFrame; readonly angle: number }
     | {
         readonly type: 'rib';
@@ -142,6 +163,8 @@ export interface ModelingOutcome {
   readonly error?: string;
   /** Where a thread feature put its thread. */
   readonly thread?: ThreadMarker;
+  /** Where an edge flange feature put its flanges. */
+  readonly flanges?: readonly FlangeMarker[];
 }
 
 /**

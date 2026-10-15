@@ -51,6 +51,8 @@ const featureLabels: Readonly<Record<FeatureType, string>> = {
   thread: 'Thread',
   draft: 'Draft',
   rib: 'Rib',
+  'base-flange': 'Base flange',
+  'edge-flange': 'Edge flange',
 };
 
 const invalid = (message: string) => fail({ code: 'invalid-command', message });

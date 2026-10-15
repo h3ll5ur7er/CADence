@@ -448,6 +448,22 @@ describe('component results and joint frames', () => {
       expect(added).toBeLessThan((40 + 2) * 2 * 10 + 1e-6);
     });
   });
+
+  describe('sheet metal', () => {
+    it('bends a flange up from an edge of a sheet', async () => {
+      const sheet = ok(await plate(2, 'sheet-2'));
+      const edge = (await names(sheet)).edges.find((e) => e.includes('f:plate:end') && e.includes('side:plate-right')) as string;
+      const flanged = await engine.apply({ type: 'edge-flange', feature: 'fl', key: 'flange', bodies: sheet, edges: [{ kind: 'edge', body: 'plate', name: edge, hint: [80, 20, 2] }], length: 20, angle: Math.PI / 2, thickness: 2, bendRadius: 2 });
+      const bodies = ok(flanged);
+      // A quarter ring of the sheet's thickness, then 20 mm of flange, all along the 40 mm edge.
+      const bend = (Math.PI / 4) * (4 * 4 - 2 * 2) * 40;
+      expect((await volume(bodies)) - 80 * 40 * 2).toBeCloseTo(bend + 20 * 2 * 40, 1);
+      expect(flanged.flanges?.[0]).toMatchObject({ away: [expect.closeTo(1, 9), expect.closeTo(0, 9), expect.closeTo(0, 9)], up: [expect.closeTo(0, 9), expect.closeTo(0, 9), 1] });
+      const faces = (await names(bodies)).faces;
+      expect(faces.some((f) => f.startsWith('f:fl:bend:'))).toBe(true);
+      expect(faces.some((f) => f.startsWith('f:fl:flange:'))).toBe(true);
+    });
+  });
 });
 
 const normal = (f: { u: readonly number[]; v: readonly number[] }) => [

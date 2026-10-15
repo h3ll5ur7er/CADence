@@ -75,6 +75,8 @@ const featureMenus: readonly { id: string; label: string; icon: IconName; items:
       { type: 'hole', icon: 'hole' },
       { type: 'rib', icon: 'rib' },
       { type: 'thread', icon: 'thread' },
+      { type: 'base-flange', icon: 'sheet' },
+      { type: 'edge-flange', icon: 'flange' },
       { type: 'insert', icon: 'imported' },
     ],
   },
@@ -125,6 +127,8 @@ const itemIcons: Readonly<Record<TimelineItem['type'], IconName>> = {
   thread: 'thread',
   draft: 'draft',
   rib: 'rib',
+  'base-flange': 'sheet',
+  'edge-flange': 'flange',
 };
 
 const exportFormats: readonly { format: SolidFormat; label: string }[] = [
@@ -307,6 +311,11 @@ export class ComponentMode {
   }
 
   /** The export form: one format, the bodies to include and the mesh quality. */
+  protected exportFlat(format: 'dxf' | 'svg'): void {
+    this.menu.set(undefined);
+    void this.store.exportFlatPattern(format);
+  }
+
   protected readonly exportDraft = signal<{ format: SolidFormat; bodies: readonly string[]; quality: MeshQuality; configuration: string } | undefined>(undefined);
 
   protected openExport(): void {

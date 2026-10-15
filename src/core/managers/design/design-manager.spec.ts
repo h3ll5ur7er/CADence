@@ -544,6 +544,25 @@ describe('DesignManager', () => {
       expect((await assets.latestResult(documentId, 'big'))?.bytes.length).toBeGreaterThan(0);
     });
 
+    it('makes sheet metal parts: a base flange, edge flanges, and the flat pattern', async () => {
+      await drawRectangle(); // 28 × 15 from (2, 1)
+      const profile = session.state().sketches.get('s1')?.profiles[0]?.id as string;
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'bf', type: 'base-flange', name: '', suppressed: false, sketch: 's1', profiles: [profile], direction: 'normal', thickness: '1.5 mm', bendRadius: '1 mm', kFactor: '0.4' } }));
+      expect(session.state().sheetMetal).toBe(true);
+      expect(await volume()).toBeCloseTo(28 * 15 * 1.5);
+      const edge = session.state().bodies[0]?.edges.find((e) => e.name.includes('f:bf:end') && e.name.includes(':side:bc'));
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'ef', type: 'edge-flange', name: '', suppressed: false, edges: [{ kind: 'edge', body: 'bf', name: edge?.name as string, hint: [30, 8.5, 1.5] }], length: '10', angle: '90 deg' } }));
+      expect(await volume()).toBeGreaterThan(28 * 15 * 1.5 + 10 * 1.5 * 15);
+      unwrap(await session.exportFlatPattern('dxf'));
+      const file = files.delivered.at(-1);
+      expect(file?.name).toBe('Component 1 - flat pattern.dxf');
+      const text = new TextDecoder().decode(file?.bytes);
+      expect(text).toContain('\nBEND\n');
+      // The flange lies flat: the bend allowance (π/2 × (1 + 0.4 × 1.5)) and 10 mm beyond x = 30.
+      const allowance = (Math.PI / 2) * (1 + 0.4 * 1.5);
+      expect(text).toContain(String(Math.round((30 + allowance + 10) * 1e6) / 1e6).slice(0, 6));
+    });
+
     it('refuses parameter changes that would break the model', async () => {
       await plate();
       const broken = await session.execute({ type: 'delete-parameter', id: 'pt' });

@@ -46,6 +46,8 @@ export const featureLabels: Readonly<Record<FeatureType, string>> = {
   thread: 'Thread',
   draft: 'Draft',
   rib: 'Rib',
+  'base-flange': 'Base flange',
+  'edge-flange': 'Edge flange',
 };
 
 /** Points of a sketch that no curve uses: where holes go. */
@@ -168,6 +170,10 @@ export function defaultFeature(type: FeatureType, id: string, state: DesignState
       return { ...base, type, face: { kind: 'face', body: '', name: '' }, size: 'M6', length: '', modelled: false, flip: false };
     case 'draft':
       return { ...base, type, faces: [], plane: 'XY', angle: '3 deg' };
+    case 'base-flange':
+      return { ...base, type, sketch: sketch?.id ?? '', profiles, direction: 'normal', thickness: '2 mm', bendRadius: '2 mm', kFactor: '0.44' };
+    case 'edge-flange':
+      return { ...base, type, edges: [], length: '20', angle: '90 deg' };
     case 'rib': {
       const ribSketch = active.filter(isSketch).at(-1);
       return { ...base, type, sketch: ribSketch?.id ?? '', thickness: '2', depth: '10', direction: 'normal' };
@@ -196,7 +202,10 @@ export function pickableFor(draft: FeatureDraft | undefined): ReadonlySet<PickKi
     case 'revolve':
     case 'loft':
     case 'sweep':
+    case 'base-flange':
       return new Set<PickKind>(['profile']);
+    case 'edge-flange':
+      return new Set<PickKind>(['edge']);
     case 'fillet':
     case 'chamfer':
       return new Set<PickKind>(['edge']);
@@ -241,6 +250,10 @@ export function selectionOf(draft: FeatureDraft): Pick[] {
       return planeFace(f.plane);
     case 'move':
       return f.axis.kind === 'edge' ? [pickOf(f.axis.edge)] : [];
+    case 'base-flange':
+      return f.profiles.map((profile): Pick => ({ kind: 'profile', sketch: f.sketch, profile }));
+    case 'edge-flange':
+      return f.edges.map(pickOf);
     case 'loft':
       return f.sections.map((s): Pick => ({ kind: 'profile', sketch: s.sketch, profile: s.profile }));
     case 'sweep':
@@ -288,6 +301,9 @@ export function applyPick(draft: FeatureDraft, pick: Pick): FeatureDraft {
       const profiles = pick.sketch === f.sketch ? toggle(f.profiles, pick.profile, (a, b) => a === b) : [pick.profile];
       return { ...draft, feature: { ...f, sketch: pick.sketch, profiles } };
     }
+    case 'edge-flange':
+      return pick.kind === 'edge' ? { ...draft, feature: { ...f, edges: toggle(f.edges, refOf(pick), sameRef) } } : draft;
+    case 'base-flange':
     case 'sweep': {
       if (pick.kind !== 'profile') return draft;
       const profiles = pick.sketch === f.sketch ? toggle(f.profiles, pick.profile, (a, b) => a === b) : [pick.profile];

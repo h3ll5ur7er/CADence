@@ -1,5 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
-import { evidence, plateProject } from './support';
+import { center, evidence, fromModelMenu, plateProject, screenPositionOf } from './support';
 
 /** Phase 12 (Parameters and sheet metal) user journey: units, project parameters, configurations, sheet metal. */
 test.setTimeout(180_000);
@@ -68,4 +69,47 @@ test('keeps configurations of a component and shows one in an assembly', async (
   await page.getByRole('button', { name: 'Home view' }).click();
   await page.waitForTimeout(800);
   await evidence(page, '55-configuration-in-assembly');
+});
+
+test('bends a flange up from a sheet and lays it flat for the laser', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'New project' }).first().click();
+  await page.getByRole('textbox', { name: 'Name' }).fill('Bracket');
+  await page.getByRole('button', { name: 'Create project' }).click();
+  await expect(page.getByTestId('renderer')).toHaveText(/WebGPU|WebGL 2/);
+  await page.getByRole('button', { name: 'New sketch' }).click();
+  await page.getByRole('menuitem', { name: 'XY plane (top)' }).click();
+  await page.waitForTimeout(500);
+  const origin = await center(page, 'circle.point.origin');
+  await page.getByRole('button', { name: 'Rectangle', exact: true }).click();
+  await page.mouse.click(origin.x, origin.y);
+  await page.mouse.click(origin.x + 240, origin.y - 120);
+  await page.getByRole('button', { name: 'Finish sketch' }).click();
+
+  await fromModelMenu(page, 'Create', 'Base flange');
+  await expect(page.getByTestId('profile-selection')).toHaveText('1 profile selected');
+  await page.getByRole('button', { name: 'OK' }).click();
+  await expect(page.getByTestId('body-count')).toHaveText('1');
+
+  await page.getByRole('button', { name: 'Home view' }).click();
+  await page.waitForTimeout(1000);
+  await fromModelMenu(page, 'Create', 'Edge flange');
+  // A top edge of the sheet: between its end face and a side.
+  const edge = await screenPositionOf(page, 'edge', ':end[|]');
+  await page.mouse.move(edge.x, edge.y);
+  await page.waitForTimeout(300);
+  await page.mouse.click(edge.x, edge.y);
+  await expect(page.getByTestId('edge-selection')).toHaveText('1 edge selected');
+  await page.getByRole('button', { name: 'OK' }).click();
+  await expect(page.locator('.item.failed')).toHaveCount(0);
+  await page.waitForTimeout(600);
+  await evidence(page, '56-sheet-metal');
+
+  await page.getByRole('button', { name: 'Export' }).click();
+  const download = page.waitForEvent('download');
+  await page.getByRole('menuitem', { name: 'Flat pattern (DXF)' }).click();
+  const file = await download;
+  expect(file.suggestedFilename()).toBe('Component 1 - flat pattern.dxf');
+  await file.saveAs('e2e/evidence/bracket-flat.dxf');
+  expect(readFileSync('e2e/evidence/bracket-flat.dxf', 'utf8')).toContain('BEND');
 });

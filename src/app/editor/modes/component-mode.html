@@ -214,6 +214,10 @@
                 <button type="button" role="menuitem" (click)="exportAs(f.format)">{{ f.label }}</button>
               }
               <button type="button" role="menuitem" (click)="openExport()">With options…</button>
+              @if (store.state()?.sheetMetal) {
+                <button type="button" role="menuitem" (click)="exportFlat('dxf')">Flat pattern (DXF)</button>
+                <button type="button" role="menuitem" (click)="exportFlat('svg')">Flat pattern (SVG)</button>
+              }
             </div>
           }
           @if (exportDraft(); as draft) {

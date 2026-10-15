@@ -132,6 +132,8 @@ export interface DesignState {
   readonly bodies: readonly BodyMesh[];
   /** Threads, for showing on their faces. */
   readonly threads: readonly ThreadMarker[];
+  /** Whether the component is a sheet metal part (it has a base flange), which can be laid flat. */
+  readonly sheetMetal: boolean;
   readonly parameters: readonly ParameterView[];
   readonly canUndo: boolean;
   readonly canRedo: boolean;
@@ -172,6 +174,8 @@ export interface DesignSession {
    * the drawing keeps its proportions and moves, turns and scales by two handle points.
    */
   insertDrawing(sketchId: string, documentId: DocumentId, idPrefix: string, options?: InsertDrawingOptions): Promise<Result<void>>;
+  /** The sheet metal part laid flat (cut outlines, bend lines apart), for laser cutting and bending. */
+  exportFlatPattern(format: DrawingFormat): Promise<Result<void>>;
   /** All bodies, one file. */
   exportBodies(format: SolidFormat, options?: ExportOptions): Promise<Result<void>>;
   /** Area, length, radius, distance and angle of picked faces and edges. */

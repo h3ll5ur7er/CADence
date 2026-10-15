@@ -78,6 +78,51 @@
           <input id="feature-end-size" autocomplete="off" [value]="f.endSize ?? ''" (change)="set({ endSize: length($event) })" />
         </label>
       }
+      @case ('base-flange') {
+        <label class="field">
+          Sketch
+          <select id="feature-sketch" [value]="f.sketch" (change)="set({ sketch: value($event), profiles: [] })">
+            @for (s of sketches(); track s.id) {
+              <option [value]="s.id">{{ s.name }}</option>
+            }
+          </select>
+        </label>
+        <p class="count" data-testid="profile-selection">{{ f.profiles.length }} profile{{ f.profiles.length === 1 ? '' : 's' }} selected</p>
+        <label class="field">
+          Direction
+          <select id="feature-direction" [value]="f.direction" (change)="set({ direction: $any(value($event)) })">
+            <option value="normal">Along the normal</option>
+            <option value="reverse">Reversed</option>
+          </select>
+        </label>
+        <div class="row">
+          <label class="field">
+            Thickness
+            <input id="feature-thickness" autocomplete="off" [value]="f.thickness" (change)="set({ thickness: length($event) })" />
+          </label>
+          <label class="field">
+            Bend radius
+            <input id="feature-bend-radius" autocomplete="off" [value]="f.bendRadius" (change)="set({ bendRadius: length($event) })" />
+          </label>
+          <label class="field">
+            K-factor
+            <input id="feature-k-factor" autocomplete="off" [value]="f.kFactor" (change)="set({ kFactor: value($event) })" />
+          </label>
+        </div>
+      }
+      @case ('edge-flange') {
+        <p class="count" data-testid="edge-selection">{{ f.edges.length }} edge{{ f.edges.length === 1 ? '' : 's' }} selected</p>
+        <div class="row two">
+          <label class="field">
+            Length
+            <input id="feature-length" autocomplete="off" [value]="f.length" (change)="set({ length: length($event) })" />
+          </label>
+          <label class="field">
+            Angle
+            <input id="feature-angle" autocomplete="off" [value]="f.angle" (change)="set({ angle: value($event) })" />
+          </label>
+        </div>
+      }
       @case ('draft') {
         <p class="count" data-testid="face-selection">{{ f.faces.length }} face{{ f.faces.length === 1 ? '' : 's' }} to draft</p>
         <label class="field">

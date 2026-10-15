@@ -27,6 +27,7 @@ import type { AnalysisEngine } from '@core/engines/analysis';
 import type { InterchangeEngine } from '@core/engines/interchange';
 import type { ModelingEngine } from '@core/engines/modeling';
 import type { ParameterEngine } from '@core/engines/parameter';
+import { flatPattern } from '@core/engines/sheet-metal';
 import { inferRelations, type SketchEngine } from '@core/engines/sketch';
 import type { Clock } from '@core/utilities/clock';
 import type { EventBus } from '@core/utilities/messaging';
@@ -111,6 +112,7 @@ class Session implements DesignSession {
       planes: derived.planes,
       bodies: meshes,
       threads: derived.threads,
+      sheetMetal: derived.sheet !== undefined,
       parameters: derived.parameters,
       canUndo: this.undoStack.length > 0,
       canRedo: this.redoStack.length > 0,
@@ -200,6 +202,16 @@ class Session implements DesignSession {
       });
     }
     return this.execute({ type: 'add-sketch-geometry', sketchId, entities, constraints: inferRelations(entities, options.relations ?? 'none', idPrefix) });
+  }
+
+  async exportFlatPattern(format: DrawingFormat): Promise<Result<void>> {
+    const { document, derived } = this.current;
+    if (!derived.sheet) return fail({ code: 'not-sheet-metal', message: 'Only sheet metal parts (with a base flange) can be laid flat.' });
+    const pattern = flatPattern(derived.sheet.frame, derived.sheet.profiles, derived.flanges, derived.sheet.rules);
+    if (!pattern.ok) return pattern;
+    const bytes = await this.deps.interchange.exportOutlines(pattern.value.cuts, pattern.value.bends, format);
+    await this.deps.externalFiles.deliver({ name: `${document.name} - flat pattern.${format}`, mediaType: drawingTypes[format], bytes });
+    return ok(undefined);
   }
 
   async exportBodies(format: SolidFormat, options: ExportOptions = {}): Promise<Result<void>> {

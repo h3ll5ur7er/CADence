@@ -1,5 +1,19 @@
+import { ellipseParameter } from '@core/utilities/math';
 import { place, type ShapeAccess } from '@core/access/shape';
-import { fail, type ImportFormat, type Matrix4, type MeshQuality, ok, type Result, type Sketch, type ProfileEdge, type SketchEntity, type TextOutlines, type TextWeight, type Vec2 } from '@core/contracts';
+import {
+  fail,
+  type ImportFormat,
+  type Matrix4,
+  type MeshQuality,
+  ok,
+  type ProfileEdge,
+  type Result,
+  type Sketch,
+  type SketchEntity,
+  type TextOutlines,
+  type TextWeight,
+  type Vec2,
+} from '@core/contracts';
 import { exportSTEP, type Shape3D } from 'replicad';
 import { compensatedCurves, type DrawingCurve, drawingCurves, type KerfCompensation } from './drawing';
 import { type DrawingText, type ReadDrawing, readDxf, readSvg, sketchEntities } from './drawing-readers';
@@ -33,6 +47,8 @@ export interface InterchangeEngine {
    */
   /** `texts`: the outlines of the sketch's texts, as solving produced them. */
   exportDrawing(sketch: Sketch, format: DrawingFormat, kerf?: KerfCompensation, texts?: TextOutlines): Promise<Uint8Array>;
+  /** Outlines to cut and lines to mark (bend lines, apart from the cut), as a drawing. */
+  exportOutlines(cuts: readonly ProfileEdge[], marks: readonly ProfileEdge[], format: DrawingFormat): Promise<Uint8Array>;
   /** Solid bodies: STEP keeps exact geometry; STL, OBJ and 3MF are fine triangle meshes. */
   /** One file of the bodies; meshes for STL, 3MF and OBJ at the given quality (STEP stays exact). */
   exportBodies(bodies: readonly BodySource[], format: SolidFormat, quality?: MeshQuality): Promise<Uint8Array>;
@@ -58,7 +74,7 @@ export interface InterchangeEngine {
 }
 
 /** One writer per format: adding a format is a local change. */
-const drawingWriters: Readonly<Record<DrawingFormat, (curves: readonly DrawingCurve[]) => string>> = {
+const drawingWriters: Readonly<Record<DrawingFormat, (curves: readonly DrawingCurve[], marks?: readonly DrawingCurve[]) => string>> = {
   dxf: writeDxf,
   svg: writeSvg,
 };
@@ -216,6 +232,10 @@ class DefaultInterchangeEngine implements InterchangeEngine {
     return new TextEncoder().encode(drawingWriters[format](curves));
   }
 
+  async exportOutlines(cuts: readonly ProfileEdge[], marks: readonly ProfileEdge[], format: DrawingFormat): Promise<Uint8Array> {
+    return new TextEncoder().encode(drawingWriters[format](cuts.map(edgeCurve), marks.map(edgeCurve)));
+  }
+
   async exportBodies(bodies: readonly BodySource[], format: SolidFormat, quality: MeshQuality = 'normal'): Promise<Uint8Array> {
     const shapes = this.shapes;
     if (!shapes) throw new Error('Exporting solids needs the geometry kernel.');
@@ -246,6 +266,31 @@ export function createInterchangeEngine(shapes?: ShapeAccess, fonts?: (weight: T
 }
 
 /** A fine triangle mesh of a solid, for mesh formats. */
+/** A profile edge as a drawing curve (arcs counter-clockwise, as drawings keep them). */
+function edgeCurve(edge: ProfileEdge): DrawingCurve {
+  switch (edge.kind) {
+    case 'line':
+      return { kind: 'line', start: edge.start, end: edge.end };
+    case 'bezier':
+      return { kind: 'bezier', points: [edge.start, edge.c1, edge.c2, edge.end] };
+    case 'arc': {
+      const [from, to] = edge.ccw ? [edge.start, edge.end] : [edge.end, edge.start];
+      const startAngle = Math.atan2(from[1] - edge.center[1], from[0] - edge.center[0]);
+      const endAngle = Math.atan2(to[1] - edge.center[1], to[0] - edge.center[0]);
+      const sweep = (((endAngle - startAngle) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) || 2 * Math.PI;
+      return { kind: 'arc', center: edge.center, radius: edge.radius, startAngle, sweep };
+    }
+    case 'ellipse': {
+      const ellipse = { center: edge.center, a: edge.a, b: edge.b, rotation: edge.rotation };
+      const [from, to] = edge.ccw ? [edge.start, edge.end] : [edge.end, edge.start];
+      const start = ellipseParameter(ellipse, from);
+      const end = ellipseParameter(ellipse, to);
+      const sweep = (((end - start) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) || 2 * Math.PI;
+      return { kind: 'ellipse', ellipse, start, sweep };
+    }
+  }
+}
+
 /** Chordal deviation as a share of the body's diagonal (with a floor in mm), and angular deviation, per quality. */
 const meshTolerances: Readonly<Record<MeshQuality, { share: number; floor: number; angle: number }>> = {
   draft: { share: 1 / 1000, floor: 0.02, angle: 0.3 },

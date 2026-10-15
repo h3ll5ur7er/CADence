@@ -4,6 +4,7 @@ import { type Edge, type Face, getOC, measureVolume, type Shape3D, Vertex } from
 import { combine, type LoadedBody, renameCopy } from './bodies';
 import { BodyOperationError, combineBodies, splitBody, transformBodies } from './body-operations';
 import { DraftRibError, draftFaces, ribTool } from './draft-rib';
+import { edgeFlanges, FlangeError } from './flanges';
 import { HoleError, holeTool, threadGroove, threadPlacement } from './holes';
 import { add3, cross3, dot3, normalize3, scale3, sub3, toPlane } from './geometry';
 import type { AxisInput, BodyState, ModelingEngine, ModelingOutcome, ModelingRequest, ProjectedCurve, ToolInput } from './modeling-engine';
@@ -30,7 +31,7 @@ export class OcctModelingEngine implements ModelingEngine {
     try {
       outcome = this.compute(request);
     } catch (error) {
-      const message = error instanceof FeatureError || error instanceof BodyOperationError || error instanceof HoleError || error instanceof DraftRibError ? error.message : `The geometry kernel could not build this feature (${describe(error)}).`;
+      const message = error instanceof FeatureError || error instanceof BodyOperationError || error instanceof HoleError || error instanceof DraftRibError || error instanceof FlangeError ? error.message : `The geometry kernel could not build this feature (${describe(error)}).`;
       outcome = { bodies: request.bodies, error: message };
     }
     this.remember(request.key, outcome);
@@ -174,6 +175,17 @@ export class OcctModelingEngine implements ModelingEngine {
           request.type,
           request.endSize === undefined ? undefined : positive(request.endSize, 'end radius'),
         );
+      case 'edge-flange': {
+        if (request.edges.length === 0) throw new FeatureError('Select the edges to put flanges on.');
+        const bodyId = (request.edges[0] as TopologyRef).body;
+        const body = bodies.find((b) => b.state.id === bodyId);
+        if (!body || request.edges.some((r) => r.body !== bodyId)) throw new FeatureError('Select edges of one sheet.');
+        const edges = request.edges.map((ref) => ({ ref, edge: this.element(body, ref) as Edge }));
+        const rules = { thickness: positive(request.thickness, 'sheet thickness'), bendRadius: request.bendRadius };
+        const { named, markers } = edgeFlanges(request.feature, body.named, edges, rules, positive(request.length, 'flange length'), request.angle);
+        const state = { id: body.state.id, key: `${request.key}:${body.state.id}` };
+        return { ...this.store({ bodies: bodies.map((b) => (b === body ? state : b.state)), stored: [[state.key, named]] }), flanges: markers };
+      }
       case 'draft': {
         if (request.faces.length === 0) throw new FeatureError('Select the faces to draft.');
         const bodyId = (request.faces[0] as TopologyRef).body;

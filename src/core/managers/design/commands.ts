@@ -13,7 +13,8 @@ import {
   type SketchEntity,
   sketchOriginId,
 } from '@core/contracts';
-import type { DesignCommand } from './design-manager';
+import { chamfer, type EditResult, extend as extendCurve, fillet, offset, type SketchEdit, split, trim } from '@core/engines/sketch';
+import type { DesignCommand, SketchOperation } from './design-manager';
 
 /** The document a command produces, plus what must come out of regeneration intact for it to be accepted. */
 export interface Applied {
@@ -145,6 +146,35 @@ function remove(sketch: Sketch, ids: readonly string[]): Sketch {
   };
 }
 
+/** The edit an editing tool makes of a sketch, or why it cannot. */
+function editOf(sketch: Sketch, operation: SketchOperation, prefix: string): EditResult {
+  switch (operation.kind) {
+    case 'trim':
+      return trim(sketch, operation.curve, operation.at, prefix);
+    case 'extend':
+      return extendCurve(sketch, operation.curve, operation.at, prefix);
+    case 'split':
+      return split(sketch, operation.curve, operation.at, prefix);
+    case 'offset':
+      return offset(sketch, operation.curves, operation.distance, prefix);
+    case 'fillet':
+      return fillet(sketch, operation.point, operation.size, prefix);
+    case 'chamfer':
+      return chamfer(sketch, operation.point, operation.size, prefix);
+  }
+}
+
+/** Applies an edit: changed entities, removals (with what depends on them), points no curve uses any more, then additions. */
+function applyEdit(sketch: Sketch, edit: SketchEdit): Result<Sketch> {
+  const changed = new Map(edit.update.map((e) => [e.id, e]));
+  const before = new Set(edit.update.flatMap((e) => references(sketch.entities.find((x) => x.id === e.id) ?? e)));
+  let next = remove({ ...sketch, entities: sketch.entities.map((e) => changed.get(e.id) ?? e) }, edit.remove);
+  const used = new Set([...next.entities, ...edit.add].flatMap(references));
+  const orphans = [...before].filter((p) => p !== sketchOriginId && !used.has(p) && next.entities.some((e) => e.id === p && e.kind === 'point'));
+  next = remove(next, orphans);
+  return extend(next, edit.add, edit.constraints);
+}
+
 export function applyCommand(document: ComponentDocument, command: DesignCommand): Result<Applied> {
   switch (command.type) {
     case 'create-sketch': {
@@ -190,6 +220,11 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
       );
     case 'delete-sketch-elements':
       return withSketch(document, command.sketchId, (s) => ok(remove(s, command.ids)));
+    case 'edit-sketch':
+      return withSketch(document, command.sketchId, (s) => {
+        const result = editOf(s, command.operation, command.idPrefix);
+        return result.ok ? applyEdit(s, result.edit) : invalid(result.reason);
+      });
     case 'rename-item': {
       const name = command.name.trim();
       if (!name || name.length > 80) return fail({ code: 'invalid-name', message: 'Names need 1 to 80 characters.' });

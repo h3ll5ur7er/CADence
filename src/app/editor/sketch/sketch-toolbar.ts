@@ -1,8 +1,9 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, DestroyRef, inject, signal } from '@angular/core';
 import { isCurve, type SketchEntity, sketchOriginId } from '@core/contracts';
 import type { DrawingFormat } from '@core/managers/design';
 import { newId } from '@core/utilities/identity';
 import { Icon, type IconName } from '../../shared/icon';
+import { Shortcuts } from '../../shared/shortcuts';
 import { DesignStore } from './design-store';
 import { type ConstraintTool, constraintFor, type Tool } from './sketch-tools';
 
@@ -20,6 +21,14 @@ const tools: readonly { tool: Tool; icon: IconName; label: string; key?: string 
   { tool: 'spline', icon: 'spline', label: 'Spline' },
   { tool: 'point', icon: 'point', label: 'Point', key: 'P' },
   { tool: 'dimension', icon: 'dimension', label: 'Dimension', key: 'D' },
+];
+
+const editingTools: readonly { tool: Tool; icon: IconName; label: string; key?: string }[] = [
+  { tool: 'trim', icon: 'trim', label: 'Trim', key: 'T' },
+  { tool: 'extend', icon: 'extend', label: 'Extend' },
+  { tool: 'split', icon: 'split', label: 'Split' },
+  { tool: 'fillet', icon: 'fillet', label: 'Sketch fillet' },
+  { tool: 'chamfer', icon: 'chamfer', label: 'Sketch chamfer' },
 ];
 
 const constraintTools: readonly { tool: ConstraintTool; symbol: string; label: string }[] = [
@@ -50,6 +59,11 @@ const hints: Readonly<Record<Tool, string>> = {
   polygon: 'Click the centre, then a corner. Set the number of sides in the toolbar.',
   ellipse: 'Click the centre, the end of the long axis, then how wide the ellipse is.',
   spline: 'Click each point the curve passes through. Double-click to end; click the first point to close it.',
+  trim: 'Click the piece of a curve to cut away, up to where other curves cross it.',
+  extend: 'Click near the end of a line or arc to lengthen it to the next curve.',
+  split: 'Click a line or arc where it should break in two.',
+  fillet: 'Click a corner where two lines meet to round it with the radius in the toolbar.',
+  chamfer: 'Click a corner where two lines meet to cut it at the distance in the toolbar.',
   dimension: 'Click a line, circle or arc, or two items, then type the value.',
 };
 
@@ -64,6 +78,10 @@ const hints: Readonly<Record<Tool, string>> = {
 export class SketchToolbar {
   protected readonly store = inject(DesignStore);
   protected readonly tools = tools;
+  protected readonly editingTools = editingTools;
+  /** Distance of the offset form, while it is open. */
+  protected readonly offsetDistance = signal<number | undefined>(undefined);
+  protected readonly canOffset = computed(() => this.selected().some((e) => e.kind === 'line' || e.kind === 'arc' || e.kind === 'circle'));
   protected readonly constraintTools = constraintTools;
 
   protected readonly view = this.store.editedView;
@@ -90,6 +108,28 @@ export class SketchToolbar {
     return `${view.degreesOfFreedom} degree${view.degreesOfFreedom === 1 ? '' : 's'} of freedom`;
   });
   protected readonly canToggleConstruction = computed(() => this.selected().some(isCurve));
+
+  constructor() {
+    const stop = inject(Shortcuts).register('sketch', { 'sketch-offset': () => this.canOffset() && this.offsetDistance.set(2) });
+    inject(DestroyRef).onDestroy(stop);
+  }
+
+  protected setCornerSize(value: string): void {
+    const size = Number(value);
+    if (size > 0) this.store.cornerSize.set(size);
+  }
+
+  /** Offsets the selected curves; a negative distance offsets to the other side. */
+  protected async applyOffset(value: string): Promise<void> {
+    const sketchId = this.store.editing();
+    const distance = Number(value);
+    if (!sketchId || !Number.isFinite(distance) || distance === 0) return;
+    const curves = this.selected().filter((e) => e.kind !== 'point').map((e) => e.id);
+    if (await this.store.run({ type: 'edit-sketch', sketchId, operation: { kind: 'offset', curves, distance }, idPrefix: `${newId()}-` })) {
+      this.offsetDistance.set(undefined);
+      this.store.select([]);
+    }
+  }
 
   protected setSides(value: string): void {
     const sides = Math.round(Number(value));

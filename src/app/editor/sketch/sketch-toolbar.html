@@ -21,6 +21,40 @@
     }
   </div>
 
+  <div class="group" role="group" aria-label="Edit curves">
+    @for (t of editingTools; track t.tool) {
+      <button
+        type="button"
+        class="tool"
+        [class.active]="store.tool() === t.tool"
+        [attr.aria-pressed]="store.tool() === t.tool"
+        [attr.aria-label]="t.label"
+        [title]="t.key ? t.label + ' (' + t.key + ')' : t.label"
+        (click)="store.tool.set(t.tool)"
+      >
+        <cad-icon [name]="t.icon" [size]="18" />
+      </button>
+    }
+    @if (store.tool() === 'fillet' || store.tool() === 'chamfer') {
+      <label class="sides" [title]="store.tool() === 'fillet' ? 'Radius of the rounded corner' : 'Distance cut back along each line'">
+        <input type="number" min="0.01" step="0.5" [attr.aria-label]="store.tool() === 'fillet' ? 'Fillet radius' : 'Chamfer distance'" [value]="store.cornerSize()" (change)="setCornerSize($any($event.target).value)" />
+        mm
+      </label>
+    }
+    <div class="menu">
+      <button type="button" class="tool" aria-label="Offset" title="Offset the selected curves (O)" [disabled]="!canOffset()" (click)="offsetDistance.set(offsetDistance() === undefined ? 2 : undefined)">
+        <cad-icon name="offset" [size]="18" />
+      </button>
+      @if (offsetDistance() !== undefined) {
+        <form class="menu-list offset" aria-label="Offset" (submit)="$event.preventDefault(); applyOffset(distance.value)">
+          <label>Distance <input #distance type="number" step="0.5" aria-label="Offset distance" [value]="offsetDistance()" /> mm</label>
+          <span class="hint">Negative offsets to the other side.</span>
+          <button type="submit" class="btn btn-primary">Offset</button>
+        </form>
+      }
+    </div>
+  </div>
+
   <div class="group" role="group" aria-label="Constrain the selection">
     @for (c of constraintTools; track c.tool) {
       <button

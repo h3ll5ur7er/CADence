@@ -58,17 +58,28 @@ const tolerance = 1e-9;
  * Returns nothing when a detail is smaller than the offset (an arc or edge would vanish or flip).
  */
 export function offsetLoop(loop: readonly LoopEdge[], by: number): LineOrArc[] | undefined {
-  const edges = loop.flatMap(linesAndArcs);
+  return offsetChain(loop, by, true)?.map((piece) => piece.edge);
+}
+
+/**
+ * Moves a chain of edges `by` mm to the right of its direction of travel, closed (a loop) or open.
+ * Each piece names the edge it came from; corners the offset has to go round get an arc of their own
+ * (`source` undefined).
+ */
+export function offsetChain(chain: readonly LoopEdge[], by: number, closed: boolean): { edge: LineOrArc; source: number | undefined }[] | undefined {
+  const pieces = chain.flatMap((edge, source) => linesAndArcs(edge).map((piece) => ({ piece, source })));
+  const edges = pieces.map((p) => p.piece);
   const moved: Edge[] = [];
   for (const edge of edges) {
     const next = shift(edge, by);
     if (!next) return undefined;
     moved.push(next);
   }
-  const result: Edge[] = [];
+  const result: { edge: LineOrArc; source: number | undefined }[] = [];
   moved.forEach((edge, i) => {
+    result.push({ edge, source: (pieces[i] as (typeof pieces)[number]).source });
+    if (!closed && i === moved.length - 1) return;
     const following = moved[(i + 1) % moved.length] as Edge;
-    result.push(edge);
     const corner = (edges[i] as LineOrArc).end;
     if (near(edge.end, following.start)) {
       following.start = edge.end;
@@ -81,7 +92,8 @@ export function offsetLoop(loop: readonly LoopEdge[], by: number): LineOrArc[] |
       return;
     }
     // The curves do not meet near the corner: go round it, as the laser beam does.
-    result.push({ kind: 'arc', start: edge.end, end: following.start, center: corner, radius: Math.abs(by), ccw: cross(sub(edge.end, corner), sub(following.start, corner)) > 0 });
+    const around: Edge = { kind: 'arc', start: edge.end, end: following.start, center: corner, radius: Math.abs(by), ccw: cross(sub(edge.end, corner), sub(following.start, corner)) > 0 };
+    result.push({ edge: around, source: undefined });
   });
   // An edge that turned around was shorter than the offset.
   const valid = moved.every((edge, i) => {

@@ -24,6 +24,8 @@ import {
   arcCommand,
   circleCommand,
   dimensionFor,
+  type EditTool,
+  isEditTool,
   lineCommand,
   type PointRef,
   pointCommand,
@@ -97,6 +99,7 @@ export class SketchEditor {
       'sketch-point': () => this.setTool('point'),
       'sketch-dimension': () => this.setTool('dimension'),
       'sketch-construction': () => void this.toggleConstruction(),
+      'sketch-trim': () => this.setTool('trim'),
       'finish-sketch': () => this.store.finishEditing(),
     });
     inject(DestroyRef).onDestroy(stop);
@@ -160,6 +163,7 @@ export class SketchEditor {
       return;
     }
     if (tool === 'dimension') return void this.dimensionClick(target);
+    if (isEditTool(tool)) return void this.editClick(tool, target, at);
     void this.toolClick(this.snapRef(at));
   }
 
@@ -291,6 +295,15 @@ export class SketchEditor {
         return;
       }
     }
+  }
+
+  /** An editing tool's click: on a curve for trim, extend and split; on a corner point for fillet and chamfer. */
+  private async editClick(tool: EditTool, target: { id: string; kind: string } | undefined, at: Vec2): Promise<void> {
+    if (!target) return;
+    const corner = tool === 'fillet' || tool === 'chamfer';
+    if (corner !== (target.kind === 'point')) return;
+    const operation = corner ? { kind: tool, point: target.id, size: this.store.cornerSize() } : { kind: tool, curve: target.id, at };
+    await this.store.run({ type: 'edit-sketch', sketchId: this.sketch().id, operation, idPrefix: `${newId()}-` });
   }
 
   /** First pick, then a second pick or a click on empty space to place a single-entity dimension. */

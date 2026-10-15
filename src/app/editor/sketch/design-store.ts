@@ -48,6 +48,8 @@ export class DesignStore {
   readonly tool = signal<Tool>('select');
   /** Corners of the polygon tool. */
   readonly polygonSides = signal(6);
+  /** Radius of the sketch fillet tool and length of the chamfer tool, mm. */
+  readonly cornerSize = signal(2);
   readonly selection = signal<readonly string[]>([]);
   /** A solved drag that is not committed yet. */
   readonly preview = signal<SketchView | undefined>(undefined);

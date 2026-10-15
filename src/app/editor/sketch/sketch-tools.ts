@@ -10,7 +10,12 @@ import type { DesignCommand } from '@core/managers/design';
 import { pointsOf } from '../../viewport/sketch-display';
 import type { ShapeTool } from './shape-tools';
 
-export type Tool = 'select' | 'line' | 'rectangle' | 'circle' | 'arc' | 'point' | 'dimension' | ShapeTool;
+/** Tools that change existing curves with a click: on a curve (trim, extend, split) or on a corner (fillet, chamfer). */
+export type EditTool = 'trim' | 'extend' | 'split' | 'fillet' | 'chamfer';
+export const editTools: readonly EditTool[] = ['trim', 'extend', 'split', 'fillet', 'chamfer'];
+export const isEditTool = (tool: string): tool is EditTool => (editTools as readonly string[]).includes(tool);
+
+export type Tool = 'select' | 'line' | 'rectangle' | 'circle' | 'arc' | 'point' | 'dimension' | ShapeTool | EditTool;
 
 /**
  * A position a tool clicked: snapped to an existing point (`id`), or free; a free position snapped onto

@@ -87,5 +87,5 @@ export function circleCircle(c1: Vec2, r1: number, c2: Vec2, r2: number, toleran
 }
 
 export * from './curves';
-export { type LineOrArc, type LoopEdge, offsetLoop } from './offset';
+export { type LineOrArc, type LoopEdge, offsetChain, offsetLoop } from './offset';
 export * from './transform';

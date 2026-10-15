@@ -152,6 +152,22 @@ describe('DesignManager', () => {
     expect(sketch()?.profiles).toHaveLength(1);
   });
 
+  it('rounds a corner of a dimensioned rectangle with one undoable edit, and refuses what does not fit', async () => {
+    await drawRectangle();
+    unwrap(await session.execute({ type: 'add-constraint', sketchId: 's1', constraint: { id: 'w', kind: 'distance', points: ['a', 'b'], expression: '40' } }));
+    unwrap(await session.execute({ type: 'edit-sketch', sketchId: 's1', operation: { kind: 'fillet', point: 'c', size: 5 }, idPrefix: 'f' }));
+    expect(sketch()?.sketch.entities.some((e) => e.id === 'c')).toBe(false);
+    expect(sketch()?.sketch.entities.filter((e) => e.kind === 'arc')).toHaveLength(1);
+    expect(sketch()?.profiles).toHaveLength(1);
+    expect(sketch()?.values.get('w')).toBe(40); // dimensions on other points survive
+    await session.undo();
+    expect(sketch()?.sketch.entities.some((e) => e.id === 'c')).toBe(true);
+    expect(await session.execute({ type: 'edit-sketch', sketchId: 's1', operation: { kind: 'fillet', point: 'c', size: 50 }, idPrefix: 'g' })).toMatchObject({
+      ok: false,
+      error: { code: 'invalid-command', message: 'The radius is too large for these lines.' },
+    });
+  });
+
   it('drives geometry with dimensions and expressions', async () => {
     await drawRectangle();
     unwrap(await session.execute({ type: 'add-constraint', sketchId: 's1', constraint: { id: 'o', kind: 'coincident', points: ['a', sketchOriginId] } }));

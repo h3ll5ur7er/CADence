@@ -46,6 +46,8 @@ export const shortcutCommands = {
   'sketch-point': { scope: 'sketch', label: 'Point' },
   'sketch-dimension': { scope: 'sketch', label: 'Dimension' },
   'sketch-construction': { scope: 'sketch', label: 'Construction on or off' },
+  'sketch-trim': { scope: 'sketch', label: 'Trim' },
+  'sketch-offset': { scope: 'sketch', label: 'Offset the selection' },
   'sketch-delete': { scope: 'sketch', label: 'Delete the selection' },
   'finish-sketch': { scope: 'sketch', label: 'Finish the sketch' },
 } as const satisfies Record<string, { readonly scope: ShortcutScope; readonly label: string }>;
@@ -91,6 +93,8 @@ const cadence: Keymap = {
   'sketch-point': ['P'],
   'sketch-dimension': ['D'],
   'sketch-construction': ['X'],
+  'sketch-trim': ['T'],
+  'sketch-offset': ['O'],
   'finish-sketch': ['Enter'],
 };
 

@@ -68,6 +68,25 @@ class Translator {
     return e.center;
   }
 
+  /** The end point two lines or arcs share, if any. */
+  private sharedEnd(a: string, b: string): string | undefined {
+    const ends = (id: string): string[] => {
+      const e = this.entities.get(id);
+      return e?.kind === 'line' || e?.kind === 'arc' ? [e.start, e.end] : [];
+    };
+    const other = ends(b);
+    return ends(a).find((p) => other.includes(p));
+  }
+
+  /** Direction of travel of a line or arc (counter-clockwise) at one of its points. */
+  private tangentAt(id: string, point: string): Vec2 {
+    const e = this.entities.get(id);
+    if (e?.kind === 'line') return this.lineDirection(id);
+    if (e?.kind !== 'arc') return [1, 0];
+    const r = sub(this.position(point), this.position(e.center));
+    return [-r[1], r[0]];
+  }
+
   private lineDirection(id: string): Vec2 {
     const e = this.entities.get(id);
     if (e?.kind !== 'line') throw new Error(`${id} is not a line`);
@@ -220,6 +239,14 @@ class Translator {
     [a, b]: readonly [string, string],
     add: (type: string, fields: Record<string, unknown>) => void,
   ): void {
+    // Curves that share an end point touch there: tangency at the point (as FreeCAD does), since the
+    // plain tangency and the shared point together would count as redundant.
+    const shared = this.sharedEnd(a, b);
+    if (shared) {
+      const [ta, tb] = [this.tangentAt(a, shared), this.tangentAt(b, shared)];
+      const current = Math.atan2(ta[0] * tb[1] - ta[1] * tb[0], ta[0] * tb[0] + ta[1] * tb[1]);
+      return add('angle_via_point', { crv1_id: a, crv2_id: b, p_id: shared, angle: closest(current, [0, Math.PI, -Math.PI]) });
+    }
     const [first, second] = this.kindOf(a) === 'line' || this.kindOf(b) !== 'line' ? [a, b] : [b, a];
     const k1 = this.kindOf(first);
     const k2 = this.kindOf(second);

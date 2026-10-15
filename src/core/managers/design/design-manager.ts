@@ -19,6 +19,7 @@ import type {
   SketchStatus,
   TopologyRef,
   ValidationReport,
+  Vec2,
 } from '@core/contracts';
 
 /** Every change to a component is one of these commands (docs/Architecture/Decisions.md#adr-10). Ids come from the caller. */
@@ -30,6 +31,8 @@ export type DesignCommand =
   | { readonly type: 'move-point'; readonly sketchId: string; readonly pointId: string; readonly x: number; readonly y: number }
   | { readonly type: 'toggle-construction'; readonly sketchId: string; readonly ids: readonly string[] }
   | { readonly type: 'delete-sketch-elements'; readonly sketchId: string; readonly ids: readonly string[] }
+  /** Trim, extend, split, offset, fillet or chamfer sketch curves; new ids start with `idPrefix`. */
+  | { readonly type: 'edit-sketch'; readonly sketchId: string; readonly operation: SketchOperation; readonly idPrefix: string }
   /** Adds a feature at the end of the timeline; an empty name gets the next default ("Extrude 2"). */
   | { readonly type: 'add-feature'; readonly feature: Feature }
   /** Replaces a feature's definition (same id). */
@@ -45,6 +48,13 @@ export type DesignCommand =
   | { readonly type: 'set-process'; readonly process: ManufacturingProfile }
   /** How a body is shown; an appearance of defaults only removes the entry. */
   | { readonly type: 'set-appearance'; readonly body: string; readonly appearance: Appearance };
+
+/** The editing tools of the sketcher (docs/User-guide/Sketching.md#edit). */
+export type SketchOperation =
+  | { readonly kind: 'trim' | 'extend' | 'split'; readonly curve: string; readonly at: Vec2 }
+  /** Positive moves to the right of the chain's direction (outward around a counter-clockwise loop). */
+  | { readonly kind: 'offset'; readonly curves: readonly string[]; readonly distance: number }
+  | { readonly kind: 'fillet' | 'chamfer'; readonly point: string; readonly size: number };
 
 /** A solved sketch as the editor shows it. */
 export interface SketchView {

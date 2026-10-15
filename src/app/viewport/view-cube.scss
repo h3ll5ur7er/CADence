@@ -1,0 +1,47 @@
+:host {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+}
+
+.stage {
+  display: grid;
+  place-items: center;
+  width: 96px;
+  height: 96px;
+}
+
+.cube {
+  position: relative;
+  width: 60px;
+  height: 60px;
+  transform-style: preserve-3d;
+}
+
+.face {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  background: color-mix(in srgb, var(--surface-raised) 92%, transparent);
+  color: var(--text-muted);
+  font: 600 10px var(--font);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  backface-visibility: hidden;
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+    outline: none;
+  }
+}
+
+.home {
+  background: color-mix(in srgb, var(--surface-raised) 85%, transparent);
+  box-shadow: var(--shadow);
+}

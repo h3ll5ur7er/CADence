@@ -1,15 +1,18 @@
 ---
 id: CAD-4
-title: Project, Document and Asset Access for the browser
+title: Project and Document Access for the browser
 type: feature
-status: todo
+status: done
 priority: high
 ---
 
 IndexedDB implementations of the Resource Access contracts, plus in-memory fakes for manager tests ([[Architecture/Decisions#ADR-5]]).
 
-- [ ] Contract test suite run against every implementation
-- [ ] Project Access: enumerate, establish, retitle, discard
-- [ ] Document Access: load (with schema migration hook), store, discard, enumerate
-- [ ] Asset Access: keep, fetch, release
-- [ ] In-memory implementations
+- [x] Contract test suites (`testing/*.contract.ts`) run against every implementation
+- [x] Project Access: enumerate, find, establish, revise, discard
+- [x] Document Access: enumerate, load (migrates the schema on read), store, discard
+- [x] Schema migration pipeline with tests
+- [x] In-memory implementations
+- [ ] ~~Asset Access~~: moved to [[CAD-26]], the first feature that stores blobs (YAGNI)
+
+Each access component owns its own IndexedDB database (`cadence-projects`, `cadence-documents`), so components share no storage internals.

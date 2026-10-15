@@ -1,0 +1,207 @@
+/* CADence design tokens. Light by default, dark when the OS asks for it. */
+:root {
+  --surface-0: #e9ecee; /* app background */
+  --surface-1: #f8f9fa; /* panels */
+  --surface-2: #eef1f3; /* hover, inset */
+  --surface-raised: #ffffff;
+  --border: #d3d9de;
+  --border-strong: #b6bfc7;
+  --text: #182026;
+  --text-muted: #5a6670;
+  --accent: #0e7c86;
+  --accent-strong: #0a5f67;
+  --accent-soft: #d8eef0;
+  --on-accent: #ffffff;
+  --danger: #b4332a;
+  --danger-soft: #f8e1df;
+  --viewport-top: #f4f6f8;
+  --viewport-bottom: #cfd6dc;
+  --axis-x: #d0453b;
+  --axis-y: #3a9a4b;
+  --axis-z: #2f6fd0;
+  --shadow: 0 1px 2px rgb(16 24 32 / 8%), 0 4px 16px rgb(16 24 32 / 6%);
+
+  --font: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Mono', 'SF Mono', Consolas, monospace;
+  --radius: 6px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface-0: #14181b;
+    --surface-1: #1b2024;
+    --surface-2: #242b30;
+    --surface-raised: #222a2f;
+    --border: #2f383f;
+    --border-strong: #46525b;
+    --text: #e3e8eb;
+    --text-muted: #94a1ab;
+    --accent: #3fb4be;
+    --accent-strong: #6fcbd3;
+    --accent-soft: #163a3e;
+    --on-accent: #06272a;
+    --danger: #ef7d73;
+    --danger-soft: #3b1f1d;
+    --viewport-top: #2b3339;
+    --viewport-bottom: #161b1f;
+    --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 6px 20px rgb(0 0 0 / 25%);
+    color-scheme: dark;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--surface-0);
+  color: var(--text);
+  font: 400 14px/1.45 var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  line-height: 1.2;
+  text-wrap: balance;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 32px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--text);
+  font: 500 13px var(--font);
+  cursor: pointer;
+  white-space: nowrap;
+
+  &:hover {
+    background: var(--surface-2);
+  }
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+}
+
+.btn-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+
+  &:hover {
+    background: var(--accent-strong);
+    border-color: var(--accent-strong);
+  }
+}
+
+.btn-danger {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: #fff;
+
+  &:hover {
+    filter: brightness(1.08);
+    background: var(--danger);
+  }
+}
+
+.btn-ghost {
+  border-color: transparent;
+  background: transparent;
+
+  &:hover {
+    background: var(--surface-2);
+  }
+}
+
+.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+
+  &:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+}
+
+/* Text inputs */
+.field {
+  display: grid;
+  gap: var(--space-1);
+  font-size: 12px;
+  color: var(--text-muted);
+
+  input {
+    height: 34px;
+    padding: 0 var(--space-3);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--surface-raised);
+    color: var(--text);
+    font: 400 14px var(--font);
+
+    &:focus {
+      outline: 2px solid var(--accent);
+      outline-offset: -1px;
+    }
+  }
+}
+
+.eyebrow {
+  font: 600 11px/1.2 var(--font);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

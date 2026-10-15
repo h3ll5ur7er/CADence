@@ -92,7 +92,7 @@ Project Access, Document Access and Asset Access read and write the project stor
 
 ## Call rules
 
-These rules are enforced by lint (`eslint` import boundaries per folder, see [[Conventions]]):
+These rules are enforced by the **architecture test** ([[tools/architecture/rules.ts]]). It runs with `npm test` over the real import graph and fails on any violation (see [[Conventions]]):
 
 | From → To | Allowed? |
 | --- | --- |
@@ -106,7 +106,7 @@ These rules are enforced by lint (`eslint` import boundaries per folder, see [[C
 | Anything → Utilities, Contracts | ✅ |
 | Any upward call | ❌ (results flow back as return values or event streams) |
 
-Each component exposes an **interface plus a factory** from its `index.ts`. The implementation stays private. Wiring happens in exactly one **composition root per host** (browser or desktop), and Angular DI provides the managers to the clients through injection tokens.
+Each component exposes an **interface plus a factory** from its `index.ts`. The implementation stays private, and the architecture test rejects imports of another component's internals. A component's `testing/` folder (contract suites, test doubles) is a second entry point that only tests may use. Wiring happens in exactly one **composition root per host** (browser or desktop), and Angular DI provides the managers to the clients through injection tokens.
 
 ## Deployment and threads
 
@@ -149,18 +149,19 @@ flowchart LR
 
 ```
 src/
-  app/                    Clients (Angular): home, editor shell, component-editor,
-                          assembly-editor, imported-viewer, viewport, shared UI
+  app/                    Clients (Angular): home, editor (shell + modes), viewport, shared UI
+    platform/             Host adapters for the client, e.g. the Tauri file system
   core/
     contracts/            Data contracts: document model, DTOs, commands, events
     managers/             project/  design/  assembly/
     engines/              sketch/  parameter/  modeling/  kinematics/  analysis/  interchange/
     access/               project/  document/  asset/  shape/  external-file/
     utilities/            messaging/  diagnostics/  math/  identity/
-    composition/          composition roots: browser.ts, desktop.ts
+    composition/          composition roots: createBrowserCore, createDesktopCore, createInMemoryCore
   workers/                geometry.worker.ts (hosts the kernel-bound engines)
 src-tauri/                Desktop shell (Rust)
 e2e/                      Playwright specs and evidence screenshots
+tools/architecture/       The architecture test (call rules over the import graph)
 ```
 
 `src/core` has no dependency on Angular. It runs under Node in unit tests, and both OCCT and planegcs load in Node, so engines are tested headless.

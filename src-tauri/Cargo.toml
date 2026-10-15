@@ -1,0 +1,19 @@
+[package]
+name = "cadence"
+version = "0.1.0"
+description = "CADence: parametric CAD for 3D printing and laser cutting"
+authors = ["Emanuel Knecht"]
+license = ""
+edition = "2024"
+rust-version = "1.90"
+
+[lib]
+name = "cadence_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.2", features = [] }
+
+[dependencies]
+tauri = { version = "2.12.3", features = [] }
+tauri-plugin-fs = "2"

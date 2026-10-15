@@ -1,0 +1,72 @@
+<header class="topbar">
+  <a class="brand" routerLink="/" aria-label="CADence home">
+    <span class="mark" aria-hidden="true"></span>
+    CADence
+  </a>
+  <button type="button" class="btn btn-primary" (click)="createProject()">
+    <cad-icon name="plus" />
+    New project
+  </button>
+</header>
+
+<main class="content">
+  @if (projects.value(); as list) {
+    @if (list.length > 0) {
+      <div class="heading">
+        <h1>Projects</h1>
+        <span class="count">{{ list.length }}</span>
+      </div>
+      <ul class="grid" aria-label="Projects">
+        @for (project of list; track project.id) {
+          <li class="card">
+            <a class="card-link" [routerLink]="['/projects', project.id]">
+              <span class="thumb" aria-hidden="true"><cad-icon name="component" [size]="40" /></span>
+              <span class="name">{{ project.name }}</span>
+              <span class="meta">
+                {{ plural(project.documentCount, 'document') }} · edited {{ relativeTime(project.modifiedAt) }}
+              </span>
+            </a>
+            <div class="card-actions">
+              <button
+                type="button"
+                class="icon-btn"
+                [attr.aria-label]="'Rename ' + project.name"
+                title="Rename"
+                (click)="rename(project)"
+              >
+                <cad-icon name="pencil" />
+              </button>
+              <button
+                type="button"
+                class="icon-btn"
+                [attr.aria-label]="'Delete ' + project.name"
+                title="Delete"
+                (click)="delete(project)"
+              >
+                <cad-icon name="trash" />
+              </button>
+            </div>
+          </li>
+        }
+      </ul>
+    } @else {
+      <section class="empty" aria-labelledby="empty-heading">
+        <span class="empty-mark" aria-hidden="true"><cad-icon name="component" [size]="44" /></span>
+        <h1 id="empty-heading">No projects yet</h1>
+        <p>
+          A project holds the parts you model, the assemblies you build from them and the files you
+          import. Everything stays on this device.
+        </p>
+        <button type="button" class="btn btn-primary" (click)="createProject()">
+          <cad-icon name="plus" />
+          New project
+        </button>
+      </section>
+    }
+  } @else if (projects.error()) {
+    <p class="error" role="alert">Projects could not be loaded. Reload the page to try again.</p>
+  }
+</main>
+
+<cad-name-dialog />
+<cad-confirm-dialog />

@@ -110,11 +110,14 @@ Atomic business verbs over a resource. Implementations vary by host and are chos
 
 | Resource Access | Contract | Browser | Desktop |
 | --- | --- | --- | --- |
-| **Project Access** | `enumerate`, `establish`, `retitle`, `discard` projects | IndexedDB | `projects/<id>/project.json` |
+| **Project Access** | `enumerate`, `find`, `establish`, `revise`, `discard` projects | IndexedDB | `projects/<id>/project.json` |
 | **Document Access** | `load(id)` (migrates schema on read), `store(doc)`, `discard(id)`, `enumerate(projectId)` | IndexedDB | `projects/<id>/documents/<docId>.json` |
+
+> [!NOTE]
+> Choosing a file to import needs a user gesture, so the **client** shows the picker (or accepts a drop) and passes the file's name and bytes to the Project Manager as an `ExternalFile`. External File Access only delivers files *out* of the app.
 | **Asset Access** | `keep(bytes, meta) → AssetId`, `fetch(assetId)`, `release(assetId)`; `publishResult(documentId, hash, bytes)`, `latestResult(documentId)` | IndexedDB blobs | `projects/<id>/assets/*`, `projects/<id>/results/*` |
 | **Shape Access** | `put(key, shape)`, `get(key)`, `evict(keys)`, `retainOnly(keys)` | in-worker OCCT shape cache | same |
-| **External File Access** | `pickForImport(accept) → ExternalFileRef`, `read(ref)`, `deliver(bytes, suggestedName)` | `<input type=file>`, drag and drop, download | Tauri dialog and fs plugins |
+| **External File Access** | `deliver(bytes, suggestedName)` (exports) | download | Tauri dialog and fs plugins |
 
 ## Utilities
 

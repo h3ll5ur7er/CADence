@@ -1,0 +1,82 @@
+<header class="topbar">
+  <a class="brand" routerLink="/" aria-label="All projects" title="All projects">
+    <span class="mark" aria-hidden="true"></span>
+  </a>
+  <nav class="crumbs" aria-label="Breadcrumb">
+    <a routerLink="/">Projects</a>
+    <cad-icon name="chevronRight" [size]="14" />
+    <button type="button" class="crumb-button" title="Rename project" (click)="renameProject()">
+      {{ project.value()?.name ?? '…' }}
+    </button>
+    @if (active(); as doc) {
+      <cad-icon name="chevronRight" [size]="14" />
+      <span class="current" aria-current="page">{{ doc.name }}</span>
+      <span class="mode-chip" [attr.data-kind]="doc.kind">{{ kindLabels[doc.kind] }}</span>
+    }
+  </nav>
+</header>
+
+<aside class="sidebar" aria-label="Project">
+  <cad-documents-panel
+    [documents]="documents.value() ?? []"
+    [activeId]="documentId()"
+    (create)="create($event)"
+    (importFile)="importFile($event)"
+    (rename)="rename($event)"
+    (remove)="remove($event)"
+  />
+  @if (message(); as text) {
+    <p class="message" role="alert">{{ text }}</p>
+  }
+</aside>
+
+<main class="workspace">
+  @if (!project.hasValue() || !documents.hasValue()) {
+    <!-- Local loads are fast; keep the last view while reloading instead of flickering. -->
+  } @else if (!project.value()) {
+    <div class="empty">
+      <h1>Project not found</h1>
+      <p>It may have been deleted. <a routerLink="/">Back to all projects</a></p>
+    </div>
+  } @else if (active(); as doc) {
+    @switch (doc.kind) {
+      @case ('component') {
+        @defer (on immediate) {
+          <cad-component-mode [document]="doc" />
+        }
+      }
+      @case ('assembly') {
+        @defer (on immediate) {
+          <cad-assembly-mode [document]="doc" />
+        }
+      }
+      @case ('imported') {
+        @defer (on immediate) {
+          <cad-imported-mode [document]="doc" />
+        }
+      }
+    }
+  } @else if (documentId()) {
+    <div class="empty">
+      <h1>Document not found</h1>
+      <p>Pick another document from the project on the left.</p>
+    </div>
+  } @else if (documents.value().length === 0) {
+    <div class="empty">
+      <h1>This project is empty</h1>
+      <p>Create a component or an assembly, or import a file, from the panel on the left.</p>
+    </div>
+  }
+</main>
+
+<footer class="statusbar">
+  <span>Renderer <strong data-testid="renderer">{{ status.renderer() ?? '…' }}</strong></span>
+  <span>Units <strong>mm</strong></span>
+  <span>Storage <strong data-testid="storage">{{ storage }}</strong></span>
+  @if (active(); as doc) {
+    <span>Mode <strong data-testid="mode">{{ kindLabels[doc.kind] }}</strong></span>
+  }
+</footer>
+
+<cad-name-dialog />
+<cad-confirm-dialog />

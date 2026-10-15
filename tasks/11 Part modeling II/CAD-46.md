@@ -2,11 +2,12 @@
 id: CAD-46
 title: Body operations
 type: feature
-status: todo
+status: done
 priority: medium
 ---
 
-- [ ] Combine existing bodies: join, cut, intersect
-- [ ] Split a body by a plane or face
-- [ ] Move or copy a body
-- [ ] Scale a body, uniformly or per axis
+- [x] Combine existing bodies: join, cut, intersect (keep the tools or use them up)
+- [x] Split a body by a plane or face
+- [x] Move or copy a body (turn about an axis, then shift)
+- [x] Scale a body uniformly
+- [ ] Scale per axis: needs `BRepBuilderAPI_GTransform`, which the bundled OpenCascade build (replicad-opencascadejs) does not include

@@ -370,6 +370,30 @@ export class Regeneration {
         if (!thickness.ok) return thickness;
         return withKey({ ...base, type: 'shell', faces: feature.faces, thickness: thickness.value });
       }
+      case 'combine':
+        return withKey({ ...base, type: 'combine', target: feature.target, tools: feature.tools, operation: feature.operation, keepTools: feature.keepTools });
+      case 'split': {
+        const plane = await this.frame(feature.plane);
+        if (!plane.ok) return plane;
+        return withKey({ ...base, type: 'split', body: feature.body, plane: plane.value });
+      }
+      case 'move': {
+        const [x, y, z] = feature.translate.map((e, i) => this.value(e, 'length', `${'XYZ'[i]} distance`));
+        if (!x?.ok) return x as Result<never>;
+        if (!y?.ok) return y as Result<never>;
+        if (!z?.ok) return z as Result<never>;
+        const angle = this.value(feature.angle, 'angle', 'Angle');
+        if (!angle.ok) return angle;
+        const axis = this.axis(feature.axis);
+        if (!axis.ok) return axis;
+        const rotation = angle.value !== 0 ? { axis: axis.value, angle: angle.value } : undefined;
+        return withKey({ ...base, type: 'move', bodyIds: feature.bodies, translation: [x.value, y.value, z.value], ...(rotation ? { rotation } : {}), copy: feature.copy });
+      }
+      case 'scale': {
+        const factor = this.value(feature.factor, 'scalar', 'Scale factor');
+        if (!factor.ok) return factor;
+        return withKey({ ...base, type: 'scale', bodyIds: feature.bodies, factor: factor.value });
+      }
       case 'linear-pattern':
       case 'circular-pattern':
       case 'mirror': {

@@ -177,9 +177,23 @@
         </div>
         <span class="divider"></span>
         @for (tool of featureTools; track tool.type) {
-          <button type="button" class="icon-btn tool" [attr.aria-label]="featureLabels[tool.type]" [title]="featureLabels[tool.type]" (click)="store.startFeature(tool.type)">
+          <button type="button" class="icon-btn tool" [attr.aria-label]="featureLabels[tool.type]" [title]="featureLabels[tool.type]" (click)="startFeature(tool.type)">
             <cad-icon [name]="tool.icon" [size]="18" />
           </button>
+        }
+        @for (group of featureMenus; track group.id) {
+          <div class="menu">
+            <button type="button" class="btn" aria-haspopup="menu" [attr.aria-expanded]="menu() === group.id" (click)="toggleMenu(group.id)">
+              <cad-icon [name]="group.icon" /> {{ group.label }}
+            </button>
+            @if (menu() === group.id) {
+              <div class="menu-list" role="menu" [attr.aria-label]="group.label">
+                @for (tool of group.items; track tool.type) {
+                  <button type="button" role="menuitem" (click)="startFeature(tool.type)"><cad-icon [name]="tool.icon" [size]="16" /> {{ featureLabels[tool.type] }}</button>
+                }
+              </div>
+            }
+          </div>
         }
         <span class="divider"></span>
         <button type="button" class="icon-btn tool" aria-label="Measure" title="Measure" [class.on]="store.panel() === 'measure'" (click)="togglePanel('measure')">

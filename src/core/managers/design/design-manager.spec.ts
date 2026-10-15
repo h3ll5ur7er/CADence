@@ -402,6 +402,22 @@ describe('DesignManager', () => {
       expect(session.state().document.timeline.map((i) => i.id)).toEqual(['p1', 's1', 'e1']);
     });
 
+    it('copies, splits and combines bodies with parameters', async () => {
+      await plate();
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'm1', type: 'move', name: '', suppressed: false, bodies: ['e1'], translate: ['0', 'width / 2', '0'], axis: { kind: 'origin', axis: 'Z' }, angle: '0 deg', copy: true } }));
+      expect(session.state().bodies.map((b) => b.body)).toEqual(['e1', 'm1']);
+      expect(await volume()).toBeCloseTo(2 * 60 * 30 * 6);
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'c1', type: 'combine', name: '', suppressed: false, target: 'e1', tools: ['m1'], operation: 'join', keepTools: false } }));
+      expect(session.state().bodies.map((b) => b.body)).toEqual(['e1']);
+      expect(await volume()).toBeCloseTo(60 * 30 * 6 * 2);
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'p1', type: 'plane', name: '', suppressed: false, base: 'YZ', offset: '20' } }));
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'x1', type: 'split', name: '', suppressed: false, body: 'e1', plane: { plane: 'p1' } } }));
+      expect(session.state().bodies.map((b) => b.body)).toEqual(['e1', 'x1']);
+      expect((await session.properties()).map((p) => Math.round(p.volume))).toEqual([40 * 60 * 6, 20 * 60 * 6]);
+      // The combine uses the copy, so it cannot move before the move.
+      expect(await session.execute({ type: 'reorder-item', itemId: 'c1', index: 2 })).toMatchObject({ ok: false });
+    });
+
     it('refuses parameter changes that would break the model', async () => {
       await plate();
       const broken = await session.execute({ type: 'delete-parameter', id: 'pt' });

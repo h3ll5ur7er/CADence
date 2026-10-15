@@ -115,8 +115,46 @@ export interface InsertFeature extends FeatureBase {
   readonly document: string;
 }
 
+/** Joins bodies into a target body, cuts them from it, or keeps only where they overlap it. */
+export interface CombineFeature extends FeatureBase {
+  readonly type: 'combine';
+  readonly target: string;
+  readonly tools: readonly string[];
+  readonly operation: 'join' | 'cut' | 'intersect';
+  /** Leave the tool bodies as they are; otherwise they are used up. */
+  readonly keepTools: boolean;
+}
+
+/** Splits a body in two by a plane; the piece behind the plane becomes a new body. */
+export interface SplitFeature extends FeatureBase {
+  readonly type: 'split';
+  readonly body: string;
+  readonly plane: PlaneRef;
+}
+
+/** Moves or copies bodies: turned by `angle` about `axis`, then shifted by `translate` (x, y, z). */
+export interface MoveFeature extends FeatureBase {
+  readonly type: 'move';
+  readonly bodies: readonly string[];
+  readonly translate: readonly [string, string, string];
+  readonly axis: AxisRef;
+  readonly angle: string;
+  readonly copy: boolean;
+}
+
+/** Scales bodies about the origin, the same in every direction. */
+export interface ScaleFeature extends FeatureBase {
+  readonly type: 'scale';
+  readonly bodies: readonly string[];
+  readonly factor: string;
+}
+
 export type Feature =
   | InsertFeature
+  | CombineFeature
+  | SplitFeature
+  | MoveFeature
+  | ScaleFeature
   | ExtrudeFeature
   | RevolveFeature
   | EdgeTreatmentFeature

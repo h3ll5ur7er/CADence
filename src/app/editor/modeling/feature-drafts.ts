@@ -32,6 +32,10 @@ export const featureLabels: Readonly<Record<FeatureType, string>> = {
   'linear-pattern': 'Linear pattern',
   'circular-pattern': 'Circular pattern',
   mirror: 'Mirror',
+  combine: 'Combine bodies',
+  split: 'Split body',
+  move: 'Move or copy bodies',
+  scale: 'Scale bodies',
 };
 
 /** A loop by its pieces, whichever way round it runs: the curve each comes from and where it ends (a text's letters share one source). */
@@ -58,6 +62,7 @@ export function defaultFeature(type: FeatureType, id: string, state: DesignState
   const profiles = sketch ? solidProfiles(state.sketches.get(sketch.id)?.profiles ?? []) : [];
   const operation = state.bodies.length ? ('join' as const) : ('new-body' as const);
   const lastTool = active.filter(isToolFeature).at(-1);
+  const bodyIds = state.bodies.map((b) => b.body);
   const tools = lastTool ? [lastTool.id] : [];
   switch (type) {
     case 'insert':
@@ -82,6 +87,14 @@ export function defaultFeature(type: FeatureType, id: string, state: DesignState
       return { ...base, type, features: tools, axis: { kind: 'origin', axis: 'Z' }, count: '4', angle: '360 deg' };
     case 'mirror':
       return { ...base, type, features: tools, plane: 'YZ' };
+    case 'combine':
+      return { ...base, type, target: bodyIds[0] ?? '', tools: bodyIds.slice(1, 2), operation: 'join', keepTools: false };
+    case 'split':
+      return { ...base, type, body: bodyIds[0] ?? '', plane: 'XY' };
+    case 'move':
+      return { ...base, type, bodies: bodyIds.slice(-1), translate: ['10', '0', '0'], axis: { kind: 'origin', axis: 'Z' }, angle: '0 deg', copy: false };
+    case 'scale':
+      return { ...base, type, bodies: bodyIds.slice(-1), factor: '2' };
   }
 }
 
@@ -108,6 +121,10 @@ export function pickableFor(draft: FeatureDraft | undefined): ReadonlySet<PickKi
     case 'chamfer':
       return new Set<PickKind>(['edge']);
     case 'shell':
+    case 'combine':
+    case 'split':
+    case 'move':
+    case 'scale':
       return new Set<PickKind>(['face']);
     default:
       return new Set<PickKind>();
@@ -137,7 +154,13 @@ export function selectionOf(draft: FeatureDraft): Pick[] {
       return f.direction.kind === 'edge' ? [pickOf(f.direction.edge)] : [];
     case 'circular-pattern':
       return f.axis.kind === 'edge' ? [pickOf(f.axis.edge)] : [];
+    case 'split':
+      return planeFace(f.plane);
+    case 'move':
+      return f.axis.kind === 'edge' ? [pickOf(f.axis.edge)] : [];
     case 'insert':
+    case 'combine':
+    case 'scale':
       return [];
   }
 }
@@ -150,11 +173,13 @@ export function applyPick(draft: FeatureDraft, pick: Pick): FeatureDraft {
     if (f.type === 'revolve') return { mode: draft.mode, feature: { ...f, axis: edge } };
     if (f.type === 'circular-pattern') return { mode: draft.mode, feature: { ...f, axis: edge } };
     if (f.type === 'linear-pattern') return { mode: draft.mode, feature: { ...f, direction: edge } };
+    if (f.type === 'move') return { mode: draft.mode, feature: { ...f, axis: edge } };
   }
   if (draft.target === 'plane' && pick.kind === 'face' && pick.planar) {
     const face = { face: refOf(pick) };
     if (f.type === 'plane') return { mode: draft.mode, feature: { ...f, base: face } };
     if (f.type === 'mirror') return { mode: draft.mode, feature: { ...f, plane: face } };
+    if (f.type === 'split') return { mode: draft.mode, feature: { ...f, plane: face } };
   }
   switch (f.type) {
     case 'extrude':
@@ -168,6 +193,14 @@ export function applyPick(draft: FeatureDraft, pick: Pick): FeatureDraft {
       return pick.kind === 'edge' ? { ...draft, feature: { ...f, edges: toggle(f.edges, refOf(pick), sameRef) } } : draft;
     case 'shell':
       return pick.kind === 'face' ? { ...draft, feature: { ...f, faces: toggle(f.faces, refOf(pick), sameRef) } } : draft;
+    // Clicking a body picks it: the body to split, or one more (or one less) to combine, move or scale.
+    case 'split':
+      return pick.kind === 'face' ? { ...draft, feature: { ...f, body: pick.body } } : draft;
+    case 'combine':
+      return pick.kind === 'face' && pick.body !== f.target ? { ...draft, feature: { ...f, tools: toggle(f.tools, pick.body, (a, b) => a === b) } } : draft;
+    case 'move':
+    case 'scale':
+      return pick.kind === 'face' ? { ...draft, feature: { ...f, bodies: toggle(f.bodies, pick.body, (a, b) => a === b) } } : draft;
     default:
       return draft;
   }

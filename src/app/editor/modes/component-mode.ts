@@ -63,6 +63,21 @@ const featureTools: readonly { type: FeatureType; icon: IconName }[] = [
   { type: 'mirror', icon: 'mirror' },
 ];
 
+/** Less frequent features, in menus of the model toolbar. */
+const featureMenus: readonly { id: string; label: string; icon: IconName; items: readonly { type: FeatureType; icon: IconName }[] }[] = [
+  {
+    id: 'bodies',
+    label: 'Bodies',
+    icon: 'body',
+    items: [
+      { type: 'combine', icon: 'combine' },
+      { type: 'split', icon: 'split' },
+      { type: 'move', icon: 'move' },
+      { type: 'scale', icon: 'scale' },
+    ],
+  },
+];
+
 const itemIcons: Readonly<Record<TimelineItem['type'], IconName>> = {
   insert: 'imported',
   sketch: 'sketch',
@@ -75,6 +90,10 @@ const itemIcons: Readonly<Record<TimelineItem['type'], IconName>> = {
   'linear-pattern': 'pattern',
   'circular-pattern': 'circular',
   mirror: 'mirror',
+  combine: 'combine',
+  split: 'split',
+  move: 'move',
+  scale: 'scale',
 };
 
 const exportFormats: readonly { format: SolidFormat; label: string }[] = [
@@ -98,9 +117,11 @@ export class ComponentMode {
   protected readonly status = inject(EditorStatus);
   protected readonly store = inject(DesignStore);
   protected readonly originVisible = signal(true);
-  protected readonly menu = signal<'sketch' | 'export' | undefined>(undefined);
+  /** The open toolbar menu: sketch, export, or one of the feature menus. */
+  protected readonly menu = signal<string | undefined>(undefined);
   protected readonly statusLabels = statusLabels;
   protected readonly featureTools = featureTools;
+  protected readonly featureMenus = featureMenus;
   protected readonly featureLabels = featureLabels;
   protected readonly itemIcons = itemIcons;
   protected readonly exportFormats = exportFormats;
@@ -221,7 +242,12 @@ export class ComponentMode {
     this.store.openPanel(this.store.panel() === panel ? undefined : panel);
   }
 
-  protected toggleMenu(menu: 'sketch' | 'export'): void {
+  protected startFeature(type: FeatureType): void {
+    this.menu.set(undefined);
+    this.store.startFeature(type);
+  }
+
+  protected toggleMenu(menu: string): void {
     this.menu.set(this.menu() === menu ? undefined : menu);
   }
 

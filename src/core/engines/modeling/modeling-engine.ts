@@ -58,6 +58,23 @@ export type ModelingRequest = RequestBase &
     | { readonly type: 'mirror'; readonly tools: readonly ToolInput[]; readonly plane: PlaneFrame }
     /** Solids read by the Interchange Engine (stored without names) become new bodies, named by this feature. */
     | { readonly type: 'insert'; readonly sources: readonly string[] }
+    | {
+        readonly type: 'combine';
+        readonly target: string;
+        readonly tools: readonly string[];
+        readonly operation: 'join' | 'cut' | 'intersect';
+        readonly keepTools: boolean;
+      }
+    | { readonly type: 'split'; readonly body: string; readonly plane: PlaneFrame }
+    | {
+        readonly type: 'move';
+        readonly bodyIds: readonly string[];
+        readonly translation: Vec3;
+        /** Radians about the axis, applied before the translation. */
+        readonly rotation?: { readonly axis: AxisInput; readonly angle: number };
+        readonly copy: boolean;
+      }
+    | { readonly type: 'scale'; readonly bodyIds: readonly string[]; readonly factor: number }
   );
 
 export interface ModelingOutcome {

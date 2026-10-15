@@ -2,6 +2,7 @@ import { find, type NamedShape, type ShapeAccess } from '@core/access/shape';
 import { type BodyMesh, fail, ok, type PlaneFrame, type Result, type TopologyRef, type Vec2, type Vec3 } from '@core/contracts';
 import { type Edge, type Face, getOC, measureVolume, type Shape3D, Vertex } from 'replicad';
 import { combine, type LoadedBody, renameCopy } from './bodies';
+import { BodyOperationError, combineBodies, splitBody, transformBodies } from './body-operations';
 import { add3, cross3, dot3, normalize3, scale3, sub3, toPlane } from './geometry';
 import type { AxisInput, BodyState, ModelingEngine, ModelingOutcome, ModelingRequest, ProjectedCurve, ToolInput } from './modeling-engine';
 import { nameShape, namedSurfaces } from './naming';
@@ -27,7 +28,7 @@ export class OcctModelingEngine implements ModelingEngine {
     try {
       outcome = this.compute(request);
     } catch (error) {
-      const message = error instanceof FeatureError ? error.message : `The geometry kernel could not build this feature (${describe(error)}).`;
+      const message = error instanceof FeatureError || error instanceof BodyOperationError ? error.message : `The geometry kernel could not build this feature (${describe(error)}).`;
       outcome = { bodies: request.bodies, error: message };
     }
     this.remember(request.key, outcome);
@@ -144,6 +145,20 @@ export class OcctModelingEngine implements ModelingEngine {
         const plane = toPlane(request.plane);
         return this.repeat(request.feature, request.key, bodies, request.tools, 2, (shape) => shape.mirror(plane));
       }
+      case 'combine':
+        return this.store(combineBodies(bodies, request.target, request.tools, request.operation, request.keepTools, request.feature, request.key));
+      case 'split':
+        return this.store(splitBody(bodies, request.body, request.plane, request.feature, request.key));
+      case 'move': {
+        const turn = request.rotation && Math.abs(request.rotation.angle) > 1e-12 ? { ...this.axis(bodies, request.rotation.axis), angle: request.rotation.angle } : undefined;
+        const transform = (shape: Shape3D) => {
+          const turned = turn ? shape.rotate((turn.angle * 180) / Math.PI, [...turn.origin], [...turn.direction]) : shape;
+          return turned.translate([...request.translation]);
+        };
+        return this.store(transformBodies(bodies, request.bodyIds, transform, request.copy, request.feature, request.key));
+      }
+      case 'scale':
+        return this.store(transformBodies(bodies, request.bodyIds, (shape) => shape.scale(positive(request.factor, 'scale factor'), [0, 0, 0]), false, request.feature, request.key));
     }
   }
 

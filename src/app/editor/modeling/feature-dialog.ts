@@ -8,6 +8,7 @@ import {
   type PlaneRef,
 } from '@core/contracts';
 import { Icon } from '../../shared/icon';
+import { bodyNames } from './body-names';
 import { DesignStore } from '../sketch/design-store';
 import { featureLabels, type PickTarget } from './feature-drafts';
 
@@ -29,6 +30,10 @@ const hints: Readonly<Record<Feature['type'], string>> = {
   'linear-pattern': 'Repeats holes and bosses made by the selected features.',
   'circular-pattern': 'Repeats them around an axis; 360° spreads the copies evenly.',
   mirror: 'Mirrors them across a plane.',
+  combine: 'Joins bodies into the target, cuts them from it, or keeps only where they overlap. Click bodies in the view to add them.',
+  split: 'Cuts a body in two along a plane; the piece behind the plane becomes a new body.',
+  move: 'Turns the bodies about an axis, then shifts them. Click bodies in the view to add or remove them.',
+  scale: 'Scales the bodies about the origin, the same in every direction.',
 };
 
 /** Creates or edits one feature. Values are expressions; references are picked in the 3D view. */
@@ -76,6 +81,13 @@ export class FeatureDialog {
     const end = at >= 0 ? at : timeline.length - (document?.rollbackIndex ?? 0);
     return timeline.slice(0, end).filter(isToolFeature);
   });
+  /** The bodies at this point of the timeline, with their names. */
+  protected readonly bodyOptions = computed(() => {
+    const state = this.store.state();
+    const ids = (state?.bodies ?? []).map((b) => b.body);
+    const names = bodyNames(ids, state?.document.timeline ?? []);
+    return ids.map((id) => ({ id, name: names.get(id) ?? id }));
+  });
   protected readonly planeFeatures = computed(() =>
     (this.store.state()?.document.timeline ?? []).filter((i) => !isSketch(i) && i.type === 'plane' && i.id !== this.feature()?.id),
   );
@@ -115,6 +127,21 @@ export class FeatureDialog {
     const f = this.feature();
     if (f?.type !== 'linear-pattern' && f?.type !== 'circular-pattern' && f?.type !== 'mirror') return;
     this.set({ features: on ? [...f.features, id] : f.features.filter((x) => x !== id) });
+  }
+
+  /** Adds or removes a body of a combine's tools, or of the bodies to move or scale. */
+  protected toggleBody(id: string, on: boolean): void {
+    const f = this.feature();
+    if (f?.type === 'combine') this.set({ tools: on ? [...f.tools, id] : f.tools.filter((x) => x !== id) });
+    if (f?.type === 'move' || f?.type === 'scale') this.set({ bodies: on ? [...f.bodies, id] : f.bodies.filter((x) => x !== id) });
+  }
+
+  protected setTranslate(i: number, expression: string): void {
+    const f = this.feature();
+    if (f?.type !== 'move') return;
+    const translate = [...f.translate] as [string, string, string];
+    translate[i] = expression;
+    this.set({ translate });
   }
 
   protected value(event: Event): string {

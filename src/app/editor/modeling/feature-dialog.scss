@@ -38,6 +38,19 @@ select {
   font: inherit;
 }
 
+.row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
 .tools {
   display: grid;
   gap: var(--space-1);

@@ -182,6 +182,97 @@
           </select>
         </label>
       }
+      @case ('combine') {
+        <label class="field">
+          Target
+          <select id="feature-target" (change)="set({ target: value($event), tools: f.tools.filter((t) => t !== value($event)) })">
+            @for (b of bodyOptions(); track b.id) {
+              <option [value]="b.id" [selected]="b.id === f.target">{{ b.name }}</option>
+            }
+          </select>
+        </label>
+        <fieldset class="tools">
+          <legend>With</legend>
+          @for (b of bodyOptions(); track b.id) {
+            @if (b.id !== f.target) {
+              <label><input type="checkbox" [checked]="f.tools.includes(b.id)" (change)="toggleBody(b.id, $any($event.target).checked)" /> {{ b.name }}</label>
+            }
+          }
+        </fieldset>
+        <label class="field">
+          Operation
+          <select id="feature-combine" [value]="f.operation" (change)="set({ operation: $any(value($event)) })">
+            <option value="join">Join</option>
+            <option value="cut">Cut</option>
+            <option value="intersect">Intersect</option>
+          </select>
+        </label>
+        <label class="check"><input type="checkbox" id="feature-keep" [checked]="f.keepTools" (change)="set({ keepTools: $any($event.target).checked })" /> Keep the other bodies</label>
+      }
+      @case ('split') {
+        <label class="field">
+          Body
+          <select id="feature-body" (change)="set({ body: value($event) })">
+            @for (b of bodyOptions(); track b.id) {
+              <option [value]="b.id" [selected]="b.id === f.body">{{ b.name }}</option>
+            }
+          </select>
+        </label>
+        <label class="field">
+          Plane
+          <select id="feature-plane" [value]="planeValue(f.plane)" (change)="setPlane(value($event), 'plane')">
+            <option value="XY">XY plane</option>
+            <option value="XZ">XZ plane</option>
+            <option value="YZ">YZ plane</option>
+            @for (p of planeFeatures(); track p.id) {
+              <option [value]="'plane:' + p.id">{{ p.name }}</option>
+            }
+            <option value="face">A flat face (pick in the view)…</option>
+          </select>
+        </label>
+      }
+      @case ('move') {
+        <fieldset class="tools">
+          <legend>Bodies</legend>
+          @for (b of bodyOptions(); track b.id) {
+            <label><input type="checkbox" [checked]="f.bodies.includes(b.id)" (change)="toggleBody(b.id, $any($event.target).checked)" /> {{ b.name }}</label>
+          }
+        </fieldset>
+        <div class="row">
+          @for (axis of ['X', 'Y', 'Z']; track axis; let i = $index) {
+            <label class="field">
+              {{ axis }}
+              <input [id]="'feature-move-' + axis.toLowerCase()" autocomplete="off" [value]="f.translate[i]" (change)="setTranslate(i, value($event))" />
+            </label>
+          }
+        </div>
+        <label class="field">
+          Turn about
+          <select id="feature-axis" [value]="axisValue(f.axis)" (change)="setAxis(value($event), 'axis')">
+            <option value="origin:X">X axis</option>
+            <option value="origin:Y">Y axis</option>
+            <option value="origin:Z">Z axis</option>
+            <option value="edge">An edge (pick in the view)…</option>
+          </select>
+        </label>
+        <label class="field">
+          Angle
+          <input id="feature-angle" autocomplete="off" [value]="f.angle" (change)="set({ angle: value($event) })" />
+        </label>
+        <label class="check"><input type="checkbox" id="feature-copy" [checked]="f.copy" (change)="set({ copy: $any($event.target).checked })" /> Copy (keep the originals)</label>
+      }
+      @case ('scale') {
+        <fieldset class="tools">
+          <legend>Bodies</legend>
+          @for (b of bodyOptions(); track b.id) {
+            <label><input type="checkbox" [checked]="f.bodies.includes(b.id)" (change)="toggleBody(b.id, $any($event.target).checked)" /> {{ b.name }}</label>
+          }
+        </fieldset>
+        <label class="field">
+          Factor
+          <input id="feature-factor" autocomplete="off" [value]="f.factor" (change)="set({ factor: value($event) })" />
+        </label>
+      }
     }
 
     @if (f.type === 'extrude' || f.type === 'revolve') {

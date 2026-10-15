@@ -1,7 +1,7 @@
 import { baseName, centerOf, type NamedShape } from '@core/access/shape';
 import type { Vec3 } from '@core/contracts';
 import type { Edge, Face, Shape3D } from 'replicad';
-import { sameSurface, type Surface, surfaceOf } from './surfaces';
+import { samePlaneIgnoringSide, sameSurface, type Surface, surfaceOf } from './surfaces';
 
 /**
  * Generative persistent naming (docs/Architecture/Document-model.md#persistent-references).
@@ -54,7 +54,8 @@ export function nameShape(
   const faceNames: { item: Face; name: string }[] = [];
   for (const face of shape.faces) {
     const surface = surfaceOf(face);
-    const match = candidates.find((c) => sameSurface(c.surface, surface));
+    // A hole's walls face the other way to the tool faces that cut them: same plane, other side.
+    const match = candidates.find((c) => sameSurface(c.surface, surface)) ?? candidates.find((c) => samePlaneIgnoringSide(c.surface, surface));
     if (match) faceNames.push({ item: face, name: match.name });
     else unexplained.push({ face, surface });
   }

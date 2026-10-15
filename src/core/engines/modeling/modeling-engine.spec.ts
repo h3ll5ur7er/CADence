@@ -248,6 +248,54 @@ describe('component results and joint frames', () => {
     const rim = await engine.frameOf(bodies, { kind: 'edge', body: 'plate', name: 'e:f:plate:end|f:plate:side:hole' });
     expect(rim.ok && round(rim.value.origin)).toEqual([20, 20, 6]);
   });
+
+  describe('body operations', () => {
+    /** The 80 × 40 × 5 plate and a 10 × 10 × 20 post standing through it at (10, 10). */
+    async function plateAndPost(): Promise<readonly BodyState[]> {
+      const bodies = ok(await plate());
+      const post = profile(rectangleLoop(5, 5, 10, 10, 'post'));
+      return ok(await engine.apply({ type: 'extrude', feature: 'post', key: 'post', bodies, frame: XY, profiles: [post], distance: 20, direction: 'normal', operation: 'new-body' }));
+    }
+
+    it('combines bodies: joins, cuts or intersects, and uses the tools up unless kept', async () => {
+      const bodies = await plateAndPost();
+      const joined = ok(await engine.apply({ type: 'combine', feature: 'c', key: 'c-join', bodies, target: 'plate', tools: ['post'], operation: 'join', keepTools: false }));
+      expect(joined.map((b) => b.id)).toEqual(['plate']);
+      expect(await volume(joined)).toBeCloseTo(80 * 40 * 5 + 10 * 10 * 15);
+      const cut = ok(await engine.apply({ type: 'combine', feature: 'c', key: 'c-cut', bodies, target: 'plate', tools: ['post'], operation: 'cut', keepTools: true }));
+      expect(cut.map((b) => b.id)).toEqual(['plate', 'post']);
+      expect(await volume(cut.slice(0, 1))).toBeCloseTo(80 * 40 * 5 - 10 * 10 * 5);
+      expect((await names(cut.slice(0, 1))).faces).toContain('f:post:side:post-left');
+      const both = ok(await engine.apply({ type: 'combine', feature: 'c', key: 'c-int', bodies, target: 'plate', tools: ['post'], operation: 'intersect', keepTools: false }));
+      expect(await volume(both)).toBeCloseTo(10 * 10 * 5);
+    });
+
+    it('splits a body by a plane into two named pieces', async () => {
+      const bodies = ok(await plate());
+      const frame = { origin: [30, 0, 0] as const, u: [0, 1, 0] as const, v: [0, 0, 1] as const }; // normal +X
+      const split = ok(await engine.apply({ type: 'split', feature: 's', key: 'split', bodies, body: 'plate', plane: frame }));
+      expect(split.map((b) => b.id)).toEqual(['plate', 's']);
+      expect(await volume(split.slice(0, 1))).toBeCloseTo(50 * 40 * 5);
+      expect(await volume(split.slice(1))).toBeCloseTo(30 * 40 * 5);
+      expect((await names(split.slice(0, 1))).faces).toContain('f:s:split');
+      const miss = await engine.apply({ type: 'split', feature: 's', key: 'split-miss', bodies, body: 'plate', plane: { ...frame, origin: [200, 0, 0] } });
+      expect(miss.error).toBe('The plane does not cut through the body.');
+    });
+
+    it('moves, turns, copies and scales bodies, keeping their face names', async () => {
+      const bodies = ok(await plate());
+      const moved = ok(await engine.apply({ type: 'move', feature: 'm', key: 'move', bodies, bodyIds: ['plate'], translation: [0, 0, 10], rotation: { axis: { origin: [0, 0, 0], direction: [0, 0, 1] }, angle: Math.PI / 2 }, copy: false }));
+      expect(moved.map((b) => b.id)).toEqual(['plate']);
+      const box = (shapes.get(moved[0]?.key as string) as NamedShape).shape.boundingBox.bounds;
+      expect(box[0].map((v) => Math.round(v))).toEqual([-40, 0, 10]);
+      expect((await names(moved)).faces).toContain('f:plate:end');
+      const copied = ok(await engine.apply({ type: 'move', feature: 'm', key: 'copy', bodies, bodyIds: ['plate'], translation: [0, 50, 0], copy: true }));
+      expect(copied.map((b) => b.id)).toEqual(['plate', 'm']);
+      expect(await volume(copied)).toBeCloseTo(2 * 80 * 40 * 5);
+      const scaled = ok(await engine.apply({ type: 'scale', feature: 'z', key: 'scale', bodies, bodyIds: ['plate'], factor: 2 }));
+      expect(await volume(scaled)).toBeCloseTo(8 * 80 * 40 * 5);
+    });
+  });
 });
 
 const normal = (f: { u: readonly number[]; v: readonly number[] }) => [

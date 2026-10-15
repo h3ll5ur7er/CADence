@@ -36,3 +36,39 @@ test('rolls the timeline back, inserts a feature there and reorders it', async (
   expect(await timelineNames(page)).toEqual(['Plane 1', 'Sketch 1', 'Extrude 1']);
   await evidence(page, '46-timeline');
 });
+
+test('copies, turns, scales and combines bodies', async ({ page }) => {
+  await plateProject(page, 'Bodies');
+  const bodies = page.getByTestId('body-count');
+  const fromMenu = async (menu: string, item: string) => {
+    await page.getByRole('toolbar', { name: 'Model tools' }).getByRole('button', { name: menu, exact: true }).click();
+    await page.getByRole('menuitem', { name: item }).click();
+  };
+
+  // A copy 40 mm along Y, turned a quarter about Z.
+  await fromMenu('Bodies', 'Move or copy bodies');
+  await page.locator('#feature-move-x').fill('0');
+  await page.locator('#feature-move-x').press('Tab');
+  await page.locator('#feature-move-y').fill('80');
+  await page.locator('#feature-move-y').press('Tab');
+  await page.locator('#feature-angle').fill('90 deg');
+  await page.locator('#feature-angle').press('Tab');
+  await page.locator('#feature-copy').check();
+  await page.getByRole('button', { name: 'OK' }).click();
+  await expect(bodies).toHaveText('2');
+
+  // The copy at half size, then joined into the plate where they touch? They do not: cut it from nothing, keep both.
+  await fromMenu('Bodies', 'Scale bodies');
+  await page.locator('#feature-factor').fill('0.5');
+  await page.locator('#feature-factor').press('Tab');
+  await page.getByRole('button', { name: 'OK' }).click();
+  await expect(page.locator('.item.failed')).toHaveCount(0);
+  await expect(page.getByRole('list', { name: 'Timeline' })).toContainText('Scale 1');
+
+  await fromMenu('Bodies', 'Combine bodies');
+  await page.getByRole('button', { name: 'OK' }).click();
+  await expect(bodies).toHaveText('1');
+  await page.getByRole('button', { name: 'Home view' }).click();
+  await page.waitForTimeout(600);
+  await evidence(page, '47-bodies');
+});

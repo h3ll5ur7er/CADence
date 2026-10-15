@@ -16,7 +16,15 @@ export interface Instance {
   readonly grounded: boolean;
   /** Absent: shown in its bodies' own appearance. */
   readonly appearance?: Appearance;
+  /** A configuration of the component (absent: its parameters' own values). */
+  readonly configuration?: string;
 }
+
+/**
+ * What an instance shows and where its result is kept: a component, or one configuration of it
+ * (`<component>@<configuration>`).
+ */
+export const sourceKey = (component: string, configuration?: string): string => (configuration ? `${component}@${configuration}` : component);
 
 export type JointType = 'rigid' | 'revolute' | 'slider' | 'cylindrical' | 'pin-slot' | 'planar' | 'ball';
 

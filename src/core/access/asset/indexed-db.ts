@@ -1,6 +1,6 @@
 import type { AssetId, DocumentId } from '@core/contracts';
 import { KeyValueDatabase } from '@core/utilities/indexed-db';
-import type { Asset, AssetAccess, ComponentResult } from './asset-access';
+import { type Asset, type AssetAccess, type ComponentResult, resultKey } from './asset-access';
 
 const store = 'assets';
 
@@ -26,15 +26,18 @@ export class IndexedDbAssetAccess implements AssetAccess {
     return this.db.delete(store, id);
   }
 
+  // Results are stored under their result key in the `documentId` key path (no schema upgrade needed).
   publishResult(result: ComponentResult): Promise<void> {
-    return this.results.put('results', result);
+    return this.results.put('results', { ...result, documentId: resultKey(result.documentId, result.configuration) });
   }
 
-  latestResult(documentId: DocumentId): Promise<ComponentResult | undefined> {
-    return this.results.get<ComponentResult>('results', documentId);
+  async latestResult(documentId: DocumentId, configuration?: string): Promise<ComponentResult | undefined> {
+    const stored = await this.results.get<ComponentResult>('results', resultKey(documentId, configuration));
+    return stored && { ...stored, documentId };
   }
 
-  discardResult(documentId: DocumentId): Promise<void> {
-    return this.results.delete('results', documentId);
+  async discardResult(documentId: DocumentId): Promise<void> {
+    await this.results.delete('results', documentId);
+    await this.results.delete('results', IDBKeyRange.bound(`${documentId}@`, `${documentId}@\uffff`));
   }
 }

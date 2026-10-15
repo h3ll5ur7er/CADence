@@ -164,6 +164,12 @@ function orderProblem(timeline: readonly TimelineItem[]): string | undefined {
   return undefined;
 }
 
+/** The document with `configuration` as the one edited and shown (none: the parameters' own values). */
+function withConfiguration(document: ComponentDocument, configuration: string | undefined): ComponentDocument {
+  if (configuration) return { ...document, configuration };
+  return Object.fromEntries(Object.entries(document).filter(([key]) => key !== 'configuration')) as unknown as ComponentDocument;
+}
+
 function nextName(document: ComponentDocument, label: string): string {
   const numbers = document.timeline.map((item) =>
     item.name.startsWith(`${label} `) ? Number(item.name.slice(label.length + 1)) || 0 : 0,
@@ -427,6 +433,16 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
       });
     case 'delete-parameter':
       return ok({ document: { ...document, parameters: document.parameters.filter((p) => p.id !== command.id) }, parameters: true });
+    case 'set-configurations': {
+      const names = command.configurations.map((c) => c.name.trim());
+      if (names.some((n) => !n)) return invalid('Every configuration needs a name.');
+      if (new Set(names).size < names.length || new Set(command.configurations.map((c) => c.id)).size < names.length) return invalid('Configuration names must differ.');
+      const active = document.configuration && command.configurations.some((c) => c.id === document.configuration) ? document.configuration : undefined;
+      return ok({ document: withConfiguration({ ...document, configurations: command.configurations }, active), parameters: true });
+    }
+    case 'activate-configuration':
+      if (command.configuration && !document.configurations?.some((c) => c.id === command.configuration)) return invalid('That configuration does not exist.');
+      return ok({ document: withConfiguration(document, command.configuration), parameters: true });
     case 'set-units':
       if (!(command.units in lengthUnitSize)) return invalid(`${command.units} is not a unit lengths can be shown in.`);
       return ok({ document: { ...document, units: command.units } });

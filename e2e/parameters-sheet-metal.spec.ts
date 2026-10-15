@@ -39,3 +39,33 @@ test('drives a component from a project parameter', async ({ page }) => {
   await page.getByRole('button', { name: 'Close parameters' }).click();
   await expect(page.getByTestId('body-size')).toHaveText('60, 30, 3 mm');
 });
+
+test('keeps configurations of a component and shows one in an assembly', async ({ page }) => {
+  await plateProject(page, 'Configurations');
+  await page.getByRole('button', { name: /Parameters/ }).click();
+  await page.getByRole('textbox', { name: 'New configuration name' }).fill('Thick');
+  await page.getByRole('button', { name: 'Add configuration' }).click();
+  await page.getByRole('textbox', { name: 'thickness in Thick' }).fill('12 mm');
+  await page.getByRole('textbox', { name: 'thickness in Thick' }).press('Enter');
+  await page.getByRole('combobox', { name: 'Shown configuration' }).selectOption({ label: 'Thick' });
+  await expect(page.getByRole('table', { name: 'Parameters', exact: true })).toContainText('12 mm');
+  await evidence(page, '54-configurations');
+  await page.getByRole('combobox', { name: 'Shown configuration' }).selectOption({ label: "The parameters' own values" });
+  await expect(page.getByRole('table', { name: 'Parameters', exact: true })).toContainText('6 mm');
+  await page.getByRole('button', { name: 'Close parameters' }).click();
+
+  // In an assembly: the second instance shows the thick variant.
+  await page.getByRole('button', { name: 'Assembly', exact: true }).click();
+  for (const expected of ['1', '2']) {
+    await page.getByRole('button', { name: 'Insert', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Component 1' }).click();
+    await expect(page.getByTestId('instance-count')).toHaveText(expected);
+  }
+  await page.getByRole('button', { name: 'Select Component 1 2' }).click();
+  await page.locator('#instance-configuration').selectOption({ label: 'Thick' });
+  await expect(page.getByText('Instance of Component 1 (Thick)')).toBeVisible();
+  await expect(page.getByRole('list', { name: 'Instances' })).not.toContainText('loading');
+  await page.getByRole('button', { name: 'Home view' }).click();
+  await page.waitForTimeout(800);
+  await evidence(page, '55-configuration-in-assembly');
+});

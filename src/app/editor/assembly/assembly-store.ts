@@ -1,17 +1,5 @@
 import { computed, DestroyRef, inject, Injectable, signal } from '@angular/core';
-import {
-  type DocumentId,
-  type DocumentSummary,
-  isImportedModel,
-  type Interference,
-  type Joint,
-  jointDofs,
-  type JointOrigin,
-  type JointType,
-  type Matrix4,
-  type MotionFrame,
-  type ProjectId,
-} from '@core/contracts';
+import { type DocumentId, type DocumentSummary, type Interference, isImportedModel, type Joint, jointDofs, type JointOrigin, type JointType, type Matrix4, type MotionFrame, type ProjectId, sourceKey } from '@core/contracts';
 import type { AssemblyCommand, AssemblyFormat, AssemblySession, AssemblyState } from '@core/managers/assembly';
 import { newId } from '@core/utilities/identity';
 import { ASSEMBLY_MANAGER, PROJECT_MANAGER } from '../../core.providers';
@@ -44,7 +32,7 @@ function rightEdge(state: AssemblyState): number | undefined {
   let edge: number | undefined;
   for (const instance of state.document.instances) {
     const m = state.poses.get(instance.id);
-    const bodies = state.components.get(instance.component)?.bodies ?? [];
+    const bodies = state.components.get(sourceKey(instance.component, instance.configuration))?.bodies ?? [];
     if (!m) continue;
     for (const body of bodies) {
       const p = body.positions;
@@ -95,7 +83,7 @@ export class AssemblyStore {
     const preview = this.previewPoses();
     const flagged = new Set((this.panel() === 'interference' ? (this.interference() ?? []) : []).flatMap((i) => [i.a, i.b]));
     return state.document.instances.flatMap((instance) => {
-      const component = state.components.get(instance.component);
+      const component = state.components.get(sourceKey(instance.component, instance.configuration));
       const transform = preview?.get(instance.id) ?? state.poses.get(instance.id);
       if (!component || !transform) return [];
       const part: PartDisplay = { id: instance.id, bodies: component.bodies, transform, flagged: flagged.has(instance.id), bodyAppearances: component.appearances ?? {} };

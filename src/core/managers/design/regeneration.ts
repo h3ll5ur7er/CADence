@@ -56,6 +56,8 @@ function handlesMoved(before: Sketch, after: Sketch): boolean {
 /** What a component is regenerated with, beyond its own document. */
 export interface RegenerationContext {
   readonly projectParameters?: readonly Parameter[];
+  /** A configuration to build instead of the document's own (`''`: the parameters' own values). */
+  readonly configuration?: string;
 }
 
 export interface RegenerationEngines {
@@ -131,9 +133,13 @@ export class Regeneration {
   /** Runs the timeline with the project's parameters (the component's own of the same name win). */
   async run(document: ComponentDocument, context: RegenerationContext = {}): Promise<Derived> {
     if (document.process?.kind === 'print') this.layer = document.process.layerHeight;
+    // A configuration's values replace the parameters' expressions, by name.
+    const chosen = context.configuration ?? document.configuration;
+    const values = document.configurations?.find((c) => c.id === chosen)?.values ?? {};
+    const configured = (p: Parameter): Parameter => (p.name in values ? { ...p, expression: values[p.name] as string } : p);
     const own = new Set(document.parameters.map((p) => p.name));
     const shared = (context.projectParameters ?? []).filter((p) => !own.has(p.name));
-    const evaluated = this.engines.parameters.evaluateAll([...shared, ...document.parameters]);
+    const evaluated = this.engines.parameters.evaluateAll([...shared, ...document.parameters].map(configured));
     if (evaluated.ok) this.scope = evaluated.value;
     const view = (parameter: Parameter, project: boolean): ParameterView => {
       const value = this.scope.get(parameter.name);

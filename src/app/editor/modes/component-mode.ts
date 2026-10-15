@@ -307,14 +307,14 @@ export class ComponentMode {
   }
 
   /** The export form: one format, the bodies to include and the mesh quality. */
-  protected readonly exportDraft = signal<{ format: SolidFormat; bodies: readonly string[]; quality: MeshQuality } | undefined>(undefined);
+  protected readonly exportDraft = signal<{ format: SolidFormat; bodies: readonly string[]; quality: MeshQuality; configuration: string } | undefined>(undefined);
 
   protected openExport(): void {
     this.menu.set(undefined);
-    this.exportDraft.set({ format: 'stl', bodies: this.bodies().map((b) => b.body), quality: 'normal' });
+    this.exportDraft.set({ format: 'stl', bodies: this.bodies().map((b) => b.body), quality: 'normal', configuration: this.store.state()?.document.configuration ?? '' });
   }
 
-  protected changeExport(changes: Partial<{ format: SolidFormat; quality: MeshQuality }>): void {
+  protected changeExport(changes: Partial<{ format: SolidFormat; quality: MeshQuality; configuration: string }>): void {
     const draft = this.exportDraft();
     if (draft) this.exportDraft.set({ ...draft, ...changes });
   }
@@ -328,7 +328,7 @@ export class ComponentMode {
     const draft = this.exportDraft();
     if (!draft) return;
     this.exportDraft.set(undefined);
-    await this.store.exportBodies(draft.format, { bodies: draft.bodies, quality: draft.quality });
+    await this.store.exportBodies(draft.format, { bodies: draft.bodies, quality: draft.quality, configuration: draft.configuration });
   }
 
   /** The number of items before the rollback marker. */

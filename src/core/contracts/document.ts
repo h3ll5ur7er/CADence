@@ -57,10 +57,22 @@ export type TimelineItem = Sketch | Feature;
 
 export const isSketch = (item: TimelineItem): item is Sketch => item.type === 'sketch';
 
+/** A named variant of a component: other values for some of its (or its project's) parameters. */
+export interface Configuration {
+  readonly id: string;
+  readonly name: string;
+  /** Expressions by parameter name. */
+  readonly values: Readonly<Record<string, string>>;
+}
+
 export interface ComponentDocument extends DocumentBase {
   readonly kind: 'component';
   readonly units: LengthUnit;
   readonly parameters: readonly Parameter[];
+  /** The component's configuration table. */
+  readonly configurations?: readonly Configuration[];
+  /** The configuration being edited and shown (absent: the parameters' own values). */
+  readonly configuration?: string;
   readonly timeline: readonly TimelineItem[];
   /**
    * How many items at the end of the timeline are rolled back: they are kept but not run, and new

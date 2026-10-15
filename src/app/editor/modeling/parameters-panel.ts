@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-import type { Parameter } from '@core/contracts';
+import type { Configuration, Parameter } from '@core/contracts';
 import { newId } from '@core/utilities/identity';
 import { Icon } from '../../shared/icon';
 import { DesignStore } from '../sketch/design-store';
@@ -66,6 +66,51 @@ import { DesignStore } from '../sketch/design-store';
         </tr>
       </tbody>
     </table>
+    <h3 class="eyebrow">Configurations</h3>
+    <p class="hint">Variants of the component: other values for some parameters. Empty cells keep the parameter's own value.</p>
+    <label class="shown">
+      Shown
+      <select aria-label="Shown configuration" (change)="activate(value($event))">
+        <option value="" [selected]="!active()">The parameters' own values</option>
+        @for (c of configurations(); track c.id) {
+          <option [value]="c.id" [selected]="c.id === active()">{{ c.name }}</option>
+        }
+      </select>
+    </label>
+    @if (configurations().length) {
+      <div class="scroll">
+        <table aria-label="Configurations">
+          <thead>
+            <tr>
+              <th>Configuration</th>
+              @for (name of parameterNames(); track name) {
+                <th>{{ name }}</th>
+              }
+              <th><span class="visually-hidden">Delete</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (c of configurations(); track c.id) {
+              <tr>
+                <td><input [attr.aria-label]="'Name of configuration ' + c.name" [value]="c.name" (change)="renameConfiguration(c, value($event))" /></td>
+                @for (name of parameterNames(); track name) {
+                  <td><input [attr.aria-label]="name + ' in ' + c.name" [value]="c.values[name] ?? ''" [placeholder]="defaults().get(name) ?? ''" (change)="setValue(c, name, value($event))" /></td>
+                }
+                <td>
+                  <button type="button" class="icon-btn" [attr.aria-label]="'Delete configuration ' + c.name" (click)="removeConfiguration(c)">
+                    <cad-icon name="trash" [size]="14" />
+                  </button>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+    <div class="add-configuration">
+      <input aria-label="New configuration name" placeholder="name" [value]="configurationName()" (input)="configurationName.set(value($event))" (keydown.enter)="addConfiguration()" />
+      <button type="button" class="btn" aria-label="Add configuration" (click)="addConfiguration()"><cad-icon name="plus" /> Add</button>
+    </div>
     @if (store.error(); as error) {
       <p class="error" role="alert">{{ error }}</p>
     }
@@ -75,6 +120,12 @@ import { DesignStore } from '../sketch/design-store';
     .head { display: flex; justify-content: space-between; align-items: center; }
     h2 { font-size: 15px; }
     h3 { margin: var(--space-2) 0 0; }
+    .shown { display: grid; gap: var(--space-1); font-size: 12px; color: var(--text-muted); }
+    .shown select { height: 28px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-raised); color: var(--text); font: 13px var(--font); }
+    .scroll { overflow-x: auto; }
+    .scroll input { min-width: 64px; }
+    .add-configuration { display: grid; grid-template-columns: 1fr auto; gap: var(--space-1); }
+    .add-configuration input { height: 28px; }
     .hint { margin: 0; color: var(--text-muted); font-size: 12px; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
     th { text-align: left; font-weight: 600; color: var(--text-muted); font-size: 11px; padding: 0 2px 4px; }
@@ -94,6 +145,13 @@ export class ParametersPanel {
     return this.store.projectParameters().map((parameter) => ({ parameter, display: shown.get(parameter.id), overridden: !shown.has(parameter.id) }));
   });
   protected readonly sharedName = signal('');
+  protected readonly configurationName = signal('');
+  protected readonly configurations = computed(() => this.store.state()?.document.configurations ?? []);
+  protected readonly active = computed(() => this.store.state()?.document.configuration ?? '');
+  /** Every parameter a configuration can set: the component's and the project's. */
+  protected readonly parameterNames = computed(() => [...new Set((this.store.state()?.parameters ?? []).map((p) => p.parameter.name))]);
+  /** Each parameter's own expression, shown in empty cells. */
+  protected readonly defaults = computed(() => new Map((this.store.state()?.parameters ?? []).map((p) => [p.parameter.name, p.parameter.expression])));
   protected readonly sharedExpression = signal('');
   protected readonly name = signal('');
   protected readonly expression = signal('');
@@ -130,6 +188,36 @@ export class ParametersPanel {
 
   protected removeShared(parameter: Parameter): void {
     void this.store.setProjectParameters(this.store.projectParameters().filter((p) => p.id !== parameter.id));
+  }
+
+  protected activate(id: string): void {
+    void this.store.run({ type: 'activate-configuration', ...(id ? { configuration: id } : {}) });
+  }
+
+  protected async addConfiguration(): Promise<void> {
+    const name = this.configurationName().trim();
+    if (!name) return;
+    const configuration = { id: newId(), name, values: {} };
+    if (await this.store.run({ type: 'set-configurations', configurations: [...this.configurations(), configuration] })) this.configurationName.set('');
+  }
+
+  protected renameConfiguration(configuration: Configuration, name: string): void {
+    this.saveConfiguration({ ...configuration, name: name.trim() });
+  }
+
+  /** Sets one parameter's value in a configuration; an empty value takes the parameter's own again. */
+  protected setValue(configuration: Configuration, name: string, expression: string): void {
+    const values = Object.fromEntries(Object.entries(configuration.values).filter(([key]) => key !== name));
+    if (expression.trim()) values[name] = expression.trim();
+    this.saveConfiguration({ ...configuration, values });
+  }
+
+  protected removeConfiguration(configuration: Configuration): void {
+    void this.store.run({ type: 'set-configurations', configurations: this.configurations().filter((c) => c.id !== configuration.id) });
+  }
+
+  private saveConfiguration(configuration: Configuration): void {
+    void this.store.run({ type: 'set-configurations', configurations: this.configurations().map((c) => (c.id === configuration.id ? configuration : c)) });
   }
 
   protected value(event: Event): string {

@@ -226,6 +226,17 @@
                   }
                 </select>
               </label>
+              @if (store.state()?.document?.configurations?.length) {
+                <label class="field">
+                  Configuration
+                  <select id="export-configuration" (change)="changeExport({ configuration: $any($event.target).value })">
+                    <option value="" [selected]="!draft.configuration">The parameters' own values</option>
+                    @for (c of store.state()?.document?.configurations ?? []; track c.id) {
+                      <option [value]="c.id" [selected]="c.id === draft.configuration">{{ c.name }}</option>
+                    }
+                  </select>
+                </label>
+              }
               <fieldset>
                 <legend>Bodies</legend>
                 @for (body of bodyRows(); track body.id) {

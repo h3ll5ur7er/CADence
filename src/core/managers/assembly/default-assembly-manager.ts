@@ -4,6 +4,7 @@ import type { ProjectAccess } from '@core/access/project';
 import type { ExternalFileAccess } from '@core/access/external-file';
 import {
   type AssemblyDocument,
+  type BodyMesh,
   type BodyState,
   type CadDocument,
   type DocumentId,
@@ -17,6 +18,7 @@ import {
   type PlaneFrame,
   type Result,
   resultStamp,
+  sourceKey,
 } from '@core/contracts';
 import type { AnalysisEngine } from '@core/engines/analysis';
 import type { InterchangeEngine } from '@core/engines/interchange';
@@ -62,10 +64,11 @@ const solidTypes: Readonly<Record<AssemblyFormat, string>> = { step: 'model/step
 
 class Session implements AssemblySession {
   private derived: Derived = { poses: new Map(), placed: new Set(), values: new Map(), errors: new Map() };
-  private readonly components = new Map<DocumentId, LoadedComponent>();
+  /** By source: a component, or a configuration of it (`sourceKey`). */
+  private readonly components = new Map<string, LoadedComponent>();
   private readonly frames = new Map<string, Result<PlaneFrame>>();
-  /** Regeneration requests per component; a component edited again meanwhile is asked for again, a few times. */
-  private readonly requests = new Map<DocumentId, number>();
+  /** Regeneration requests per source; a component edited again meanwhile is asked for again, a few times. */
+  private readonly requests = new Map<string, number>();
   private readonly undoStack: AssemblyDocument[] = [];
   private readonly redoStack: AssemblyDocument[] = [];
   private readonly listeners = new Set<(state: AssemblyState) => void>();
@@ -77,22 +80,28 @@ class Session implements AssemblySession {
     private document: AssemblyDocument,
   ) {
     const { events } = deps;
-    const uses = (id: DocumentId) => this.components.has(id);
+    // The sources (component and configuration) of a component that this assembly shows.
+    const sourcesOf = (id: DocumentId) => [...this.components.keys()].filter((source) => source === id || source.startsWith(`${id}@`));
+    const refreshAll = (sources: readonly string[]) =>
+      sources.length
+        ? this.serialized(async () => {
+            for (const source of sources) await this.refresh(source, 'changed');
+          })
+        : undefined;
     this.unsubscribe = [
-      events.subscribe('componentRegenerated', ({ documentId, ok: done }) =>
-        uses(documentId) ? this.serialized(() => this.refresh(documentId, done ? 'regenerated' : 'failed')) : undefined,
-      ),
-      events.subscribe('documentRenamed', ({ documentId }) => (uses(documentId) ? this.serialized(() => this.refresh(documentId, 'changed')) : undefined)),
-      events.subscribe('documentDeleted', ({ documentId }) => (uses(documentId) ? this.serialized(() => this.refresh(documentId, 'changed')) : undefined)),
+      events.subscribe('componentRegenerated', ({ documentId, configuration, ok: done }) => {
+        const source = sourceKey(documentId, configuration);
+        return this.components.has(source) ? this.serialized(() => this.refresh(source, done ? 'regenerated' : 'failed')) : undefined;
+      }),
+      events.subscribe('documentRenamed', ({ documentId }) => refreshAll(sourcesOf(documentId))),
+      events.subscribe('documentDeleted', ({ documentId }) => refreshAll(sourcesOf(documentId))),
       // New project parameters make the project's component results stale.
-      events.subscribe('projectParametersChanged', ({ projectId }) =>
-        projectId === this.document.projectId ? this.serialized(async () => { for (const id of [...this.components.keys()]) await this.refresh(id, 'changed'); }) : undefined,
-      ),
+      events.subscribe('projectParametersChanged', ({ projectId }) => (projectId === this.document.projectId ? refreshAll([...this.components.keys()]) : undefined)),
     ];
   }
 
   async start(): Promise<void> {
-    for (const id of new Set(this.document.instances.map((i) => i.component))) await this.load(id, 'open');
+    for (const source of new Set(this.document.instances.map((i) => sourceKey(i.component, i.configuration)))) await this.load(source, 'open');
     this.derived = await this.derive(this.document);
   }
 
@@ -183,7 +192,10 @@ class Session implements AssemblySession {
     }
     const applied = applyCommand(this.document, command, componentName);
     if (!applied.ok) return applied;
-    for (const instance of applied.value.document.instances) if (!this.components.has(instance.component)) await this.load(instance.component, 'open');
+    for (const instance of applied.value.document.instances) {
+      const source = sourceKey(instance.component, instance.configuration);
+      if (!this.components.has(source)) await this.load(source, 'open');
+    }
     const target = applied.value.joint;
     const derived = await this.derive(applied.value.document, target ? new Set([target]) : undefined);
     const error = target && derived.errors.get(target);
@@ -217,8 +229,8 @@ class Session implements AssemblySession {
   }
 
   /** Re-reads a component after the Design Manager answered, or after it was renamed or deleted. */
-  private async refresh(id: DocumentId, reason: 'regenerated' | 'failed' | 'changed'): Promise<void> {
-    await this.load(id, reason);
+  private async refresh(source: string, reason: 'regenerated' | 'failed' | 'changed'): Promise<void> {
+    await this.load(source, reason);
     this.derived = await this.derive(this.document);
     this.notify();
   }
@@ -227,39 +239,48 @@ class Session implements AssemblySession {
    * Restores a component from its published result. A missing or stale result is requested from the
    * Design Manager (queued); the answer arrives as `componentRegenerated` (docs/Architecture/Decisions.md#adr-11).
    */
-  private async load(id: DocumentId, reason: 'open' | 'regenerated' | 'failed' | 'changed'): Promise<void> {
+  private async load(source: string, reason: 'open' | 'regenerated' | 'failed' | 'changed'): Promise<void> {
+    const [id, configuration] = source.split('@') as [DocumentId, string | undefined];
     const document = await this.deps.documents.load(id);
-    const previous = this.components.get(id);
+    const previous = this.components.get(source);
+    const view = (status: ComponentView['status'], bodies: readonly BodyMesh[], name = document?.name ?? previous?.view.name ?? 'Missing component'): ComponentView => ({
+      id,
+      ...(configuration ? { configuration } : {}),
+      name: configuration && document?.kind === 'component' ? `${name} (${document.configurations?.find((c) => c.id === configuration)?.name ?? 'missing configuration'})` : name,
+      status,
+      bodies,
+      ...(document?.kind === 'component' && document.configurations?.length ? { configurations: document.configurations.map(({ id: c, name: n }) => ({ id: c, name: n })) } : {}),
+    });
     if (document?.kind === 'imported') {
       await this.loadImported(document);
       return;
     }
     if (document?.kind !== 'component' || reason === 'failed') {
-      this.components.set(id, { view: { id, name: document?.name ?? previous?.view.name ?? 'Missing component', status: 'missing', bodies: [] }, bodies: [], stamp: '' });
+      this.components.set(source, { view: view('missing', []), bodies: [], stamp: '' });
       return;
     }
-    const result = await this.deps.assets.latestResult(id);
+    const result = await this.deps.assets.latestResult(id, configuration);
     const stamp = resultStamp(document.modifiedAt, (await this.deps.projects.find(document.projectId))?.parameters);
     if (result?.stamp !== stamp) {
-      const requests = this.requests.get(id) ?? 0;
+      const requests = this.requests.get(source) ?? 0;
       if (reason === 'regenerated' && requests >= maxRequests) {
-        this.components.set(id, { view: { id, name: document.name, status: 'missing', bodies: [] }, bodies: [], stamp: '' });
+        this.components.set(source, { view: view('missing', []), bodies: [], stamp: '' });
         return;
       }
-      this.requests.set(id, requests + 1);
-      this.components.set(id, { view: { id, name: document.name, status: 'loading', bodies: previous?.view.bodies ?? [] }, bodies: previous?.bodies ?? [], stamp: previous?.stamp ?? '' });
-      this.deps.events.publish('regenerateComponent', { documentId: id });
+      this.requests.set(source, requests + 1);
+      this.components.set(source, { view: view('loading', previous?.view.bodies ?? []), bodies: previous?.bodies ?? [], stamp: previous?.stamp ?? '' });
+      this.deps.events.publish('regenerateComponent', { documentId: id, ...(configuration ? { configuration } : {}) });
       return;
     }
-    this.requests.delete(id);
+    this.requests.delete(source);
     const appearances = document.appearances ?? {};
     if (previous?.stamp === result.stamp && previous.view.status === 'ready') {
-      this.components.set(id, { ...previous, view: { ...previous.view, name: document.name, appearances } });
+      this.components.set(source, { ...previous, view: { ...view('ready', previous.view.bodies), appearances } });
       return;
     }
-    const bodies = await this.deps.modeling.restore(result.bytes, `result:${id}:${result.stamp}`);
+    const bodies = await this.deps.modeling.restore(result.bytes, `result:${source}:${result.stamp}`);
     const meshes = bodies.length ? await this.deps.modeling.tessellate(bodies) : [];
-    this.components.set(id, { view: { id, name: document.name, status: 'ready', bodies: meshes, appearances }, bodies, stamp: result.stamp });
+    this.components.set(source, { view: { ...view('ready', meshes), appearances }, bodies, stamp: result.stamp });
   }
 
   /**
@@ -309,7 +330,7 @@ class Session implements AssemblySession {
   private async frame(document: AssemblyDocument, origin: JointOrigin): Promise<Result<PlaneFrame>> {
     if (!origin.ref) return ok(componentOrigin);
     const instance = document.instances.find((i) => i.id === origin.instance);
-    const component = instance && this.components.get(instance.component);
+    const component = instance && this.components.get(sourceKey(instance.component, instance.configuration));
     if (!component || component.view.status !== 'ready') {
       return fail({ code: 'not-ready', message: `${component?.view.name ?? 'The component'} is ${component?.view.status === 'missing' ? 'missing' : 'still loading'}.` });
     }
@@ -323,7 +344,7 @@ class Session implements AssemblySession {
 
   private readyInstances() {
     return this.document.instances.flatMap((instance) => {
-      const component = this.components.get(instance.component);
+      const component = this.components.get(sourceKey(instance.component, instance.configuration));
       const transform = this.derived.poses.get(instance.id);
       return component?.view.status === 'ready' && transform ? [{ instance, component, transform }] : [];
     });

@@ -78,3 +78,18 @@
     font: 13px var(--font-mono);
   }
 }
+
+.field {
+  display: grid;
+  gap: var(--space-1);
+
+  select {
+    height: 30px;
+    padding: 0 var(--space-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-raised);
+    color: var(--text);
+    font: 13px var(--font);
+  }
+}

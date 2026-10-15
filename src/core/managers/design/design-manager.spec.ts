@@ -521,6 +521,29 @@ describe('DesignManager', () => {
       stop();
     });
 
+    it('keeps configurations: variants it shows, exports and publishes results of', async () => {
+      await plate();
+      const big = { id: 'big', name: 'Big', values: { width: '80 mm' } };
+      unwrap(await session.execute({ type: 'set-configurations', configurations: [big, { id: 'thin', name: 'Thin', values: { thickness: '2 mm' } }] }));
+      expect(await session.execute({ type: 'set-configurations', configurations: [big, { ...big, id: 'b2' }] })).toMatchObject({ ok: false });
+      unwrap(await session.execute({ type: 'activate-configuration', configuration: 'big' }));
+      expect(await volume()).toBeCloseTo(80 * 30 * 8); // thickness = width / 10 follows
+      unwrap(await session.execute({ type: 'activate-configuration', configuration: 'thin' }));
+      expect(await volume()).toBeCloseTo(60 * 30 * 2);
+      expect((await assets.latestResult(documentId, 'thin'))?.configuration).toBe('thin');
+      // Another configuration exported, without changing what is shown.
+      unwrap(await session.exportBodies('stl', { configuration: 'big' }));
+      expect(files.delivered.at(-1)?.name).toBe('Component 1 (Big).stl');
+      expect(await volume()).toBeCloseTo(60 * 30 * 2);
+      unwrap(await session.execute({ type: 'activate-configuration' }));
+      expect(await volume()).toBeCloseTo(60 * 30 * 6);
+      // Assemblies ask for a configuration's result.
+      const answered = new Promise<boolean>((resolve) => events.subscribe('componentRegenerated', ({ configuration, ok }) => resolve(configuration === 'big' && ok)));
+      events.publish('regenerateComponent', { documentId, configuration: 'big' });
+      expect(await answered).toBe(true);
+      expect((await assets.latestResult(documentId, 'big'))?.bytes.length).toBeGreaterThan(0);
+    });
+
     it('refuses parameter changes that would break the model', async () => {
       await plate();
       const broken = await session.execute({ type: 'delete-parameter', id: 'pt' });

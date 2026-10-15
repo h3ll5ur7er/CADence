@@ -3,13 +3,14 @@ import type {
   BodyMesh,
   BodyProperties,
   ComponentDocument,
+  Configuration,
   DocumentId,
   Feature,
   LengthUnit,
   ManufacturingProfile,
-  MeshQuality,
   Material,
   Measurement,
+  MeshQuality,
   Parameter,
   PlaneFrame,
   PlaneRef,
@@ -19,12 +20,12 @@ import type {
   SketchConstraint,
   SketchEntity,
   SketchStatus,
-  TopologyRef,
-  ValidationReport,
-  Vec2,
   TextOutlines,
   TextWeight,
   ThreadMarker,
+  TopologyRef,
+  ValidationReport,
+  Vec2,
 } from '@core/contracts';
 
 /** Every change to a component is one of these commands (docs/Architecture/Decisions.md#adr-10). Ids come from the caller. */
@@ -74,6 +75,10 @@ export type DesignCommand =
   | { readonly type: 'set-parameter'; readonly parameter: Parameter }
   | { readonly type: 'delete-parameter'; readonly id: string }
   | { readonly type: 'set-material'; readonly material: Material }
+  /** Replaces the configuration table; the configuration being edited must stay in it. */
+  | { readonly type: 'set-configurations'; readonly configurations: readonly Configuration[] }
+  /** Edits and shows a configuration (absent: the parameters' own values). */
+  | { readonly type: 'activate-configuration'; readonly configuration?: string }
   /** The unit lengths are shown and typed in; nothing stored changes. */
   | { readonly type: 'set-units'; readonly units: LengthUnit }
   /** The machine the component is made on (print or laser profile), for validation and kerf compensation. */
@@ -140,6 +145,8 @@ export type SolidFormat = 'step' | 'stl' | 'obj' | '3mf';
 export interface ExportOptions {
   readonly bodies?: readonly string[];
   readonly quality?: MeshQuality;
+  /** A configuration to export (`''`: the parameters' own values); the shown one by default. */
+  readonly configuration?: string;
 }
 
 /** How a drawing goes into a sketch: as one piece, or as separate curves held by the relations it shows, fixed, or free. */

@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, DestroyRef, effect, inject, input, signal, untracked, viewChild } from '@angular/core';
-import { type Appearance, type DocumentId, type DocumentSummary, type Matrix4 } from '@core/contracts';
+import { type Appearance, type DocumentId, type DocumentSummary, type Matrix4, sourceKey } from '@core/contracts';
 import type { AssemblyFormat } from '@core/managers/assembly';
 import { newId } from '@core/utilities/identity';
 import { compose, rotation, translation } from '@core/utilities/math';
@@ -57,9 +57,13 @@ export class AssemblyMode {
   private readonly viewport = viewChild.required(Viewport);
   protected readonly capture = (fps: number) => this.viewport().captureStream(fps);
 
+  protected setConfiguration(instanceId: string, configuration: string): void {
+    void this.store.run({ type: 'set-instance-configuration', instanceId, ...(configuration ? { configuration } : {}) });
+  }
+
   protected readonly instances = computed(() => {
     const state = this.store.state();
-    return (state?.document.instances ?? []).map((instance) => ({ instance, status: state?.components.get(instance.component)?.status ?? 'loading' }));
+    return (state?.document.instances ?? []).map((instance) => ({ instance, status: state?.components.get(sourceKey(instance.component, instance.configuration))?.status ?? 'loading' }));
   });
   protected readonly joints = computed(() => this.store.state()?.document.joints ?? []);
   protected readonly studies = computed(() => this.store.state()?.document.motionStudies ?? []);
@@ -70,7 +74,8 @@ export class AssemblyMode {
     if (!instance || !state) return undefined;
     return {
       instance,
-      component: state.components.get(instance.component)?.name ?? 'a component',
+      component: state.components.get(sourceKey(instance.component, instance.configuration))?.name ?? 'a component',
+      configurations: state.components.get(sourceKey(instance.component, instance.configuration))?.configurations ?? [],
       placed: state.placed.has(instance.id),
       position: positionOf(state.poses.get(instance.id) ?? instance.transform),
     };

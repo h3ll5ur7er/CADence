@@ -203,13 +203,17 @@ class Session implements DesignSession {
   }
 
   async exportBodies(format: SolidFormat, options: ExportOptions = {}): Promise<Result<void>> {
-    const { document, derived } = this.current;
-    const bodies = this.namedBodies().filter((b) => !options.bodies || options.bodies.includes(b.id));
+    const { document } = this.current;
+    // Another configuration is built for the export only; the session keeps showing its own.
+    const other = options.configuration !== undefined && options.configuration !== (document.configuration ?? '');
+    const derived = other ? await new Regeneration(this.deps).run(document, { ...this.context, configuration: options.configuration }) : this.current.derived;
+    const bodies = this.namedBodies(derived).filter((b) => !options.bodies || options.bodies.includes(b.id));
     if (derived.bodies.length === 0) return fail({ code: 'nothing-to-export', message: 'There are no bodies to export yet.' });
     if (bodies.length === 0) return fail({ code: 'nothing-to-export', message: 'Select at least one body to export.' });
+    const variant = document.configurations?.find((c) => c.id === (other ? options.configuration : document.configuration))?.name;
     try {
       const bytes = await this.deps.interchange.exportBodies(bodies, format, options.quality);
-      await this.deps.externalFiles.deliver({ name: `${document.name}.${format}`, mediaType: solidTypes[format], bytes });
+      await this.deps.externalFiles.deliver({ name: `${document.name}${variant ? ` (${variant})` : ''}.${format}`, mediaType: solidTypes[format], bytes });
       return ok(undefined);
     } catch (error) {
       return fail({ code: 'export-failed', message: error instanceof Error ? error.message : String(error) });
@@ -233,8 +237,8 @@ class Session implements DesignSession {
   }
 
   /** Bodies with the names of the features that made them. */
-  private namedBodies() {
-    const { document, derived } = this.current;
+  private namedBodies(derived: Derived = this.current.derived) {
+    const { document } = this.current;
     return derived.bodies.map((b) => ({ ...b, name: document.timeline.find((item) => item.id === b.id)?.name ?? b.id }));
   }
 
@@ -287,7 +291,7 @@ class Session implements DesignSession {
     await this.deps.documents.store(snapshot.document);
     const state = this.state();
     for (const listener of this.listeners) listener(state);
-    await this.results.publish(snapshot.document, snapshot.derived.bodies, this.context.projectParameters);
+    await this.results.publish(snapshot.document, snapshot.derived.bodies, this.context.projectParameters, snapshot.document.configuration);
   }
 
   private serialized<T>(work: () => Promise<T>): Promise<T> {
@@ -323,17 +327,17 @@ class ResultPublisher {
 
   constructor(private readonly deps: DesignManagerDependencies) {}
 
-  async publish(document: ComponentDocument, bodies: readonly BodyState[], projectParameters: readonly Parameter[] = []): Promise<void> {
+  async publish(document: ComponentDocument, bodies: readonly BodyState[], projectParameters: readonly Parameter[] = [], configuration?: string): Promise<void> {
     const keys = bodies.map((b) => b.key).join('|');
     if (this.last?.keys !== keys) this.last = { keys, bytes: await this.deps.modeling.snapshot(bodies) };
     const stamp = resultStamp(document.modifiedAt, projectParameters);
-    await this.deps.assets.publishResult({ documentId: document.id, projectId: document.projectId, stamp, bytes: this.last.bytes });
+    await this.deps.assets.publishResult({ documentId: document.id, projectId: document.projectId, stamp, bytes: this.last.bytes, ...(configuration ? { configuration } : {}) });
   }
 }
 
 export class DefaultDesignManager implements DesignManager {
   constructor(private readonly deps: DesignManagerDependencies) {
-    deps.events.subscribe('regenerateComponent', ({ documentId }) => this.regenerate(documentId));
+    deps.events.subscribe('regenerateComponent', ({ documentId, configuration }) => this.regenerate(documentId, configuration));
     deps.events.subscribe('documentDeleted', ({ documentId }) => deps.assets.discardResult(documentId));
   }
 
@@ -348,16 +352,14 @@ export class DefaultDesignManager implements DesignManager {
     return ok(new Session(this.deps, { document, derived, meshes }, new ResultPublisher(this.deps), context));
   }
 
-  /** Answers a queued `regenerateComponent` request with `componentRegenerated`. */
-  private async regenerate(documentId: DocumentId): Promise<void> {
+  /** Answers a queued `regenerateComponent` request (for one configuration) with `componentRegenerated`. */
+  private async regenerate(documentId: DocumentId, configuration?: string): Promise<void> {
+    const answer = (ok: boolean) => this.deps.events.publish('componentRegenerated', { documentId, ...(configuration ? { configuration } : {}), ok });
     const document = await this.deps.documents.load(documentId);
-    if (document?.kind !== 'component') {
-      this.deps.events.publish('componentRegenerated', { documentId, ok: false });
-      return;
-    }
+    if (document?.kind !== 'component' || (configuration && !document.configurations?.some((c) => c.id === configuration))) return answer(false);
     const projectParameters = await projectParametersOf(this.deps, document);
-    const derived = await new Regeneration(this.deps).run(document, { projectParameters });
-    await new ResultPublisher(this.deps).publish(document, derived.bodies, projectParameters);
-    this.deps.events.publish('componentRegenerated', { documentId, ok: true });
+    const derived = await new Regeneration(this.deps).run(document, { projectParameters, configuration: configuration ?? '' });
+    await new ResultPublisher(this.deps).publish(document, derived.bodies, projectParameters, configuration);
+    answer(true);
   }
 }

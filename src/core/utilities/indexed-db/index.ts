@@ -29,7 +29,7 @@ export class KeyValueDatabase {
     return this.run(store, 'readwrite', (s) => s.put(value)).then(() => undefined);
   }
 
-  delete(store: string, key: IDBValidKey): Promise<void> {
+  delete(store: string, key: IDBValidKey | IDBKeyRange): Promise<void> {
     return this.run(store, 'readwrite', (s) => s.delete(key)).then(() => undefined);
   }
 

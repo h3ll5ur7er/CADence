@@ -18,6 +18,7 @@ export function boxSelect(sketch: Sketch, from: Vec2, to: Vec2): string[] {
   return sketch.entities.flatMap((e) => {
     if (e.kind === 'point') return inside(at(e.id)) ? [e.id] : [];
     if (e.kind === 'projection') return [];
+    if (e.kind === 'text') return inside(at(e.anchor)) ? [e.id] : [];
     const polyline = curvePolyline(e, at);
     const hit = crossing ? polyline.some(inside) || polyline.slice(1).some((p, i) => crossesBox(polyline[i] as Vec2, p, x0, y0, x1, y1)) : polyline.every(inside);
     return hit ? [e.id] : [];

@@ -18,7 +18,7 @@ import { Autofocus } from '../../shared/autofocus';
 import { Shortcuts } from '../../shared/shortcuts';
 import { DesignStore } from './design-store';
 import { isShapeTool, shapeClicks, shapeCommand } from './shape-tools';
-import { curvePath, dimensionLabels, glyphs, hitTest, profilePath } from './sketch-overlay';
+import { curvePath, dimensionLabels, glyphs, hitTest, outlinePath, profilePath } from './sketch-overlay';
 import { boxSelect, copySelection, pasted } from './selection';
 import { circularPatternCommand, mirrorCommand } from './sketch-patterns';
 import { snap } from './snapping';
@@ -127,11 +127,13 @@ export class SketchEditor {
     const m = this.matrix();
     return m ? `matrix(${m.a} ${m.b} ${m.c} ${m.d} ${m.e} ${m.f})` : '';
   });
-  protected readonly curves = computed(() =>
-    this.sketch()
-      .entities.filter(isCurve)
-      .map((e) => ({ id: e.id, d: curvePath(e, this.points()), construction: e.construction, projected: projectionOf(this.sketch(), e.id) !== undefined })),
-  );
+  protected readonly curves = computed(() => {
+    const texts = this.view().texts;
+    return this.sketch().entities.flatMap((e) => {
+      if (e.kind === 'text') return [{ id: e.id, d: outlinePath(texts.get(e.id) ?? []), construction: e.construction, projected: false }];
+      return isCurve(e) ? [{ id: e.id, d: curvePath(e, this.points()), construction: e.construction, projected: projectionOf(this.sketch(), e.id) !== undefined }] : [];
+    });
+  });
   protected readonly profiles = computed(() => this.view().profiles.map((p) => ({ id: p.id, d: profilePath(p) })));
   protected readonly screenPoints = computed(() => {
     const m = this.matrix();
@@ -461,7 +463,7 @@ export class SketchEditor {
     if (id && kind) return { id, kind };
     const at = this.toPlane(event);
     const m = this.matrix();
-    return at && m ? hitTest(this.sketch(), at, hitPixels / affineScale(m)) : undefined;
+    return at && m ? hitTest(this.sketch(), at, hitPixels / affineScale(m), this.view().texts) : undefined;
   }
 
   private preview(): string | undefined {

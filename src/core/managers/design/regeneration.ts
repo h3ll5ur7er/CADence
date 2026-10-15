@@ -127,7 +127,7 @@ export class Regeneration {
   private async sketch(stored: Sketch): Promise<Result<void>> {
     const frame = await this.frame(stored.plane);
     const unsolved = (error: string, f: PlaneFrame = originFrames.XY) => {
-      this.sketches.set(stored.id, { sketch: stored, frame: f, status: 'failed', degreesOfFreedom: 0, profiles: [], values: new Map(), error });
+      this.sketches.set(stored.id, { sketch: stored, frame: f, status: 'failed', degreesOfFreedom: 0, profiles: [], texts: new Map(), values: new Map(), error });
       return fail({ code: 'unsolvable', message: error });
     };
     if (!frame.ok) return unsolved(frame.error.message);

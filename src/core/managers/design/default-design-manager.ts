@@ -133,7 +133,7 @@ class Session implements DesignSession {
     }
     try {
       const kerf = options.compensateKerf && process.kind === 'laser' ? { profiles: view.profiles, kerf: process.kerf } : undefined;
-      const bytes = await this.deps.interchange.exportDrawing(view.sketch, format, kerf);
+      const bytes = await this.deps.interchange.exportDrawing(view.sketch, format, kerf, view.texts);
       const suffix = kerf ? ' (kerf compensated)' : '';
       await this.deps.externalFiles.deliver({
         name: `${this.current.document.name} - ${view.sketch.name}${suffix}.${format}`,

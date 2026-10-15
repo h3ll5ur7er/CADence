@@ -59,6 +59,8 @@ export function references(item: SketchEntity | SketchConstraint): string[] {
       return [...item.points];
     case 'projection':
       return [];
+    case 'text':
+      return [item.anchor];
     case 'horizontal-points':
     case 'vertical-points':
       return [...item.points];
@@ -119,8 +121,19 @@ function withSketch(
   });
 }
 
+/** Why a text cannot be drawn, or `undefined`. */
+function textProblem(text: string, height: number): string | undefined {
+  if (!text.trim()) return 'A text needs at least one character.';
+  if (!(height > 0)) return 'Text height must be above zero.';
+  return undefined;
+}
+
 /** Adds entities and constraints after checking ids are new and references resolve. */
 function extend(sketch: Sketch, entities: readonly SketchEntity[], constraints: readonly SketchConstraint[]): Result<Sketch> {
+  for (const e of entities) {
+    const problem = e.kind === 'text' ? textProblem(e.text, e.height) : undefined;
+    if (problem) return invalid(problem);
+  }
   const ids = new Set([sketchOriginId, ...sketch.entities.map((e) => e.id), ...sketch.constraints.map((c) => c.id)]);
   for (const item of [...entities, ...constraints]) {
     if (ids.has(item.id)) return invalid(`Id ${item.id} is already in use.`);
@@ -262,6 +275,15 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
       );
     case 'delete-sketch-elements':
       return withSketch(document, command.sketchId, (s) => ok(remove(s, command.ids)));
+    case 'set-sketch-text':
+      return withSketch(document, command.sketchId, (s) => {
+        const target = s.entities.find((e) => e.id === command.textId && e.kind === 'text');
+        if (!target) return invalid(`Text ${command.textId} does not exist.`);
+        const problem = textProblem(command.text, command.height);
+        if (problem) return invalid(problem);
+        const { text, height, weight, angle } = command;
+        return ok({ ...s, entities: s.entities.map((e) => (e === target ? { ...e, text, height, weight, angle } : e)) });
+      });
     case 'transform-sketch-elements':
       return withSketch(document, command.sketchId, (s) => transformed(s, command.ids, command.translate, command.rotate));
     case 'edit-sketch':

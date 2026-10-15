@@ -1,5 +1,5 @@
 import { place, type ShapeAccess } from '@core/access/shape';
-import { fail, type ImportFormat, type Matrix4, ok, type Result, type Sketch, type SketchEntity } from '@core/contracts';
+import { fail, type ImportFormat, type Matrix4, ok, type Result, type Sketch, type SketchEntity, type TextOutlines } from '@core/contracts';
 import { exportSTEP, type Shape3D } from 'replicad';
 import { compensatedCurves, type DrawingCurve, drawingCurves, type KerfCompensation } from './drawing';
 import { readDxf, readSvg, sketchEntities } from './drawing-readers';
@@ -30,7 +30,8 @@ export interface InterchangeEngine {
    * A solved sketch as a 2D drawing; construction geometry is left out. With `kerf`, the profile
    * outlines are compensated for the laser's cut width (throws when a detail is too small for it).
    */
-  exportDrawing(sketch: Sketch, format: DrawingFormat, kerf?: KerfCompensation): Promise<Uint8Array>;
+  /** `texts`: the outlines of the sketch's texts, as solving produced them. */
+  exportDrawing(sketch: Sketch, format: DrawingFormat, kerf?: KerfCompensation, texts?: TextOutlines): Promise<Uint8Array>;
   /** Solid bodies: STEP keeps exact geometry; STL, OBJ and 3MF are fine triangle meshes. */
   exportBodies(bodies: readonly BodySource[], format: SolidFormat): Promise<Uint8Array>;
   /**
@@ -144,8 +145,8 @@ class DefaultInterchangeEngine implements InterchangeEngine {
     return this.shapes;
   }
 
-  async exportDrawing(sketch: Sketch, format: DrawingFormat, kerf?: KerfCompensation): Promise<Uint8Array> {
-    const curves = kerf ? compensatedCurves(sketch, kerf) : drawingCurves(sketch);
+  async exportDrawing(sketch: Sketch, format: DrawingFormat, kerf?: KerfCompensation, texts?: TextOutlines): Promise<Uint8Array> {
+    const curves = kerf ? compensatedCurves(sketch, kerf, texts) : drawingCurves(sketch, texts);
     return new TextEncoder().encode(drawingWriters[format](curves));
   }
 

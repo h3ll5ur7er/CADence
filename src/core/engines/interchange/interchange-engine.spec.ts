@@ -68,6 +68,20 @@ describe('InterchangeEngine drawings', () => {
     expect(20 + Math.min(...xs)).toBeLessThan(0.005);
   });
 
+  it('writes text as its outlines', async () => {
+    const b = new SketchBuilder();
+    const label = b.text(b.point(0, 0), 'L', 10);
+    const outline = [
+      [
+        { kind: 'line' as const, start: [0, 0] as const, end: [6, 0] as const, source: label },
+        { kind: 'line' as const, start: [6, 0] as const, end: [6, 10] as const, source: label },
+        { kind: 'line' as const, start: [6, 10] as const, end: [0, 0] as const, source: label },
+      ],
+    ];
+    const svg = text(await engine.exportDrawing(b.build(), 'svg', undefined, new Map([[label, outline]])));
+    expect(svg.match(/<line /g)).toHaveLength(3);
+  });
+
   it('leaves construction geometry out', async () => {
     const svg = text(await engine.exportDrawing(plate(), 'svg'));
     expect(svg).not.toContain('x1="0" y1="0" x2="40" y2="-20"');

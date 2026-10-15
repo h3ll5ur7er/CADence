@@ -194,4 +194,20 @@ describe('SketchEngine.solve', () => {
       expect((d[0] - a[0]) * (e[1] - a[1]) - (d[1] - a[1]) * (e[0] - a[0])).toBeCloseTo(0, 6);
     }
   });
+
+  it('lays out text at its anchor as profiles: one per letter, holes included', async () => {
+    const b = new SketchBuilder();
+    const anchor = b.point(5, 5);
+    b.text(anchor, 'HO', 10, 't');
+    const solution = await engine.solve(b.build(), values());
+    expect(solution.texts.get('t')).toHaveLength(3); // H, and O with its hole
+    expect(solution.profiles).toHaveLength(3); // H, the ring of the O, and the region inside it (as with a hole in a plate)
+    const o = solution.profiles.find((p) => p.holes.length === 1);
+    expect(o?.outer.edges.every((e) => e.source === 't')).toBe(true);
+    // The H sits exactly on the baseline and reaches the capital height (round letters overshoot both a little).
+    const h = [...solution.profiles].sort((p, q) => Math.min(...p.outer.polygon.map((v) => v[0])) - Math.min(...q.outer.polygon.map((v) => v[0])))[0];
+    const ys = h?.outer.polygon.map((q) => q[1]) ?? [];
+    expect(Math.min(...ys)).toBeCloseTo(5, 1);
+    expect(Math.max(...ys)).toBeCloseTo(15, 1);
+  });
 });

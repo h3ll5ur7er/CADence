@@ -80,7 +80,28 @@ export interface SketchProjection {
   readonly construction: boolean;
 }
 
-export type SketchEntity = SketchPoint | SketchCurve | SketchProjection;
+export type TextWeight = 'regular' | 'bold';
+
+/**
+ * Text drawn as outlines of the bundled font (Inter): its baseline starts at the point `anchor` and
+ * runs along `angle` (radians); `height` is the height of capital letters (mm). Its outlines make
+ * profiles like any other curves.
+ */
+export interface SketchText {
+  readonly id: string;
+  readonly kind: 'text';
+  readonly anchor: string;
+  readonly text: string;
+  readonly height: number;
+  readonly weight: TextWeight;
+  readonly angle: number;
+  readonly construction: boolean;
+}
+
+/** The outlines of a sketch's texts, by text id: closed contours of lines and Béziers. */
+export type TextOutlines = ReadonlyMap<string, readonly (readonly ProfileEdge[])[]>;
+
+export type SketchEntity = SketchPoint | SketchCurve | SketchProjection | SketchText;
 
 /** The projection an entity was made by, if any. */
 export function projectionOf(sketch: Pick<Sketch, 'entities'>, id: string): SketchProjection | undefined {
@@ -130,7 +151,7 @@ export type SketchConstraint = GeometricConstraint | Dimension;
 export type DimensionKind = Dimension['kind'];
 
 export const isDimension = (c: SketchConstraint): c is Dimension => 'expression' in c;
-export const isCurve = (e: SketchEntity): e is SketchCurve => e.kind !== 'point' && e.kind !== 'projection';
+export const isCurve = (e: SketchEntity): e is SketchCurve => e.kind !== 'point' && e.kind !== 'projection' && e.kind !== 'text';
 
 /** A sketch as stored in a component's timeline. Points hold the last solved positions. */
 export interface Sketch {

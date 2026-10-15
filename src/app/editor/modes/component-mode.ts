@@ -116,7 +116,7 @@ export class ComponentMode {
     const editing = this.store.editing();
     return [...state.sketches.values()]
       .filter((v) => v.sketch.id !== editing && !v.error && state.items.get(v.sketch.id)?.state === 'ok')
-      .map((v) => sketchDisplay(v.sketch, v.profiles, v.frame));
+      .map((v) => sketchDisplay(v.sketch, v.profiles, v.frame, v.texts));
   });
   protected readonly planeFrames = computed(() => [...(this.store.state()?.planes.values() ?? [])]);
   protected readonly planeFeatures = computed(() => this.timeline().filter((i) => !isSketch(i) && i.type === 'plane'));

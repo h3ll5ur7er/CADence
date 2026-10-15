@@ -108,6 +108,7 @@ class Translator {
       case 'ellipse':
       case 'spline':
       case 'projection':
+      case 'text':
         return;
       case 'line':
         this.primitives.push({ id: e.id, type: 'line', p1_id: e.start, p2_id: e.end });

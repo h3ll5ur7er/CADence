@@ -20,6 +20,8 @@ import type {
   TopologyRef,
   ValidationReport,
   Vec2,
+  TextOutlines,
+  TextWeight,
 } from '@core/contracts';
 
 /** Every change to a component is one of these commands (docs/Architecture/Decisions.md#adr-10). Ids come from the caller. */
@@ -41,6 +43,16 @@ export type DesignCommand =
       readonly ids: readonly string[];
       readonly translate: Vec2;
       readonly rotate?: { readonly center: Vec2; readonly angle: number };
+    }
+  /** Changes what a sketch text says, how tall and bold it is, and its direction (radians). */
+  | {
+      readonly type: 'set-sketch-text';
+      readonly sketchId: string;
+      readonly textId: string;
+      readonly text: string;
+      readonly height: number;
+      readonly weight: TextWeight;
+      readonly angle: number;
     }
   /** Trim, extend, split, offset, fillet or chamfer sketch curves; new ids start with `idPrefix`. */
   | { readonly type: 'edit-sketch'; readonly sketchId: string; readonly operation: SketchOperation; readonly idPrefix: string }
@@ -75,6 +87,8 @@ export interface SketchView {
   readonly status: SketchStatus;
   readonly degreesOfFreedom: number;
   readonly profiles: readonly Profile[];
+  /** Outlines of the sketch's texts, by text id. */
+  readonly texts: TextOutlines;
   /** Evaluated dimension values (mm, radians) by constraint id. */
   readonly values: ReadonlyMap<string, number>;
   /** Why the sketch could not be placed or solved. */

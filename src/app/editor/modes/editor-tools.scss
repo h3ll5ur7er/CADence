@@ -241,6 +241,11 @@
     outline: 2px solid var(--accent);
     outline-offset: 1px;
   }
+
+  /* At the end of the timeline nothing is rolled back: the marker takes no room. */
+  &.at-end {
+    margin-block: -5px;
+  }
 }
 
 .item.suppressed .item-name {

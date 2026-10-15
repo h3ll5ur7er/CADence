@@ -116,6 +116,21 @@ Each feature type is its own interface in [[src/core/contracts/feature.ts]]. All
 | `plane` | base plane (origin plane, construction plane or flat face) | offset |
 | `linear-pattern`, `circular-pattern` | extrudes/revolves to repeat, direction / axis | count, spacing / angle (360° spreads evenly) |
 | `mirror` | extrudes/revolves to mirror, plane | |
+| `loft` | sections: a profile of each of two or more sketches, in order | ruled (straight) or smooth; operation |
+| `sweep` | sketch, profile ids, path (a sketch whose curves form one chain) | operation |
+| `path-pattern` | features to repeat, path (a sketch) | count; align (turn with the path) |
+| `hole` | sketch and its points (centres) | kind (simple, counterbore, countersink); diameter; through or a depth; counterbore diameter and depth; countersink diameter and angle; teardrop; bridge |
+| `thread` | a round face | ISO metric size (`metricThreads`); length (empty: the whole face); modelled; flip |
+| `draft` | faces, neutral plane | angle |
+| `rib` | sketch (open curves) | thickness; depth; direction |
+| `combine` | target body, tool bodies | join, cut or intersect; keep tools |
+| `split` | body, plane | |
+| `move` | bodies, axis | translation (x, y, z); angle; copy |
+| `scale` | bodies | factor (about the origin) |
+
+Construction `plane`s have a `mode`: `offset` (the default, from a base plane), `angle` (about an axis in the base plane), `midplane` (between the base and a parallel second plane) or `points` (three vertices).
+
+The **rollback marker** is `rollbackIndex`: how many items at the end of the timeline are rolled back (0: none). Regeneration stops before them and marks them `rolled-back`; new items are inserted before them. Reordering is refused when an item would come before an item it uses: its sketch, plane, repeated features, path, or a feature named in the bodies, faces and edges it refers to (`itemDependencies` in [[src/core/managers/design/commands.ts]]).
 
 The **operation** of extrude and revolve is `new-body`, `join` (into the bodies the tool touches; a new body when it touches none), `cut` or `intersect` (every touched body). Bodies are identified by the feature that created them.
 
@@ -148,9 +163,16 @@ The Modeling Engine names every face after each feature (*generative naming*, [[
 | Fillet or chamfer face | `f:<feature>:round:<edge name>` / `f:<feature>:bevel:<edge name>` |
 | Shell inner face | `f:<feature>:inner` |
 | Pattern or mirror copy | the original's name plus `@<feature>.<n>` |
+| Loft or sweep side | `f:<feature>:side:<sketch curve id>`, from the kernel's history: the faces generated from that profile edge (along the whole path) |
+| Loft or sweep cap | `f:<feature>:start` / `f:<feature>:end` |
+| Hole face | `f:<feature>:wall:<point>`, `bore`, `sink`, `floor` or `tip` (teardrop flats), by the sketch point of the hole |
+| Split face | `f:<feature>:split` |
+| Drafted face | its old name: it is the same face, tilted (from the kernel's history) |
+| Thread groove | `f:<feature>:flank` |
+| Rib | `f:<feature>:side`, `start`, `end` |
 | Anything else new | `f:<feature>:new:<n>`, in order of position |
 
-- **Inherited names.** A face that lies on the same exact surface as a face of the feature's inputs keeps that face's name, however it was trimmed. This is why changing an upstream dimension keeps downstream references valid: the names follow the design intent, not the kernel's numbering.
+- **Inherited names.** A face that lies on the same exact surface as a face of the feature's inputs keeps that face's name, however it was trimmed. Planes also match with the other side facing (a hole's wall faces the other way to the tool face that cut it). Freeform faces (B-splines, and cones and tori, whose parameters the kernel build cannot read) match when probe points of the earlier face's surface lie on the new face's surface. This is why changing an upstream dimension keeps downstream references valid: the names follow the design intent, not the kernel's numbering.
 - **Edges** are named after the faces they separate: `e:<face A>|<face B>`.
 - **Vertices** are named after the edges that meet there: `v:<edge>&<edge>&…`, sorted. A vertex reference that no longer matches resolves only where it was picked.
 - **Repeated names.** When a name occurs more than once (a face split in two), `~1`, `~2` … are appended in order of position.

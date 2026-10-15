@@ -32,6 +32,7 @@ export class DocumentsPanel {
   readonly importFile = output<File>();
   readonly rename = output<DocumentSummary>();
   readonly remove = output<DocumentSummary>();
+  readonly history = output<DocumentSummary>();
 
   protected readonly groups = groups;
   protected readonly accept = importAccept;

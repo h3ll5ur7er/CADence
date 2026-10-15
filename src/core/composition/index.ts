@@ -16,6 +16,7 @@ import {
   InMemoryProjectAccess,
   type ProjectAccess,
 } from '@core/access/project';
+import { GitVersionAccess, type VersionAccess } from '@core/access/version';
 import type { DomainEvents, TextWeight } from '@core/contracts';
 import type { AnalysisEngine } from '@core/engines/analysis';
 import type { InterchangeEngine } from '@core/engines/interchange';
@@ -28,7 +29,7 @@ import { type AssemblyManager, createAssemblyManager } from '@core/managers/asse
 import { createDesignManager, type DesignManager } from '@core/managers/design';
 import { createProjectManager, type ProjectManager } from '@core/managers/project';
 import { systemClock } from '@core/utilities/clock';
-import type { FileSystem } from '@core/utilities/file-system';
+import { type FileSystem, IndexedDbFileSystem, MemoryFileSystem } from '@core/utilities/file-system';
 import { newId } from '@core/utilities/identity';
 import { EventBus, type Port, remote } from '@core/utilities/messaging';
 
@@ -49,6 +50,8 @@ export interface Host {
   readonly documents: DocumentAccess;
   readonly assets: AssetAccess;
   readonly externalFiles: ExternalFileAccess;
+  /** Each project's version history. */
+  readonly versions: VersionAccess;
   /** Where the browser loads the constraint solver from; Node finds it on its own. */
   readonly solverWasmUrl?: string;
   /** Where the browser loads the bundled fonts from; Node reads them from the font package. */
@@ -108,7 +111,18 @@ export function createCore(host: Host): Core {
       }
     : localGeometry();
   return {
-    projectManager: createProjectManager({ projects, documents, assets, externalFiles, interchange: geometry.interchange, parameters: createParameterEngine(), events, clock: systemClock, newId }),
+    projectManager: createProjectManager({
+      projects,
+      documents,
+      assets,
+      externalFiles,
+      interchange: geometry.interchange,
+      parameters: createParameterEngine(),
+      versions: host.versions,
+      events,
+      clock: systemClock,
+      newId,
+    }),
     designManager: createDesignManager({
       projects,
       documents,
@@ -145,6 +159,7 @@ export function createBrowserCore(options: HostOptions = {}): Core {
     projects: new IndexedDbProjectAccess(),
     documents: new IndexedDbDocumentAccess(),
     assets: new IndexedDbAssetAccess(),
+    versions: new GitVersionAccess(new IndexedDbFileSystem()),
     externalFiles: new BrowserDownloadAccess(),
     ...options,
   });
@@ -161,6 +176,8 @@ export function createDesktopCore(
     projects: new FileSystemProjectAccess(fileSystem),
     documents: new FileSystemDocumentAccess(fileSystem),
     assets: new FileSystemAssetAccess(fileSystem),
+    // The repository lives in the project folder (`projects/<id>/.git`).
+    versions: new GitVersionAccess(fileSystem),
     externalFiles,
     ...options,
   });
@@ -173,6 +190,7 @@ export function createInMemoryCore(options: HostOptions = {}): Core {
     projects: new InMemoryProjectAccess(),
     documents: new InMemoryDocumentAccess(),
     assets: new InMemoryAssetAccess(),
+    versions: new GitVersionAccess(new MemoryFileSystem()),
     externalFiles: new InMemoryExternalFileAccess(),
     ...options,
   });

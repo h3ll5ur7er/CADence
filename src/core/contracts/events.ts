@@ -6,6 +6,10 @@ export interface DomainEvents {
   /** The project's parameters changed: its components regenerate. */
   readonly projectParametersChanged: { readonly projectId: ProjectId };
   readonly documentRenamed: { readonly documentId: DocumentId; readonly name: string };
+  /** A document was brought back as it was in an earlier version: editors and assemblies showing it reload it. */
+  readonly documentRestored: { readonly documentId: DocumentId };
+  /** An editor saved a change of a document: the project's version history records it soon. */
+  readonly documentSaved: { readonly projectId: ProjectId; readonly documentId: DocumentId };
   readonly documentDeleted: { readonly documentId: DocumentId };
   /** A request to the Design Manager: bring the component's published result up to date (ADR-11). */
   readonly regenerateComponent: { readonly documentId: DocumentId; readonly configuration?: string };

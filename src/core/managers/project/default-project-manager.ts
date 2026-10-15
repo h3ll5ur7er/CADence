@@ -25,6 +25,7 @@ import {
   type Result,
   summarize,
 } from '@core/contracts';
+import { InvalidVersionNameError, type Version, type VersionAccess } from '@core/access/version';
 import type { InterchangeEngine } from '@core/engines/interchange';
 import type { ParameterEngine } from '@core/engines/parameter';
 import type { Clock } from '@core/utilities/clock';
@@ -39,12 +40,19 @@ export interface ProjectManagerDependencies {
   readonly interchange: InterchangeEngine;
   /** Checks project parameters before they are saved. */
   readonly parameters: ParameterEngine;
+  /** Each project's version history. */
+  readonly versions: VersionAccess;
+  /** How long after the last save a version is recorded (ms). */
+  readonly versionDelay?: number;
   readonly events: EventBus<DomainEvents>;
   readonly clock: Clock;
   readonly newId: () => string;
 }
 
 const maxNameLength = 80;
+
+/** Where a document is kept in the project's version history. */
+const documentPath = (id: DocumentId) => `documents/${id}.json`;
 
 /** Where a document's picture is kept among the project's assets. */
 const thumbnailId = (documentId: DocumentId): AssetId => asAssetId(`thumbnail-${documentId}`);
@@ -98,7 +106,95 @@ const byKindThenName = (a: DocumentSummary, b: DocumentSummary) =>
   documentKinds.indexOf(a.kind) - documentKinds.indexOf(b.kind) || a.name.localeCompare(b.name);
 
 export class DefaultProjectManager implements ProjectManager {
-  constructor(private readonly deps: ProjectManagerDependencies) {}
+  /** Versions waiting to be recorded, by project. */
+  private readonly pending = new Map<ProjectId, ReturnType<typeof setTimeout>>();
+  /** One recording at a time per project. */
+  private recording: Promise<unknown> = Promise.resolve();
+
+  constructor(private readonly deps: ProjectManagerDependencies) {
+    deps.events.subscribe('documentSaved', ({ projectId }) => this.scheduleVersion(projectId));
+  }
+
+  /** Records a version once the project has been left alone for a moment. */
+  private scheduleVersion(projectId: ProjectId): void {
+    clearTimeout(this.pending.get(projectId));
+    this.pending.set(
+      projectId,
+      setTimeout(() => {
+        this.pending.delete(projectId);
+        void this.recordVersion(projectId);
+      }, this.deps.versionDelay ?? 3000),
+    );
+  }
+
+  recordVersion(id: ProjectId, message?: string): Promise<void> {
+    const run = this.recording.then(() => this.record(id, message));
+    this.recording = run.catch(() => undefined);
+    return run;
+  }
+
+  private async record(id: ProjectId, message?: string): Promise<void> {
+    const project = await this.deps.projects.find(id);
+    if (!project) return;
+    const documents = await Promise.all((await this.deps.documents.enumerate(id)).map((d) => this.deps.documents.load(d.id)));
+    const files = documents.flatMap((d) => (d ? [{ path: documentPath(d.id), text: JSON.stringify(d, null, 2) }] : []));
+    files.push({ path: 'project.json', text: JSON.stringify({ name: project.name, parameters: project.parameters ?? [] }, null, 2) });
+    const summary = message ?? (await this.changes(id, files, documents.flatMap((d) => (d ? [d] : []))));
+    await this.deps.versions.record(id, files, summary, this.now());
+  }
+
+  /** What changed since the latest version: documents added, changed or removed. */
+  private async changes(id: ProjectId, files: readonly { path: string; text: string }[], documents: readonly CadDocument[]): Promise<string> {
+    const [latest] = await this.deps.versions.versions(id);
+    if (!latest) return 'First version';
+    const changed: string[] = [];
+    for (const document of documents) {
+      const before = await this.deps.versions.read(id, latest.id, documentPath(document.id));
+      const now = files.find((f) => f.path === documentPath(document.id))?.text;
+      if (before === undefined) changed.push(`Added ${document.name}`);
+      else if (before !== now) changed.push(`Changed ${document.name}`);
+    }
+    return changed.join(', ') || 'Changed the project';
+  }
+
+  async projectHistory(id: ProjectId): Promise<Version[]> {
+    return this.deps.versions.versions(id);
+  }
+
+  async documentHistory(id: DocumentId): Promise<Version[]> {
+    const document = await this.deps.documents.load(id);
+    return document ? this.deps.versions.versions(document.projectId, documentPath(id)) : [];
+  }
+
+  async restoreDocument(id: DocumentId, version: string): Promise<Result<void>> {
+    const current = await this.deps.documents.load(id);
+    if (!current) return fail({ code: 'unknown-document', message: `Document ${id} does not exist.` });
+    const text = await this.deps.versions.read(current.projectId, version, documentPath(id));
+    if (text === undefined) return fail({ code: 'unknown-version', message: 'The document did not exist in that version.' });
+    const restored = { ...(JSON.parse(text) as CadDocument), id, projectId: current.projectId, modifiedAt: this.now() } as CadDocument;
+    await this.deps.documents.store(restored);
+    const from = (await this.deps.versions.versions(current.projectId)).find((v) => v.id === version);
+    await this.recordVersion(current.projectId, `Restored ${restored.name} from ${from?.names[0] ?? from?.time ?? version.slice(0, 7)}`);
+    this.deps.events.publish('documentRestored', { documentId: id });
+    return ok(undefined);
+  }
+
+  async nameVersion(id: ProjectId, name: string, version?: string): Promise<Result<void>> {
+    if (!version) await this.recordVersion(id);
+    const target = version ?? (await this.deps.versions.versions(id))[0]?.id;
+    if (!target) return fail({ code: 'no-versions', message: 'The project has no versions yet.' });
+    try {
+      await this.deps.versions.name(id, target, name.trim());
+      return ok(undefined);
+    } catch (error) {
+      if (error instanceof InvalidVersionNameError) return fail({ code: 'invalid-name', message: error.message });
+      throw error;
+    }
+  }
+
+  async unnameVersion(id: ProjectId, name: string): Promise<void> {
+    await this.deps.versions.unname(id, name);
+  }
 
   async listProjects(): Promise<ProjectSummary[]> {
     const projects = await this.deps.projects.enumerate();
@@ -145,6 +241,8 @@ export class DefaultProjectManager implements ProjectManager {
       await this.discardDocument(document.id);
     }
     await this.deps.projects.discard(id);
+    clearTimeout(this.pending.get(id));
+    await this.deps.versions.discard(id);
     this.deps.events.publish('projectDeleted', { projectId: id });
   }
 
@@ -335,6 +433,7 @@ export class DefaultProjectManager implements ProjectManager {
   private async touchProject(id: ProjectId): Promise<void> {
     const project = await this.deps.projects.find(id);
     if (project) await this.deps.projects.revise({ ...project, modifiedAt: this.now() });
+    this.scheduleVersion(id);
   }
 
   private async summarizeProject(project: Project): Promise<ProjectSummary> {

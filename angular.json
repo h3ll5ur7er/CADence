@@ -23,6 +23,7 @@
             "browser": "src/main.ts",
             "tsConfig": "tsconfig.app.json",
             "inlineStyleLanguage": "scss",
+            "allowedCommonJsDependencies": ["async-lock", "base64-js", "buffer", "clean-git-ref", "crc-32", "diff3", "ieee754", "ignore", "pako", "pify", "sha.js"],
             "assets": [
               {
                 "glob": "**/*",

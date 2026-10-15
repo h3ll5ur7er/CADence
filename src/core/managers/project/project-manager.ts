@@ -1,3 +1,4 @@
+import type { Version } from '@core/access/version';
 import type {
   BodyMesh,
   CreatableDocumentKind,
@@ -68,6 +69,18 @@ export interface ProjectManager {
   deleteDocument(id: DocumentId): Promise<void>;
 
   importFile(projectId: ProjectId, file: ExternalFile): Promise<Result<DocumentSummary>>;
+
+  /** Records the project as a version now (a few seconds after saves this happens on its own). */
+  recordVersion(id: ProjectId, message?: string): Promise<void>;
+  /** The project's versions, newest first. */
+  projectHistory(id: ProjectId): Promise<Version[]>;
+  /** The versions in which a document changed, newest first. */
+  documentHistory(id: DocumentId): Promise<Version[]>;
+  /** Brings a document back as it was in a version (a change of its own, recorded as a version). */
+  restoreDocument(id: DocumentId, version: string): Promise<Result<void>>;
+  /** Names a version (the latest when none is given); a name given again moves. */
+  nameVersion(id: ProjectId, name: string, version?: string): Promise<Result<void>>;
+  unnameVersion(id: ProjectId, name: string): Promise<void>;
 
   /** Keeps a picture of a document (PNG), replacing the one before. Unknown documents are ignored. */
   saveThumbnail(id: DocumentId, png: Uint8Array): Promise<void>;

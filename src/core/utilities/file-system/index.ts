@@ -4,6 +4,8 @@
  */
 export interface FileSystem {
   exists(path: string): Promise<boolean>;
+  /** Whether the path is a directory (false when it is a file or does not exist). */
+  isDirectory(path: string): Promise<boolean>;
   readText(path: string): Promise<string>;
   writeText(path: string, text: string): Promise<void>;
   readBytes(path: string): Promise<Uint8Array>;
@@ -16,3 +18,6 @@ export interface FileSystem {
 }
 
 export const joinPath = (...parts: string[]): string => parts.filter(Boolean).join('/');
+
+export { IndexedDbFileSystem } from './indexed-db';
+export { MemoryFileSystem } from './memory';

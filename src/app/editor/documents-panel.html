@@ -28,6 +28,9 @@
               <span class="name">{{ doc.name }}</span>
             </a>
             <span class="item-actions">
+              <button type="button" class="icon-btn" title="History" [attr.aria-label]="'History of ' + doc.name" (click)="history.emit(doc)">
+                <cad-icon name="history" [size]="14" />
+              </button>
               <button type="button" class="icon-btn" title="Rename" [attr.aria-label]="'Rename ' + doc.name" (click)="rename.emit(doc)">
                 <cad-icon name="pencil" [size]="14" />
               </button>

@@ -13,7 +13,7 @@ import {
   untracked,
   viewChild,
 } from '@angular/core';
-import type { Appearance, BodyMesh, PlaneFrame, Vec3 } from '@core/contracts';
+import type { Appearance, BodyMesh, PlaneFrame, ThreadMarker, Vec3 } from '@core/contracts';
 import { Icon } from '../shared/icon';
 import { mouseBindings } from '../shared/keymap';
 import { Shortcuts } from '../shared/shortcuts';
@@ -151,6 +151,8 @@ export class Viewport {
   readonly fit = input<{ readonly min: Vec3; readonly max: Vec3 } | undefined>(undefined);
   /** The two closest points of a distance measurement. */
   readonly measureLine = input<readonly [Vec3, Vec3] | undefined>(undefined);
+  /** Threads, drawn as helices on their faces. */
+  readonly threads = input<readonly ThreadMarker[]>([]);
   readonly backendReady = output<RendererBackend>();
   readonly picked = output<Pick>();
 
@@ -221,6 +223,7 @@ export class Viewport {
     effect(() => this.scene()?.setSelection(this.selection()));
     effect(() => this.scene()?.setFlagged(this.flagged()));
     effect(() => this.scene()?.setMeasureLine(this.measureLine()));
+    effect(() => this.scene()?.setThreads(this.threads()));
     effect(() => this.scene()?.setProjection(this.settings.projection()));
     effect(() => this.scene()?.setMouse(mouseBindings[this.settings.controls()]));
     effect(() => {

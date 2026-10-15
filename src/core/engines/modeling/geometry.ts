@@ -21,7 +21,7 @@ export function toPlane(frame: PlaneFrame, offsetAlongNormal = 0): Plane {
   return new Plane([...add3(frame.origin, scale3(normal, offsetAlongNormal))], [...frame.u], [...normal]);
 }
 
-function loopDrawing(loop: ProfileLoop): Drawing {
+export function loopDrawing(loop: ProfileLoop): Drawing {
   const [first] = loop.edges;
   if (!first) throw new Error('Empty profile loop');
   const pen = draw([first.start[0], first.start[1]]);

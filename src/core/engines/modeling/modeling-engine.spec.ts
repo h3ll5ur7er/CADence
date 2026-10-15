@@ -1,6 +1,6 @@
 import { createShapeAccess, type NamedShape } from '@core/access/shape';
 import { measureVolume } from 'replicad';
-import { originFrames, type TopologyRef } from '@core/contracts';
+import { originFrames, type PlaneFrame, type TopologyRef } from '@core/contracts';
 import { curveArea, curveAt } from '@core/utilities/math';
 import { circleLoop, profile, rectangleLoop } from '@core/contracts/testing/profiles';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -247,6 +247,206 @@ describe('component results and joint frames', () => {
     expect(hole.ok && round(normal(hole.value))).toEqual([0, 0, 1]); // holes point up, whatever the kernel says
     const rim = await engine.frameOf(bodies, { kind: 'edge', body: 'plate', name: 'e:f:plate:end|f:plate:side:hole' });
     expect(rim.ok && round(rim.value.origin)).toEqual([20, 20, 6]);
+  });
+
+  describe('body operations', () => {
+    /** The 80 × 40 × 5 plate and a 10 × 10 × 20 post standing through it at (10, 10). */
+    async function plateAndPost(): Promise<readonly BodyState[]> {
+      const bodies = ok(await plate());
+      const post = profile(rectangleLoop(5, 5, 10, 10, 'post'));
+      return ok(await engine.apply({ type: 'extrude', feature: 'post', key: 'post', bodies, frame: XY, profiles: [post], distance: 20, direction: 'normal', operation: 'new-body' }));
+    }
+
+    it('combines bodies: joins, cuts or intersects, and uses the tools up unless kept', async () => {
+      const bodies = await plateAndPost();
+      const joined = ok(await engine.apply({ type: 'combine', feature: 'c', key: 'c-join', bodies, target: 'plate', tools: ['post'], operation: 'join', keepTools: false }));
+      expect(joined.map((b) => b.id)).toEqual(['plate']);
+      expect(await volume(joined)).toBeCloseTo(80 * 40 * 5 + 10 * 10 * 15);
+      const cut = ok(await engine.apply({ type: 'combine', feature: 'c', key: 'c-cut', bodies, target: 'plate', tools: ['post'], operation: 'cut', keepTools: true }));
+      expect(cut.map((b) => b.id)).toEqual(['plate', 'post']);
+      expect(await volume(cut.slice(0, 1))).toBeCloseTo(80 * 40 * 5 - 10 * 10 * 5);
+      expect((await names(cut.slice(0, 1))).faces).toContain('f:post:side:post-left');
+      const both = ok(await engine.apply({ type: 'combine', feature: 'c', key: 'c-int', bodies, target: 'plate', tools: ['post'], operation: 'intersect', keepTools: false }));
+      expect(await volume(both)).toBeCloseTo(10 * 10 * 5);
+    });
+
+    it('splits a body by a plane into two named pieces', async () => {
+      const bodies = ok(await plate());
+      const frame = { origin: [30, 0, 0] as const, u: [0, 1, 0] as const, v: [0, 0, 1] as const }; // normal +X
+      const split = ok(await engine.apply({ type: 'split', feature: 's', key: 'split', bodies, body: 'plate', plane: frame }));
+      expect(split.map((b) => b.id)).toEqual(['plate', 's']);
+      expect(await volume(split.slice(0, 1))).toBeCloseTo(50 * 40 * 5);
+      expect(await volume(split.slice(1))).toBeCloseTo(30 * 40 * 5);
+      expect((await names(split.slice(0, 1))).faces).toContain('f:s:split');
+      const miss = await engine.apply({ type: 'split', feature: 's', key: 'split-miss', bodies, body: 'plate', plane: { ...frame, origin: [200, 0, 0] } });
+      expect(miss.error).toBe('The plane does not cut through the body.');
+    });
+
+    it('moves, turns, copies and scales bodies, keeping their face names', async () => {
+      const bodies = ok(await plate());
+      const moved = ok(await engine.apply({ type: 'move', feature: 'm', key: 'move', bodies, bodyIds: ['plate'], translation: [0, 0, 10], rotation: { axis: { origin: [0, 0, 0], direction: [0, 0, 1] }, angle: Math.PI / 2 }, copy: false }));
+      expect(moved.map((b) => b.id)).toEqual(['plate']);
+      const box = (shapes.get(moved[0]?.key as string) as NamedShape).shape.boundingBox.bounds;
+      expect(box[0].map((v) => Math.round(v))).toEqual([-40, 0, 10]);
+      expect((await names(moved)).faces).toContain('f:plate:end');
+      const copied = ok(await engine.apply({ type: 'move', feature: 'm', key: 'copy', bodies, bodyIds: ['plate'], translation: [0, 50, 0], copy: true }));
+      expect(copied.map((b) => b.id)).toEqual(['plate', 'm']);
+      expect(await volume(copied)).toBeCloseTo(2 * 80 * 40 * 5);
+      const scaled = ok(await engine.apply({ type: 'scale', feature: 'z', key: 'scale', bodies, bodyIds: ['plate'], factor: 2 }));
+      expect(await volume(scaled)).toBeCloseTo(8 * 80 * 40 * 5);
+    });
+  });
+
+  describe('lofts and sweeps', () => {
+    const square = profile(rectangleLoop(-10, -10, 20, 20, 'sq'));
+    const top = { ...XY, origin: [0, 0, 30] as const };
+
+    async function squareToCircle(): Promise<readonly BodyState[]> {
+      return ok(await engine.apply({ type: 'loft', feature: 'loft', key: 'loft', bodies: [], sections: [{ frame: XY, profile: square }, { frame: top, profile: profile(circleLoop(0, 0, 8, 'round')) }], ruled: false, operation: 'new-body' }));
+    }
+
+    it('lofts between sections, naming caps and the sides after the first section', async () => {
+      const bodies = await squareToCircle();
+      const v = await volume(bodies);
+      expect(v).toBeGreaterThan(Math.PI * 64 * 30);
+      expect(v).toBeLessThan(400 * 30);
+      // The circle's two edges meet the square's four: the kernel splits the left and right sides in two.
+      const faces = (await names(bodies)).faces;
+      expect(faces.filter((f) => !f.startsWith('f:loft:side:'))).toEqual(['f:loft:end', 'f:loft:start']);
+      expect(new Set(faces.filter((f) => f.startsWith('f:loft:side:')).map((f) => f.split('~')[0]))).toEqual(
+        new Set(['f:loft:side:sq-bottom', 'f:loft:side:sq-left', 'f:loft:side:sq-right', 'f:loft:side:sq-top']),
+      );
+    });
+
+    it('keeps the names of freeform faces cut by later features', async () => {
+      const bodies = await squareToCircle();
+      // A hole through the loft's -Y side, from the XZ plane outwards.
+      const side = { origin: [0, 0, 0] as const, u: [1, 0, 0] as const, v: [0, 0, 1] as const };
+      const cut = ok(await engine.apply({ type: 'extrude', feature: 'hole', key: 'loft-hole', bodies, frame: side, profiles: [profile(circleLoop(0, 12, 2, 'h'))], distance: 20, direction: 'normal', operation: 'cut' }));
+      const faces = (await names(cut)).faces;
+      expect(faces).toContain('f:loft:side:sq-bottom');
+      expect(faces.filter((f) => f.startsWith('f:loft:side:'))).toHaveLength(6);
+      expect(faces.some((f) => f.includes(':new:'))).toBe(false);
+    });
+
+    it('names loft and sweep faces the same when their profiles change size', async () => {
+      const loftOf = async (size: number) => {
+        const sq = profile(rectangleLoop(-size / 2, -size / 2, size, size, 'sq'));
+        const lofted = ok(await engine.apply({ type: 'loft', feature: 'loft', key: `loft-${size}`, bodies: [], sections: [{ frame: XY, profile: sq }, { frame: top, profile: profile(rectangleLoop(-5, -5, 10, 10, 'up')) }], ruled: false, operation: 'new-body' }));
+        return (await names(lofted)).faces;
+      };
+      expect(await loftOf(24)).toEqual(await loftOf(20));
+      const sweepOf = async (radius: number) => {
+        const across = { origin: [0, 0, 0] as const, u: [0, 1, 0] as const, v: [0, 0, 1] as const };
+        const path = [{ kind: 'arc' as const, start: [0, 0, 0] as const, mid: [10 * Math.SQRT1_2, 10 - 10 * Math.SQRT1_2, 0] as const, end: [10, 10, 0] as const }];
+        const swept = ok(await engine.apply({ type: 'sweep', feature: 'tube', key: `sweep-${radius}`, bodies: [], frame: across, profiles: [profile(circleLoop(0, 0, radius, 'ring'))], path, closed: false, operation: 'new-body' }));
+        return (await names(swept)).faces;
+      };
+      expect(await sweepOf(3)).toEqual(await sweepOf(2));
+    });
+
+    it('sweeps a profile along a path of a line and an arc', async () => {
+      const ring = profile(circleLoop(0, 0, 2, 'ring'));
+      const across = { origin: [0, 0, 0] as const, u: [0, 1, 0] as const, v: [0, 0, 1] as const }; // facing +X
+      const path = [
+        { kind: 'line' as const, start: [0, 0, 0] as const, end: [30, 0, 0] as const },
+        { kind: 'arc' as const, start: [30, 0, 0] as const, mid: [30 + 10 * Math.SQRT1_2, 10 - 10 * Math.SQRT1_2, 0] as const, end: [40, 10, 0] as const },
+      ];
+      const bodies = ok(await engine.apply({ type: 'sweep', feature: 'tube', key: 'sweep', bodies: [], frame: across, profiles: [ring], path, closed: false, operation: 'new-body' }));
+      expect(await volume(bodies)).toBeCloseTo(Math.PI * 4 * (30 + (Math.PI / 2) * 10), 0);
+      const faces = (await names(bodies)).faces;
+      expect(faces).toContain('f:tube:start');
+      expect(faces).toContain('f:tube:end');
+      expect(faces.filter((f) => f.includes(':new:'))).toEqual([]);
+    });
+  });
+
+  describe('holes and threads', () => {
+    const onTop: PlaneFrame = { ...XY, origin: [0, 0, 5] };
+    const spec = { diameter: 5, teardrop: false, bridge: 0 };
+    const hole = (bodies: readonly BodyState[], key: string, points: { id: string; at: readonly [number, number] }[], holeSpec: object, frame = onTop) =>
+      engine.apply({ type: 'hole', feature: 'h', key, bodies, frame, points, spec: { ...spec, ...holeSpec } });
+    const plain = 80 * 40 * 5;
+
+    it('drills holes through, to a depth, counterbored and countersunk, naming their faces by point', async () => {
+      const bodies = ok(await plate());
+      const through = ok(await hole(bodies, 'h-through', [{ id: 'p1', at: [10, 10] }, { id: 'p2', at: [30, 10] }], {}));
+      expect(await volume(through)).toBeCloseTo(plain - 2 * Math.PI * 6.25 * 5, 2);
+      expect((await names(through)).faces).toEqual(expect.arrayContaining(['f:h:wall:p1', 'f:h:wall:p2']));
+      const blind = ok(await hole(bodies, 'h-blind', [{ id: 'p1', at: [10, 10] }], { depth: 3 }));
+      expect(await volume(blind)).toBeCloseTo(plain - Math.PI * 6.25 * 3, 2);
+      expect((await names(blind)).faces).toContain('f:h:floor:p1');
+      const bored = ok(await hole(bodies, 'h-bore', [{ id: 'p1', at: [10, 10] }], { diameter: 4, bore: { diameter: 8, depth: 2 } }));
+      expect(await volume(bored)).toBeCloseTo(plain - Math.PI * 16 * 2 - Math.PI * 4 * 3, 2);
+      expect((await names(bored)).faces).toEqual(expect.arrayContaining(['f:h:bore:p1', 'f:h:wall:p1']));
+      // A layer left at the bottom of the counterbore, over the hole.
+      const bridged = ok(await hole(bodies, 'h-bridge', [{ id: 'p1', at: [10, 10] }], { diameter: 4, bore: { diameter: 8, depth: 2 }, bridge: 0.2 }));
+      expect(await volume(bridged)).toBeCloseTo(plain - Math.PI * 16 * 2 - Math.PI * 4 * 2.8, 2);
+      const sunk = ok(await hole(bodies, 'h-sink', [{ id: 'p1', at: [10, 10] }], { diameter: 4, sink: { diameter: 8, angle: Math.PI / 2 } }));
+      const cone = (Math.PI * 2 * (16 + 8 + 4)) / 3; // 2 mm deep from radius 4 to 2
+      expect(await volume(sunk)).toBeCloseTo(plain - cone - Math.PI * 4 * 3, 2);
+      expect((await names(sunk)).faces).toContain('f:h:sink:p1');
+    });
+
+    it('drills teardrop holes on their side, pointing up', async () => {
+      const bodies = ok(await plate());
+      const front = { origin: [0, 0, 0] as const, u: [1, 0, 0] as const, v: [0, 0, 1] as const }; // facing -Y: into the plate is +Y
+      const round = ok(await hole(bodies, 'h-side', [{ id: 'p1', at: [40, 2.5] }], { diameter: 3, depth: 20 }, front));
+      const drop = ok(await hole(bodies, 'h-drop', [{ id: 'p1', at: [40, 2.5] }], { diameter: 3, depth: 20, teardrop: true }, front));
+      const circle = Math.PI * 2.25 * 20;
+      expect(plain - (await volume(round))).toBeCloseTo(circle, 2);
+      expect(plain - (await volume(drop))).toBeCloseTo(circle + (1.5 * 1.5 * (1 - Math.PI / 4)) * 20, 1);
+      const top = (shapes.get(drop[0]?.key as string) as NamedShape).shape;
+      expect(top.faces.length).toBeGreaterThan(6);
+    });
+
+    it('places threads from the open end of a hole, and models them on request', async () => {
+      const bodies = ok(await hole(ok(await plate()), 'h-tap', [{ id: 'p1', at: [10, 10] }], {}));
+      const face = { kind: 'face' as const, body: 'plate', name: 'f:h:wall:p1' };
+      const marker = await engine.apply({ type: 'thread', feature: 't', key: 't-marker', bodies, face, size: 'M6', diameter: 6, pitch: 1, modelled: false, flip: false });
+      expect(marker.error ?? '').toBe('');
+      expect(marker.bodies).toEqual(bodies);
+      expect(marker.thread).toMatchObject({ internal: true, radius: expect.closeTo(2.5, 6), length: expect.closeTo(5, 6), origin: [expect.closeTo(10, 6), expect.closeTo(10, 6), expect.closeTo(5, 6)], direction: [expect.closeTo(0, 9), expect.closeTo(0, 9), -1] });
+      const wrong = await engine.apply({ type: 'thread', feature: 't', key: 't-wrong', bodies, face, size: 'M3', diameter: 3, pitch: 0.5, modelled: false, flip: false });
+      expect(wrong.error).toContain('An M3 thread needs a hole of');
+      const modelled = ok(await engine.apply({ type: 'thread', feature: 't', key: 't-model', bodies, face, size: 'M6', diameter: 6, pitch: 1, length: 3, modelled: true, flip: false }));
+      const removed = (await volume(bodies)) - (await volume(modelled));
+      expect(removed).toBeGreaterThan(5);
+      expect(removed).toBeLessThan(Math.PI * (9 - 6.25) * 3);
+    });
+  });
+
+  describe('drafts, ribs and variable fillets', () => {
+    it('rounds an edge with a radius that changes along it', async () => {
+      const bodies = ok(await plate());
+      const edge = (await names(bodies)).edges.find((e) => e.includes('f:plate:end') && e.includes('side:plate-bottom')) as string;
+      const refs = [{ kind: 'edge' as const, body: 'plate', name: edge }];
+      const round = async (size: number, endSize?: number) =>
+        volume(ok(await engine.apply({ type: 'fillet', feature: 'r', key: `fillet-${size}-${endSize}`, bodies, edges: refs, size, ...(endSize === undefined ? {} : { endSize }) })));
+      const [small, varying, large] = [await round(1), await round(1, 4), await round(4)];
+      expect(varying).toBeLessThan(small);
+      expect(varying).toBeGreaterThan(large);
+    });
+
+    it('drafts side faces about a neutral plane, keeping their names', async () => {
+      const bodies = ok(await plate(10, 'plate-10'));
+      const sides = ['plate-left', 'plate-right'].map((s) => ({ kind: 'face' as const, body: 'plate', name: `f:plate:side:${s}` }));
+      const drafted = ok(await engine.apply({ type: 'draft', feature: 'd', key: 'draft', bodies, faces: sides, plane: XY, angle: (5 * Math.PI) / 180 }));
+      // Each side leans in by tan 5° × height over the height: the plate loses two triangular prisms.
+      const lean = Math.tan((5 * Math.PI) / 180) * 10;
+      expect(await volume(drafted)).toBeCloseTo(80 * 40 * 10 - 2 * ((lean * 10) / 2) * 40, 1);
+      expect((await names(drafted)).faces).toEqual(expect.arrayContaining(['f:plate:side:plate-left', 'f:plate:side:plate-right']));
+    });
+
+    it('thickens an open line into a rib and joins it', async () => {
+      const bodies = ok(await plate());
+      const path = [{ kind: 'line' as const, start: [10, 10, 0] as const, end: [50, 10, 0] as const }];
+      const ribbed = ok(await engine.apply({ type: 'rib', feature: 'rib', key: 'rib', bodies, frame: XY, path, thickness: 2, depth: 15, direction: 'normal' }));
+      expect(ribbed.map((b) => b.id)).toEqual(['plate']);
+      const added = (await volume(ribbed)) - 80 * 40 * 5;
+      expect(added).toBeGreaterThan(40 * 2 * 10 - 1e-6);
+      expect(added).toBeLessThan((40 + 2) * 2 * 10 + 1e-6);
+    });
   });
 });
 

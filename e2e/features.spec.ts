@@ -1,5 +1,5 @@
 import { expect, type Page, test } from '@playwright/test';
-import { evidence, plateProject, rectangleSketch, screenPositionOf, setThickness, shown } from './support';
+import { evidence, fromModelMenu, plateProject, rectangleSketch, screenPositionOf, setThickness, shown } from './support';
 
 /** CAD-33: the features the Part modeling journey leaves out, clicked through in the browser. */
 test.setTimeout(150_000);
@@ -88,7 +88,7 @@ test('a construction plane mirrors the plate, a circular pattern repeats it, bot
   await expect(page.getByRole('list', { name: 'Timeline' })).toContainText('Plane 1');
 
   // Mirrored across that plane: the extrude made a new body, so its mirror image is a second body on top.
-  await page.getByRole('button', { name: 'Mirror' }).click();
+  await fromModelMenu(page, 'Pattern', 'Mirror');
   await page.locator('#feature-plane').selectOption({ index: 3 });
   await confirm(page);
   const bodies = page.getByRole('list', { name: 'Bodies' });
@@ -98,7 +98,7 @@ test('a construction plane mirrors the plate, a circular pattern repeats it, bot
   await expect(mirrored).toContainText('Centre of mass30, 15, 9');
 
   // Four plates around the Z axis in the bottom layer: three more bodies.
-  await page.getByRole('button', { name: 'Circular pattern' }).click();
+  await fromModelMenu(page, 'Pattern', 'Circular pattern');
   await expect(page.locator('#feature-count')).toHaveValue('4');
   await confirm(page);
   await expect(page.getByTestId('body-count')).toHaveText('5');

@@ -13,6 +13,7 @@ import {
   type SketchConstraint,
   type SketchEntity,
   sketchOriginId,
+  type TimelineItem,
 } from '@core/contracts';
 import { chamfer, type EditResult, extend as extendCurve, fillet, offset, type SketchEdit, split, trim } from '@core/engines/sketch';
 import type { DesignCommand, SketchOperation } from './design-manager';
@@ -38,6 +39,17 @@ const featureLabels: Readonly<Record<FeatureType, string>> = {
   'linear-pattern': 'Linear pattern',
   'circular-pattern': 'Circular pattern',
   mirror: 'Mirror',
+  combine: 'Combine',
+  split: 'Split',
+  move: 'Move',
+  scale: 'Scale',
+  loft: 'Loft',
+  sweep: 'Sweep',
+  'path-pattern': 'Path pattern',
+  hole: 'Hole',
+  thread: 'Thread',
+  draft: 'Draft',
+  rib: 'Rib',
 };
 
 const invalid = (message: string) => fail({ code: 'invalid-command', message });
@@ -101,6 +113,56 @@ export function references(item: SketchEntity | SketchConstraint): string[] {
 }
 
 /** "Extrude 3": one more than the highest number already used with that label. */
+/** The document with an item inserted at the rollback marker. */
+function insertAtMarker(document: ComponentDocument, item: TimelineItem): ComponentDocument {
+  const at = document.timeline.length - document.rollbackIndex;
+  return { ...document, timeline: [...document.timeline.slice(0, at), item, ...document.timeline.slice(at)] };
+}
+
+/**
+ * The timeline items an item uses: its sketch, plane, repeated features, and the features that made
+ * the bodies, faces and edges it refers to (named in their persistent names).
+ */
+export function itemDependencies(item: TimelineItem, timeline: readonly TimelineItem[]): Set<string> {
+  const found = new Set<string>();
+  const visit = (value: unknown, key?: string): void => {
+    if (typeof value === 'string') {
+      if (key === 'sketch' || key === 'plane' || key === 'features' || key === 'path') found.add(value);
+      if (key === 'body' || key === 'target' || key === 'tools' || key === 'bodies') found.add(value.split(':')[0] as string);
+      if (key === 'name') {
+        for (const m of value.matchAll(/(?:^|[|&:])f:([^:|&~@]+)/g)) found.add(m[1] as string);
+        for (const m of value.matchAll(/@([^.|&~]+)\./g)) found.add(m[1] as string);
+      }
+      return;
+    }
+    if (Array.isArray(value)) value.forEach((v) => visit(v, key));
+    else if (value && typeof value === 'object') for (const [k, v] of Object.entries(value)) visit(v, k);
+  };
+  // A sketch's own geometry refers to nothing in the timeline; its plane and projections do.
+  if (isSketch(item)) {
+    visit(item.plane, 'plane');
+    for (const e of item.entities) if (e.kind === 'projection') visit(e.refs);
+  } else {
+    visit({ ...item, id: undefined, name: undefined });
+  }
+  const ids = new Set(timeline.map((i) => i.id));
+  return new Set([...found].filter((id) => id !== item.id && ids.has(id)));
+}
+
+/** Why a timeline order does not work: an item before something it uses. */
+function orderProblem(timeline: readonly TimelineItem[]): string | undefined {
+  const seen = new Set<string>();
+  for (const item of timeline) {
+    const missing = [...itemDependencies(item, timeline)].find((id) => !seen.has(id));
+    if (missing) {
+      const used = timeline.find((i) => i.id === missing);
+      return `${item.name} uses ${used?.name ?? missing}, so it has to come after it.`;
+    }
+    seen.add(item.id);
+  }
+  return undefined;
+}
+
 function nextName(document: ComponentDocument, label: string): string {
   const numbers = document.timeline.map((item) =>
     item.name.startsWith(`${label} `) ? Number(item.name.slice(label.length + 1)) || 0 : 0,
@@ -242,7 +304,7 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
         entities: [],
         constraints: [],
       };
-      return ok({ document: { ...document, timeline: [...document.timeline, sketch] }, target: sketch.id });
+      return ok({ document: insertAtMarker(document, sketch), target: sketch.id });
     }
     case 'add-sketch-geometry':
       return withSketch(document, command.sketchId, (s) => extend(s, command.entities, command.constraints));
@@ -301,14 +363,38 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
       if (!document.timeline.some((item) => item.id === command.itemId)) return invalid(`Item ${command.itemId} does not exist.`);
       return ok({ document: { ...document, timeline: document.timeline.map((item) => (item.id === command.itemId ? { ...item, name } : item)) } });
     }
-    case 'delete-item':
-      if (!document.timeline.some((item) => item.id === command.itemId)) return invalid(`Item ${command.itemId} does not exist.`);
-      return ok({ document: { ...document, timeline: document.timeline.filter((item) => item.id !== command.itemId) } });
+    case 'delete-item': {
+      const index = document.timeline.findIndex((item) => item.id === command.itemId);
+      if (index < 0) return invalid(`Item ${command.itemId} does not exist.`);
+      const rolledBack = index >= document.timeline.length - document.rollbackIndex;
+      return ok({
+        document: {
+          ...document,
+          timeline: document.timeline.filter((item) => item.id !== command.itemId),
+          rollbackIndex: document.rollbackIndex - (rolledBack ? 1 : 0),
+        },
+      });
+    }
+    case 'reorder-item': {
+      const item = document.timeline.find((i) => i.id === command.itemId);
+      if (!item) return invalid(`Item ${command.itemId} does not exist.`);
+      const rest = document.timeline.filter((i) => i !== item);
+      if (!Number.isInteger(command.index) || command.index < 0 || command.index > rest.length) return invalid('That place is outside the timeline.');
+      const timeline = [...rest.slice(0, command.index), item, ...rest.slice(command.index)];
+      const problem = orderProblem(timeline);
+      if (problem) return invalid(problem);
+      return ok({ document: { ...document, timeline }, target: item.id });
+    }
+    case 'roll-to': {
+      const { position } = command;
+      if (!Number.isInteger(position) || position < 0 || position > document.timeline.length) return invalid('That place is outside the timeline.');
+      return ok({ document: { ...document, rollbackIndex: document.timeline.length - position } });
+    }
     case 'add-feature': {
       if (document.timeline.some((item) => item.id === command.feature.id)) return invalid(`Id ${command.feature.id} is already in use.`);
       const name = command.feature.name.trim() || nextName(document, featureLabels[command.feature.type]);
       const feature = { ...command.feature, name } as Feature;
-      return ok({ document: { ...document, timeline: [...document.timeline, feature] }, target: feature.id });
+      return ok({ document: insertAtMarker(document, feature), target: feature.id });
     }
     case 'edit-feature': {
       const existing = document.timeline.find((item) => item.id === command.feature.id);

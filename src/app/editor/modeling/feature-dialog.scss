@@ -38,6 +38,38 @@ select {
   font: inherit;
 }
 
+.sections {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0 0 0 var(--space-4);
+  font-size: 13px;
+
+  li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+}
+
+.row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+
+  &.two {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
 .tools {
   display: grid;
   gap: var(--space-1);

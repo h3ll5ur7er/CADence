@@ -48,6 +48,7 @@
   position: absolute;
   top: calc(100% + 6px);
   left: 0;
+  z-index: 5; /* above toolbar buttons that wrapped to a second row */
   display: grid;
   min-width: 190px;
   padding: var(--space-1);
@@ -57,6 +58,9 @@
   box-shadow: var(--shadow);
 
   button {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
     padding: var(--space-2) var(--space-3);
     border: 0;
     border-radius: var(--radius);
@@ -160,6 +164,33 @@
   color: var(--text);
 }
 
+.export-form {
+  gap: var(--space-2);
+  min-width: 240px;
+  padding: var(--space-3);
+  font-size: 13px;
+
+  .field {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  fieldset {
+    display: grid;
+    gap: var(--space-1);
+    margin: 0;
+    padding: var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+
+  .actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+  }
+}
+
 .menu-list.end {
   left: auto;
   right: 0;
@@ -179,6 +210,41 @@
 
   &:hover {
     background: var(--surface-2);
+  }
+}
+
+.item.rolled-back .item-name,
+.item.rolled-back cad-icon {
+  opacity: 0.45;
+}
+
+.item.dragging,
+.marker.dragging {
+  opacity: 0.4;
+}
+
+.marker {
+  display: flex;
+  align-items: center;
+  height: 10px;
+  margin: 1px 0;
+  cursor: grab;
+
+  .marker-line {
+    flex: 1;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--accent);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  /* At the end of the timeline nothing is rolled back: the marker takes no room. */
+  &.at-end {
+    margin-block: -5px;
   }
 }
 

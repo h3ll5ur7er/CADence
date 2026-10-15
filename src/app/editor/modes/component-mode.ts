@@ -19,6 +19,7 @@ import {
   isCurve,
   isSketch,
   type Material,
+  type MeshQuality,
   materials,
   type PlaneRef,
   type SketchText,
@@ -51,16 +52,52 @@ const statusLabels = {
 } as const;
 
 const featureTools: readonly { type: FeatureType; icon: IconName }[] = [
-  { type: 'insert', icon: 'imported' },
   { type: 'extrude', icon: 'extrude' },
   { type: 'revolve', icon: 'revolve' },
   { type: 'fillet', icon: 'fillet' },
   { type: 'chamfer', icon: 'chamfer' },
   { type: 'shell', icon: 'shell' },
+  { type: 'draft', icon: 'draft' },
   { type: 'plane', icon: 'planeAdd' },
-  { type: 'linear-pattern', icon: 'pattern' },
-  { type: 'circular-pattern', icon: 'circular' },
-  { type: 'mirror', icon: 'mirror' },
+];
+
+/** Less frequent features, in menus of the model toolbar. */
+const featureMenus: readonly { id: string; label: string; icon: IconName; items: readonly { type: FeatureType; icon: IconName }[] }[] = [
+  {
+    id: 'create',
+    label: 'Create',
+    icon: 'create',
+    items: [
+      { type: 'loft', icon: 'loft' },
+      { type: 'sweep', icon: 'sweep' },
+      { type: 'hole', icon: 'hole' },
+      { type: 'rib', icon: 'rib' },
+      { type: 'thread', icon: 'thread' },
+      { type: 'insert', icon: 'imported' },
+    ],
+  },
+  {
+    id: 'pattern',
+    label: 'Pattern',
+    icon: 'pattern',
+    items: [
+      { type: 'linear-pattern', icon: 'pattern' },
+      { type: 'circular-pattern', icon: 'circular' },
+      { type: 'path-pattern', icon: 'pathPattern' },
+      { type: 'mirror', icon: 'mirror' },
+    ],
+  },
+  {
+    id: 'bodies',
+    label: 'Bodies',
+    icon: 'body',
+    items: [
+      { type: 'combine', icon: 'combine' },
+      { type: 'split', icon: 'split' },
+      { type: 'move', icon: 'move' },
+      { type: 'scale', icon: 'scale' },
+    ],
+  },
 ];
 
 const itemIcons: Readonly<Record<TimelineItem['type'], IconName>> = {
@@ -75,6 +112,17 @@ const itemIcons: Readonly<Record<TimelineItem['type'], IconName>> = {
   'linear-pattern': 'pattern',
   'circular-pattern': 'circular',
   mirror: 'mirror',
+  combine: 'combine',
+  split: 'split',
+  move: 'move',
+  scale: 'scale',
+  loft: 'loft',
+  sweep: 'sweep',
+  'path-pattern': 'pathPattern',
+  hole: 'hole',
+  thread: 'thread',
+  draft: 'draft',
+  rib: 'rib',
 };
 
 const exportFormats: readonly { format: SolidFormat; label: string }[] = [
@@ -98,9 +146,11 @@ export class ComponentMode {
   protected readonly status = inject(EditorStatus);
   protected readonly store = inject(DesignStore);
   protected readonly originVisible = signal(true);
-  protected readonly menu = signal<'sketch' | 'export' | undefined>(undefined);
+  /** The open toolbar menu: sketch, export, or one of the feature menus. */
+  protected readonly menu = signal<string | undefined>(undefined);
   protected readonly statusLabels = statusLabels;
   protected readonly featureTools = featureTools;
+  protected readonly featureMenus = featureMenus;
   protected readonly featureLabels = featureLabels;
   protected readonly itemIcons = itemIcons;
   protected readonly exportFormats = exportFormats;
@@ -221,7 +271,12 @@ export class ComponentMode {
     this.store.openPanel(this.store.panel() === panel ? undefined : panel);
   }
 
-  protected toggleMenu(menu: 'sketch' | 'export'): void {
+  protected startFeature(type: FeatureType): void {
+    this.menu.set(undefined);
+    this.store.startFeature(type);
+  }
+
+  protected toggleMenu(menu: string): void {
     this.menu.set(this.menu() === menu ? undefined : menu);
   }
 
@@ -241,7 +296,83 @@ export class ComponentMode {
     void this.store.exportBodies(format);
   }
 
-  protected open(item: TimelineItem): void {
+  /** The export form: one format, the bodies to include and the mesh quality. */
+  protected readonly exportDraft = signal<{ format: SolidFormat; bodies: readonly string[]; quality: MeshQuality } | undefined>(undefined);
+
+  protected openExport(): void {
+    this.menu.set(undefined);
+    this.exportDraft.set({ format: 'stl', bodies: this.bodies().map((b) => b.body), quality: 'normal' });
+  }
+
+  protected changeExport(changes: Partial<{ format: SolidFormat; quality: MeshQuality }>): void {
+    const draft = this.exportDraft();
+    if (draft) this.exportDraft.set({ ...draft, ...changes });
+  }
+
+  protected toggleExportBody(id: string, on: boolean): void {
+    const draft = this.exportDraft();
+    if (draft) this.exportDraft.set({ ...draft, bodies: on ? [...draft.bodies, id] : draft.bodies.filter((b) => b !== id) });
+  }
+
+  protected async exportWithOptions(): Promise<void> {
+    const draft = this.exportDraft();
+    if (!draft) return;
+    this.exportDraft.set(undefined);
+    await this.store.exportBodies(draft.format, { bodies: draft.bodies, quality: draft.quality });
+  }
+
+  /** The number of items before the rollback marker. */
+  protected readonly marker = computed(() => this.timeline().length - (this.store.state()?.document.rollbackIndex ?? 0));
+  /** The timeline item (or `marker`) being dragged. */
+  protected readonly dragging = signal<string | undefined>(undefined);
+
+  protected startDrag(event: DragEvent, what: string): void {
+    this.dragging.set(what);
+    event.dataTransfer?.setData('text/plain', what);
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+  }
+
+  /** A drop on the item at `index`: before it on its upper half, after it on its lower half. */
+  protected drop(event: DragEvent, index: number): void {
+    event.preventDefault();
+    const what = this.dragging();
+    this.dragging.set(undefined);
+    if (!what) return;
+    const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    const slot = event.clientY < box.top + box.height / 2 ? index : index + 1;
+    void this.moveTo(what, slot);
+  }
+
+  /** Moves the marker or an item to a slot between items (0 … length). */
+  private async moveTo(what: string, slot: number): Promise<void> {
+    if (what === 'marker') {
+      if (slot !== this.marker()) await this.store.run({ type: 'roll-to', position: slot });
+      return;
+    }
+    const from = this.timeline().findIndex((i) => i.id === what);
+    if (from < 0) return;
+    const index = from < slot ? slot - 1 : slot;
+    if (index !== from) await this.store.run({ type: 'reorder-item', itemId: what, index });
+  }
+
+  protected markerKey(event: KeyboardEvent): void {
+    const step = event.key === 'ArrowUp' ? -1 : event.key === 'ArrowDown' ? 1 : 0;
+    if (!step) return;
+    event.preventDefault();
+    const position = this.marker() + step;
+    if (position >= 0 && position <= this.timeline().length) void this.store.run({ type: 'roll-to', position });
+  }
+
+  /** Alt+arrow keys move an item up or down the timeline. */
+  protected itemKey(event: KeyboardEvent, item: TimelineItem, index: number): void {
+    if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
+    event.preventDefault();
+    void this.moveTo(item.id, event.key === 'ArrowUp' ? index - 1 : index + 2);
+  }
+
+  protected async open(item: TimelineItem, index: number): Promise<void> {
+    // A rolled-back item is edited with the model as it was there: roll forward to just after it.
+    if (index >= this.marker() && !(await this.store.run({ type: 'roll-to', position: index + 1 }))) return;
     if (isSketch(item)) {
       this.store.cancelDraft();
       this.store.edit(item.id);

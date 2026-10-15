@@ -1,5 +1,5 @@
 import { place, type ShapeAccess } from '@core/access/shape';
-import { fail, type ImportFormat, type Matrix4, ok, type Result, type Sketch, type ProfileEdge, type SketchEntity, type TextOutlines, type TextWeight, type Vec2 } from '@core/contracts';
+import { fail, type ImportFormat, type Matrix4, type MeshQuality, ok, type Result, type Sketch, type ProfileEdge, type SketchEntity, type TextOutlines, type TextWeight, type Vec2 } from '@core/contracts';
 import { exportSTEP, type Shape3D } from 'replicad';
 import { compensatedCurves, type DrawingCurve, drawingCurves, type KerfCompensation } from './drawing';
 import { type DrawingText, type ReadDrawing, readDxf, readSvg, sketchEntities } from './drawing-readers';
@@ -34,7 +34,8 @@ export interface InterchangeEngine {
   /** `texts`: the outlines of the sketch's texts, as solving produced them. */
   exportDrawing(sketch: Sketch, format: DrawingFormat, kerf?: KerfCompensation, texts?: TextOutlines): Promise<Uint8Array>;
   /** Solid bodies: STEP keeps exact geometry; STL, OBJ and 3MF are fine triangle meshes. */
-  exportBodies(bodies: readonly BodySource[], format: SolidFormat): Promise<Uint8Array>;
+  /** One file of the bodies; meshes for STL, 3MF and OBJ at the given quality (STEP stays exact). */
+  exportBodies(bodies: readonly BodySource[], format: SolidFormat, quality?: MeshQuality): Promise<Uint8Array>;
   /**
    * Reads a 3D file into solids in Shape Access, as `<key>:<n>` and without names (the Modeling
    * Engine names them when a feature inserts them). Meshes become faceted solids, up to
@@ -149,7 +150,7 @@ class DefaultInterchangeEngine implements InterchangeEngine {
       await this.kernel().ready();
       const solids = await stepSolids(bytes);
       try {
-        return { ...displayMeshes(solids.map((shape, i) => readable(fineMesh(`Solid ${i + 1}`, shape))), key), usableAsSolid: true };
+        return { ...displayMeshes(solids.map((shape, i) => readable(meshOf(`Solid ${i + 1}`, shape, 'normal'))), key), usableAsSolid: true };
       } finally {
         for (const solid of solids) solid.delete();
       }
@@ -188,7 +189,7 @@ class DefaultInterchangeEngine implements InterchangeEngine {
       try {
         const named = solids.map((shape, i) => ({ name: `Solid ${i + 1}`, shape }));
         if (to === 'step') return new Uint8Array(await exportSTEP(named, { unit: 'MM', modelUnit: 'MM' }).arrayBuffer());
-        return meshWriters[to](named.map(({ name, shape }) => fineMesh(name, shape)));
+        return meshWriters[to](named.map(({ name, shape }) => meshOf(name, shape, 'normal')));
       } finally {
         for (const solid of solids) solid.delete();
       }
@@ -215,7 +216,7 @@ class DefaultInterchangeEngine implements InterchangeEngine {
     return new TextEncoder().encode(drawingWriters[format](curves));
   }
 
-  async exportBodies(bodies: readonly BodySource[], format: SolidFormat): Promise<Uint8Array> {
+  async exportBodies(bodies: readonly BodySource[], format: SolidFormat, quality: MeshQuality = 'normal'): Promise<Uint8Array> {
     const shapes = this.shapes;
     if (!shapes) throw new Error('Exporting solids needs the geometry kernel.');
     await shapes.ready();
@@ -231,7 +232,7 @@ class DefaultInterchangeEngine implements InterchangeEngine {
         const blob = exportSTEP(loaded.map(({ name, shape }) => ({ shape, name })), { unit: 'MM', modelUnit: 'MM' });
         return new Uint8Array(await blob.arrayBuffer());
       }
-      const meshes = loaded.map(({ name, shape }) => fineMesh(name, shape));
+      const meshes = loaded.map(({ name, shape }) => meshOf(name, shape, quality));
       return meshWriters[format](meshes);
     } finally {
       for (const body of loaded) if (body.placed) body.shape.delete();
@@ -245,10 +246,18 @@ export function createInterchangeEngine(shapes?: ShapeAccess, fonts?: (weight: T
 }
 
 /** A fine triangle mesh of a solid, for mesh formats. */
-function fineMesh(name: string, shape: Shape3D): TriangleMesh {
+/** Chordal deviation as a share of the body's diagonal (with a floor in mm), and angular deviation, per quality. */
+const meshTolerances: Readonly<Record<MeshQuality, { share: number; floor: number; angle: number }>> = {
+  draft: { share: 1 / 1000, floor: 0.02, angle: 0.3 },
+  normal: { share: 1 / 5000, floor: 0.005, angle: 0.1 },
+  fine: { share: 1 / 20000, floor: 0.001, angle: 0.05 },
+};
+
+function meshOf(name: string, shape: Shape3D, quality: MeshQuality): TriangleMesh {
   const box = shape.boundingBox;
-  const tolerance = Math.max(0.005, Math.hypot(box.width, box.height, box.depth) / 5000);
-  const mesh = shape.mesh({ tolerance, angularTolerance: 0.1 });
+  const { share, floor, angle } = meshTolerances[quality];
+  const tolerance = Math.max(floor, Math.hypot(box.width, box.height, box.depth) * share);
+  const mesh = shape.mesh({ tolerance, angularTolerance: angle });
   return { name, positions: mesh.vertices, indices: mesh.triangles };
 }
 

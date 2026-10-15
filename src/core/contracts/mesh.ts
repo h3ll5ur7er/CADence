@@ -35,3 +35,6 @@ export interface BodyState {
   readonly id: string;
   readonly key: string;
 }
+
+/** How finely solids are turned into triangles for STL, 3MF and OBJ: deviation from the true surface. */
+export type MeshQuality = 'draft' | 'normal' | 'fine';

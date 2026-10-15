@@ -48,6 +48,10 @@ export interface ComponentDocument extends DocumentBase {
   readonly units: LengthUnit;
   readonly parameters: readonly Parameter[];
   readonly timeline: readonly TimelineItem[];
+  /**
+   * How many items at the end of the timeline are rolled back: they are kept but not run, and new
+   * items are inserted before them. 0 puts the rollback marker at the end.
+   */
   readonly rollbackIndex: number;
   /** For mass; `materials[0]` when absent. */
   readonly material?: Material;

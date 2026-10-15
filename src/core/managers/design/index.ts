@@ -8,6 +8,7 @@ export type {
   DesignSession,
   DesignState,
   DrawingFormat,
+  ExportOptions,
   InsertDrawingOptions,
   ItemStatus,
   ParameterView,

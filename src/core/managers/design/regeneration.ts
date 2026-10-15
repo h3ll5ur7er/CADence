@@ -11,7 +11,10 @@ import {
   ok,
   originFrames,
   type PlaneFrame,
+  metricThreads,
   type PlaneRef,
+  type Profile,
+  type ThreadMarker,
   generatorOf,
   type Result,
   type Sketch,
@@ -25,9 +28,9 @@ import {
 import type { AssetAccess } from '@core/access/asset';
 import type { DocumentAccess } from '@core/access/document';
 import type { DrawingEntities, InterchangeEngine } from '@core/engines/interchange';
-import type { AxisInput, BodyState, ModelingEngine, ModelingRequest, ToolInput } from '@core/engines/modeling';
+import type { AxisInput, BodyState, ModelingEngine, ModelingRequest, PathPiece, Placement, ToolInput } from '@core/engines/modeling';
 import type { ParameterEngine, ParameterError, Quantity, ValueKind } from '@core/engines/parameter';
-import type { DragTarget, SketchEngine } from '@core/engines/sketch';
+import { type DragTarget, placesAlong, type SketchEngine, type SketchPath, sketchPath } from '@core/engines/sketch';
 import { contentHash } from '@core/utilities/identity';
 import { references } from './commands';
 import type { ItemStatus, ParameterView, SketchView } from './design-manager';
@@ -64,6 +67,7 @@ export interface Derived {
   readonly planes: Map<string, PlaneFrame>;
   readonly bodies: readonly BodyState[];
   readonly tools: Map<string, ToolInput>;
+  readonly threads: readonly ThreadMarker[];
   readonly parameters: ParameterView[];
   readonly parameterError?: ParameterError;
 }
@@ -94,6 +98,10 @@ type WithoutKey<T> = T extends unknown ? Omit<T, 'key'> : never;
 const add = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const scale = (a: Vec3, s: number): Vec3 => [a[0] * s, a[1] * s, a[2] * s];
 const cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const dot = (a: Vec3, b: Vec3): number => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const length = (a: Vec3): number => Math.hypot(a[0], a[1], a[2]);
+const unit = (a: Vec3): Vec3 => scale(a, 1 / (length(a) || 1));
 
 /** Runs a component's timeline: parameters, then each sketch and feature in order. */
 export class Regeneration {
@@ -101,7 +109,10 @@ export class Regeneration {
   private readonly items = new Map<string, ItemStatus>();
   private readonly planes = new Map<string, PlaneFrame>();
   private readonly tools = new Map<string, ToolInput>();
+  private readonly threads: ThreadMarker[] = [];
   private bodies: readonly BodyState[] = [];
+  /** The layer left over counterbored holes for printing: the printer's layer height. */
+  private layer = 0.2;
   private scope: ReadonlyMap<string, Quantity> = new Map();
 
   constructor(
@@ -110,13 +121,19 @@ export class Regeneration {
   ) {}
 
   async run(document: ComponentDocument): Promise<Derived> {
+    if (document.process?.kind === 'print') this.layer = document.process.layerHeight;
     const evaluated = this.engines.parameters.evaluateAll(document.parameters);
     if (evaluated.ok) this.scope = evaluated.value;
     const parameters = document.parameters.map((parameter): ParameterView => {
       const value = this.scope.get(parameter.name);
       return value ? { parameter, display: display(value) } : { parameter };
     });
-    for (const item of document.timeline) {
+    const marker = document.timeline.length - document.rollbackIndex;
+    for (const [index, item] of document.timeline.entries()) {
+      if (index >= marker) {
+        this.items.set(item.id, { state: 'rolled-back' });
+        continue;
+      }
       if (item.suppressed) {
         this.items.set(item.id, { state: 'suppressed' });
         continue;
@@ -130,6 +147,7 @@ export class Regeneration {
       planes: this.planes,
       bodies: this.bodies,
       tools: this.tools,
+      threads: this.threads,
       parameters,
       ...(evaluated.ok ? {} : { parameterError: evaluated.error }),
     };
@@ -298,12 +316,9 @@ export class Regeneration {
 
   private async feature(feature: Feature): Promise<Result<void>> {
     if (feature.type === 'plane') {
-      const base = await this.frame(feature.base);
-      if (!base.ok) return base;
-      const offset = this.value(feature.offset, 'length', 'Offset');
-      if (!offset.ok) return offset;
-      const normal = cross(base.value.u, base.value.v);
-      this.planes.set(feature.id, { ...base.value, origin: add(base.value.origin, scale(normal, offset.value)) });
+      const frame = await this.constructionPlane(feature);
+      if (!frame.ok) return frame;
+      this.planes.set(feature.id, frame.value);
       return ok(undefined);
     }
     const request = await this.request(feature);
@@ -314,6 +329,9 @@ export class Regeneration {
     if (outcome.toolKey && isToolFeature(feature)) {
       this.tools.set(feature.id, { feature: feature.id, toolKey: outcome.toolKey, operation: feature.operation });
     }
+    if (outcome.toolKey && feature.type === 'hole') this.tools.set(feature.id, { feature: feature.id, toolKey: outcome.toolKey, operation: 'cut' });
+    if (outcome.toolKey && feature.type === 'rib') this.tools.set(feature.id, { feature: feature.id, toolKey: outcome.toolKey, operation: 'join' });
+    if (outcome.thread) this.threads.push(outcome.thread);
     return ok(undefined);
   }
 
@@ -358,12 +376,137 @@ export class Regeneration {
       case 'chamfer': {
         const size = this.value(feature.size, 'length', feature.type === 'fillet' ? 'Radius' : 'Distance');
         if (!size.ok) return size;
+        if (feature.type === 'fillet' && feature.endSize?.trim()) {
+          const endSize = this.value(feature.endSize, 'length', 'End radius');
+          if (!endSize.ok) return endSize;
+          return withKey({ ...base, type: 'fillet', edges: feature.edges, size: size.value, endSize: endSize.value });
+        }
         return withKey({ ...base, type: feature.type, edges: feature.edges, size: size.value });
+      }
+      case 'draft': {
+        const angle = this.value(feature.angle, 'angle', 'Angle');
+        if (!angle.ok) return angle;
+        const plane = await this.frame(feature.plane);
+        if (!plane.ok) return plane;
+        return withKey({ ...base, type: 'draft', faces: feature.faces, plane: plane.value, angle: angle.value });
+      }
+      case 'rib': {
+        const [thickness, depth] = [this.value(feature.thickness, 'length', 'Thickness'), this.value(feature.depth, 'length', 'Depth')];
+        if (!thickness.ok) return thickness;
+        if (!depth.ok) return depth;
+        const path = this.path(feature.sketch);
+        if (!path.ok) return path;
+        if (path.value.flat.closed) return fail({ code: 'invalid-input', message: 'A rib is drawn as an open line or curve; closed outlines are extruded.' });
+        return withKey({ ...base, type: 'rib', frame: path.value.frame, path: path.value.pieces, thickness: thickness.value, depth: depth.value, direction: feature.direction });
       }
       case 'shell': {
         const thickness = this.value(feature.thickness, 'length', 'Thickness');
         if (!thickness.ok) return thickness;
         return withKey({ ...base, type: 'shell', faces: feature.faces, thickness: thickness.value });
+      }
+      case 'loft': {
+        if (feature.sections.length < 2) return fail({ code: 'missing-input', message: 'Pick profiles of at least two sketches.' });
+        const sections: { frame: PlaneFrame; profile: Profile }[] = [];
+        for (const section of feature.sections) {
+          const view = this.sketches.get(section.sketch);
+          const profile = view?.profiles.find((p) => p.id === section.profile);
+          if (!view || view.error || !profile) return fail({ code: 'missing-input', message: 'A section is missing, later in the timeline or no longer a profile. Edit the loft and pick it again.' });
+          sections.push({ frame: view.frame, profile });
+        }
+        return withKey({ ...base, type: 'loft', sections, ruled: feature.ruled, operation: feature.operation });
+      }
+      case 'sweep': {
+        const view = this.sketches.get(feature.sketch);
+        if (!view || view.error) return fail({ code: 'missing-input', message: 'Its sketch is missing, later in the timeline or does not solve.' });
+        const profiles = view.profiles.filter((p) => feature.profiles.includes(p.id));
+        if (profiles.length < feature.profiles.length || profiles.length === 0) {
+          return fail({ code: 'missing-input', message: 'Some of its profiles no longer exist. Edit the feature and pick them again.' });
+        }
+        const path = this.path(feature.path);
+        if (!path.ok) return path;
+        return withKey({ ...base, type: 'sweep', frame: view.frame, profiles, path: path.value.pieces, closed: path.value.flat.closed, operation: feature.operation });
+      }
+      case 'path-pattern': {
+        const tools = feature.features.map((id) => this.tools.get(id));
+        if (tools.some((t) => !t) || tools.length === 0) {
+          return fail({ code: 'missing-input', message: 'It repeats features that are missing, failed or come later in the timeline.' });
+        }
+        const count = this.value(feature.count, 'scalar', 'Count');
+        if (!count.ok) return count;
+        if (!Number.isInteger(count.value) || count.value < 2) return fail({ code: 'invalid-input', message: 'A pattern needs a whole number of at least 2 copies.' });
+        const path = this.path(feature.path);
+        if (!path.ok) return path;
+        return withKey({ ...base, type: 'path-pattern', tools: tools as ToolInput[], placements: placementsAlong(path.value.flat, path.value.frame, count.value, feature.align) });
+      }
+      case 'hole': {
+        const view = this.sketches.get(feature.sketch);
+        if (!view || view.error) return fail({ code: 'missing-input', message: 'Its sketch is missing, later in the timeline or does not solve.' });
+        const points = feature.points.map((id) => {
+          const p = view.sketch.entities.find((e) => e.id === id);
+          return p?.kind === 'point' ? { id, at: [p.x, p.y] as Vec2 } : undefined;
+        });
+        if (points.some((p) => !p)) return fail({ code: 'missing-input', message: 'Some of its points no longer exist. Edit the hole and pick its sketch again.' });
+        const size = (expression: string, what: string) => this.value(expression, 'length', what);
+        const diameter = size(feature.diameter, 'Diameter');
+        if (!diameter.ok) return diameter;
+        let depth: number | undefined;
+        if (feature.extent === 'blind') {
+          const value = size(feature.depth, 'Depth');
+          if (!value.ok) return value;
+          depth = value.value;
+        }
+        let bore: { diameter: number; depth: number } | undefined;
+        let sink: { diameter: number; angle: number } | undefined;
+        if (feature.kind === 'counterbore') {
+          const [d, h] = [size(feature.boreDiameter, 'Counterbore diameter'), size(feature.boreDepth, 'Counterbore depth')];
+          if (!d.ok) return d;
+          if (!h.ok) return h;
+          bore = { diameter: d.value, depth: h.value };
+        }
+        if (feature.kind === 'countersink') {
+          const [d, a] = [size(feature.sinkDiameter, 'Countersink diameter'), this.value(feature.sinkAngle, 'angle', 'Countersink angle')];
+          if (!d.ok) return d;
+          if (!a.ok) return a;
+          sink = { diameter: d.value, angle: a.value };
+        }
+        const spec = { diameter: diameter.value, ...(depth === undefined ? {} : { depth }), ...(bore ? { bore } : {}), ...(sink ? { sink } : {}), teardrop: feature.teardrop, bridge: feature.bridge && bore ? this.layer : 0 };
+        return withKey({ ...base, type: 'hole', frame: view.frame, points: points as { id: string; at: Vec2 }[], spec });
+      }
+      case 'thread': {
+        if (!feature.face.name) return fail({ code: 'missing-input', message: 'Click the wall of a hole or a shaft.' });
+        const thread = metricThreads[feature.size];
+        if (!thread) return fail({ code: 'invalid-input', message: `${feature.size} is not an ISO metric thread size.` });
+        let length: number | undefined;
+        if (feature.length.trim()) {
+          const value = this.value(feature.length, 'length', 'Length');
+          if (!value.ok) return value;
+          length = value.value;
+        }
+        return withKey({ ...base, type: 'thread', face: feature.face, size: feature.size, ...thread, ...(length === undefined ? {} : { length }), modelled: feature.modelled, flip: feature.flip });
+      }
+      case 'combine':
+        return withKey({ ...base, type: 'combine', target: feature.target, tools: feature.tools, operation: feature.operation, keepTools: feature.keepTools });
+      case 'split': {
+        const plane = await this.frame(feature.plane);
+        if (!plane.ok) return plane;
+        return withKey({ ...base, type: 'split', body: feature.body, plane: plane.value });
+      }
+      case 'move': {
+        const [x, y, z] = feature.translate.map((e, i) => this.value(e, 'length', `${'XYZ'[i]} distance`));
+        if (!x?.ok) return x as Result<never>;
+        if (!y?.ok) return y as Result<never>;
+        if (!z?.ok) return z as Result<never>;
+        const angle = this.value(feature.angle, 'angle', 'Angle');
+        if (!angle.ok) return angle;
+        const axis = this.axis(feature.axis);
+        if (!axis.ok) return axis;
+        const rotation = angle.value !== 0 ? { axis: axis.value, angle: angle.value } : undefined;
+        return withKey({ ...base, type: 'move', bodyIds: feature.bodies, translation: [x.value, y.value, z.value], ...(rotation ? { rotation } : {}), copy: feature.copy });
+      }
+      case 'scale': {
+        const factor = this.value(feature.factor, 'scalar', 'Scale factor');
+        if (!factor.ok) return factor;
+        return withKey({ ...base, type: 'scale', bodyIds: feature.bodies, factor: factor.value });
       }
       case 'linear-pattern':
       case 'circular-pattern':
@@ -396,6 +539,81 @@ export class Regeneration {
     }
   }
 
+  /** The curves of a sketch as a path in world coordinates, in order. */
+  private path(sketchId: string): Result<{ readonly flat: SketchPath; readonly frame: PlaneFrame; readonly pieces: readonly PathPiece[] }> {
+    const view = this.sketches.get(sketchId);
+    if (!view || view.error) return fail({ code: 'missing-input', message: 'Its path sketch is missing, later in the timeline or does not solve.' });
+    const path = sketchPath(view.sketch);
+    if (!path.ok) return path;
+    const world = (p: Vec2): Vec3 => add(view.frame.origin, add(scale(view.frame.u, p[0]), scale(view.frame.v, p[1])));
+    const pieces = path.value.pieces.map((p): PathPiece =>
+      p.kind === 'bezier'
+        ? { kind: 'bezier', points: p.points.map(world) as unknown as [Vec3, Vec3, Vec3, Vec3] }
+        : p.kind === 'arc'
+          ? { kind: 'arc', start: world(p.start), mid: world(p.mid), end: world(p.end) }
+          : { kind: 'line', start: world(p.start), end: world(p.end) },
+    );
+    return ok({ flat: path.value, frame: view.frame, pieces });
+  }
+
+  /** Where a construction plane lies, by its mode. */
+  private async constructionPlane(feature: Extract<Feature, { type: 'plane' }>): Promise<Result<PlaneFrame>> {
+    if (feature.mode === 'points') {
+      if (feature.points.length !== 3) return fail({ code: 'missing-input', message: 'Pick three vertices.' });
+      const points: Vec3[] = [];
+      for (const ref of feature.points) {
+        const point = await this.engines.modeling.pointOf(this.bodies, ref);
+        if (!point.ok) return point;
+        points.push(point.value);
+      }
+      const [p, q, r] = points as [Vec3, Vec3, Vec3];
+      const u = sub(q, p);
+      const n = cross(u, sub(r, p));
+      if (length(n) < 1e-9 * Math.max(1, length(u) ** 2)) return fail({ code: 'invalid-input', message: 'The three points lie on one line.' });
+      const normal = unit(n);
+      return ok({ origin: p, u: unit(u), v: cross(normal, unit(u)) });
+    }
+    const base = await this.frame(feature.base);
+    if (!base.ok) return base;
+    const { origin, u, v } = base.value;
+    const normal = cross(u, v);
+    if (feature.mode === 'midplane') {
+      const second = await this.frame(feature.second);
+      if (!second.ok) return second;
+      const other = cross(second.value.u, second.value.v);
+      if (Math.abs(Math.abs(dot(normal, other)) - 1) > 1e-6) return fail({ code: 'invalid-input', message: 'A midplane lies between two parallel planes.' });
+      const gap = dot(sub(second.value.origin, origin), normal);
+      return ok({ ...base.value, origin: add(origin, scale(normal, gap / 2)) });
+    }
+    if (feature.mode === 'angle') {
+      const angle = this.value(feature.angle, 'angle', 'Angle');
+      if (!angle.ok) return angle;
+      const axis = await this.axisLine(feature.axis);
+      if (!axis.ok) return axis;
+      // The axis, laid into the base plane, is the hinge the plane turns about.
+      const along = sub(axis.value.direction, scale(normal, dot(axis.value.direction, normal)));
+      if (length(along) < 1e-9) return fail({ code: 'invalid-input', message: 'The axis must lie in the base plane or run along it.' });
+      const hinge = unit(along);
+      const across = cross(normal, hinge);
+      const turned = add(scale(normal, Math.cos(angle.value)), scale(across, -Math.sin(angle.value)));
+      const point = add(axis.value.origin, scale(normal, -dot(sub(axis.value.origin, origin), normal)));
+      return ok({ origin: point, u: hinge, v: cross(turned, hinge) });
+    }
+    const offset = this.value(feature.offset, 'length', 'Offset');
+    if (!offset.ok) return offset;
+    return ok({ ...base.value, origin: add(origin, scale(normal, offset.value)) });
+  }
+
+  /** An axis as a point and direction, with edges resolved on the bodies made so far. */
+  private async axisLine(ref: AxisRef): Promise<Result<{ origin: Vec3; direction: Vec3 }>> {
+    const axis = this.axis(ref);
+    if (!axis.ok) return axis;
+    if (!('edge' in axis.value)) return ok(axis.value);
+    const frame = await this.engines.modeling.frameOf(this.bodies, axis.value.edge);
+    if (!frame.ok) return frame;
+    return ok({ origin: frame.value.origin, direction: cross(frame.value.u, frame.value.v) });
+  }
+
   private async frame(ref: PlaneRef): Promise<Result<PlaneFrame>> {
     if (typeof ref === 'string') return ok(originFrames[ref]);
     if ('plane' in ref) {
@@ -426,6 +644,25 @@ export class Regeneration {
     const end = point(line.end);
     return ok({ origin: start, direction: add(end, scale(start, -1)) });
   }
+}
+
+/**
+ * Where each copy of a path pattern goes, relative to the path's start: shifted along it and, when
+ * aligned, turned in the path's plane as the path turns.
+ */
+function placementsAlong(path: SketchPath, frame: PlaneFrame, count: number, align: boolean): Placement[] {
+  const places = placesAlong(path, count);
+  const world = (p: Vec2): Vec3 => add(frame.origin, add(scale(frame.u, p[0]), scale(frame.v, p[1])));
+  const [first, ...rest] = places;
+  if (!first) return [];
+  const start = world(first.point);
+  const normal = cross(frame.u, frame.v);
+  const heading = (d: Vec2) => Math.atan2(d[1], d[0]);
+  return rest.map((place): Placement => {
+    const translation = sub(world(place.point), start);
+    const angle = heading(place.direction) - heading(first.direction);
+    return align && Math.abs(angle) > 1e-12 ? { translation, rotation: { origin: start, direction: normal, angle } } : { translation };
+  });
 }
 
 /** Solvable but meaningless: a curve of (almost) zero size, e.g. a line both horizontal and vertical. */

@@ -1,4 +1,4 @@
-import type { BodyMesh, PlaneFrame, Vec2 } from '@core/contracts';
+import type { BodyMesh, PlaneFrame, ThreadMarker, Vec2, Vec3 } from '@core/contracts';
 import {
   BackSide,
   BufferAttribute,
@@ -44,6 +44,31 @@ export function frameMatrix(frame: PlaneFrame): Matrix4 {
   const { origin: o, u, v } = frame;
   const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]] as const;
   return new Matrix4().set(u[0], v[0], n[0], o[0], u[1], v[1], n[1], o[1], u[2], v[2], n[2], o[2], 0, 0, 0, 1);
+}
+
+/** A thread shown as a helix of its pitch on its face, slightly off the surface so it stays visible. */
+export function threadHelix(thread: ThreadMarker, color: string): LineSegments {
+  const { origin, direction, radius, length, pitch, internal } = thread;
+  const d = direction;
+  // Two directions across the axis.
+  const seed: Vec3 = Math.abs(d[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+  const cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const norm = (a: Vec3): Vec3 => {
+    const l = Math.hypot(...a) || 1;
+    return [a[0] / l, a[1] / l, a[2] / l];
+  };
+  const x = norm(cross(d, seed));
+  const y = cross(d, x);
+  const r = radius * (internal ? 0.995 : 1.005);
+  const steps = Math.max(24, Math.ceil((length / pitch) * 24));
+  const at = (i: number): number[] => {
+    const t = (i / steps) * length;
+    const a = (t / pitch) * 2 * Math.PI;
+    return [0, 1, 2].map((k) => (origin[k] as number) + (d[k] as number) * t + r * (Math.cos(a) * (x[k] as number) + Math.sin(a) * (y[k] as number)));
+  };
+  // Line segments: each from one point of the helix to the next.
+  const points = Array.from({ length: steps }, (_, i) => [...at(i), ...at(i + 1)]).flat();
+  return lines(points, color, 0.9);
 }
 
 export function lines(points: number[] | Float32Array, color: string, opacity = 1): LineSegments {

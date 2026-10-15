@@ -1,6 +1,6 @@
 import { readFileSync, statSync } from 'node:fs';
 import { expect, type Page, test } from '@playwright/test';
-import { cutHole, evidence, plateProject, screenPositionOf, setThickness, shown } from './support';
+import { cutHole, evidence, fromModelMenu, plateProject, screenPositionOf, setThickness, shown } from './support';
 
 /** Phase 3 (Part modeling) user journey: a parametric bracket, printed and exported. */
 test.describe.configure({ mode: 'serial' });
@@ -17,7 +17,7 @@ test('a parametric bracket: extrude, hole on a face, pattern, fillet, exports', 
   await expect(volume(page)).toHaveText(shown(10800 - Math.PI * 16 * 6, 'mm³'));
 
   // Three holes in a row.
-  await page.getByRole('button', { name: 'Linear pattern' }).click();
+  await fromModelMenu(page, 'Pattern', 'Linear pattern');
   await page.locator('#feature-spacing').fill('15');
   await page.locator('#feature-spacing').press('Tab');
   await page.getByRole('button', { name: 'OK' }).click();

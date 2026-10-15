@@ -80,6 +80,7 @@ Architecture decision records. Each one records what was decided, why, and what 
 **Generative naming by surface identity.** Persistent references name faces by the feature and role that created them, and inherit names through later features by *surface identity*: a face on the same plane, cylinder, cone, sphere or torus as an earlier face keeps its name ([[Architecture/Document model#Persistent references]]).
 *Why:* OCCT's own history (`Generated`/`Modified`) is not exposed through replicad. Surface identity is exact for the prismatic and turned parts people print and cut, and it survives booleans and trims.
 *Trade-off:* freeform (B-spline) faces only match by centre and area, so their names are less stable. References that cannot be resolved fail loudly instead of re-binding.
+*Later:* freeform faces match by their surface, and loft, sweep and draft faces are named from the kernel's history ([[#ADR-28]]).
 
 ## ADR-16
 
@@ -170,3 +171,16 @@ Imported SVG `<text>` and DXF `TEXT`/`MTEXT` become editable sketch texts in thi
 
 *Why:* a logo or a part outline usually has to keep its proportions, and two points are the smallest handle a constraint solver can move, turn, scale and dimension. Geometry generated from the original keeps the document small and exact.
 *Trade-off:* the drawing scales uniformly (no stretching). While a handle is dragged, the drawing follows on release, not live. Curves of a one-piece drawing cannot be trimmed or edited; insert it as curves for that.
+
+## ADR-28
+
+**Part modeling II: the timeline can roll back; new features come from the kernel's own builders and history; gaps in the kernel build are worked around, not hidden.**
+- *Timeline.* `rollbackIndex` counts the rolled-back items at the end, so documents saved before needed no migration (0: none). New items go in at the marker, and the marker stays after them. Reordering is checked against what each item uses (`itemDependencies`), and the command is refused if the moved item then fails.
+- *Body operations* are features like any other (combine, split, move/copy, scale): body ids stay stable (a split's back piece and copies are named after the feature), and moved bodies keep their face names.
+- *Loft, sweep and draft* are built with OpenCascade's builders directly (`ThruSections`, `MakePipeShell`, `DraftAngle`) rather than replicad's wrappers, so their history names the faces: sides after the profile edge that generated them, drafted faces after themselves ([[src/core/engines/modeling/tools.ts]], [[src/core/engines/modeling/draft-rib.ts]]).
+- *Freeform naming (CAD-47).* A freeform face keeps an earlier face's name when probe points of that face's surface lie on its own (untrimmed) surface: holes cut through a loft side keep its name. Planes also match facing the other way.
+- *Holes* are revolved half-sections (one profile for simple, counterbored and countersunk holes) or, as teardrops, extruded outlines; *threads* are a marker by default and, when modelled, a 60° groove swept along a helix with a fixed binormal and cut ([[src/core/engines/modeling/holes.ts]]).
+- *Kernel build gaps.* `replicad-opencascadejs` binds neither `gp_Cone` nor `gp_Torus`, so cone and torus faces are read as freeform surfaces (revolves recognise them by a point they pass through); it has no `BRepBuilderAPI_GTransform`, so bodies scale only uniformly. No point-in-solid classifier is bound either: threads start at the end of the face nearer the outside of the body's box, with *flip* as the escape.
+
+*Why:* the builders' history is the only exact link between a sketch curve and the face it made once surfaces are freeform; geometric guesses only work for analytic surfaces.
+*Trade-off:* a rib goes a set depth rather than up to the next face; holes are flat-bottomed (no drill point); modelled threads are slow to build and can fail on long threads; scaling per axis waits for a kernel build with `GTransform`.

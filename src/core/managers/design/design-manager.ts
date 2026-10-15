@@ -6,6 +6,7 @@ import type {
   DocumentId,
   Feature,
   ManufacturingProfile,
+  MeshQuality,
   Material,
   Measurement,
   Parameter,
@@ -22,6 +23,7 @@ import type {
   Vec2,
   TextOutlines,
   TextWeight,
+  ThreadMarker,
 } from '@core/contracts';
 
 /** Every change to a component is one of these commands (docs/Architecture/Decisions.md#adr-10). Ids come from the caller. */
@@ -63,6 +65,10 @@ export type DesignCommand =
   | { readonly type: 'suppress-item'; readonly itemId: string; readonly suppressed: boolean }
   | { readonly type: 'rename-item'; readonly itemId: string; readonly name: string }
   | { readonly type: 'delete-item'; readonly itemId: string }
+  /** Moves an item to `index` (in the timeline without it); refused when it would come before something it uses, or after something that uses it. */
+  | { readonly type: 'reorder-item'; readonly itemId: string; readonly index: number }
+  /** Puts the rollback marker after the first `position` items (0 … timeline length). */
+  | { readonly type: 'roll-to'; readonly position: number }
   | { readonly type: 'add-parameter'; readonly parameter: Parameter }
   | { readonly type: 'set-parameter'; readonly parameter: Parameter }
   | { readonly type: 'delete-parameter'; readonly id: string }
@@ -97,7 +103,7 @@ export interface SketchView {
 
 /** How a timeline item came out in the last regeneration. */
 export interface ItemStatus {
-  readonly state: 'ok' | 'error' | 'suppressed';
+  readonly state: 'ok' | 'error' | 'suppressed' | 'rolled-back';
   readonly error?: string;
 }
 
@@ -114,6 +120,8 @@ export interface DesignState {
   /** Construction planes by feature id. */
   readonly planes: ReadonlyMap<string, PlaneFrame>;
   readonly bodies: readonly BodyMesh[];
+  /** Threads, for showing on their faces. */
+  readonly threads: readonly ThreadMarker[];
   readonly parameters: readonly ParameterView[];
   readonly canUndo: boolean;
   readonly canRedo: boolean;
@@ -123,6 +131,12 @@ export type DrawingFormat = 'dxf' | 'svg';
 export type SolidFormat = 'step' | 'stl' | 'obj' | '3mf';
 
 /** An editing session on one component document. */
+/** Which bodies to export (all by default), and how finely meshes are made. */
+export interface ExportOptions {
+  readonly bodies?: readonly string[];
+  readonly quality?: MeshQuality;
+}
+
 /** How a drawing goes into a sketch: as one piece, or as separate curves held by the relations it shows, fixed, or free. */
 export interface InsertDrawingOptions {
   readonly onePiece?: boolean;
@@ -147,7 +161,7 @@ export interface DesignSession {
    */
   insertDrawing(sketchId: string, documentId: DocumentId, idPrefix: string, options?: InsertDrawingOptions): Promise<Result<void>>;
   /** All bodies, one file. */
-  exportBodies(format: SolidFormat): Promise<Result<void>>;
+  exportBodies(format: SolidFormat, options?: ExportOptions): Promise<Result<void>>;
   /** Area, length, radius, distance and angle of picked faces and edges. */
   measure(refs: readonly TopologyRef[]): Promise<Result<Measurement>>;
   /** Volume, mass (from the material), centre of mass and bounding box per body. */

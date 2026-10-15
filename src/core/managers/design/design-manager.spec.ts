@@ -10,9 +10,13 @@ import {
   currentSchemaVersion,
   type DomainEvents,
   type ImportFormat,
+  type PlaneFrame,
+  type PlaneRef,
   type Result,
   type SketchPoint,
   sketchOriginId,
+  type Vec3,
+  vertexName,
 } from '@core/contracts';
 import { createAnalysisEngine } from '@core/engines/analysis';
 import { createInterchangeEngine } from '@core/engines/interchange';
@@ -54,6 +58,8 @@ const shapes = createShapeAccess();
 const modeling = createModelingEngine(shapes);
 const interchange = createInterchangeEngine(shapes);
 const analysis = createAnalysisEngine(shapes);
+
+const cross3 = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 
 describe('DesignManager', () => {
   let documents: InMemoryDocumentAccess;
@@ -362,6 +368,110 @@ describe('DesignManager', () => {
 
       unwrap(await session.execute({ type: 'set-parameter', parameter: { id: 'pw', name: 'width', expression: '80 mm' } }));
       expect(await volume()).toBeCloseTo(80 * 30 * 8);
+    });
+
+    it('rolls the timeline back, inserts new items at the marker and rolls forward again', async () => {
+      await plate();
+      const fillet = (id: string) => {
+        const edge = session.state().bodies[0]?.edges.find((e) => e.name.includes('f:e1:end') && e.name.includes(':side:ab'));
+        return { id, type: 'fillet' as const, name: '', suppressed: false, edges: [{ kind: 'edge' as const, body: 'e1', name: edge?.name as string }], size: '2' };
+      };
+      unwrap(await session.execute({ type: 'add-feature', feature: fillet('r1') }));
+      const rounded = await volume();
+      unwrap(await session.execute({ type: 'roll-to', position: 2 }));
+      expect(session.state().items.get('r1')).toEqual({ state: 'rolled-back' });
+      expect(await volume()).toBeCloseTo(60 * 30 * 6);
+      // A plane added now comes before the rolled-back fillet, and the marker stays after it.
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'p1', type: 'plane', name: '', suppressed: false, base: 'XY', offset: '20' } }));
+      expect(session.state().document.timeline.map((i) => i.id)).toEqual(['s1', 'e1', 'p1', 'r1']);
+      expect(session.state().document.rollbackIndex).toBe(1);
+      unwrap(await session.execute({ type: 'roll-to', position: 4 }));
+      expect(session.state().items.get('r1')).toEqual({ state: 'ok' });
+      expect(await volume()).toBeCloseTo(rounded);
+      // Deleting a rolled-back item keeps the marker where it is.
+      unwrap(await session.execute({ type: 'roll-to', position: 3 }));
+      unwrap(await session.execute({ type: 'delete-item', itemId: 'r1' }));
+      expect(session.state().document.rollbackIndex).toBe(0);
+    });
+
+    it('reorders the timeline, but never before what an item uses', async () => {
+      await plate();
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'p1', type: 'plane', name: '', suppressed: false, base: 'XY', offset: '20' } }));
+      unwrap(await session.execute({ type: 'reorder-item', itemId: 'p1', index: 0 }));
+      expect(session.state().document.timeline.map((i) => i.id)).toEqual(['p1', 's1', 'e1']);
+      const early = await session.execute({ type: 'reorder-item', itemId: 'e1', index: 1 });
+      expect(early).toMatchObject({ ok: false, error: { message: 'Extrude 1 uses Sketch 1, so it has to come after it.' } });
+      // A sketch on a face of the extrude may not move before it either.
+      unwrap(await session.execute({ type: 'create-sketch', id: 's2', plane: { face: { kind: 'face', body: 'e1', name: 'f:e1:end' } } }));
+      expect(await session.execute({ type: 'reorder-item', itemId: 's2', index: 1 })).toMatchObject({ ok: false });
+      await session.undo();
+      expect(session.state().document.timeline.map((i) => i.id)).toEqual(['p1', 's1', 'e1']);
+    });
+
+    it('copies, splits and combines bodies with parameters', async () => {
+      await plate();
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'm1', type: 'move', name: '', suppressed: false, bodies: ['e1'], translate: ['0', 'width / 2', '0'], axis: { kind: 'origin', axis: 'Z' }, angle: '0 deg', copy: true } }));
+      expect(session.state().bodies.map((b) => b.body)).toEqual(['e1', 'm1']);
+      expect(await volume()).toBeCloseTo(2 * 60 * 30 * 6);
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'c1', type: 'combine', name: '', suppressed: false, target: 'e1', tools: ['m1'], operation: 'join', keepTools: false } }));
+      expect(session.state().bodies.map((b) => b.body)).toEqual(['e1']);
+      expect(await volume()).toBeCloseTo(60 * 30 * 6 * 2);
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'p1', type: 'plane', name: '', suppressed: false, base: 'YZ', offset: '20' } }));
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'x1', type: 'split', name: '', suppressed: false, body: 'e1', plane: { plane: 'p1' } } }));
+      expect(session.state().bodies.map((b) => b.body)).toEqual(['e1', 'x1']);
+      expect((await session.properties()).map((p) => Math.round(p.volume))).toEqual([40 * 60 * 6, 20 * 60 * 6]);
+      // The combine uses the copy, so it cannot move before the move.
+      expect(await session.execute({ type: 'reorder-item', itemId: 'c1', index: 2 })).toMatchObject({ ok: false });
+    });
+
+    it('places construction planes at an angle, midway and through three points', async () => {
+      await plate();
+      const frame = (id: string) => session.state().planes.get(id);
+      const close = (v: readonly number[]) => v.map((x) => Math.round(x * 1e6) / 1e6 + 0);
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'a1', type: 'plane', name: '', suppressed: false, mode: 'angle', base: 'XY', axis: { kind: 'origin', axis: 'X' }, angle: '90 deg' } }));
+      const turned = frame('a1') as PlaneFrame;
+      expect(close(cross3(turned.u, turned.v))).toEqual([0, -1, 0]); // XY turned up about X: the XZ plane, facing -Y
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'o1', type: 'plane', name: '', suppressed: false, base: 'XY', offset: '20' } }));
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'm1', type: 'plane', name: '', suppressed: false, mode: 'midplane', base: 'XY', second: { plane: 'o1' } } }));
+      expect(close(frame('m1')?.origin ?? [])).toEqual([0, 0, 10]);
+      const midTop = await session.execute({ type: 'add-feature', feature: { id: 'm2', type: 'plane', name: '', suppressed: false, mode: 'midplane', base: 'XY', second: 'XZ' } });
+      expect(midTop).toMatchObject({ ok: false, error: { message: expect.stringContaining('parallel') } });
+      const corner = (x: string, y: string) => ({ kind: 'vertex' as const, body: 'e1', name: vertexName([`e:f:e1:end|f:e1:side:${x}`, `e:f:e1:end|f:e1:side:${y}`, `e:f:e1:side:${[x, y].sort().join('|f:e1:side:')}`]) });
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 't1', type: 'plane', name: '', suppressed: false, mode: 'points', points: [corner('ab', 'da'), corner('ab', 'bc'), corner('bc', 'cd')] } }));
+      expect(close(frame('t1')?.origin ?? [])).toEqual([0, 0, 6]);
+      expect(close(cross3((frame('t1') as PlaneFrame).u, (frame('t1') as PlaneFrame).v))).toEqual([0, 0, 1]);
+    });
+
+    it('lofts between sketches, sweeps along a sketch and patterns along a path', async () => {
+      /** A sketch with a w × h rectangle (or open line chain) from (x, y). */
+      const sketch = async (id: string, plane: PlaneRef, points: readonly [number, number][], closed = true) => {
+        unwrap(await session.execute({ type: 'create-sketch', id, plane }));
+        const ids = points.map((_, i) => `${id}p${i}`);
+        const lines = points.slice(0, closed ? undefined : -1).map((_, i) => ({ id: `${id}l${i}`, kind: 'line' as const, start: ids[i] as string, end: ids[(i + 1) % ids.length] as string, construction: false }));
+        unwrap(await session.execute({ type: 'add-sketch-geometry', sketchId: id, entities: [...points.map(([x, y], i) => ({ id: ids[i] as string, kind: 'point' as const, x, y })), ...lines], constraints: [] }));
+        return session.state().sketches.get(id)?.profiles[0]?.id as string;
+      };
+      const square = (x: number, y: number, w: number): [number, number][] => [[x, y], [x + w, y], [x + w, y + w], [x, y + w]];
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'top', type: 'plane', name: '', suppressed: false, base: 'XY', offset: '20' } }));
+      const bottom = await sketch('s1', 'XY', square(0, 0, 20));
+      const upper = await sketch('s2', { plane: 'top' }, square(5, 5, 10));
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'l1', type: 'loft', name: '', suppressed: false, sections: [{ sketch: 's1', profile: bottom }, { sketch: 's2', profile: upper }], ruled: true, operation: 'new-body' } }));
+      // A ruled loft between squares is a frustum: h/3 (A1 + A2 + √(A1·A2)).
+      expect(await volume()).toBeCloseTo((20 / 3) * (400 + 100 + 200), 3);
+
+      // A 4 × 4 bar swept along an L on the XY plane at y = 50: 30 along X, then 20 along Y.
+      const bar = await sketch('s3', 'YZ', square(48, 0, 4));
+      await sketch('s4', 'XY', [[0, 50], [30, 50], [30, 70]], false);
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'w1', type: 'sweep', name: '', suppressed: false, sketch: 's3', profiles: [bar], path: 's4', operation: 'new-body' } }));
+      expect(session.state().bodies.map((b) => b.body)).toEqual(['l1', 'w1']);
+
+      // A 2 × 2 post on the frustum's base, repeated 3 times along the bottom edge.
+      const post = await sketch('s5', 'XY', square(-1, -1, 2));
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'e9', type: 'extrude', name: '', suppressed: false, sketch: 's5', profiles: [post], distance: '5', direction: 'reverse', operation: 'new-body' } }));
+      await sketch('s6', 'XY', [[0, -10], [40, -10]], false);
+      const before = (await session.properties()).length;
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'pp', type: 'path-pattern', name: '', suppressed: false, features: ['e9'], path: 's6', count: '3', align: false } }));
+      expect((await session.properties()).length).toBe(before + 2);
     });
 
     it('refuses parameter changes that would break the model', async () => {

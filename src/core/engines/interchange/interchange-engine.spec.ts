@@ -145,6 +145,13 @@ describe('InterchangeEngine solids', () => {
     expect(meshVolume(positions, positions.map((_, i) => i).slice(0, positions.length / 3))).toBeCloseTo(expected, -1);
   });
 
+  it('meshes more finely at a finer quality', async () => {
+    const triangles = async (quality: 'draft' | 'normal' | 'fine') => new DataView((await solids.exportBodies(await body(), 'stl', quality)).buffer).getUint32(80, true);
+    const [draft, normal, fine] = [await triangles('draft'), await triangles('normal'), await triangles('fine')];
+    expect(draft).toBeLessThan(normal);
+    expect(normal).toBeLessThan(fine);
+  });
+
   it('writes OBJ and 3MF meshes', async () => {
     const obj = new TextDecoder().decode(await solids.exportBodies(await body(), 'obj'));
     expect(obj).toMatch(/^o Plate$/m);

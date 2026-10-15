@@ -1,4 +1,4 @@
-import type { Appearance, BodyMesh, Matrix4 as Placement, PlaneFrame, Vec3 } from '@core/contracts';
+import type { Appearance, BodyMesh, Matrix4 as Placement, PlaneFrame, ThreadMarker, Vec3 } from '@core/contracts';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
   Box3,
@@ -30,7 +30,7 @@ import {
 import type { DragAction, MouseBindings } from '../shared/keymap';
 import { lookOf, type SectionPlane } from './looks';
 import { meshVertices, type Pick, pickAt, type PickKind, pickKey, type TopologyPick } from './picking';
-import { createBody, createPlane, createSketch, edgeHighlight, faceHighlight, lines, type ViewportTheme } from './scene-content';
+import { createBody, createPlane, createSketch, edgeHighlight, faceHighlight, lines, threadHelix, type ViewportTheme } from './scene-content';
 import type { SketchDisplay } from './sketch-display';
 import type { Affine } from './sketch-planes';
 
@@ -103,6 +103,7 @@ export class ViewportScene {
   private readonly planes = new Group();
   private readonly highlights = new Group();
   private readonly annotations = new Group();
+  private readonly threads = new Group();
   private readonly parts = new Group();
   private partEntries = new Map<string, { readonly group: Group; readonly signature: string; readonly part: PartDisplay }>();
   private flagged: readonly { readonly body: string; readonly name: string }[] = [];
@@ -144,7 +145,7 @@ export class ViewportScene {
     this.origin = createOrigin(theme);
     this.model.enabled = false;
     this.model.add(this.bodies, this.parts);
-    this.scene.add(this.origin, this.model, this.sketches, this.planes, this.highlights, this.annotations);
+    this.scene.add(this.origin, this.model, this.sketches, this.planes, this.threads, this.highlights, this.annotations);
     this.controls.target.copy(homeTarget);
     this.placeCamera(viewDirections.home, homeDistance);
 
@@ -228,6 +229,18 @@ export class ViewportScene {
   private drop(group: Group): void {
     disposeTree(group);
     this.parts.remove(group);
+  }
+
+  /** Threads as helices on their faces, seen through the material like hidden lines in a drawing. */
+  setThreads(threads: readonly ThreadMarker[]): void {
+    const helices = threads.map((t) => {
+      const helix = threadHelix(t, this.theme.selection);
+      (helix.material as { depthTest: boolean; opacity: number; transparent: boolean }).depthTest = false;
+      helix.renderOrder = 4;
+      return helix;
+    });
+    this.replace(this.threads, helices);
+    this.requestRender();
   }
 
   setPlanes(frames: readonly PlaneFrame[]): void {

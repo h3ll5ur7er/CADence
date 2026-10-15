@@ -1,9 +1,24 @@
-import type { BodyMesh, BodyOperation, BodyState, PlaneFrame, Profile, Result, TopologyRef, Vec2, Vec3 } from '@core/contracts';
+import type { BodyMesh, BodyOperation, BodyState, PlaneFrame, Profile, Result, ThreadMarker, TopologyRef, Vec2, Vec3 } from '@core/contracts';
+import type { HoleSpec } from './holes';
+
+export type { HoleSpec };
 
 export type { BodyState };
 
 /** An axis given in world coordinates, or by a straight edge of a body. */
 export type AxisInput = { readonly origin: Vec3; readonly direction: Vec3 } | { readonly edge: TopologyRef };
+
+/** A piece of a sweep path in world coordinates: a line, an arc through `mid`, or a cubic Bézier. */
+export type PathPiece =
+  | { readonly kind: 'line'; readonly start: Vec3; readonly end: Vec3 }
+  | { readonly kind: 'arc'; readonly start: Vec3; readonly mid: Vec3; readonly end: Vec3 }
+  | { readonly kind: 'bezier'; readonly points: readonly [Vec3, Vec3, Vec3, Vec3] };
+
+/** Where one copy of a pattern goes: turned about an axis (radians), then shifted. */
+export interface Placement {
+  readonly translation: Vec3;
+  readonly rotation?: { readonly origin: Vec3; readonly direction: Vec3; readonly angle: number };
+}
 
 /** The tool solid an earlier extrude/revolve made, to repeat it in patterns and mirrors. */
 export interface ToolInput {
@@ -38,7 +53,16 @@ export type ModelingRequest = RequestBase &
         readonly angle: number;
         readonly operation: BodyOperation;
       }
-    | { readonly type: 'fillet' | 'chamfer'; readonly edges: readonly TopologyRef[]; readonly size: number }
+    | { readonly type: 'fillet' | 'chamfer'; readonly edges: readonly TopologyRef[]; readonly size: number; readonly endSize?: number }
+    | { readonly type: 'draft'; readonly faces: readonly TopologyRef[]; readonly plane: PlaneFrame; readonly angle: number }
+    | {
+        readonly type: 'rib';
+        readonly frame: PlaneFrame;
+        readonly path: readonly PathPiece[];
+        readonly thickness: number;
+        readonly depth: number;
+        readonly direction: 'normal' | 'reverse' | 'symmetric';
+      }
     | { readonly type: 'shell'; readonly faces: readonly TopologyRef[]; readonly thickness: number }
     | {
         readonly type: 'linear-pattern';
@@ -56,8 +80,57 @@ export type ModelingRequest = RequestBase &
         readonly angle: number;
       }
     | { readonly type: 'mirror'; readonly tools: readonly ToolInput[]; readonly plane: PlaneFrame }
+    | {
+        readonly type: 'hole';
+        readonly frame: PlaneFrame;
+        readonly points: readonly { readonly id: string; readonly at: Vec2 }[];
+        readonly spec: HoleSpec;
+      }
+    | {
+        readonly type: 'thread';
+        readonly face: TopologyRef;
+        readonly size: string;
+        readonly diameter: number;
+        readonly pitch: number;
+        /** Absent: the whole face. */
+        readonly length?: number;
+        readonly modelled: boolean;
+        readonly flip: boolean;
+      }
+    | { readonly type: 'path-pattern'; readonly tools: readonly ToolInput[]; readonly placements: readonly Placement[] }
+    | {
+        readonly type: 'loft';
+        readonly sections: readonly { readonly frame: PlaneFrame; readonly profile: Profile }[];
+        readonly ruled: boolean;
+        readonly operation: BodyOperation;
+      }
+    | {
+        readonly type: 'sweep';
+        readonly frame: PlaneFrame;
+        readonly profiles: readonly Profile[];
+        readonly path: readonly PathPiece[];
+        readonly closed: boolean;
+        readonly operation: BodyOperation;
+      }
     /** Solids read by the Interchange Engine (stored without names) become new bodies, named by this feature. */
     | { readonly type: 'insert'; readonly sources: readonly string[] }
+    | {
+        readonly type: 'combine';
+        readonly target: string;
+        readonly tools: readonly string[];
+        readonly operation: 'join' | 'cut' | 'intersect';
+        readonly keepTools: boolean;
+      }
+    | { readonly type: 'split'; readonly body: string; readonly plane: PlaneFrame }
+    | {
+        readonly type: 'move';
+        readonly bodyIds: readonly string[];
+        readonly translation: Vec3;
+        /** Radians about the axis, applied before the translation. */
+        readonly rotation?: { readonly axis: AxisInput; readonly angle: number };
+        readonly copy: boolean;
+      }
+    | { readonly type: 'scale'; readonly bodyIds: readonly string[]; readonly factor: number }
   );
 
 export interface ModelingOutcome {
@@ -67,6 +140,8 @@ export interface ModelingOutcome {
   readonly toolKey?: string;
   /** Why the feature failed; the bodies are then unchanged. */
   readonly error?: string;
+  /** Where a thread feature put its thread. */
+  readonly thread?: ThreadMarker;
 }
 
 /**
@@ -83,6 +158,8 @@ export interface ModelingEngine {
   apply(request: ModelingRequest): Promise<ModelingOutcome>;
   /** Edges (or the outlines of faces) projected straight onto a plane, in its (u, v) coordinates. */
   project(bodies: readonly BodyState[], refs: readonly TopologyRef[], frame: PlaneFrame): Promise<Result<ProjectedCurve[]>>;
+  /** Where a vertex is (or the centre of an edge or face), for construction planes through points. */
+  pointOf(bodies: readonly BodyState[], ref: TopologyRef): Promise<Result<Vec3>>;
   /** The plane of a planar face, for sketches and construction planes on faces. */
   planeOf(bodies: readonly BodyState[], face: TopologyRef): Promise<Result<PlaneFrame>>;
   tessellate(bodies: readonly BodyState[]): Promise<BodyMesh[]>;

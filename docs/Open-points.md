@@ -45,22 +45,24 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 
 ## Part modeling
 
-- [X] **Reorder the timeline and roll back** to insert features earlier. *([[CAD-28]])* → [[CAD-28]]
-- [X] **More construction planes:** at an angle, midplanes, through three points. *([[CAD-30]])* → [[CAD-30]]
-- [X] **Export options:** choose bodies, mesh quality for STL, 3MF and OBJ. *([[CAD-30]])* → [[CAD-30]]
-- [X] **Loft and sweep.** OpenCascade supports both. *(ADR-2 lists them; not built)* → [[CAD-43]]
-- [X] **Hole feature** with counterbore, countersink and print-friendly options. *(new)* → [[CAD-44]]
-- [X] **Threads**, cosmetic or modelled (screw holes for prints). *(new)* → [[CAD-44]]
-- [X] **Draft, rib, variable fillet.** *(new)* → [[CAD-45]]
-- [X] **Body operations:** combine bodies (join/cut/intersect existing bodies), split a body, move or copy a body, scale. *(new)* → [[CAD-46]]
+- [X] **Reorder the timeline and roll back** to insert features earlier. *([[CAD-28]])* → [[CAD-28]] ✅
+- [X] **More construction planes:** at an angle, midplanes, through three points. *([[CAD-30]])* → [[CAD-30]] ✅
+- [X] **Export options:** choose bodies, mesh quality for STL, 3MF and OBJ. *([[CAD-30]])* → [[CAD-30]] ✅
+- [X] **Loft and sweep.** OpenCascade supports both. *(ADR-2 lists them; not built)* → [[CAD-43]] ✅
+- [X] **Hole feature** with counterbore, countersink and print-friendly options. *(new)* → [[CAD-44]] ✅
+- [X] **Threads**, cosmetic or modelled (screw holes for prints). *(new)* → [[CAD-44]] ✅
+- [X] **Draft, rib, variable fillet.** *(new)* → [[CAD-45]] ✅
+- [X] **Body operations:** combine bodies (join/cut/intersect existing bodies), split a body, move or copy a body, scale. *(new)* → [[CAD-46]] ✅ (uniform scale only)
 - [X] **Text on faces**, embossed or engraved. *(new)* → [[CAD-41]] ✅
-- [X] **Pattern along a path.** *(new)* → [[CAD-43]]
+- [X] **Pattern along a path.** *(new)* → [[CAD-43]] ✅
 - [X] **Sheet metal** (flanges and unfolding). *(new)* → [[CAD-51]]
 - [X] **Configurations:** variants of one component with other parameter values, also per assembly instance. *(ADR-11 trade-off)* → [[CAD-50]]
 - [X] **Project-wide parameters** shared by several components. *(new)* → [[CAD-49]]
 - [X] **Display units:** the document stores a unit (mm, cm, in), but the editor always shows millimetres. *(Document model)* → [[CAD-48]]
-- [X] **More stable names for freeform faces** (B-spline faces only match by centre and area). *(ADR-15 trade-off)* → [[CAD-47]]
+- [X] **More stable names for freeform faces** (B-spline faces only match by centre and area). *(ADR-15 trade-off)* → [[CAD-47]] ✅
 - [ ] **NURBS**
+- [ ] **Scale bodies per axis.** Needs `BRepBuilderAPI_GTransform`, missing from the bundled OpenCascade build; a custom `replicad-opencascadejs` build could add it (and `gp_Cone`, `gp_Torus`). *(ADR-28)*
+- [ ] **Rib up to the next face** instead of a set depth, and **drill points** at the bottom of blind holes. *(ADR-28 trade-offs)*
 
 ## Viewport and interaction
 

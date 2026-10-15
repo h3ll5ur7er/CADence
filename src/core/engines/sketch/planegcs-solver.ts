@@ -76,6 +76,11 @@ class Translator {
 
   private pushCurve(e: Exclude<SketchEntity, { kind: 'point' }>): void {
     switch (e.kind) {
+      // Ellipses and splines are shaped by their points (and an ellipse's minor radius, set by its
+      // dimension after solving); the solver needs no curve for them.
+      case 'ellipse':
+      case 'spline':
+        return;
       case 'line':
         this.primitives.push({ id: e.id, type: 'line', p1_id: e.start, p2_id: e.end });
         return;
@@ -126,6 +131,7 @@ class Translator {
         return this.pushTangent(c.curves, add);
       case 'point-on': {
         const kind = this.kindOf(c.curve);
+        if (kind === 'ellipse' || kind === 'spline') throw new Error(`Points cannot be put on a ${kind} yet`);
         if (kind === 'line') return add('point_on_line_pl', { p_id: c.point, l_id: c.curve });
         if (kind === 'circle') return add('point_on_circle', { p_id: c.point, c_id: c.curve });
         return add('point_on_arc', { p_id: c.point, a_id: c.curve });
@@ -155,6 +161,7 @@ class Translator {
       case 'point-line-distance':
         return add('p2l_distance', { p_id: c.point, l_id: c.line, distance: this.value(c.id) });
       case 'radius':
+        if (this.kindOf(c.curve) === 'ellipse') return;
         return this.kindOf(c.curve) === 'circle'
           ? add('circle_radius', { c_id: c.curve, radius: this.value(c.id) })
           : add('arc_radius', { a_id: c.curve, radius: this.value(c.id) });
@@ -227,7 +234,11 @@ export class PlanegcsSolver {
     const conflicting = [
       ...new Set([...gcs.get_gcs_conflicting_constraints(), ...gcs.get_gcs_redundant_constraints()].map(ownerOf)),
     ];
-    const degreesOfFreedom = gcs.gcs.dof();
+    // An ellipse's minor radius is a freedom of its own until a dimension sets it.
+    const minorRadii = new Map(
+      sketch.constraints.flatMap((c) => (c.kind === 'radius' && sketch.entities.find((e) => e.id === c.curve)?.kind === 'ellipse' ? [[c.curve, values.get(c.id)] as const] : [])),
+    );
+    const degreesOfFreedom = gcs.gcs.dof() + sketch.entities.filter((e) => e.kind === 'ellipse' && minorRadii.get(e.id) === undefined).length;
     if (conflicting.length > 0) {
       return { sketch, status: 'over-constrained', degreesOfFreedom, conflicting };
     }
@@ -240,6 +251,7 @@ export class PlanegcsSolver {
       const p = solved.get(e.id);
       if (e.kind === 'point' && p) return { ...e, x: p['x'] as number, y: p['y'] as number };
       if (e.kind === 'circle' && p) return { ...e, radius: p['radius'] as number };
+      if (e.kind === 'ellipse') return { ...e, minorRadius: minorRadii.get(e.id) ?? e.minorRadius };
       return e;
     });
     return {

@@ -44,7 +44,29 @@ export interface SketchArc {
   readonly construction: boolean;
 }
 
-export type SketchCurve = SketchLine | SketchCircle | SketchArc;
+/** An ellipse: its major axis runs from `center` to the point `major`; `minorRadius` is the half axis across it. */
+export interface SketchEllipse {
+  readonly id: string;
+  readonly kind: 'ellipse';
+  readonly center: string;
+  readonly major: string;
+  readonly minorRadius: number;
+  readonly construction: boolean;
+}
+
+/**
+ * A smooth curve through its points in order (cubic Béziers, tangent continuous; see
+ * `splineBeziers`). A closed spline also runs from the last point back to the first.
+ */
+export interface SketchSpline {
+  readonly id: string;
+  readonly kind: 'spline';
+  readonly points: readonly string[];
+  readonly closed: boolean;
+  readonly construction: boolean;
+}
+
+export type SketchCurve = SketchLine | SketchCircle | SketchArc | SketchEllipse | SketchSpline;
 export type SketchEntity = SketchPoint | SketchCurve;
 
 /** Geometric constraints: relations without a value. */
@@ -69,6 +91,7 @@ export type Dimension =
   | { readonly id: string; readonly kind: 'horizontal-distance'; readonly points: readonly [string, string]; readonly expression: string }
   | { readonly id: string; readonly kind: 'vertical-distance'; readonly points: readonly [string, string]; readonly expression: string }
   | { readonly id: string; readonly kind: 'point-line-distance'; readonly point: string; readonly line: string; readonly expression: string }
+  /** Of a circle or arc; of an ellipse, its minor radius. */
   | { readonly id: string; readonly kind: 'radius'; readonly curve: string; readonly expression: string }
   | { readonly id: string; readonly kind: 'diameter'; readonly curve: string; readonly expression: string }
   /** Angle between two lines, measured from the first to the second. */
@@ -105,6 +128,20 @@ export type ProfileEdge =
       readonly center: Vec2;
       readonly radius: number;
       /** True when the boundary runs counter-clockwise along the arc. */
+      readonly ccw: boolean;
+    }
+  /** A cubic Bézier from `start` through the controls to `end` (a piece of a spline). */
+  | { readonly kind: 'bezier'; readonly source: string; readonly start: Vec2; readonly end: Vec2; readonly c1: Vec2; readonly c2: Vec2 }
+  | {
+      /** A piece of an ellipse with semi-axes `a` (along `rotation`, radians) and `b`. */
+      readonly kind: 'ellipse';
+      readonly source: string;
+      readonly start: Vec2;
+      readonly end: Vec2;
+      readonly center: Vec2;
+      readonly a: number;
+      readonly b: number;
+      readonly rotation: number;
       readonly ccw: boolean;
     };
 

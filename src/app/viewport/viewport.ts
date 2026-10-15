@@ -62,20 +62,6 @@ async function softwareWebGPU(): Promise<boolean> {
 }
 
 /**
- * True when WebGPU would run on the processor (a fallback adapter, such as SwiftShader on machines
- * without a usable GPU). WebGL 2 is the proven path there: software WebGPU may render nothing.
- */
-async function softwareWebGPU(): Promise<boolean> {
-  const gpu = (navigator as { gpu?: { requestAdapter(): Promise<{ isFallbackAdapter?: boolean; info?: { isFallbackAdapter?: boolean } } | null> } }).gpu;
-  try {
-    const adapter = await gpu?.requestAdapter();
-    return (adapter?.info?.isFallbackAdapter ?? adapter?.isFallbackAdapter) === true;
-  } catch {
-    return false;
-  }
-}
-
-/**
  * The 3D viewport shared by all editor modes. Pure presentation: it renders what it is given
  * and never talks to a manager. Rendering happens outside change detection, on demand.
  * Overlays (such as the sketch editor) are projected on top and share its navigation.

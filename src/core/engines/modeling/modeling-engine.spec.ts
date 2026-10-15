@@ -1,6 +1,7 @@
 import { createShapeAccess, type NamedShape } from '@core/access/shape';
 import { measureVolume } from 'replicad';
 import { originFrames, type TopologyRef } from '@core/contracts';
+import { curveArea, curveAt } from '@core/utilities/math';
 import { circleLoop, profile, rectangleLoop } from '@core/contracts/testing/profiles';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { type BodyState, createModelingEngine, type ModelingEngine, type ModelingOutcome } from './index';
@@ -56,6 +57,34 @@ describe('ModelingEngine', () => {
       'f:plate:start',
     ]);
     expect((await names(bodies)).edges).toContain('e:f:plate:end|f:plate:side:plate-top');
+  });
+
+  it('extrudes ellipses and spline pieces exactly, naming their sides', async () => {
+    const ellipse = { center: [0, 0] as const, a: 20, b: 10, rotation: Math.PI / 6 };
+    const at = (t: number) => curveAt({ kind: 'ellipse', ellipse }, t);
+    const oval = profile({
+      edges: [
+        { kind: 'ellipse', source: 'oval', start: at(0), end: at(Math.PI), ...ellipse, ccw: true },
+        { kind: 'ellipse', source: 'oval', start: at(Math.PI), end: at(0), ...ellipse, ccw: true },
+      ],
+      polygon: [],
+    });
+    const solid = ok(await engine.apply({ type: 'extrude', feature: 'o', key: 'oval', bodies: [], frame: XY, profiles: [oval], distance: 4, direction: 'normal', operation: 'new-body' }));
+    expect(await volume(solid)).toBeCloseTo(Math.PI * 20 * 10 * 4, 6);
+    expect((await names(solid)).faces).toEqual(['f:o:end', 'f:o:side:oval~1', 'f:o:side:oval~2', 'f:o:start']);
+
+    const curve = { kind: 'bezier' as const, points: [[40, 0], [40, 20], [0, 20], [0, 0]] as const };
+    const dome = profile({
+      edges: [
+        { kind: 'line', source: 'floor', start: [0, 0], end: [40, 0] },
+        { kind: 'bezier', source: 'roof', start: [40, 0], c1: [40, 20], c2: [0, 20], end: [0, 0] },
+      ],
+      polygon: [],
+    });
+    const area = curveArea(curve, 0, 1);
+    const shape = ok(await engine.apply({ type: 'extrude', feature: 'd', key: 'dome', bodies: [], frame: XY, profiles: [dome], distance: 3, direction: 'normal', operation: 'new-body' }));
+    expect(await volume(shape)).toBeCloseTo(area * 3, 6);
+    expect((await names(shape)).faces).toContain('f:d:side:roof');
   });
 
   it('extrudes with holes, in reverse and symmetrically', async () => {

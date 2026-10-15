@@ -1,5 +1,5 @@
 import type { PlaneFrame, Profile, ProfileLoop, Vec2, Vec3 } from '@core/contracts';
-import { ccwSweep } from '@core/utilities/math';
+import { ccwSweep, ellipseParameter } from '@core/utilities/math';
 import { draw, type Drawing, Plane } from 'replicad';
 
 /** 3D vector helpers on tuples. */
@@ -28,6 +28,19 @@ function loopDrawing(loop: ProfileLoop): Drawing {
   for (const edge of loop.edges) {
     if (edge.kind === 'line') {
       pen.lineTo([edge.end[0], edge.end[1]]);
+      continue;
+    }
+    if (edge.kind === 'bezier') {
+      pen.cubicBezierCurveTo([edge.end[0], edge.end[1]], [edge.c1[0], edge.c1[1]], [edge.c2[0], edge.c2[1]]);
+      continue;
+    }
+    if (edge.kind === 'ellipse') {
+      // As in SVG: the sweep flag picks the counter-clockwise way round (Y up), the long-axis flag the longer piece.
+      const ellipse = { center: edge.center, a: edge.a, b: edge.b, rotation: edge.rotation };
+      const t0 = ellipseParameter(ellipse, edge.start);
+      const t1 = ellipseParameter(ellipse, edge.end);
+      const sweep = edge.ccw ? ccwSweep(t0, t1) : ccwSweep(t1, t0);
+      pen.ellipseTo([edge.end[0], edge.end[1]], edge.a, edge.b, (edge.rotation * 180) / Math.PI, sweep > Math.PI + 1e-9, edge.ccw);
       continue;
     }
     const a0 = Math.atan2(edge.start[1] - edge.center[1], edge.start[0] - edge.center[0]);

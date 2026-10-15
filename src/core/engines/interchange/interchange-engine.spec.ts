@@ -50,6 +50,24 @@ describe('InterchangeEngine drawings', () => {
     expect(root.querySelector('path')?.getAttribute('d')).toBe('M 15 -10 A 5 5 0 0 0 10 -15');
   });
 
+  it('writes ellipses and splines: exact in SVG, as fine polylines in DXF', async () => {
+    const b = new SketchBuilder();
+    b.ellipse(b.point(0, 0), b.point(20, 0), 10);
+    b.spline([b.point(-20, -15), b.point(0, -10), b.point(20, -15)]);
+    const svg = new JSDOM(text(await engine.exportDrawing(b.build(), 'svg')), { contentType: 'image/svg+xml' }).window.document;
+    expect(svg.querySelector('ellipse')?.getAttribute('rx')).toBe('20');
+    expect(svg.querySelector('ellipse')?.getAttribute('ry')).toBe('10');
+    expect([...svg.querySelectorAll('path')].map((p) => p.getAttribute('d')?.split(' ')[3])).toEqual(['C', 'C']);
+    expect(svg.documentElement.getAttribute('width')).toBe('40mm');
+    const dxf = new DxfParser().parseSync(text(await engine.exportDrawing(b.build(), 'dxf')));
+    const polylines = (dxf?.entities ?? []) as unknown as { type: string; vertices: { x: number; y: number }[] }[];
+    expect(polylines.map((e) => e.type)).toEqual(['POLYLINE', 'POLYLINE', 'POLYLINE']);
+    const xs = polylines[0]?.vertices.map((v) => v.x) ?? [];
+    // Within 0.005 mm of the ellipse.
+    expect(20 - Math.max(...xs)).toBeLessThan(0.005);
+    expect(20 + Math.min(...xs)).toBeLessThan(0.005);
+  });
+
   it('leaves construction geometry out', async () => {
     const svg = text(await engine.exportDrawing(plate(), 'svg'));
     expect(svg).not.toContain('x1="0" y1="0" x2="40" y2="-20"');

@@ -51,6 +51,10 @@ function references(item: SketchEntity | SketchConstraint): string[] {
       return [item.center];
     case 'arc':
       return [item.center, item.start, item.end];
+    case 'ellipse':
+      return [item.center, item.major];
+    case 'spline':
+      return [...item.points];
     case 'coincident':
     case 'distance':
     case 'horizontal-distance':

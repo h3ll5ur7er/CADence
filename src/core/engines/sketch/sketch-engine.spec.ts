@@ -135,4 +135,31 @@ describe('SketchEngine.solve', () => {
     const solution = await engine.solve(b.build(), values(), { point: 'p2', x: 25, y: 9 });
     expect(point(solution, 'p2')).toEqual([expect.closeTo(25), expect.closeTo(0)]);
   });
+
+  it('shapes an ellipse by its points and its minor radius dimension', async () => {
+    const b = new SketchBuilder();
+    const center = b.point(1, 1);
+    const major = b.point(18, 2);
+    const ellipse = b.ellipse(center, major, 6);
+    b.constrain({ id: 'c', kind: 'coincident', points: [center, sketchOriginId] });
+    b.constrain({ id: 'h', kind: 'horizontal-distance', points: [center, major], expression: '20' });
+    b.constrain({ id: 'v', kind: 'vertical-distance', points: [center, major], expression: '0' });
+    const loose = await engine.solve(b.build(), values({ h: 20, v: 0 }));
+    expect(loose.degreesOfFreedom).toBe(1); // the minor radius
+    b.constrain({ id: 'r', kind: 'radius', curve: ellipse, expression: '8' });
+    const solution = await engine.solve(b.build(), values({ h: 20, v: 0, r: 8 }));
+    expect(solution.status).toBe('fully-constrained');
+    expect(solution.sketch.entities.find((e) => e.id === ellipse)).toMatchObject({ minorRadius: 8 });
+    expect(solution.profiles[0]?.area).toBeCloseTo(Math.PI * 20 * 8, 6);
+  });
+
+  it('moves a spline with its points', async () => {
+    const b = new SketchBuilder();
+    const points = [b.point(0, 0), b.point(10, 8), b.point(20, 0)];
+    b.spline(points);
+    b.constrain({ id: 'c', kind: 'coincident', points: [points[0] as string, sketchOriginId] });
+    const solution = await engine.solve(b.build(), values());
+    expect(solution.status).toBe('under-constrained');
+    expect(solution.degreesOfFreedom).toBe(4);
+  });
 });

@@ -1,4 +1,4 @@
-import { type DrawingCurve, num } from './drawing';
+import { type DrawingCurve, num, samplePoints } from './drawing';
 
 const degrees = (radians: number) => (radians * 180) / Math.PI;
 
@@ -21,6 +21,14 @@ function entity(curve: DrawingCurve): string {
         10, curve.center[0], 20, curve.center[1], 30, 0, 40, curve.radius,
         50, degrees(curve.startAngle), 51, degrees(curve.startAngle + curve.sweep),
       );
+    case 'bezier':
+    case 'ellipse': {
+      // R12 has no splines or ellipses: a polyline that stays within 0.005 mm of the curve, which every laser program reads.
+      const points = samplePoints(curve);
+      const closed = curve.kind === 'ellipse' && curve.sweep >= 2 * Math.PI - 1e-9;
+      const vertices = (closed ? points.slice(0, -1) : points).map((p) => pairs(0, 'VERTEX', 8, '0', 10, p[0], 20, p[1], 30, 0));
+      return [pairs(0, 'POLYLINE', 8, '0', 66, 1, 70, closed ? 1 : 0, 10, 0, 20, 0, 30, 0), ...vertices, pairs(0, 'SEQEND', 8, '0')].join('\n');
+    }
   }
 }
 

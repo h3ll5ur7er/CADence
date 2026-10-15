@@ -298,7 +298,9 @@ function collapses(sketch: Sketch): boolean {
     (e) =>
       (e.kind === 'line' && gap(e.start, e.end) < minimum) ||
       (e.kind === 'circle' && e.radius < minimum) ||
-      (e.kind === 'arc' && (gap(e.center, e.start) < minimum || gap(e.start, e.end) < minimum)),
+      (e.kind === 'arc' && (gap(e.center, e.start) < minimum || gap(e.start, e.end) < minimum)) ||
+      (e.kind === 'ellipse' && (gap(e.center, e.major) < minimum || e.minorRadius < minimum)) ||
+      (e.kind === 'spline' && e.points.some((p, i) => i > 0 && gap(e.points[i - 1] as string, p) < minimum)),
   );
 }
 

@@ -1,11 +1,42 @@
 import { type Profile, type Sketch, sketchOriginId } from '@core/contracts';
-import { angleOf, ccwSweep, distance, offsetLoop, polar, sub, type Vec2 } from '@core/utilities/math';
+import {
+  angleOf,
+  type Bezier,
+  ccwSweep,
+  distance,
+  type Ellipse,
+  ellipseOf,
+  offsetLoop,
+  type ParamCurve,
+  polar,
+  sampleCurve,
+  splineBeziers,
+  sub,
+  type Vec2,
+} from '@core/utilities/math';
 
 /** The drawable (non-construction) curves of a solved sketch, in sketch coordinates (mm). */
 export type DrawingCurve =
   | { readonly kind: 'line'; readonly start: Vec2; readonly end: Vec2 }
   | { readonly kind: 'circle'; readonly center: Vec2; readonly radius: number }
-  | { readonly kind: 'arc'; readonly center: Vec2; readonly radius: number; readonly startAngle: number; readonly sweep: number };
+  | { readonly kind: 'arc'; readonly center: Vec2; readonly radius: number; readonly startAngle: number; readonly sweep: number }
+  /** A cubic Bézier: start, two control points, end (splines are chains of them). */
+  | { readonly kind: 'bezier'; readonly points: Bezier }
+  /** An ellipse, or the piece of it from parameter `start` counter-clockwise by `sweep` (2π: all of it). */
+  | { readonly kind: 'ellipse'; readonly ellipse: Ellipse; readonly start: number; readonly sweep: number };
+
+/** Béziers and ellipses as parametric curves, for sampling. */
+export function paramCurveOf(curve: Extract<DrawingCurve, { kind: 'bezier' | 'ellipse' }>): { curve: ParamCurve; t0: number; t1: number } {
+  return curve.kind === 'bezier'
+    ? { curve: { kind: 'bezier', points: curve.points }, t0: 0, t1: 1 }
+    : { curve: { kind: 'ellipse', ellipse: curve.ellipse }, t0: curve.start, t1: curve.start + curve.sweep };
+}
+
+/** Points along a Bézier or ellipse, ends included, within `tolerance` mm of it. */
+export function samplePoints(curve: Extract<DrawingCurve, { kind: 'bezier' | 'ellipse' }>, tolerance = 0.005): Vec2[] {
+  const { curve: c, t0, t1 } = paramCurveOf(curve);
+  return sampleCurve(c, t0, t1, tolerance);
+}
 
 export function drawingCurves(sketch: Sketch): DrawingCurve[] {
   const points = new Map<string, Vec2>([[sketchOriginId, [0, 0]]]);
@@ -15,6 +46,8 @@ export function drawingCurves(sketch: Sketch): DrawingCurve[] {
     if (e.kind === 'point' || e.construction) return [];
     if (e.kind === 'line') return [{ kind: 'line', start: at(e.start), end: at(e.end) }];
     if (e.kind === 'circle') return [{ kind: 'circle', center: at(e.center), radius: e.radius }];
+    if (e.kind === 'ellipse') return [{ kind: 'ellipse', ellipse: ellipseOf(at(e.center), at(e.major), e.minorRadius), start: 0, sweep: 2 * Math.PI }];
+    if (e.kind === 'spline') return splineBeziers(e.points.map(at), e.closed).map((points): DrawingCurve => ({ kind: 'bezier', points }));
     const center = at(e.center);
     const startAngle = angleOf(sub(at(e.start), center));
     return [{ kind: 'arc', center, radius: distance(at(e.start), center), startAngle, sweep: ccwSweep(startAngle, angleOf(sub(at(e.end), center))) }];
@@ -26,10 +59,11 @@ export interface Bounds {
   readonly max: Vec2;
 }
 
-/** Exact bounds: arcs contribute their end points and every axis extreme they pass. */
+/** Exact bounds for lines, circles and arcs (end points and every axis extreme they pass); Béziers and ellipses within 0.005 mm. */
 export function boundsOf(curves: readonly DrawingCurve[]): Bounds {
   const points: Vec2[] = curves.flatMap((c): Vec2[] => {
     if (c.kind === 'line') return [c.start, c.end];
+    if (c.kind === 'bezier' || c.kind === 'ellipse') return samplePoints(c);
     if (c.kind === 'circle') return [0, 1, 2, 3].map((q) => polar(c.center, c.radius, (q * Math.PI) / 2));
     const extremes = [0, 1, 2, 3, 4, 5, 6, 7]
       .map((q) => (q * Math.PI) / 2)

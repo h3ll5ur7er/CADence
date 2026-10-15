@@ -89,6 +89,22 @@ describe('ProjectManager', () => {
       expect(seen).toHaveLength(1);
     });
 
+    it('keeps a picture of each document, and shows the latest as the picture of the project', async () => {
+      const created = await manager.createProject('Pictures');
+      if (!created.ok) throw new Error(created.error.message);
+      const projectId = created.value.project.id;
+      const first = await manager.createDocument(projectId, 'component');
+      const second = await manager.createDocument(projectId, 'component');
+      if (!first.ok || !second.ok) throw new Error('documents');
+      expect(await manager.projectThumbnail(projectId)).toBeUndefined();
+      await manager.saveThumbnail(first.value.id, new Uint8Array([1, 2]));
+      expect([...((await manager.thumbnail(first.value.id)) ?? [])]).toEqual([1, 2]);
+      expect([...((await manager.projectThumbnail(projectId)) ?? [])]).toEqual([1, 2]);
+      await manager.deleteDocument(first.value.id);
+      expect(await manager.thumbnail(first.value.id)).toBeUndefined();
+      expect(await manager.projectThumbnail(projectId)).toBeUndefined();
+    });
+
     it('renames a project', async () => {
       const { project } = unwrap(await manager.createProject('Old'));
       unwrap(await manager.renameProject(project.id, 'New'));

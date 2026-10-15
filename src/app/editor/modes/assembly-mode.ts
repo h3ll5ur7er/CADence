@@ -13,6 +13,7 @@ import { JointPanel } from '../assembly/joint-panel';
 import { JointProperties } from '../assembly/joint-properties';
 import { MotionPanel } from '../assembly/motion-panel';
 import { EditorStatus } from '../editor-status';
+import { ThumbnailSaver } from '../thumbnail-saver';
 
 const exportFormats: readonly { format: AssemblyFormat; label: string }[] = [
   { format: 'step', label: 'STEP (one solid per instance)' },
@@ -41,6 +42,7 @@ const positionOf = (m: Matrix4): Position => {
 export class AssemblyMode {
   readonly document = input.required<DocumentSummary>();
   protected readonly status = inject(EditorStatus);
+  protected readonly thumbnails = inject(ThumbnailSaver);
   protected readonly store = inject(AssemblyStore);
   protected readonly menu = signal<'insert' | 'export' | undefined>(undefined);
   protected readonly exportFormats = exportFormats;

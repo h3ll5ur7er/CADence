@@ -20,7 +20,11 @@
         @for (project of list; track project.id) {
           <li class="card">
             <a class="card-link" [routerLink]="['/projects', project.id]">
-              <span class="thumb" aria-hidden="true"><cad-icon name="component" [size]="40" /></span>
+              <span class="thumb" aria-hidden="true" data-testid="project-thumbnail">
+                <cad-thumbnail [source]="pictureOf(project.id)" [key]="project.modifiedAt">
+                  <cad-icon name="component" [size]="40" />
+                </cad-thumbnail>
+              </span>
               <span class="name">{{ project.name }}</span>
               <span class="meta">
                 {{ plural(project.documentCount, 'document') }} · edited {{ relativeTime(project.modifiedAt) }}

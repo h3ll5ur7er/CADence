@@ -1,6 +1,7 @@
 <div class="stage">
   <cad-viewport
     #viewport
+    (thumbnail)="thumbnails.save($event)"
     [parts]="store.parts()"
     [pickable]="store.pickable()"
     [selection]="store.picks()"

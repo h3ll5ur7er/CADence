@@ -11,8 +11,10 @@ import {
 } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import {
+  asDocumentId,
   asProjectId,
   type CreatableDocumentKind,
+  type DocumentId,
   type DocumentSummary,
 } from '@core/contracts';
 import { PROJECT_MANAGER, STORAGE_KIND } from '../core.providers';
@@ -21,6 +23,7 @@ import { Icon } from '../shared/icon';
 import { SettingsDialog } from '../shared/settings-dialog';
 import { DocumentsPanel } from './documents-panel';
 import { EditorStatus } from './editor-status';
+import { ThumbnailSaver } from './thumbnail-saver';
 import { AssemblyMode } from './modes/assembly-mode';
 import { ComponentMode } from './modes/component-mode';
 import { ImportedMode } from './modes/imported-mode';
@@ -31,7 +34,7 @@ const storageLabels = { browser: 'This browser', 'project-folders': 'Project fol
 @Component({
   selector: 'cad-editor-page',
   imports: [RouterLink, Icon, DocumentsPanel, ComponentMode, AssemblyMode, ImportedMode, NameDialog, ConfirmDialog, SettingsDialog],
-  providers: [EditorStatus],
+  providers: [EditorStatus, ThumbnailSaver],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './editor-page.html',
   styleUrl: './editor-page.scss',
@@ -42,6 +45,9 @@ export class EditorPage {
   readonly documentId = input<string>();
 
   protected readonly status = inject(EditorStatus);
+  protected readonly thumbnails = inject(ThumbnailSaver);
+  /** A document's picture, for the documents panel. */
+  protected readonly thumbnailOf = (id: DocumentId) => this.projectManager.thumbnail(id);
   protected readonly kindLabels = kindLabels;
   protected readonly storage = storageLabels[inject(STORAGE_KIND)];
   protected readonly message = signal<string | undefined>(undefined);
@@ -61,6 +67,7 @@ export class EditorPage {
   protected readonly active = computed(() => this.documents.value()?.find((d) => d.id === this.documentId()));
 
   constructor() {
+    effect(() => this.thumbnails.document.set(this.documentId() ? asDocumentId(this.documentId() as string) : undefined));
     // A project opened without a document shows its most recently edited one.
     effect(() => {
       const documents = this.documents.value();

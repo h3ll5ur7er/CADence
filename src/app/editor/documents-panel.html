@@ -20,7 +20,11 @@
         @for (doc of docs; track doc.id) {
           <li class="item" [class.active]="doc.id === activeId()">
             <a [routerLink]="['/projects', doc.projectId, 'documents', doc.id]" [attr.aria-current]="doc.id === activeId() ? 'page' : null">
-              <cad-icon [name]="group.icon" />
+              <span class="thumb" data-testid="document-thumbnail">
+                <cad-thumbnail [source]="loader(doc.id)" [key]="doc.modifiedAt + ':' + thumbnailsSaved()">
+                  <cad-icon [name]="group.icon" />
+                </cad-thumbnail>
+              </span>
               <span class="name">{{ doc.name }}</span>
             </a>
             <span class="item-actions">

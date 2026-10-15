@@ -6,6 +6,7 @@ import {
   asAssetId,
   asDocumentId,
   asProjectId,
+  type AssetId,
   type CadDocument,
   type CreatableDocumentKind,
   currentSchemaVersion,
@@ -44,6 +45,9 @@ export interface ProjectManagerDependencies {
 }
 
 const maxNameLength = 80;
+
+/** Where a document's picture is kept among the project's assets. */
+const thumbnailId = (documentId: DocumentId): AssetId => asAssetId(`thumbnail-${documentId}`);
 
 const kindLabels: Readonly<Record<DocumentKind, string>> = {
   component: 'Component',
@@ -301,9 +305,29 @@ export class DefaultProjectManager implements ProjectManager {
     return summarize(document);
   }
 
+  async saveThumbnail(id: DocumentId, png: Uint8Array): Promise<void> {
+    const document = await this.deps.documents.load(id);
+    if (!document) return;
+    await this.deps.assets.keep({ id: thumbnailId(id), projectId: document.projectId, name: 'thumbnail.png', byteLength: png.length, bytes: png });
+  }
+
+  async thumbnail(id: DocumentId): Promise<Uint8Array | undefined> {
+    return (await this.deps.assets.fetch(thumbnailId(id)))?.bytes;
+  }
+
+  async projectThumbnail(id: ProjectId): Promise<Uint8Array | undefined> {
+    const documents = [...(await this.deps.documents.enumerate(id))].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
+    for (const document of documents) {
+      const png = await this.thumbnail(document.id);
+      if (png) return png;
+    }
+    return undefined;
+  }
+
   private async discardDocument(id: DocumentId): Promise<void> {
     const document = await this.deps.documents.load(id);
     if (document?.kind === 'imported') await this.deps.assets.release(document.assetId);
+    await this.deps.assets.release(thumbnailId(id));
     await this.deps.documents.discard(id);
     this.deps.events.publish('documentDeleted', { documentId: id });
   }

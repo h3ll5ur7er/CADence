@@ -68,6 +68,12 @@ export interface ProjectManager {
   deleteDocument(id: DocumentId): Promise<void>;
 
   importFile(projectId: ProjectId, file: ExternalFile): Promise<Result<DocumentSummary>>;
+
+  /** Keeps a picture of a document (PNG), replacing the one before. Unknown documents are ignored. */
+  saveThumbnail(id: DocumentId, png: Uint8Array): Promise<void>;
+  thumbnail(id: DocumentId): Promise<Uint8Array | undefined>;
+  /** The picture of the project's most recently changed document that has one. */
+  projectThumbnail(id: ProjectId): Promise<Uint8Array | undefined>;
   openImported(id: DocumentId): Promise<ImportedView | undefined>;
   /** Reads an imported file for the viewer. */
   previewImported(id: DocumentId): Promise<Result<ImportedContent>>;

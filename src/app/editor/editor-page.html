@@ -23,6 +23,8 @@
   <cad-documents-panel
     [documents]="documents.value() ?? []"
     [activeId]="documentId()"
+    [thumbnail]="thumbnailOf"
+    [thumbnailsSaved]="thumbnails.saved()"
     (create)="create($event)"
     (importFile)="importFile($event)"
     (rename)="rename($event)"

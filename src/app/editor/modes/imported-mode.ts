@@ -7,6 +7,7 @@ import { sketchDisplay } from '../../viewport/sketch-display';
 import { Viewport } from '../../viewport/viewport';
 import { grams, millimetres, point } from '../analysis/units';
 import { EditorStatus } from '../editor-status';
+import { ThumbnailSaver } from '../thumbnail-saver';
 
 const modelFormats: readonly { format: ImportFormat; label: string }[] = [
   { format: 'step', label: 'STEP' },
@@ -26,7 +27,7 @@ const drawingFormats: readonly { format: ImportFormat; label: string }[] = [
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="stage">
-      <cad-viewport [bodies]="meshes()" [sketches]="drawing()" [fit]="extent()" (backendReady)="status.renderer.set($event)" />
+      <cad-viewport [bodies]="meshes()" [sketches]="drawing()" [fit]="extent()" (backendReady)="status.renderer.set($event)" (thumbnail)="thumbnails.save($event)" />
       <section class="browser" aria-label="Imported file">
         <h2 class="eyebrow browser-title">Browser</h2>
         <ul class="tree">
@@ -100,6 +101,7 @@ const drawingFormats: readonly { format: ImportFormat; label: string }[] = [
 export class ImportedMode {
   readonly document = input.required<DocumentSummary>();
   protected readonly status = inject(EditorStatus);
+  protected readonly thumbnails = inject(ThumbnailSaver);
   private readonly projectManager = inject(PROJECT_MANAGER);
   protected readonly menuOpen = signal(false);
   protected readonly byteSize = byteSize;

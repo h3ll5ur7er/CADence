@@ -1,14 +1,15 @@
 import { ChangeDetectionStrategy, Component, inject, resource, viewChild } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
-import type { ProjectSummary } from '@core/contracts';
+import type { ProjectId, ProjectSummary } from '@core/contracts';
 import { PROJECT_MANAGER } from '../core.providers';
 import { ConfirmDialog, NameDialog } from '../shared/dialogs';
 import { plural, relativeTime } from '../shared/format';
+import { Thumbnail } from '../shared/thumbnail';
 import { Icon } from '../shared/icon';
 
 @Component({
   selector: 'cad-home-page',
-  imports: [RouterLink, Icon, NameDialog, ConfirmDialog],
+  imports: [RouterLink, Icon, NameDialog, ConfirmDialog, Thumbnail],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './home-page.html',
   styleUrl: './home-page.scss',
@@ -20,6 +21,8 @@ export class HomePage {
   private readonly confirmDialog = viewChild.required(ConfirmDialog);
 
   protected readonly projects = resource({ loader: () => this.projectManager.listProjects() });
+  /** A project's picture: its most recently changed document's. */
+  protected readonly pictureOf = (id: ProjectId) => () => this.projectManager.projectThumbnail(id);
   protected readonly plural = plural;
   protected readonly relativeTime = relativeTime;
 

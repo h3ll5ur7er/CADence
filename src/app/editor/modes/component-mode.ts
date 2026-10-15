@@ -15,6 +15,8 @@ import {
   type Appearance,
   type DocumentSummary,
   type FeatureType,
+  type LengthUnit,
+  lengthUnitNames,
   generatorOf,
   isCurve,
   isSketch,
@@ -29,7 +31,7 @@ import type { SolidFormat } from '@core/managers/design';
 import { NameDialog } from '../../shared/dialogs';
 import { CheckPanel } from '../analysis/check-panel';
 import { MeasurePanel } from '../analysis/measure-panel';
-import { grams, millimetres, point } from '../analysis/units';
+import { grams, lengthIn, point, pointIn } from '../analysis/units';
 import { relativeTime } from '../../shared/format';
 import { Icon, type IconName } from '../../shared/icon';
 import { Shortcuts } from '../../shared/shortcuts';
@@ -144,6 +146,11 @@ const exportFormats: readonly { format: SolidFormat; label: string }[] = [
 export class ComponentMode {
   readonly document = input.required<DocumentSummary>();
   protected readonly status = inject(EditorStatus);
+  private readonly unitsInStatus = effect(() => this.status.units.set(this.store.units()));
+
+  protected setUnits(units: LengthUnit): void {
+    void this.store.run({ type: 'set-units', units });
+  }
   protected readonly store = inject(DesignStore);
   protected readonly originVisible = signal(true);
   /** The open toolbar menu: sketch, export, or one of the feature menus. */
@@ -156,7 +163,10 @@ export class ComponentMode {
   protected readonly exportFormats = exportFormats;
   protected readonly relativeTime = relativeTime;
   protected readonly materials = materials;
-  protected readonly mm = millimetres;
+  protected readonly mm = (value: number, power: 1 | 2 | 3 = 1) => lengthIn(this.store.units(), value, power);
+  protected readonly at = (p: readonly number[]) => pointIn(this.store.units(), p);
+  protected readonly unitNames = lengthUnitNames;
+  protected readonly unitList = Object.keys(lengthUnitNames) as LengthUnit[];
   protected readonly grams = grams;
   protected readonly point = point;
   private readonly nameDialog = viewChild.required(NameDialog);

@@ -29,7 +29,7 @@
         <p class="count" data-testid="profile-selection">{{ f.profiles.length }} profile{{ f.profiles.length === 1 ? '' : 's' }} selected</p>
         <label class="field">
           Distance
-          <input id="feature-distance" autocomplete="off" [value]="f.distance" (change)="set({ distance: value($event) })" />
+          <input id="feature-distance" autocomplete="off" [value]="f.distance" (change)="set({ distance: length($event) })" />
         </label>
         <label class="field">
           Direction
@@ -71,11 +71,11 @@
         <p class="count" data-testid="edge-selection">{{ f.edges.length }} edge{{ f.edges.length === 1 ? '' : 's' }} selected</p>
         <label class="field">
           Radius
-          <input id="feature-size" autocomplete="off" [value]="f.size" (change)="set({ size: value($event) })" />
+          <input id="feature-size" autocomplete="off" [value]="f.size" (change)="set({ size: length($event) })" />
         </label>
         <label class="field">
           Radius at the other end (empty: the same)
-          <input id="feature-end-size" autocomplete="off" [value]="f.endSize ?? ''" (change)="set({ endSize: value($event) })" />
+          <input id="feature-end-size" autocomplete="off" [value]="f.endSize ?? ''" (change)="set({ endSize: length($event) })" />
         </label>
       }
       @case ('draft') {
@@ -109,11 +109,11 @@
         <div class="row two">
           <label class="field">
             Thickness
-            <input id="feature-thickness" autocomplete="off" [value]="f.thickness" (change)="set({ thickness: value($event) })" />
+            <input id="feature-thickness" autocomplete="off" [value]="f.thickness" (change)="set({ thickness: length($event) })" />
           </label>
           <label class="field">
             Depth
-            <input id="feature-depth" autocomplete="off" [value]="f.depth" (change)="set({ depth: value($event) })" />
+            <input id="feature-depth" autocomplete="off" [value]="f.depth" (change)="set({ depth: length($event) })" />
           </label>
         </div>
         <label class="field">
@@ -129,14 +129,14 @@
         <p class="count" data-testid="edge-selection">{{ f.edges.length }} edge{{ f.edges.length === 1 ? '' : 's' }} selected</p>
         <label class="field">
           Distance
-          <input id="feature-size" autocomplete="off" [value]="f.size" (change)="set({ size: value($event) })" />
+          <input id="feature-size" autocomplete="off" [value]="f.size" (change)="set({ size: length($event) })" />
         </label>
       }
       @case ('shell') {
         <p class="count" data-testid="face-selection">{{ f.faces.length }} face{{ f.faces.length === 1 ? '' : 's' }} to open</p>
         <label class="field">
           Wall thickness
-          <input id="feature-thickness" autocomplete="off" [value]="f.thickness" (change)="set({ thickness: value($event) })" />
+          <input id="feature-thickness" autocomplete="off" [value]="f.thickness" (change)="set({ thickness: length($event) })" />
         </label>
       }
       @case ('plane') {
@@ -195,7 +195,7 @@
         } @else {
           <label class="field">
             Offset
-            <input id="feature-offset" autocomplete="off" [value]="f.offset" (change)="set({ offset: value($event) })" />
+            <input id="feature-offset" autocomplete="off" [value]="f.offset" (change)="set({ offset: length($event) })" />
           </label>
         }
       }
@@ -223,7 +223,7 @@
         </label>
         <label class="field">
           Spacing
-          <input id="feature-spacing" autocomplete="off" [value]="f.spacing" (change)="set({ spacing: value($event) })" />
+          <input id="feature-spacing" autocomplete="off" [value]="f.spacing" (change)="set({ spacing: length($event) })" />
         </label>
       }
       @case ('circular-pattern') {
@@ -353,7 +353,7 @@
         </label>
         <label class="field">
           Diameter
-          <input id="feature-diameter" autocomplete="off" [value]="f.diameter" (change)="set({ diameter: value($event) })" />
+          <input id="feature-diameter" autocomplete="off" [value]="f.diameter" (change)="set({ diameter: length($event) })" />
         </label>
         <label class="field">
           Depth
@@ -365,18 +365,18 @@
         @if (f.extent === 'blind') {
           <label class="field">
             Depth
-            <input id="feature-depth" autocomplete="off" [value]="f.depth" (change)="set({ depth: value($event) })" />
+            <input id="feature-depth" autocomplete="off" [value]="f.depth" (change)="set({ depth: length($event) })" />
           </label>
         }
         @if (f.kind === 'counterbore') {
           <div class="row two">
             <label class="field">
               Counterbore ⌀
-              <input id="feature-bore-diameter" autocomplete="off" [value]="f.boreDiameter" (change)="set({ boreDiameter: value($event) })" />
+              <input id="feature-bore-diameter" autocomplete="off" [value]="f.boreDiameter" (change)="set({ boreDiameter: length($event) })" />
             </label>
             <label class="field">
               Counterbore depth
-              <input id="feature-bore-depth" autocomplete="off" [value]="f.boreDepth" (change)="set({ boreDepth: value($event) })" />
+              <input id="feature-bore-depth" autocomplete="off" [value]="f.boreDepth" (change)="set({ boreDepth: length($event) })" />
             </label>
           </div>
           <label class="check"><input type="checkbox" id="feature-bridge" [checked]="f.bridge" (change)="set({ bridge: $any($event.target).checked })" /> Bridge layer for printing (drill out after)</label>
@@ -385,7 +385,7 @@
           <div class="row two">
             <label class="field">
               Countersink ⌀
-              <input id="feature-sink-diameter" autocomplete="off" [value]="f.sinkDiameter" (change)="set({ sinkDiameter: value($event) })" />
+              <input id="feature-sink-diameter" autocomplete="off" [value]="f.sinkDiameter" (change)="set({ sinkDiameter: length($event) })" />
             </label>
             <label class="field">
               Angle
@@ -407,7 +407,7 @@
         </label>
         <label class="field">
           Length (empty: the whole face)
-          <input id="feature-length" autocomplete="off" [value]="f.length" (change)="set({ length: value($event) })" />
+          <input id="feature-length" autocomplete="off" [value]="f.length" (change)="set({ length: length($event) })" />
         </label>
         <label class="check"><input type="checkbox" id="feature-modelled" [checked]="f.modelled" (change)="set({ modelled: $any($event.target).checked })" /> Model the thread (cut its groove)</label>
         <label class="check"><input type="checkbox" id="feature-flip" [checked]="f.flip" (change)="set({ flip: $any($event.target).checked })" /> Start at the other end</label>
@@ -472,7 +472,7 @@
           @for (axis of ['X', 'Y', 'Z']; track axis; let i = $index) {
             <label class="field">
               {{ axis }}
-              <input [id]="'feature-move-' + axis.toLowerCase()" autocomplete="off" [value]="f.translate[i]" (change)="setTranslate(i, value($event))" />
+              <input [id]="'feature-move-' + axis.toLowerCase()" autocomplete="off" [value]="f.translate[i]" (change)="setTranslate(i, length($event))" />
             </label>
           }
         </div>

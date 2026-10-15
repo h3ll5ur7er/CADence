@@ -7,6 +7,7 @@ import {
   type FeatureType,
   isDefaultAppearance,
   isSketch,
+  lengthUnitSize,
   ok,
   type Result,
   type Sketch,
@@ -426,6 +427,9 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
       });
     case 'delete-parameter':
       return ok({ document: { ...document, parameters: document.parameters.filter((p) => p.id !== command.id) }, parameters: true });
+    case 'set-units':
+      if (!(command.units in lengthUnitSize)) return invalid(`${command.units} is not a unit lengths can be shown in.`);
+      return ok({ document: { ...document, units: command.units } });
     case 'set-material':
       if (!command.material.name.trim() || !(command.material.density > 0)) return invalid('A material needs a name and a density above zero.');
       return ok({ document: { ...document, material: command.material } });

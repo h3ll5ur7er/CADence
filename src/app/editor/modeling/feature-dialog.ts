@@ -6,6 +6,7 @@ import {
   isSketch,
   isRepeatable,
   isToolFeature,
+  lengthExpression,
   metricThreads,
   type PlaneRef,
 } from '@core/contracts';
@@ -198,6 +199,11 @@ export class FeatureDialog {
             ? { ...common, mode, points: [] }
             : { ...common, base, offset: '10' };
     this.store.updateDraft(next);
+  }
+
+  /** A length field's value: plain numbers are in the component's unit. */
+  protected length(event: Event): string {
+    return lengthExpression(this.value(event), this.store.units());
   }
 
   protected value(event: Event): string {

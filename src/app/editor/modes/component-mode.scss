@@ -19,19 +19,24 @@
   color: var(--text-muted);
 }
 
+#component-units,
+.material select {
+  height: 30px;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--text);
+  font: 13px var(--font);
+}
+
+#component-units {
+  height: 26px;
+}
+
 .material {
   display: grid;
   gap: var(--space-1);
-
-  select {
-    height: 30px;
-    padding: 0 var(--space-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface-raised);
-    color: var(--text);
-    font: 13px var(--font);
-  }
 }
 
 .bodies {

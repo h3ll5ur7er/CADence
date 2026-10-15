@@ -17,6 +17,7 @@ import {
   type Result,
   type TopologyRef,
   type ValidationReport,
+  type LengthUnit,
 } from '@core/contracts';
 import type { DesignCommand, DesignSession, DesignState, DrawingFormat, ExportOptions, InsertDrawingOptions, SketchView, SolidFormat } from '@core/managers/design';
 import { newId } from '@core/utilities/identity';
@@ -141,6 +142,9 @@ export class DesignStore {
   }
 
   /** Runs a command; shows its error and returns false when it was rejected. */
+  /** The unit the edited component shows and takes lengths in. */
+  readonly units = computed((): LengthUnit => this.state()?.document.units ?? 'mm');
+
   async run(command: DesignCommand): Promise<boolean> {
     if (!this.session) return false;
     const result = await this.session.execute(command);

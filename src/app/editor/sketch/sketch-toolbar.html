@@ -39,8 +39,8 @@
         <input class="text-input" type="text" aria-label="Text to place" [value]="store.textDraft().text" (input)="setText({ text: $any($event.target).value })" />
       </label>
       <label class="sides" title="Height of capital letters">
-        <input type="number" min="0.1" step="0.5" aria-label="Text height" [value]="store.textDraft().height" (change)="setText({ height: +$any($event.target).value })" />
-        mm
+        <input type="number" min="0.1" step="0.5" aria-label="Text height" [value]="shown(store.textDraft().height)" (change)="setText({ height: +$any($event.target).value * unitSize() })" />
+        {{ store.units() }}
       </label>
       <label class="sides"><input type="checkbox" aria-label="Bold text" [checked]="store.textDraft().weight === 'bold'" (change)="setText({ weight: $any($event.target).checked ? 'bold' : 'regular' })" /> Bold</label>
     }
@@ -77,7 +77,7 @@
       }
       @if (offsetDistance() !== undefined) {
         <form class="menu-list start offset" aria-label="Offset" (submit)="$event.preventDefault(); applyOffset(distance.value)">
-          <label>Distance <input #distance type="number" step="0.5" aria-label="Offset distance" [value]="offsetDistance()" /> mm</label>
+          <label>Distance <input #distance type="number" step="0.5" aria-label="Offset distance" [value]="shown(offsetDistance())" /> {{ store.units() }}</label>
           <span class="hint">Negative offsets to the other side.</span>
           <div class="actions">
             <button type="button" class="btn" (click)="offsetDistance.set(undefined)">Cancel</button>
@@ -88,8 +88,8 @@
       @if (linearOpen()) {
         <form class="menu-list start offset" aria-label="Linear pattern" (submit)="$event.preventDefault(); applyLinearPattern(count.value, dx.value, dy.value)">
           <label>Copies <input #count type="number" min="2" aria-label="Linear pattern count" value="3" /></label>
-          <label>X step <input #dx type="number" step="1" aria-label="Linear pattern X step" value="20" /> mm</label>
-          <label>Y step <input #dy type="number" step="1" aria-label="Linear pattern Y step" value="0" /> mm</label>
+          <label>X step <input #dx type="number" step="1" aria-label="Linear pattern X step" [value]="shown(20)" /> {{ store.units() }}</label>
+          <label>Y step <input #dy type="number" step="1" aria-label="Linear pattern Y step" value="0" /> {{ store.units() }}</label>
           <div class="actions">
             <button type="button" class="btn" (click)="linearOpen.set(false)">Cancel</button>
             <button type="submit" class="btn btn-primary">Repeat</button>
@@ -99,8 +99,8 @@
     </div>
     @if (store.tool() === 'fillet' || store.tool() === 'chamfer') {
       <label class="sides" [title]="store.tool() === 'fillet' ? 'Radius of the rounded corner' : 'Distance cut back along each line'">
-        <input type="number" min="0.01" step="0.5" [attr.aria-label]="store.tool() === 'fillet' ? 'Fillet radius' : 'Chamfer distance'" [value]="store.cornerSize()" (change)="setCornerSize($any($event.target).value)" />
-        mm
+        <input type="number" min="0.01" step="0.5" [attr.aria-label]="store.tool() === 'fillet' ? 'Fillet radius' : 'Chamfer distance'" [value]="shown(store.cornerSize())" (change)="setCornerSize($any($event.target).value)" />
+        {{ store.units() }}
       </label>
     }
     @if (store.tool() === 'circular-pattern') {

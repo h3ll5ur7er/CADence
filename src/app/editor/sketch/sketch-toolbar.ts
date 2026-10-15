@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, DestroyRef, inject, signal } from '@angular/core';
-import { type DocumentId, isCurve, type SketchEntity, sketchOriginId } from '@core/contracts';
+import { type DocumentId, isCurve, lengthUnitSize, type SketchEntity, sketchOriginId } from '@core/contracts';
 import type { DrawingFormat } from '@core/managers/design';
 import { newId } from '@core/utilities/identity';
 import { Icon, type IconName } from '../../shared/icon';
@@ -150,15 +150,20 @@ export class SketchToolbar {
     this.store.tool.set(tool);
   }
 
+  /** Millimetres in the component's unit: the toolbar's numbers are typed in that unit. */
+  protected readonly unitSize = computed(() => lengthUnitSize[this.store.units()]);
+  /** A stored length (mm) as shown in the toolbar. */
+  protected readonly shown = (mm: number | undefined) => (mm === undefined ? undefined : Math.round((mm / this.unitSize()) * 1e4) / 1e4);
+
   protected setCornerSize(value: string): void {
-    const size = Number(value);
+    const size = Number(value) * this.unitSize();
     if (size > 0) this.store.cornerSize.set(size);
   }
 
   /** Offsets the selected curves; a negative distance offsets to the other side. */
   protected async applyOffset(value: string): Promise<void> {
     const sketchId = this.store.editing();
-    const distance = Number(value);
+    const distance = Number(value) * this.unitSize();
     if (!sketchId || !Number.isFinite(distance) || distance === 0) return;
     const curves = this.selected().filter((e) => e.kind !== 'point').map((e) => e.id);
     if (await this.store.run({ type: 'edit-sketch', sketchId, operation: { kind: 'offset', curves, distance }, idPrefix: `${newId()}-` })) {
@@ -170,7 +175,7 @@ export class SketchToolbar {
   /** Copies the selection in a row: `count` in all (the original counts), `x`, `y` apart. */
   protected async applyLinearPattern(count: string, x: string, y: string): Promise<void> {
     const sketch = this.view()?.sketch;
-    const command = sketch && linearPatternCommand(sketch, this.store.selection(), Math.round(Number(count)), [Number(x), Number(y)], newId);
+    const command = sketch && linearPatternCommand(sketch, this.store.selection(), Math.round(Number(count)), [Number(x) * this.unitSize(), Number(y) * this.unitSize()], newId);
     if (command && (await this.store.run(command))) {
       this.linearOpen.set(false);
       this.store.select([]);

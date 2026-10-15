@@ -11,6 +11,8 @@ import {
   ok,
   originFrames,
   type PlaneFrame,
+  type LengthUnit,
+  lengthUnitSize,
   metricThreads,
   type PlaneRef,
   type Profile,
@@ -126,7 +128,7 @@ export class Regeneration {
     if (evaluated.ok) this.scope = evaluated.value;
     const parameters = document.parameters.map((parameter): ParameterView => {
       const value = this.scope.get(parameter.name);
-      return value ? { parameter, display: display(value) } : { parameter };
+      return value ? { parameter, display: display(value, document.units) } : { parameter };
     });
     const marker = document.timeline.length - document.rollbackIndex;
     for (const [index, item] of document.timeline.entries()) {
@@ -684,10 +686,12 @@ function collapses(sketch: Sketch): boolean {
   );
 }
 
-function display(q: Quantity): string {
+/** A parameter's value as shown: lengths (and their powers) in the document's unit. */
+function display(q: Quantity, unit: LengthUnit): string {
   const round = (v: number) => String(Math.round(v * 1000) / 1000);
-  if (q.length === 1 && q.angle === 0) return `${round(q.value)} mm`;
+  const value = q.value / lengthUnitSize[unit] ** q.length;
+  if (q.length === 1 && q.angle === 0) return `${round(value)} ${unit}`;
   if (q.length === 0 && q.angle === 1) return `${round((q.value * 180) / Math.PI)}°`;
   if (q.length === 0 && q.angle === 0) return round(q.value);
-  return `${round(q.value)} mm^${q.length}`;
+  return `${round(value)} ${unit}^${q.length}`;
 }

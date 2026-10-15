@@ -10,6 +10,7 @@ import {
   currentSchemaVersion,
   type DomainEvents,
   type ImportFormat,
+  lengthExpression,
   type PlaneFrame,
   type PlaneRef,
   type Result,
@@ -472,6 +473,21 @@ describe('DesignManager', () => {
       const before = (await session.properties()).length;
       unwrap(await session.execute({ type: 'add-feature', feature: { id: 'pp', type: 'path-pattern', name: '', suppressed: false, features: ['e9'], path: 's6', count: '3', align: false } }));
       expect((await session.properties()).length).toBe(before + 2);
+    });
+
+    it('shows lengths in the document unit without changing the model', async () => {
+      await plate();
+      unwrap(await session.execute({ type: 'set-units', units: 'in' }));
+      expect(session.state().document.units).toBe('in');
+      expect(session.state().parameters.map((p) => p.display)).toEqual([`${Math.round((60 / 25.4) * 1000) / 1000} in`, `${Math.round((6 / 25.4) * 1000) / 1000} in`]);
+      expect(await volume()).toBeCloseTo(60 * 30 * 6);
+      // Typed plain numbers are inches: written out, they keep their meaning in any unit.
+      expect(lengthExpression('2', 'in')).toBe('2 in');
+      expect(lengthExpression('width / 2', 'in')).toBe('width / 2');
+      expect(lengthExpression('5', 'mm')).toBe('5');
+      unwrap(await session.execute({ type: 'set-dimension', sketchId: 's1', constraintId: 'h', expression: lengthExpression('1', 'in') }));
+      unwrap(await session.execute({ type: 'set-units', units: 'mm' }));
+      expect(await volume()).toBeCloseTo(60 * 25.4 * 6);
     });
 
     it('refuses parameter changes that would break the model', async () => {

@@ -5,6 +5,7 @@ import type {
   ComponentDocument,
   DocumentId,
   Feature,
+  LengthUnit,
   ManufacturingProfile,
   MeshQuality,
   Material,
@@ -73,6 +74,8 @@ export type DesignCommand =
   | { readonly type: 'set-parameter'; readonly parameter: Parameter }
   | { readonly type: 'delete-parameter'; readonly id: string }
   | { readonly type: 'set-material'; readonly material: Material }
+  /** The unit lengths are shown and typed in; nothing stored changes. */
+  | { readonly type: 'set-units'; readonly units: LengthUnit }
   /** The machine the component is made on (print or laser profile), for validation and kerf compensation. */
   | { readonly type: 'set-process'; readonly process: ManufacturingProfile }
   /** How a body is shown; an appearance of defaults only removes the entry. */

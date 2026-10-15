@@ -13,6 +13,20 @@ export const documentKinds: readonly DocumentKind[] = ['component', 'assembly', 
 export type CreatableDocumentKind = Exclude<DocumentKind, 'imported'>;
 
 export type LengthUnit = 'mm' | 'cm' | 'in';
+
+/** Millimetres in one unit. Geometry is always stored and computed in millimetres. */
+export const lengthUnitSize: Readonly<Record<LengthUnit, number>> = { mm: 1, cm: 10, in: 25.4 };
+
+export const lengthUnitNames: Readonly<Record<LengthUnit, string>> = { mm: 'Millimetres', cm: 'Centimetres', in: 'Inches' };
+
+/**
+ * A length as typed in a document's unit: a plain number gets the unit written out, so the stored
+ * expression means the same length whatever the document's unit is later (plain numbers are millimetres).
+ */
+export function lengthExpression(typed: string, unit: LengthUnit): string {
+  const text = typed.trim();
+  return unit !== 'mm' && /^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(text) ? `${text} ${unit}` : text;
+}
 export type ImportFormat = 'step' | 'stl' | 'obj' | '3mf' | 'dxf' | 'svg';
 
 export interface DocumentSummary {

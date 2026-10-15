@@ -1,10 +1,13 @@
 import {
   type Feature,
   type FeatureType,
+  generatorOf,
+  isCurve,
+  isRepeatable,
   isSketch,
-  isToolFeature,
   type PlaneRef,
   type Profile,
+  type Sketch,
   type ProfileLoop,
   type TopologyRef,
 } from '@core/contracts';
@@ -39,6 +42,32 @@ export const featureLabels: Readonly<Record<FeatureType, string>> = {
   loft: 'Loft',
   sweep: 'Sweep',
   'path-pattern': 'Pattern along a path',
+  hole: 'Hole',
+  thread: 'Thread',
+};
+
+/** Points of a sketch that no curve uses: where holes go. */
+export function holePoints(sketch: Sketch | undefined): string[] {
+  if (!sketch) return [];
+  const used = new Set(sketch.entities.flatMap((e) => (isCurve(e) ? references(e) : e.kind === 'text' ? [e.anchor] : e.kind === 'drawing' ? [e.origin, e.handle] : [])));
+  return sketch.entities.filter((e) => e.kind === 'point' && !used.has(e.id) && !generatorOf(sketch, e.id)).map((e) => e.id);
+}
+
+const references = (e: Exclude<Sketch['entities'][number], { kind: 'point' }>): string[] => {
+  switch (e.kind) {
+    case 'line':
+      return [e.start, e.end];
+    case 'circle':
+      return [e.center];
+    case 'arc':
+      return [e.center, e.start, e.end];
+    case 'ellipse':
+      return [e.center, e.major];
+    case 'spline':
+      return [...e.points];
+    default:
+      return [];
+  }
 };
 
 /** A loop by its pieces, whichever way round it runs: the curve each comes from and where it ends (a text's letters share one source). */
@@ -64,7 +93,7 @@ export function defaultFeature(type: FeatureType, id: string, state: DesignState
   const sketch = sketches.at(-1);
   const profiles = sketch ? solidProfiles(state.sketches.get(sketch.id)?.profiles ?? []) : [];
   const operation = state.bodies.length ? ('join' as const) : ('new-body' as const);
-  const lastTool = active.filter(isToolFeature).at(-1);
+  const lastTool = active.filter(isRepeatable).at(-1);
   const bodyIds = state.bodies.map((b) => b.body);
   const tools = lastTool ? [lastTool.id] : [];
   switch (type) {
@@ -112,6 +141,29 @@ export function defaultFeature(type: FeatureType, id: string, state: DesignState
       const path = active.filter(isSketch).at(-1);
       return { ...base, type, features: tools, path: path?.id ?? '', count: '4', align: false };
     }
+    case 'hole': {
+      // The latest sketch with points of their own.
+      const holeSketch = active.filter(isSketch).filter((s) => holePoints(state.sketches.get(s.id)?.sketch).length > 0).at(-1);
+      const points = holePoints(holeSketch && state.sketches.get(holeSketch.id)?.sketch);
+      return {
+        ...base,
+        type,
+        sketch: holeSketch?.id ?? '',
+        points,
+        kind: 'simple',
+        diameter: '5',
+        extent: 'through',
+        depth: '10',
+        boreDiameter: '9',
+        boreDepth: '3',
+        sinkDiameter: '10',
+        sinkAngle: '90 deg',
+        teardrop: false,
+        bridge: false,
+      };
+    }
+    case 'thread':
+      return { ...base, type, face: { kind: 'face', body: '', name: '' }, size: 'M6', length: '', modelled: false, flip: false };
   }
 }
 
@@ -141,6 +193,7 @@ export function pickableFor(draft: FeatureDraft | undefined): ReadonlySet<PickKi
     case 'chamfer':
       return new Set<PickKind>(['edge']);
     case 'shell':
+    case 'thread':
     case 'combine':
     case 'split':
     case 'move':
@@ -183,10 +236,13 @@ export function selectionOf(draft: FeatureDraft): Pick[] {
       return f.sections.map((s): Pick => ({ kind: 'profile', sketch: s.sketch, profile: s.profile }));
     case 'sweep':
       return f.profiles.map((profile): Pick => ({ kind: 'profile', sketch: f.sketch, profile }));
+    case 'thread':
+      return f.face.name ? [pickOf(f.face)] : [];
     case 'insert':
     case 'combine':
     case 'scale':
     case 'path-pattern':
+    case 'hole':
       return [];
   }
 }
@@ -246,6 +302,8 @@ export function applyPick(draft: FeatureDraft, pick: Pick): FeatureDraft {
       const points = toggle(f.points, refOf(pick), sameRef);
       return points.length <= 3 ? { ...draft, feature: { ...f, points } } : draft;
     }
+    case 'thread':
+      return pick.kind === 'face' ? { ...draft, feature: { ...f, face: refOf(pick) } } : draft;
     // Clicking a body picks it: the body to split, or one more (or one less) to combine, move or scale.
     case 'split':
       return pick.kind === 'face' ? { ...draft, feature: { ...f, body: pick.body } } : draft;

@@ -23,6 +23,7 @@ import type {
   Vec2,
   TextOutlines,
   TextWeight,
+  ThreadMarker,
 } from '@core/contracts';
 
 /** Every change to a component is one of these commands (docs/Architecture/Decisions.md#adr-10). Ids come from the caller. */
@@ -119,6 +120,8 @@ export interface DesignState {
   /** Construction planes by feature id. */
   readonly planes: ReadonlyMap<string, PlaneFrame>;
   readonly bodies: readonly BodyMesh[];
+  /** Threads, for showing on their faces. */
+  readonly threads: readonly ThreadMarker[];
   readonly parameters: readonly ParameterView[];
   readonly canUndo: boolean;
   readonly canRedo: boolean;

@@ -153,9 +153,9 @@ export function revolveTool(
         const plane: Surface = { type: 'plane', normal: direction, offset: dot3(direction, p) };
         return { source: edge.source, matches: (s) => samePlaneIgnoringSide(s, plane) };
       }
-      // A slanted line sweeps a cone whose apex is where the line meets the axis.
-      const apex = closestOnAxis(p, d, line);
-      return { source: edge.source, matches: (s) => s.type === 'cone' && length3(sub3(s.apex, apex)) < 1e-4 && sameLine(s.axis, line) };
+      // A slanted line sweeps a cone, which the kernel build cannot read: recognised by a point it passes through.
+      const point = rotateAbout(toWorld(frame, midOf(edge)), axis, angle / 2);
+      return { source: edge.source, matches: (s, face) => s.type === 'other' && passesThrough(face, point) };
     }
     const center = toWorld(frame, edge.center);
     const offAxis = distanceToLine(center, line);
@@ -169,18 +169,6 @@ export function revolveTool(
 
 function distanceToPlane(p: Vec3, plane: Extract<Surface, { type: 'plane' }>): number {
   return Math.abs(dot3(plane.normal, p) - plane.offset);
-}
-
-/** Point on the axis closest to the line through `p` with direction `d` (where they meet, if they do). */
-function closestOnAxis(p: Vec3, d: Vec3, axis: Line): Vec3 {
-  const w = sub3(p, axis.point);
-  const a = dot3(d, d);
-  const b = dot3(d, axis.direction);
-  const c = dot3(axis.direction, axis.direction);
-  const e = dot3(d, w);
-  const f = dot3(axis.direction, w);
-  const t = (a * f - b * e) / (a * c - b * b);
-  return add3(axis.point, scale3(axis.direction, t));
 }
 
 /** A point halfway along any profile edge, where the face it sweeps or lofts must pass. */

@@ -91,6 +91,68 @@ export interface PathPatternFeature extends FeatureBase {
   readonly align: boolean;
 }
 
+/** Holes drilled at points of a sketch, into the material (against the sketch's normal). */
+export interface HoleFeature extends FeatureBase {
+  readonly type: 'hole';
+  readonly sketch: string;
+  readonly points: readonly string[];
+  readonly kind: 'simple' | 'counterbore' | 'countersink';
+  readonly diameter: string;
+  readonly extent: 'through' | 'blind';
+  /** For blind holes. */
+  readonly depth: string;
+  readonly boreDiameter: string;
+  readonly boreDepth: string;
+  readonly sinkDiameter: string;
+  readonly sinkAngle: string;
+  /** Print-friendly: a pointed top for holes that lie on their side, so they print without support. */
+  readonly teardrop: boolean;
+  /** Print-friendly: one layer left over the hole at the bottom of a counterbore, drilled out after printing. */
+  readonly bridge: boolean;
+}
+
+/** An ISO metric thread on a round face: a hole (inside) or a shaft (outside), shown as a marker or modelled. */
+export interface ThreadFeature extends FeatureBase {
+  readonly type: 'thread';
+  readonly face: TopologyRef;
+  /** A size of {@link metricThreads}, such as `M6`. */
+  readonly size: string;
+  /** An expression, or empty for the whole face. */
+  readonly length: string;
+  readonly modelled: boolean;
+  /** Start at the other end of the face. */
+  readonly flip: boolean;
+}
+
+/** ISO metric coarse threads: major diameter and pitch (mm). */
+export const metricThreads: Readonly<Record<string, { readonly diameter: number; readonly pitch: number }>> = {
+  M2: { diameter: 2, pitch: 0.4 },
+  'M2.5': { diameter: 2.5, pitch: 0.45 },
+  M3: { diameter: 3, pitch: 0.5 },
+  M4: { diameter: 4, pitch: 0.7 },
+  M5: { diameter: 5, pitch: 0.8 },
+  M6: { diameter: 6, pitch: 1 },
+  M8: { diameter: 8, pitch: 1.25 },
+  M10: { diameter: 10, pitch: 1.5 },
+  M12: { diameter: 12, pitch: 1.75 },
+  M16: { diameter: 16, pitch: 2 },
+  M20: { diameter: 20, pitch: 2.5 },
+};
+
+/** Where a thread is, for showing it: from its start along `direction`, on a round face of `radius`. */
+export interface ThreadMarker {
+  readonly feature: string;
+  readonly size: string;
+  readonly origin: Vec3;
+  readonly direction: Vec3;
+  readonly radius: number;
+  readonly length: number;
+  readonly pitch: number;
+  /** The thread's major (nominal) diameter. */
+  readonly diameter: number;
+  readonly internal: boolean;
+}
+
 /** Rounds (fillet) or bevels (chamfer) edges. */
 export interface EdgeTreatmentFeature extends FeatureBase {
   readonly type: 'fillet' | 'chamfer';
@@ -185,6 +247,8 @@ export interface ScaleFeature extends FeatureBase {
 
 export type Feature =
   | InsertFeature
+  | HoleFeature
+  | ThreadFeature
   | LoftFeature
   | SweepFeature
   | PathPatternFeature
@@ -207,6 +271,8 @@ export type FeatureType = Feature['type'];
 export type ToolFeature = ExtrudeFeature | RevolveFeature | LoftFeature | SweepFeature;
 export const isToolFeature = (f: { readonly type: string }): f is ToolFeature =>
   f.type === 'extrude' || f.type === 'revolve' || f.type === 'loft' || f.type === 'sweep';
+/** Features whose tool patterns and mirrors can repeat: tool features and holes. */
+export const isRepeatable = (f: { readonly type: string }): f is ToolFeature | HoleFeature => isToolFeature(f) || f.type === 'hole';
 
 /** A plane in space: origin and orthonormal in-plane axes (u, v); the normal is u × v. */
 export interface PlaneFrame {

@@ -1,9 +1,10 @@
 import { expect, type Page, test } from '@playwright/test';
-import { center, evidence, fromModelMenu, plateProject } from './support';
+import { center, evidence, fromModelMenu, plateProject, screenPositionOf, visiblePointOf } from './support';
 
 /** Phase 11 (Part modeling II) user journey: timeline, body operations, planes, loft and sweep, holes, draft. */
 test.setTimeout(180_000);
 
+const number = async (page: Page, testId: string) => Number(((await page.getByTestId(testId).first().textContent()) ?? '').replace(/[^\d.]/g, ''));
 const timelineNames = (page: Page) => page.getByRole('list', { name: 'Timeline' }).locator('.item-name').allTextContents();
 
 test('rolls the timeline back, inserts a feature there and reorders it', async ({ page }) => {
@@ -137,4 +138,49 @@ test('lofts from a rectangle to a circle on a plane above it', async ({ page }) 
   await page.getByRole('button', { name: 'Home view' }).click();
   await page.waitForTimeout(800);
   await evidence(page, '49-loft');
+});
+
+test('drills counterbored holes at sketch points and threads one of them', async ({ page }) => {
+  await plateProject(page, 'Holes');
+  const volume = await number(page, 'body-volume');
+  const top = await screenPositionOf(page, 'face', ':end$');
+  await page.mouse.click(top.x, top.y);
+  await page.getByRole('button', { name: 'New sketch' }).click();
+  await page.getByRole('menuitem', { name: 'Selected face' }).click();
+  await page.waitForTimeout(600);
+  const origin = await center(page, 'circle.point.origin');
+  await page.getByRole('button', { name: 'Point', exact: true }).click();
+  for (const dx of [-60, 60]) {
+    await page.mouse.move(origin.x + dx, origin.y);
+    await page.mouse.click(origin.x + dx, origin.y);
+  }
+  await page.getByRole('button', { name: 'Finish sketch' }).click();
+
+  await fromModelMenu(page, 'Create', 'Hole');
+  await expect(page.getByTestId('point-count')).toHaveText('2 holes');
+  await page.locator('#feature-hole-kind').selectOption('counterbore');
+  await page.getByRole('button', { name: 'OK' }).click();
+  await expect(page.locator('.item.failed')).toHaveCount(0);
+  await expect.poll(() => number(page, 'body-volume')).toBeLessThan(volume - 300);
+
+  // An M6 thread in the hole's wall (5 mm: the tap drill), picked looking in at an angle.
+  await page.getByRole('button', { name: 'Home view' }).click();
+  await page.waitForTimeout(600);
+  await fromModelMenu(page, 'Create', 'Thread');
+  await expect(page.locator('#feature-thread-size')).toHaveValue('M6');
+  const hole = await screenPositionOf(page, 'face', ':wall:');
+  await page.mouse.move(hole.x, hole.y);
+  for (let i = 0; i < 8; i++) await page.mouse.wheel(0, -300);
+  await page.waitForTimeout(400);
+  const wall = await visiblePointOf(page, ':wall:');
+  await page.mouse.click(wall.x, wall.y);
+  await expect(page.getByTestId('face-selection')).toHaveText('1 round face selected');
+  await page.getByRole('button', { name: 'OK' }).click();
+  await expect(page.locator('.item.failed')).toHaveCount(0);
+  await expect(page.getByRole('list', { name: 'Timeline' })).toContainText('Thread 1');
+  // Close up: the counterbores, and the thread shown as a helix in the hole.
+  await page.mouse.move(wall.x, wall.y);
+  for (let i = 0; i < 4; i++) await page.mouse.wheel(0, -300);
+  await page.waitForTimeout(800);
+  await evidence(page, '50-holes');
 });

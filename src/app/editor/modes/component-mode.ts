@@ -69,6 +69,8 @@ const featureMenus: readonly { id: string; label: string; icon: IconName; items:
     items: [
       { type: 'loft', icon: 'loft' },
       { type: 'sweep', icon: 'sweep' },
+      { type: 'hole', icon: 'hole' },
+      { type: 'thread', icon: 'thread' },
       { type: 'insert', icon: 'imported' },
     ],
   },
@@ -115,6 +117,8 @@ const itemIcons: Readonly<Record<TimelineItem['type'], IconName>> = {
   loft: 'loft',
   sweep: 'sweep',
   'path-pattern': 'pathPattern',
+  hole: 'hole',
+  thread: 'thread',
 };
 
 const exportFormats: readonly { format: SolidFormat; label: string }[] = [

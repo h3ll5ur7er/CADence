@@ -3,6 +3,7 @@ import { type BodyMesh, fail, ok, type PlaneFrame, type Result, type TopologyRef
 import { type Edge, type Face, getOC, measureVolume, type Shape3D, Vertex } from 'replicad';
 import { combine, type LoadedBody, renameCopy } from './bodies';
 import { BodyOperationError, combineBodies, splitBody, transformBodies } from './body-operations';
+import { HoleError, holeTool, threadGroove, threadPlacement } from './holes';
 import { add3, cross3, dot3, normalize3, scale3, sub3, toPlane } from './geometry';
 import type { AxisInput, BodyState, ModelingEngine, ModelingOutcome, ModelingRequest, ProjectedCurve, ToolInput } from './modeling-engine';
 import { nameShape, namedSurfaces } from './naming';
@@ -28,7 +29,7 @@ export class OcctModelingEngine implements ModelingEngine {
     try {
       outcome = this.compute(request);
     } catch (error) {
-      const message = error instanceof FeatureError || error instanceof BodyOperationError ? error.message : `The geometry kernel could not build this feature (${describe(error)}).`;
+      const message = error instanceof FeatureError || error instanceof BodyOperationError || error instanceof HoleError ? error.message : `The geometry kernel could not build this feature (${describe(error)}).`;
       outcome = { bodies: request.bodies, error: message };
     }
     this.remember(request.key, outcome);
@@ -142,6 +143,17 @@ export class OcctModelingEngine implements ModelingEngine {
         this.shapes.put(toolKey, tool);
         return { ...this.store(combine(bodies, tool, request.operation, request.feature, request.key)), toolKey };
       }
+      case 'hole': {
+        if (!bodies.length) throw new FeatureError('Holes go into a body: there is none yet.');
+        // Through all: deeper than everything there is.
+        const depth = request.spec.depth ?? 2 * reach(bodies.map((b) => b.named.shape), request.frame.origin) + 1;
+        const tool = holeTool(request.feature, request.frame, request.points, request.spec, positive(depth, 'depth'));
+        const toolKey = `${request.key}:tool`;
+        this.shapes.put(toolKey, tool);
+        return { ...this.store(combine(bodies, tool, 'cut', request.feature, request.key)), toolKey };
+      }
+      case 'thread':
+        return this.thread(request, bodies);
       case 'path-pattern':
         return this.repeat(request.feature, request.key, bodies, request.tools, request.placements.length + 1, (shape, i) => {
           const place = request.placements[i - 1] as (typeof request.placements)[number];
@@ -214,6 +226,31 @@ export class OcctModelingEngine implements ModelingEngine {
       }
     }
     return { bodies: current.map((b) => b.state) };
+  }
+
+  /** A thread on a round face: placed from its open end; modelled threads cut their groove. */
+  private thread(request: Extract<ModelingRequest, { type: 'thread' }>, bodies: LoadedBody[]): ModelingOutcome {
+    const body = bodies.find((b) => b.state.id === request.face.body);
+    if (!body) throw new FeatureError(`The body of ${request.face.name} no longer exists.`);
+    const face = this.element(body, request.face);
+    if (!('normalAt' in face) || face.geomType !== 'CYLINDRE') throw new FeatureError('Threads go on round faces: the wall of a hole or a shaft.');
+    const axis = axisOf(face);
+    if (!axis) throw new FeatureError('Threads go on round faces: the wall of a hole or a shaft.');
+    const place = threadPlacement(face, axis, body.named.shape, request.flip);
+    const length = Math.min(request.length ?? place.length, place.length);
+    const [d, p] = [request.diameter, request.pitch];
+    // A tapped hole is drilled between the thread's minor and major diameter; a shaft is about the major diameter.
+    const [low, high] = place.internal ? [d - 1.2 * p, d + 1e-6] : [d - 0.3 * p, d + 0.1 * p];
+    if (2 * place.radius < low - 1e-6 || 2 * place.radius > high) {
+      const range = `${Math.round(low * 100) / 100} to ${Math.round(high * 100) / 100} mm`;
+      throw new FeatureError(`An ${request.size} thread needs a ${place.internal ? 'hole' : 'shaft'} of ${range}; this one is ${Math.round(2 * place.radius * 100) / 100} mm.`);
+    }
+    const thread = { feature: request.feature, size: request.size, origin: place.origin, direction: place.direction, radius: place.radius, length, pitch: p, diameter: d, internal: place.internal };
+    if (!request.modelled) return { bodies: request.bodies, thread };
+    const shape = body.named.shape.cut(threadGroove(thread));
+    const named = nameShape(shape, namedSurfaces(body.named), () => `f:${request.feature}:flank`, request.feature);
+    const state = { id: body.state.id, key: `${request.key}:${body.state.id}` };
+    return { ...this.store({ bodies: bodies.map((b) => (b === body ? state : b.state)), stored: [[state.key, named]] }), thread };
   }
 
   private treatEdges(feature: string, key: string, bodies: LoadedBody[], refs: readonly TopologyRef[], size: number, kind: 'fillet' | 'chamfer'): ModelingOutcome {
@@ -371,6 +408,17 @@ function valid(shape: Shape3D): boolean {
   } finally {
     analyzer.delete();
   }
+}
+
+/** How far the shapes reach from a point, at most. */
+function reach(shapes: readonly Shape3D[], from: Vec3): number {
+  return Math.max(
+    1,
+    ...shapes.flatMap((s) => {
+      const [low, high] = s.boundingBox.bounds as [Vec3, Vec3];
+      return [0, 1, 2, 3, 4, 5, 6, 7].map((i) => Math.hypot(...sub3([i & 1 ? high[0] : low[0], i & 2 ? high[1] : low[1], i & 4 ? high[2] : low[2]], from)));
+    }),
+  );
 }
 
 function positive(value: number, what: string): number {

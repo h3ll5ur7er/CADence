@@ -170,6 +170,36 @@ export async function rimOf(page: Page, instance: number, side: 'top' | 'bottom'
   );
 }
 
+/**
+ * A screen point where a click really picks a face of the first body whose name matches `pattern`:
+ * the middles of the face's triangles are tried until the viewport's own picking hits that face
+ * (a hole's wall is only partly in view).
+ */
+export async function visiblePointOf(page: Page, pattern: string): Promise<{ x: number; y: number }> {
+  return page.evaluate((pattern) => {
+    // Test-only introspection of Angular's dev-mode debug API and the viewport's three.js scene.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ng = (window as unknown as { ng: { getComponent(e: Element): any } }).ng;
+    const viewport = ng.getComponent(document.querySelector('cad-viewport') as Element);
+    const scene = viewport.scene();
+    const mesh = viewport.bodies()[0];
+    const regex = new RegExp(pattern);
+    const rect = scene.eventTarget.getBoundingClientRect();
+    const Vector = scene.camera.position.constructor;
+    for (const face of mesh.faces.filter((f: { name: string }) => regex.test(f.name))) {
+      for (let t = face.start; t < face.start + face.count; t += 3) {
+        const corner = (k: number) => [0, 1, 2].map((a) => mesh.positions[mesh.indices[t + k] * 3 + a]);
+        const [a, b, c] = [corner(0), corner(1), corner(2)];
+        const v = new Vector((a[0] + b[0] + c[0]) / 3, (a[1] + b[1] + c[1]) / 3, (a[2] + b[2] + c[2]) / 3).project(scene.camera);
+        const point = { x: rect.left + ((v.x + 1) / 2) * rect.width, y: rect.top + ((1 - v.y) / 2) * rect.height };
+        const pick = scene.pickUnder({ clientX: point.x, clientY: point.y });
+        if (pick?.kind === 'face' && regex.test(pick.name)) return point;
+      }
+    }
+    throw new Error(`No visible face matches ${pattern}`);
+  }, pattern);
+}
+
 /** A feature from one of the model toolbar's menus (Create, Pattern, Bodies). */
 export async function fromModelMenu(page: Page, menu: 'Create' | 'Pattern' | 'Bodies', item: string): Promise<void> {
   await page.getByRole('toolbar', { name: 'Model tools' }).getByRole('button', { name: menu, exact: true }).click();

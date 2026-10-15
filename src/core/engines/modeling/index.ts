@@ -3,6 +3,7 @@ import type { ModelingEngine } from './modeling-engine';
 import { OcctModelingEngine } from './occt-modeling-engine';
 
 export type {
+  HoleSpec,
   PathPiece,
   Placement,
   AxisInput,

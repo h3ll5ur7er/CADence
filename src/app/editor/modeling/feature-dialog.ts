@@ -4,13 +4,15 @@ import {
   type BodyOperation,
   type Feature,
   isSketch,
+  isRepeatable,
   isToolFeature,
+  metricThreads,
   type PlaneRef,
 } from '@core/contracts';
 import { Icon } from '../../shared/icon';
 import { bodyNames } from './body-names';
 import { DesignStore } from '../sketch/design-store';
-import { featureLabels, type PickTarget } from './feature-drafts';
+import { featureLabels, holePoints, type PickTarget } from './feature-drafts';
 
 const operations: readonly { value: BodyOperation; label: string }[] = [
   { value: 'new-body', label: 'New body' },
@@ -37,6 +39,8 @@ const hints: Readonly<Record<Feature['type'], string>> = {
   loft: 'Click one profile in each sketch, in order; the loft blends through their outlines.',
   sweep: 'Click the profiles to sweep; the path is the curves of another sketch, starting at the profile.',
   'path-pattern': 'Repeats the selected features along the curves of a sketch, evenly spaced.',
+  hole: 'Holes go at the points of a sketch (drawn with the Point tool), into the material below it.',
+  thread: 'Click the wall of a hole or a shaft. A thread is shown on the face; modelled threads are cut.',
 };
 
 /** Creates or edits one feature. Values are expressions; references are picked in the 3D view. */
@@ -89,6 +93,14 @@ export class FeatureDialog {
   }
 
   protected readonly isToolFeature = isToolFeature;
+  protected readonly threadSizes = Object.keys(metricThreads);
+
+  /** Sketches with points of their own, for holes. */
+  protected readonly holeSketches = computed(() => this.pathSketches().filter((s) => holePoints(this.store.state()?.sketches.get(s.id)?.sketch).length > 0));
+
+  protected setHoleSketch(id: string): void {
+    this.set({ sketch: id, points: holePoints(this.store.state()?.sketches.get(id)?.sketch) });
+  }
 
   /** Construction lines of the chosen sketch, as revolve axes. */
   protected readonly axisLines = computed(() => {
@@ -104,7 +116,7 @@ export class FeatureDialog {
     const timeline = document?.timeline ?? [];
     const at = f ? timeline.findIndex((i) => i.id === f.id) : -1;
     const end = at >= 0 ? at : timeline.length - (document?.rollbackIndex ?? 0);
-    return timeline.slice(0, end).filter(isToolFeature);
+    return timeline.slice(0, end).filter(isRepeatable);
   });
   /** The bodies at this point of the timeline, with their names. */
   protected readonly bodyOptions = computed(() => {

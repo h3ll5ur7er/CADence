@@ -11,8 +11,10 @@ import {
   ok,
   originFrames,
   type PlaneFrame,
+  metricThreads,
   type PlaneRef,
   type Profile,
+  type ThreadMarker,
   generatorOf,
   type Result,
   type Sketch,
@@ -65,6 +67,7 @@ export interface Derived {
   readonly planes: Map<string, PlaneFrame>;
   readonly bodies: readonly BodyState[];
   readonly tools: Map<string, ToolInput>;
+  readonly threads: readonly ThreadMarker[];
   readonly parameters: ParameterView[];
   readonly parameterError?: ParameterError;
 }
@@ -106,7 +109,10 @@ export class Regeneration {
   private readonly items = new Map<string, ItemStatus>();
   private readonly planes = new Map<string, PlaneFrame>();
   private readonly tools = new Map<string, ToolInput>();
+  private readonly threads: ThreadMarker[] = [];
   private bodies: readonly BodyState[] = [];
+  /** The layer left over counterbored holes for printing: the printer's layer height. */
+  private layer = 0.2;
   private scope: ReadonlyMap<string, Quantity> = new Map();
 
   constructor(
@@ -115,6 +121,7 @@ export class Regeneration {
   ) {}
 
   async run(document: ComponentDocument): Promise<Derived> {
+    if (document.process?.kind === 'print') this.layer = document.process.layerHeight;
     const evaluated = this.engines.parameters.evaluateAll(document.parameters);
     if (evaluated.ok) this.scope = evaluated.value;
     const parameters = document.parameters.map((parameter): ParameterView => {
@@ -140,6 +147,7 @@ export class Regeneration {
       planes: this.planes,
       bodies: this.bodies,
       tools: this.tools,
+      threads: this.threads,
       parameters,
       ...(evaluated.ok ? {} : { parameterError: evaluated.error }),
     };
@@ -321,6 +329,8 @@ export class Regeneration {
     if (outcome.toolKey && isToolFeature(feature)) {
       this.tools.set(feature.id, { feature: feature.id, toolKey: outcome.toolKey, operation: feature.operation });
     }
+    if (outcome.toolKey && feature.type === 'hole') this.tools.set(feature.id, { feature: feature.id, toolKey: outcome.toolKey, operation: 'cut' });
+    if (outcome.thread) this.threads.push(outcome.thread);
     return ok(undefined);
   }
 
@@ -405,6 +415,52 @@ export class Regeneration {
         const path = this.path(feature.path);
         if (!path.ok) return path;
         return withKey({ ...base, type: 'path-pattern', tools: tools as ToolInput[], placements: placementsAlong(path.value.flat, path.value.frame, count.value, feature.align) });
+      }
+      case 'hole': {
+        const view = this.sketches.get(feature.sketch);
+        if (!view || view.error) return fail({ code: 'missing-input', message: 'Its sketch is missing, later in the timeline or does not solve.' });
+        const points = feature.points.map((id) => {
+          const p = view.sketch.entities.find((e) => e.id === id);
+          return p?.kind === 'point' ? { id, at: [p.x, p.y] as Vec2 } : undefined;
+        });
+        if (points.some((p) => !p)) return fail({ code: 'missing-input', message: 'Some of its points no longer exist. Edit the hole and pick its sketch again.' });
+        const size = (expression: string, what: string) => this.value(expression, 'length', what);
+        const diameter = size(feature.diameter, 'Diameter');
+        if (!diameter.ok) return diameter;
+        let depth: number | undefined;
+        if (feature.extent === 'blind') {
+          const value = size(feature.depth, 'Depth');
+          if (!value.ok) return value;
+          depth = value.value;
+        }
+        let bore: { diameter: number; depth: number } | undefined;
+        let sink: { diameter: number; angle: number } | undefined;
+        if (feature.kind === 'counterbore') {
+          const [d, h] = [size(feature.boreDiameter, 'Counterbore diameter'), size(feature.boreDepth, 'Counterbore depth')];
+          if (!d.ok) return d;
+          if (!h.ok) return h;
+          bore = { diameter: d.value, depth: h.value };
+        }
+        if (feature.kind === 'countersink') {
+          const [d, a] = [size(feature.sinkDiameter, 'Countersink diameter'), this.value(feature.sinkAngle, 'angle', 'Countersink angle')];
+          if (!d.ok) return d;
+          if (!a.ok) return a;
+          sink = { diameter: d.value, angle: a.value };
+        }
+        const spec = { diameter: diameter.value, ...(depth === undefined ? {} : { depth }), ...(bore ? { bore } : {}), ...(sink ? { sink } : {}), teardrop: feature.teardrop, bridge: feature.bridge && bore ? this.layer : 0 };
+        return withKey({ ...base, type: 'hole', frame: view.frame, points: points as { id: string; at: Vec2 }[], spec });
+      }
+      case 'thread': {
+        if (!feature.face.name) return fail({ code: 'missing-input', message: 'Click the wall of a hole or a shaft.' });
+        const thread = metricThreads[feature.size];
+        if (!thread) return fail({ code: 'invalid-input', message: `${feature.size} is not an ISO metric thread size.` });
+        let length: number | undefined;
+        if (feature.length.trim()) {
+          const value = this.value(feature.length, 'length', 'Length');
+          if (!value.ok) return value;
+          length = value.value;
+        }
+        return withKey({ ...base, type: 'thread', face: feature.face, size: feature.size, ...thread, ...(length === undefined ? {} : { length }), modelled: feature.modelled, flip: feature.flip });
       }
       case 'combine':
         return withKey({ ...base, type: 'combine', target: feature.target, tools: feature.tools, operation: feature.operation, keepTools: feature.keepTools });

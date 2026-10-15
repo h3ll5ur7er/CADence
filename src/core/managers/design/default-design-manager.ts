@@ -94,6 +94,7 @@ class Session implements DesignSession {
       items: derived.items,
       planes: derived.planes,
       bodies: meshes,
+      threads: derived.threads,
       parameters: derived.parameters,
       canUndo: this.undoStack.length > 0,
       canRedo: this.redoStack.length > 0,

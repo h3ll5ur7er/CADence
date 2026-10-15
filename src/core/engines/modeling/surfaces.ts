@@ -9,10 +9,9 @@ import { cross3, dot3, length3, normalize3, sub3 } from './geometry';
 export type Surface =
   | { readonly type: 'plane'; readonly normal: Vec3; readonly offset: number }
   | { readonly type: 'cylinder'; readonly axis: Line; readonly radius: number }
-  | { readonly type: 'cone'; readonly axis: Line; readonly apex: Vec3; readonly angle: number }
   | { readonly type: 'sphere'; readonly center: Vec3; readonly radius: number }
   /**
-   * Any other surface (B-splines, tori, …): its centre and area, and probe points on the untrimmed
+   * Any other surface (B-splines; cones and tori, whose parameters this kernel build cannot read): its centre and area, and probe points on the untrimmed
    * surface, which tell whether a later face lies on the same surface however it was trimmed.
    */
   | { readonly type: 'other'; readonly center: Vec3; readonly area: number; readonly probes: readonly Vec3[] };
@@ -39,8 +38,6 @@ export function sameSurface(a: Surface, b: Surface): boolean {
       return b.type === 'plane' && samePoint(a.normal, b.normal) && near(a.offset, b.offset);
     case 'cylinder':
       return b.type === 'cylinder' && near(a.radius, b.radius) && sameLine(a.axis, b.axis);
-    case 'cone':
-      return b.type === 'cone' && samePoint(a.apex, b.apex) && near(a.angle, b.angle) && sameLine(a.axis, b.axis);
     case 'sphere':
       return b.type === 'sphere' && samePoint(a.center, b.center) && near(a.radius, b.radius);
     case 'other':
@@ -104,10 +101,6 @@ export function surfaceOf(face: Face): Surface {
       case 'CYLINDRE': {
         const c = adaptor.Cylinder();
         return { type: 'cylinder', axis: lineOf(c.Axis()), radius: c.Radius() };
-      }
-      case 'CONE': {
-        const c = adaptor.Cone() as { SemiAngle(): number; Apex(): Xyz; Axis(): Axis };
-        return { type: 'cone', axis: lineOf(c.Axis()), apex: tuple(c.Apex()), angle: Math.abs(c.SemiAngle()) };
       }
       case 'SPHERE': {
         const c = adaptor.Sphere();

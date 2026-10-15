@@ -11,6 +11,7 @@
     [selection]="store.picks()"
     [flagged]="store.flagged()"
     [measureLine]="measureLine()"
+    [threads]="store.state()?.threads ?? []"
     (picked)="store.pick($event)"
     (backendReady)="status.renderer.set($event)"
   >

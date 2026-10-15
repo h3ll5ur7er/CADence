@@ -1,6 +1,6 @@
 import { createShapeAccess, type NamedShape } from '@core/access/shape';
 import { measureVolume } from 'replicad';
-import { originFrames, type TopologyRef } from '@core/contracts';
+import { originFrames, type PlaneFrame, type TopologyRef } from '@core/contracts';
 import { curveArea, curveAt } from '@core/utilities/math';
 import { circleLoop, profile, rectangleLoop } from '@core/contracts/testing/profiles';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -358,6 +358,61 @@ describe('component results and joint frames', () => {
       expect(faces).toContain('f:tube:start');
       expect(faces).toContain('f:tube:end');
       expect(faces.filter((f) => f.includes(':new:'))).toEqual([]);
+    });
+  });
+
+  describe('holes and threads', () => {
+    const onTop: PlaneFrame = { ...XY, origin: [0, 0, 5] };
+    const spec = { diameter: 5, teardrop: false, bridge: 0 };
+    const hole = (bodies: readonly BodyState[], key: string, points: { id: string; at: readonly [number, number] }[], holeSpec: object, frame = onTop) =>
+      engine.apply({ type: 'hole', feature: 'h', key, bodies, frame, points, spec: { ...spec, ...holeSpec } });
+    const plain = 80 * 40 * 5;
+
+    it('drills holes through, to a depth, counterbored and countersunk, naming their faces by point', async () => {
+      const bodies = ok(await plate());
+      const through = ok(await hole(bodies, 'h-through', [{ id: 'p1', at: [10, 10] }, { id: 'p2', at: [30, 10] }], {}));
+      expect(await volume(through)).toBeCloseTo(plain - 2 * Math.PI * 6.25 * 5, 2);
+      expect((await names(through)).faces).toEqual(expect.arrayContaining(['f:h:wall:p1', 'f:h:wall:p2']));
+      const blind = ok(await hole(bodies, 'h-blind', [{ id: 'p1', at: [10, 10] }], { depth: 3 }));
+      expect(await volume(blind)).toBeCloseTo(plain - Math.PI * 6.25 * 3, 2);
+      expect((await names(blind)).faces).toContain('f:h:floor:p1');
+      const bored = ok(await hole(bodies, 'h-bore', [{ id: 'p1', at: [10, 10] }], { diameter: 4, bore: { diameter: 8, depth: 2 } }));
+      expect(await volume(bored)).toBeCloseTo(plain - Math.PI * 16 * 2 - Math.PI * 4 * 3, 2);
+      expect((await names(bored)).faces).toEqual(expect.arrayContaining(['f:h:bore:p1', 'f:h:wall:p1']));
+      // A layer left at the bottom of the counterbore, over the hole.
+      const bridged = ok(await hole(bodies, 'h-bridge', [{ id: 'p1', at: [10, 10] }], { diameter: 4, bore: { diameter: 8, depth: 2 }, bridge: 0.2 }));
+      expect(await volume(bridged)).toBeCloseTo(plain - Math.PI * 16 * 2 - Math.PI * 4 * 2.8, 2);
+      const sunk = ok(await hole(bodies, 'h-sink', [{ id: 'p1', at: [10, 10] }], { diameter: 4, sink: { diameter: 8, angle: Math.PI / 2 } }));
+      const cone = (Math.PI * 2 * (16 + 8 + 4)) / 3; // 2 mm deep from radius 4 to 2
+      expect(await volume(sunk)).toBeCloseTo(plain - cone - Math.PI * 4 * 3, 2);
+      expect((await names(sunk)).faces).toContain('f:h:sink:p1');
+    });
+
+    it('drills teardrop holes on their side, pointing up', async () => {
+      const bodies = ok(await plate());
+      const front = { origin: [0, 0, 0] as const, u: [1, 0, 0] as const, v: [0, 0, 1] as const }; // facing -Y: into the plate is +Y
+      const round = ok(await hole(bodies, 'h-side', [{ id: 'p1', at: [40, 2.5] }], { diameter: 3, depth: 20 }, front));
+      const drop = ok(await hole(bodies, 'h-drop', [{ id: 'p1', at: [40, 2.5] }], { diameter: 3, depth: 20, teardrop: true }, front));
+      const circle = Math.PI * 2.25 * 20;
+      expect(plain - (await volume(round))).toBeCloseTo(circle, 2);
+      expect(plain - (await volume(drop))).toBeCloseTo(circle + (1.5 * 1.5 * (1 - Math.PI / 4)) * 20, 1);
+      const top = (shapes.get(drop[0]?.key as string) as NamedShape).shape;
+      expect(top.faces.length).toBeGreaterThan(6);
+    });
+
+    it('places threads from the open end of a hole, and models them on request', async () => {
+      const bodies = ok(await hole(ok(await plate()), 'h-tap', [{ id: 'p1', at: [10, 10] }], {}));
+      const face = { kind: 'face' as const, body: 'plate', name: 'f:h:wall:p1' };
+      const marker = await engine.apply({ type: 'thread', feature: 't', key: 't-marker', bodies, face, size: 'M6', diameter: 6, pitch: 1, modelled: false, flip: false });
+      expect(marker.error ?? '').toBe('');
+      expect(marker.bodies).toEqual(bodies);
+      expect(marker.thread).toMatchObject({ internal: true, radius: expect.closeTo(2.5, 6), length: expect.closeTo(5, 6), origin: [expect.closeTo(10, 6), expect.closeTo(10, 6), expect.closeTo(5, 6)], direction: [expect.closeTo(0, 9), expect.closeTo(0, 9), -1] });
+      const wrong = await engine.apply({ type: 'thread', feature: 't', key: 't-wrong', bodies, face, size: 'M3', diameter: 3, pitch: 0.5, modelled: false, flip: false });
+      expect(wrong.error).toContain('An M3 thread needs a hole of');
+      const modelled = ok(await engine.apply({ type: 'thread', feature: 't', key: 't-model', bodies, face, size: 'M6', diameter: 6, pitch: 1, length: 3, modelled: true, flip: false }));
+      const removed = (await volume(bodies)) - (await volume(modelled));
+      expect(removed).toBeGreaterThan(5);
+      expect(removed).toBeLessThan(Math.PI * (9 - 6.25) * 3);
     });
   });
 });

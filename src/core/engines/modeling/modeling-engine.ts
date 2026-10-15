@@ -1,4 +1,7 @@
-import type { BodyMesh, BodyOperation, BodyState, PlaneFrame, Profile, Result, TopologyRef, Vec2, Vec3 } from '@core/contracts';
+import type { BodyMesh, BodyOperation, BodyState, PlaneFrame, Profile, Result, ThreadMarker, TopologyRef, Vec2, Vec3 } from '@core/contracts';
+import type { HoleSpec } from './holes';
+
+export type { HoleSpec };
 
 export type { BodyState };
 
@@ -68,6 +71,23 @@ export type ModelingRequest = RequestBase &
         readonly angle: number;
       }
     | { readonly type: 'mirror'; readonly tools: readonly ToolInput[]; readonly plane: PlaneFrame }
+    | {
+        readonly type: 'hole';
+        readonly frame: PlaneFrame;
+        readonly points: readonly { readonly id: string; readonly at: Vec2 }[];
+        readonly spec: HoleSpec;
+      }
+    | {
+        readonly type: 'thread';
+        readonly face: TopologyRef;
+        readonly size: string;
+        readonly diameter: number;
+        readonly pitch: number;
+        /** Absent: the whole face. */
+        readonly length?: number;
+        readonly modelled: boolean;
+        readonly flip: boolean;
+      }
     | { readonly type: 'path-pattern'; readonly tools: readonly ToolInput[]; readonly placements: readonly Placement[] }
     | {
         readonly type: 'loft';
@@ -111,6 +131,8 @@ export interface ModelingOutcome {
   readonly toolKey?: string;
   /** Why the feature failed; the bodies are then unchanged. */
   readonly error?: string;
+  /** Where a thread feature put its thread. */
+  readonly thread?: ThreadMarker;
 }
 
 /**

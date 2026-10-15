@@ -280,6 +280,87 @@
         </label>
         <label class="check"><input type="checkbox" id="feature-align" [checked]="f.align" (change)="set({ align: $any($event.target).checked })" /> Turn the copies with the path</label>
       }
+      @case ('hole') {
+        <label class="field">
+          Sketch with the hole points
+          <select id="feature-sketch" (change)="setHoleSketch(value($event))">
+            @for (s of holeSketches(); track s.id) {
+              <option [value]="s.id" [selected]="s.id === f.sketch">{{ s.name }}</option>
+            } @empty {
+              <option value="" selected>Sketch points with the Point tool first</option>
+            }
+          </select>
+        </label>
+        <p class="count" data-testid="point-count">{{ f.points.length }} hole{{ f.points.length === 1 ? '' : 's' }}</p>
+        <label class="field">
+          Kind
+          <select id="feature-hole-kind" [value]="f.kind" (change)="set({ kind: $any(value($event)) })">
+            <option value="simple">Simple</option>
+            <option value="counterbore">Counterbored</option>
+            <option value="countersink">Countersunk</option>
+          </select>
+        </label>
+        <label class="field">
+          Diameter
+          <input id="feature-diameter" autocomplete="off" [value]="f.diameter" (change)="set({ diameter: value($event) })" />
+        </label>
+        <label class="field">
+          Depth
+          <select id="feature-extent" [value]="f.extent" (change)="set({ extent: $any(value($event)) })">
+            <option value="through">Through all</option>
+            <option value="blind">To a depth</option>
+          </select>
+        </label>
+        @if (f.extent === 'blind') {
+          <label class="field">
+            Depth
+            <input id="feature-depth" autocomplete="off" [value]="f.depth" (change)="set({ depth: value($event) })" />
+          </label>
+        }
+        @if (f.kind === 'counterbore') {
+          <div class="row two">
+            <label class="field">
+              Counterbore ⌀
+              <input id="feature-bore-diameter" autocomplete="off" [value]="f.boreDiameter" (change)="set({ boreDiameter: value($event) })" />
+            </label>
+            <label class="field">
+              Counterbore depth
+              <input id="feature-bore-depth" autocomplete="off" [value]="f.boreDepth" (change)="set({ boreDepth: value($event) })" />
+            </label>
+          </div>
+          <label class="check"><input type="checkbox" id="feature-bridge" [checked]="f.bridge" (change)="set({ bridge: $any($event.target).checked })" /> Bridge layer for printing (drill out after)</label>
+        }
+        @if (f.kind === 'countersink') {
+          <div class="row two">
+            <label class="field">
+              Countersink ⌀
+              <input id="feature-sink-diameter" autocomplete="off" [value]="f.sinkDiameter" (change)="set({ sinkDiameter: value($event) })" />
+            </label>
+            <label class="field">
+              Angle
+              <input id="feature-sink-angle" autocomplete="off" [value]="f.sinkAngle" (change)="set({ sinkAngle: value($event) })" />
+            </label>
+          </div>
+        }
+        <label class="check"><input type="checkbox" id="feature-teardrop" [checked]="f.teardrop" (change)="set({ teardrop: $any($event.target).checked })" /> Teardrop when lying on its side (prints without support)</label>
+      }
+      @case ('thread') {
+        <p class="count" data-testid="face-selection">{{ f.face.name ? '1 round face' : 'No face' }} selected</p>
+        <label class="field">
+          Size
+          <select id="feature-thread-size" (change)="set({ size: value($event) })">
+            @for (size of threadSizes; track size) {
+              <option [value]="size" [selected]="size === f.size">{{ size }}</option>
+            }
+          </select>
+        </label>
+        <label class="field">
+          Length (empty: the whole face)
+          <input id="feature-length" autocomplete="off" [value]="f.length" (change)="set({ length: value($event) })" />
+        </label>
+        <label class="check"><input type="checkbox" id="feature-modelled" [checked]="f.modelled" (change)="set({ modelled: $any($event.target).checked })" /> Model the thread (cut its groove)</label>
+        <label class="check"><input type="checkbox" id="feature-flip" [checked]="f.flip" (change)="set({ flip: $any($event.target).checked })" /> Start at the other end</label>
+      }
       @case ('combine') {
         <label class="field">
           Target

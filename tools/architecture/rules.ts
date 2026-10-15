@@ -49,6 +49,8 @@ const componentLayers: Readonly<Record<string, Layer>> = {
 
 export function classify(path: string): Element | null {
   if (path.startsWith('src/app/platform/')) return { layer: 'platform', component: 'platform' };
+  // Scripts, the command line and the MCP server: clients of the core that run in Node.
+  if (path.startsWith('src/automation/')) return { layer: 'client', component: 'automation' };
   if (path.startsWith('src/app/')) return { layer: 'client', component: 'app' };
   if (path.startsWith('src/workers/')) return { layer: 'worker', component: 'workers' };
   const core = /^src\/core\/([^/]+)\/(?:([^/]+)\/)?/.exec(path);
@@ -72,6 +74,14 @@ function entryPointOf(path: string, element: Element): string {
 
 const isTestFile = (path: string) => path.endsWith('.spec.ts') || path.includes('/testing/');
 
+/** Code that only ever runs in Node: tests, the automation client and Node entry points themselves. */
+const isNodeOnly = (path: string) => isTestFile(path) || path.startsWith('src/automation/') || path.endsWith('/node.ts');
+
+/** A component's `node.ts` is its Node-only entry point (adapters over `node:fs` and the like), open to Node-only code. */
+function isNodeEntry(from: string, to: string, target: Element): boolean {
+  return isNodeOnly(from) && to === entryPointOf(to, target).replace(/index\.ts$/, 'node.ts');
+}
+
 /** A component's `testing/` folder is a second entry point, open to tests only. */
 function isTestSupport(from: string, to: string, target: Element): boolean {
   const entry = entryPointOf(to, target).replace(/index\.ts$/, 'testing/');
@@ -90,7 +100,7 @@ export function checkImport(from: string, to: string): string | null {
     return `${from}: ${source.layer} '${source.component}' must not call ${target.layer} '${target.component}' (${to})`;
   }
   const isCoreTarget = coreLayers.includes(target.layer) || target.layer === 'composition';
-  if (isCoreTarget && to !== entryPointOf(to, target) && !isTestSupport(from, to, target)) {
+  if (isCoreTarget && to !== entryPointOf(to, target) && !isTestSupport(from, to, target) && !isNodeEntry(from, to, target)) {
     return `${from}: import ${target.layer} '${target.component}' through its index.ts, not ${to}`;
   }
   return null;

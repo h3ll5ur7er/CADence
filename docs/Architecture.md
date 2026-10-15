@@ -15,6 +15,7 @@ flowchart TB
     IV[Imported viewer]
     VP[Viewport<br/>three.js WebGPU]
     DS[Desktop shell<br/>Tauri]
+    AU[Automation<br/>scripts, CLI, MCP]
   end
 
   subgraph Managers
@@ -109,7 +110,7 @@ These rules are enforced by the **architecture test** ([[tools/architecture/rule
 | Client → Platform adapter | ✅ only to choose the host in `app.config.ts` |
 | Main thread (clients, managers, composition) → kernel-bound engines (Modeling, Interchange, Analysis), Shape Access, replicad | types only; their code loads in the geometry worker ([[Architecture/Decisions#ADR-22]]) |
 
-Each component exposes an **interface plus a factory** from its `index.ts`. The implementation stays private, and the architecture test rejects imports of another component's internals. A component's `testing/` folder (contract suites, test doubles) is a second entry point that only tests may use. Wiring happens in exactly one **composition root per host** (browser or desktop), and Angular DI provides the managers to the clients through injection tokens.
+Each component exposes an **interface plus a factory** from its `index.ts`. The implementation stays private, and the architecture test rejects imports of another component's internals. A component's `testing/` folder (contract suites, test doubles) is a second entry point that only tests may use, and its `node.ts` (adapters over `node:fs` and the like) is a third that only Node code may use: tests, the automation client and other `node.ts` files, so browser bundles never see Node modules. Wiring happens in exactly one **composition root per host** (browser, desktop or Node), and Angular DI provides the managers to the Angular clients through injection tokens.
 
 ## Deployment and threads
 
@@ -162,8 +163,9 @@ src/
     engines/              sketch/  parameter/  modeling/  kinematics/  analysis/  interchange/
     access/               project/  document/  asset/  shape/  external-file/
     utilities/            messaging/  diagnostics/  math/  identity/
-    composition/          composition roots: createBrowserCore, createDesktopCore, createInMemoryCore
+    composition/          composition roots: createBrowserCore, createDesktopCore, createInMemoryCore; node.ts: createNodeCore
   workers/                geometry.worker.ts (hosts the kernel-bound engines)
+  automation/             Client in Node: scripting API, command line, MCP server (built by tools/automation/build.mjs)
 src-tauri/                Desktop shell (Rust)
 e2e/                      Playwright specs and evidence screenshots
 tools/architecture/       The architecture test (call rules over the import graph)

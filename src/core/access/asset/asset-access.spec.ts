@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { NodeFileSystem } from '@core/utilities/file-system/testing/node-file-system';
+import { NodeFileSystem } from '@core/utilities/file-system/node';
 import { afterAll } from 'vitest';
 import { FileSystemAssetAccess } from './file-system';
 import { IDBFactory } from 'fake-indexeddb';

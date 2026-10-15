@@ -9,6 +9,6 @@ export default defineConfig({
   test: {
     name: 'core',
     environment: 'node',
-    include: ['src/core/**/*.spec.ts', 'tools/**/*.spec.ts'],
+    include: ['src/core/**/*.spec.ts', 'src/automation/**/*.spec.ts', 'tools/**/*.spec.ts'],
   },
 });

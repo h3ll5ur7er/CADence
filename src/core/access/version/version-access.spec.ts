@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { asProjectId } from '@core/contracts';
 import { IndexedDbFileSystem, MemoryFileSystem } from '@core/utilities/file-system';
-import { NodeFileSystem } from '@core/utilities/file-system/testing/node-file-system';
+import { NodeFileSystem } from '@core/utilities/file-system/node';
 import { IDBFactory } from 'fake-indexeddb';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { GitVersionAccess } from './git-version-access';

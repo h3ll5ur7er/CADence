@@ -11,7 +11,7 @@ The work is planned in phases. Each phase ends with a running demo and visible e
 | 4. Analysis ✅ | Measure, mass properties, printability and laser-cut validation, kerf-compensated export | [[CAD-20]] [[CAD-21]] |
 | 5. Assemblies ✅ | Instances, joints, kinematics, motion studies, interference, assembly export | [[CAD-22]] [[CAD-23]] [[CAD-24]] [[CAD-25]] |
 | 6. Import ✅ | STEP/STL/OBJ/3MF import and the imported viewer with conversion; imported bodies in components and assemblies; DXF/SVG into sketches | [[CAD-26]] [[CAD-27]] |
-| 7. Delivery | `master` holds every phase; CI on GitHub; the web app on GitHub Pages, offline and installable; browser journeys for every feature | [[CAD-31]] [[CAD-32]] [[CAD-33]] |
+| 7. Delivery ✅ | `master` holds every phase; CI on GitHub; the web app on GitHub Pages, offline and installable; browser journeys for every feature | [[CAD-31]] [[CAD-32]] [[CAD-33]] |
 | 8. Viewport | Zoom to fit, orthographic and section views; show, hide and colour bodies; vertex picks; shortcuts and control schemes | [[CAD-34]] [[CAD-35]] [[CAD-36]] |
 | 9. Sketcher tools | Slot, polygon, ellipse, spline and more; trim, extend, offset, fillet; more relations and snapping; box selection, copy and paste; projected edges, sketch patterns | [[CAD-37]] [[CAD-38]] [[CAD-39]] [[CAD-40]] [[CAD-29]] |
 | 10. Text and drawings | Text in sketches, on faces and in imported drawings; imported drawings as one piece, with arcs, blocks, hatches and constraints | [[CAD-41]] [[CAD-42]] |

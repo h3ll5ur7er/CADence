@@ -1,6 +1,6 @@
 # Open points
 
-Everything phases 0–6 left out, deferred on purpose, or only half covered, collected from the tasks, the decisions and the phase reports. **Check the box of every point you want implemented**, and add your own at the end of a section or under [Your additions](#your-additions). Checked points become tasks in the next phases; the arrow after a checked point names its task ([[Roadmap]]).
+Everything phases 0–6 left out, deferred on purpose, or only half covered, collected from the tasks, the decisions and the phase reports. **Check the box of every point you want implemented**, and add your own at the end of a section or under [Your additions](#your-additions). Checked points become tasks in the next phases; the arrow after a checked point names its task ([[Roadmap]]), and ✅ marks the points that are done.
 
 Each point says where it comes from: a task, a decision ([[Architecture/Decisions]]), or a phase report. Points marked *(new)* were never discussed but follow naturally from what exists.
 
@@ -9,13 +9,13 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 ## Obligations and housekeeping
 
 - [ ] **About dialog with licence credits.** ADR-2 promises to credit OpenCascade (LGPL-2.1) and planegcs (LGPL) in an About dialog; no such dialog exists yet. *(ADR-2, ADR-3; an obligation before any release)*
-- [X] **Merge the phase branches into `master`.** Every phase lives on its own branch (`feature/phase-1-foundation` … `feature/phase-6-import`), each built on the previous one; nothing is merged or pushed yet. *(git process)* → [[CAD-31]]
-- [X] **Continuous integration.** `npm run verify` and the Playwright journeys run only locally; there is no CI pipeline. *(new)* → [[CAD-31]]
-- [X] **deployment using github pages** → [[CAD-32]]
+- [X] **Merge the phase branches into `master`.** Every phase lives on its own branch (`feature/phase-1-foundation` … `feature/phase-6-import`), each built on the previous one; nothing is merged or pushed yet. *(git process)* → [[CAD-31]] ✅
+- [X] **Continuous integration.** `npm run verify` and the Playwright journeys run only locally; there is no CI pipeline. *(new)* → [[CAD-31]] ✅
+- [X] **deployment using github pages** → [[CAD-32]] ✅
 - [ ] **Desktop smoke tests in the repository.** The desktop checks (WebView2 remote debugging, window capture) are scripts outside the repository and run by hand. *(phases 1–6)*
 - [ ] **Desktop installers.** Only the bare executable was built and tested (`tauri build --no-bundle`); the MSI/NSIS installers, code signing and auto-update are untried. *(phase 1)*
 - [ ] **Native save dialog under test.** Exports on desktop go through the Tauri save dialog, which no automated test drives. *(phase 3)*
-- [X] **End-to-end coverage of all features.** Revolve, shell, chamfer, construction planes, circular pattern and mirror are tested in the engine but not clicked through in a browser test. *(phase 3)* → [[CAD-33]]
+- [X] **End-to-end coverage of all features.** Revolve, shell, chamfer, construction planes, circular pattern and mirror are tested in the engine but not clicked through in a browser test. *(phase 3)* → [[CAD-33]] ✅
 - [ ] **Other browsers.** Browser tests run in Chromium only; Firefox and Safari (WebGL 2 fallback, file APIs) are untested. *(new)*
 
 ## Projects and documents
@@ -115,7 +115,7 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 
 ## Platform and performance
 
-- [X] **Offline use and caching** of the 23 MB kernel through a service worker (installable web app). *(ADR-2 mentions the service worker; not built)* → [[CAD-32]]
+- [X] **Offline use and caching** of the 23 MB kernel through a service worker (installable web app). *(ADR-2 mentions the service worker; not built)* → [[CAD-32]] ✅
 - [ ] **Performance on large models and assemblies:** measure and optimise (meshing in the worker, level of detail). *(new)*
 - [ ] **Rust/WASM where profiling shows a need.** So far it never did (ADR-18). *(ADR-8)*
 - [X] **Scripting API or command line** for automation. *(Volatility analysis, client and host)* → [[CAD-55]]

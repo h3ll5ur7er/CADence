@@ -5,6 +5,7 @@ const port = 4300;
 /** End-to-end tests against the dev build. Screenshots for phase evidence land in e2e/evidence/. */
 export default defineConfig({
   testDir: 'e2e',
+  testIgnore: 'pages/**', // against the production build: playwright.pages.config.ts
   fullyParallel: false,
   reporter: [['list'], ['html', { open: 'never' }]],
   use: {
@@ -16,7 +17,7 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 }, launchOptions: { args: ['--enable-unsafe-webgpu'] } },
+      use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 }, launchOptions: { args: ['--enable-unsafe-webgpu', '--enable-unsafe-swiftshader'] } },
     },
   ],
   webServer: {

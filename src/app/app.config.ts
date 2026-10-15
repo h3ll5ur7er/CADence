@@ -1,5 +1,6 @@
-import { type ApplicationConfig, provideBrowserGlobalErrorListeners } from '@angular/core';
+import { type ApplicationConfig, isDevMode, provideBrowserGlobalErrorListeners } from '@angular/core';
 import { provideRouter, withComponentInputBinding } from '@angular/router';
+import { provideServiceWorker } from '@angular/service-worker';
 import { createBrowserCore, createDesktopCore } from '@core/composition';
 import { isTauri } from '@tauri-apps/api/core';
 import { routes } from './app.routes';
@@ -17,7 +18,8 @@ const options = {
 };
 
 /** The host decides where projects live and how exports are saved. */
-const core = isTauri()
+const desktop = isTauri();
+const core = desktop
   ? createDesktopCore(new TauriFileSystem(), new TauriFileDelivery(), options)
   : createBrowserCore(options);
 
@@ -26,5 +28,7 @@ export const appConfig: ApplicationConfig = {
     provideBrowserGlobalErrorListeners(),
     provideRouter(routes, withComponentInputBinding()),
     provideCore(core),
+    // The web app works offline from its cache (ngsw-config.json); the desktop app is installed and needs none.
+    provideServiceWorker('ngsw-worker.js', { enabled: !isDevMode() && !desktop, registrationStrategy: 'registerWhenStable:5000' }),
   ],
 };

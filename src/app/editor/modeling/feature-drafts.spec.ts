@@ -1,4 +1,4 @@
-import type { EdgeTreatmentFeature, ExtrudeFeature } from '@core/contracts';
+import type { EdgeTreatmentFeature, ExtrudeFeature, ProfileLoop } from '@core/contracts';
 import { circleLoop, profile, rectangleLoop } from '@core/contracts/testing/profiles';
 import { applyPick, type FeatureDraft, pickableFor, selectionOf, solidProfiles } from './feature-drafts';
 
@@ -15,6 +15,15 @@ describe('feature drafts', () => {
     const plug = profile(circleLoop(10, 10, 3, 'hole'), [], 'plug');
     const tab = profile(rectangleLoop(50, 0, 10, 10, 't'), [], 'tab');
     expect(solidProfiles([plate, plug, tab])).toEqual(['plate', 'tab']);
+  });
+
+  it('tells the letters of one text apart from their counters', () => {
+    // An O with its counter and an I beside it, all outlines of the same text.
+    const text = (loop: ProfileLoop): ProfileLoop => ({ ...loop, edges: loop.edges.map((e) => ({ ...e, source: 't' })) });
+    const o = profile(text(rectangleLoop(0, 0, 10, 10)), [text(rectangleLoop(3, 3, 4, 4))], 'o');
+    const counter = profile(text(rectangleLoop(3, 3, 4, 4)), [], 'counter');
+    const i = profile(text(rectangleLoop(12, 0, 2, 10)), [], 'i');
+    expect(solidProfiles([o, counter, i])).toEqual(['o', 'i']);
   });
 
   it('toggles profiles of one sketch and switches sketches', () => {

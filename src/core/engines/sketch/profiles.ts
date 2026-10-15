@@ -1,4 +1,4 @@
-import { type Profile, type ProfileEdge, type ProfileLoop, type Sketch, sketchOriginId } from '@core/contracts';
+import { type Profile, type ProfileEdge, type ProfileLoop, type Sketch, sketchOriginId, type TextOutlines } from '@core/contracts';
 import { contentHash } from '@core/utilities/identity';
 import {
   angleOf,
@@ -69,13 +69,20 @@ function speedOf(s: Segment): number {
   return length / Math.abs(s.t1 - s.t0);
 }
 
-function segmentsOf(sketch: Sketch): Segment[] {
+function segmentsOf(sketch: Sketch, texts: TextOutlines): Segment[] {
   const points = new Map<string, Vec2>([[sketchOriginId, [0, 0]]]);
   for (const e of sketch.entities) if (e.kind === 'point') points.set(e.id, [e.x, e.y]);
   const at = (id: string): Vec2 => points.get(id) ?? [0, 0];
   const segments: Segment[] = [];
   for (const e of sketch.entities) {
-    if (e.kind === 'point' || e.kind === 'projection' || e.construction) continue;
+    if (e.kind === 'point' || e.kind === 'projection' || e.kind === 'drawing' || e.construction) continue;
+    if (e.kind === 'text') {
+      for (const edge of (texts.get(e.id) ?? []).flat()) {
+        if (edge.kind === 'line') segments.push({ kind: 'line', a: edge.start, b: edge.end, source: e.id });
+        else if (edge.kind === 'bezier') segments.push({ kind: 'curve', curve: { kind: 'bezier', points: [edge.start, edge.c1, edge.c2, edge.end] }, t0: 0, t1: 1, source: e.id });
+      }
+      continue;
+    }
     if (e.kind === 'line') {
       segments.push({ kind: 'line', a: at(e.start), b: at(e.end), source: e.id });
     } else if (e.kind === 'circle') {
@@ -359,8 +366,8 @@ function components(edges: Edge[]): (vertex: number) => number {
   return find;
 }
 
-export function findProfiles(sketch: Sketch): Profile[] {
-  const { vertices, edges } = graph(split(segmentsOf(sketch)));
+export function findProfiles(sketch: Sketch, texts: TextOutlines = new Map()): Profile[] {
+  const { vertices, edges } = graph(split(segmentsOf(sketch, texts)));
   if (edges.length === 0) return [];
   const componentOf = components(edges);
   const traced = faces(edges).map((loop) => ({

@@ -18,13 +18,13 @@ import {
   type TopologyRef,
   type ValidationReport,
 } from '@core/contracts';
-import type { DesignCommand, DesignSession, DesignState, DrawingFormat, SketchView, SolidFormat } from '@core/managers/design';
+import type { DesignCommand, DesignSession, DesignState, DrawingFormat, InsertDrawingOptions, SketchView, SolidFormat } from '@core/managers/design';
 import { newId } from '@core/utilities/identity';
 import { DESIGN_MANAGER, PROJECT_MANAGER } from '../../core.providers';
 import type { Pick, PickKind, TopologyPick } from '../../viewport/picking';
 import { applyPick, defaultFeature, type FeatureDraft, type PickTarget, pickableFor, selectionOf } from '../modeling/feature-drafts';
 import type { SketchClipboard } from './selection';
-import type { Tool } from './sketch-tools';
+import type { TextDraft, Tool } from './sketch-tools';
 
 /** What the properties column shows besides feature dialogs and sketch info. */
 export type SidePanel = 'parameters' | 'measure' | 'check';
@@ -51,6 +51,8 @@ export class DesignStore {
   readonly polygonSides = signal(6);
   /** Sketch geometry copied or cut, to paste into this or another sketch. */
   readonly sketchClipboard = signal<SketchClipboard | undefined>(undefined);
+  /** What the text tool places. */
+  readonly textDraft = signal<TextDraft>({ text: 'CADence', height: 5, weight: 'regular' });
   /** Copies (the original counts) a circular pattern makes when its centre is clicked. */
   readonly patternCount = signal(6);
   /** Radius of the sketch fillet tool and length of the chamfer tool, mm. */
@@ -287,11 +289,11 @@ export class DesignStore {
     this.error.set(undefined);
   }
 
-  /** Adds an imported drawing's curves to the edited sketch. */
-  async insertDrawing(documentId: DocumentId): Promise<void> {
+  /** Adds an imported drawing to the edited sketch. */
+  async insertDrawing(documentId: DocumentId, options?: InsertDrawingOptions): Promise<void> {
     const sketchId = this.editing();
     if (!sketchId || !this.session) return;
-    const result = await this.session.insertDrawing(sketchId, documentId, `${newId()}-`);
+    const result = await this.session.insertDrawing(sketchId, documentId, `${newId()}-`, options);
     this.error.set(result.ok ? undefined : result.error.message);
   }
 

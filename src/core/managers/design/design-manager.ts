@@ -20,6 +20,8 @@ import type {
   TopologyRef,
   ValidationReport,
   Vec2,
+  TextOutlines,
+  TextWeight,
 } from '@core/contracts';
 
 /** Every change to a component is one of these commands (docs/Architecture/Decisions.md#adr-10). Ids come from the caller. */
@@ -41,6 +43,16 @@ export type DesignCommand =
       readonly ids: readonly string[];
       readonly translate: Vec2;
       readonly rotate?: { readonly center: Vec2; readonly angle: number };
+    }
+  /** Changes what a sketch text says, how tall and bold it is, and its direction (radians). */
+  | {
+      readonly type: 'set-sketch-text';
+      readonly sketchId: string;
+      readonly textId: string;
+      readonly text: string;
+      readonly height: number;
+      readonly weight: TextWeight;
+      readonly angle: number;
     }
   /** Trim, extend, split, offset, fillet or chamfer sketch curves; new ids start with `idPrefix`. */
   | { readonly type: 'edit-sketch'; readonly sketchId: string; readonly operation: SketchOperation; readonly idPrefix: string }
@@ -75,6 +87,8 @@ export interface SketchView {
   readonly status: SketchStatus;
   readonly degreesOfFreedom: number;
   readonly profiles: readonly Profile[];
+  /** Outlines of the sketch's texts, by text id. */
+  readonly texts: TextOutlines;
   /** Evaluated dimension values (mm, radians) by constraint id. */
   readonly values: ReadonlyMap<string, number>;
   /** Why the sketch could not be placed or solved. */
@@ -109,6 +123,12 @@ export type DrawingFormat = 'dxf' | 'svg';
 export type SolidFormat = 'step' | 'stl' | 'obj' | '3mf';
 
 /** An editing session on one component document. */
+/** How a drawing goes into a sketch: as one piece, or as separate curves held by the relations it shows, fixed, or free. */
+export interface InsertDrawingOptions {
+  readonly onePiece?: boolean;
+  readonly relations?: 'none' | 'infer' | 'fix';
+}
+
 export interface DesignSession {
   state(): DesignState;
   /** Called after every change; returns the unsubscribe function. */
@@ -120,8 +140,12 @@ export interface DesignSession {
   previewDrag(sketchId: string, pointId: string, x: number, y: number): Promise<SketchView | undefined>;
   /** With `compensateKerf`, outlines are offset for the laser profile's kerf (laser profiles only). */
   exportSketch(sketchId: string, format: DrawingFormat, options?: { readonly compensateKerf?: boolean }): Promise<Result<void>>;
-  /** Adds the curves of an imported DXF or SVG document to a sketch (one undoable change); new ids start with `idPrefix`. */
-  insertDrawing(sketchId: string, documentId: DocumentId, idPrefix: string): Promise<Result<void>>;
+  /**
+   * Adds an imported DXF or SVG document to a sketch (one undoable change); new ids start with `idPrefix`.
+   * By default its curves and texts become separate sketch geometry, held by `relations`. As one piece,
+   * the drawing keeps its proportions and moves, turns and scales by two handle points.
+   */
+  insertDrawing(sketchId: string, documentId: DocumentId, idPrefix: string, options?: InsertDrawingOptions): Promise<Result<void>>;
   /** All bodies, one file. */
   exportBodies(format: SolidFormat): Promise<Result<void>>;
   /** Area, length, radius, distance and angle of picked faces and edges. */

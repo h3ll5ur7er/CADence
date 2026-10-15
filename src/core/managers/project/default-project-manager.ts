@@ -226,14 +226,17 @@ export class DefaultProjectManager implements ProjectManager {
     if (!original.ok) return original;
     const { document, bytes } = original.value;
     if (document.format === 'dxf' || document.format === 'svg') {
-      const entities = await this.deps.interchange.readDrawing(bytes, document.format, 'i');
-      if (!entities.ok) return entities;
-      const points = entities.value.flatMap((e) => (e.kind === 'point' ? [[e.x, e.y]] : []));
+      const drawing = await this.deps.interchange.readDrawing(bytes, document.format, 'i');
+      if (!drawing.ok) return drawing;
+      // The extent of the curves' points and of the texts' outlines.
+      const outlinePoints = [...drawing.value.texts.values()].flat(2).flatMap((e) => [e.start, e.end]);
+      const points = [...drawing.value.entities.flatMap((e) => (e.kind === 'point' ? [[e.x, e.y]] : [])), ...outlinePoints];
       const extent = (pick: (v: number[]) => number) => (points.length ? pick(points.map((p) => p[0] as number)) : 0);
       const extentY = (pick: (v: number[]) => number) => (points.length ? pick(points.map((p) => p[1] as number)) : 0);
       return ok({
         kind: 'drawing',
-        entities: entities.value,
+        entities: drawing.value.entities,
+        texts: drawing.value.texts,
         min: [extent((v) => Math.min(...v)), extentY((v) => Math.min(...v)), 0],
         max: [extent((v) => Math.max(...v)), extentY((v) => Math.max(...v)), 0],
       });

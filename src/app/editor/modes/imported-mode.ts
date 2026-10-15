@@ -134,7 +134,7 @@ export class ImportedMode {
     const c = this.content();
     if (c?.kind !== 'drawing') return [];
     const sketch = { id: 'imported', type: 'sketch' as const, name: this.document().name, suppressed: false, plane: 'XY' as const, entities: c.entities, constraints: [] };
-    return [sketchDisplay(sketch, [], originFrames.XY)];
+    return [sketchDisplay(sketch, [], originFrames.XY, c.texts)];
   });
   protected readonly curveCount = computed(() => {
     const c = this.content();

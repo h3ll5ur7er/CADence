@@ -33,7 +33,14 @@ More shapes are in the **Shapes** menu (▾ next to the drawing tools):
 | Polygon | Set the number of sides in the toolbar, click the centre, then a corner. The corners sit on a construction circle and the sides stay equal. |
 | Ellipse | Click the centre, the end of the long axis, then how wide it is. A radius dimension on an ellipse sets its short half axis. |
 | Spline | Click each point the curve passes through; double-click to end. Click the first point again to close it. Move its points to reshape it. |
+| Text | Type the text and its height in the toolbar (tick Bold if you like), then click where its baseline starts (see [Text](#text)). |
 | Project | Click edges or faces of bodies in the view (see [Projected geometry](#projected-geometry)). |
+
+### Text
+
+The **Text** tool places text as outlines of the bundled Inter font. The height is the height of capital letters in millimetres; the point you click is the start of the baseline. Each letter becomes a profile (and its holes, such as the inside of an A, profiles of their own), so text extrudes, cuts and exports like any curve: sketch on a face of a body and extrude the letters to emboss them, or cut them to engrave them. When you extrude, the letters are selected and their holes are not.
+
+Select a text to change it in the panel on the right: the text, its height, its angle and whether it is bold. Move it by its point, or constrain and dimension that point like any other. Text can be construction geometry too.
 
 ### Snapping
 

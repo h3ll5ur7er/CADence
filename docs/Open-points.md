@@ -8,7 +8,7 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 
 ## Obligations and housekeeping
 
-- [ ] **About dialog with licence credits.** ADR-2 promises to credit OpenCascade (LGPL-2.1) and planegcs (LGPL) in an About dialog; no such dialog exists yet. *(ADR-2, ADR-3; an obligation before any release)*
+- [ ] **About dialog with licence credits.** ADR-2 promises to credit OpenCascade (LGPL-2.1) and planegcs (LGPL) in an About dialog; no such dialog exists yet. The bundled Inter font (SIL Open Font License) and opentype.js (MIT) belong there too (ADR-26). *(ADR-2, ADR-3; an obligation before any release)*
 - [X] **Merge the phase branches into `master`.** Every phase lives on its own branch (`feature/phase-1-foundation` … `feature/phase-6-import`), each built on the previous one; nothing is merged or pushed yet. *(git process)* → [[CAD-31]] ✅
 - [X] **Continuous integration.** `npm run verify` and the Playwright journeys run only locally; there is no CI pipeline. *(new)* → [[CAD-31]] ✅
 - [X] **deployment using github pages** → [[CAD-32]] ✅
@@ -36,11 +36,11 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 
 - [X] **Project body edges into a sketch** as reference geometry that follows the body. *([[CAD-29]])* → [[CAD-29]] ✅
 - [X] **Pattern and mirror sketch geometry.** *([[CAD-29]])* → [[CAD-29]] ✅
-- [X] **More drawing tools:** slot, polygon, center rectangle, three-point arc, ellipse, spline, text. *(new; the sketcher has line, rectangle, circle, arc, point)* → [[CAD-37]] [[CAD-41]]
+- [X] **More drawing tools:** slot, polygon, center rectangle, three-point arc, ellipse, spline, text. *(new; the sketcher has line, rectangle, circle, arc, point)* → [[CAD-37]] [[CAD-41]] ✅
 - [X] **Editing tools:** trim, extend, split, offset, sketch fillet and chamfer. *(new)* → [[CAD-38]] ✅
 - [X] **More relations:** symmetric, concentric, collinear, horizontal/vertical alignment of two points. *(new)* → [[CAD-39]] ✅
 - [X] **Box selection, copy and paste, move and rotate** of sketch geometry. *(new)* → [[CAD-40]] ✅
-- [X] **Constraints for imported drawings** (fix them, or infer horizontal, vertical, tangent). Imported curves arrive unconstrained. *(phase 6, ADR-22)* → [[CAD-42]]
+- [X] **Constraints for imported drawings** (fix them, or infer horizontal, vertical, tangent). Imported curves arrive unconstrained. *(phase 6, ADR-22)* → [[CAD-42]] ✅
 - [X] **Snap to existing geometry** e.g. if a point is placed on a line, a coincidence relation shall be created automatically. → [[CAD-39]] ✅
 
 ## Part modeling
@@ -53,7 +53,7 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 - [X] **Threads**, cosmetic or modelled (screw holes for prints). *(new)* → [[CAD-44]]
 - [X] **Draft, rib, variable fillet.** *(new)* → [[CAD-45]]
 - [X] **Body operations:** combine bodies (join/cut/intersect existing bodies), split a body, move or copy a body, scale. *(new)* → [[CAD-46]]
-- [X] **Text on faces**, embossed or engraved. *(new)* → [[CAD-41]]
+- [X] **Text on faces**, embossed or engraved. *(new)* → [[CAD-41]] ✅
 - [X] **Pattern along a path.** *(new)* → [[CAD-43]]
 - [X] **Sheet metal** (flanges and unfolding). *(new)* → [[CAD-51]]
 - [X] **Configurations:** variants of one component with other parameter values, also per assembly instance. *(ADR-11 trade-off)* → [[CAD-50]]
@@ -107,10 +107,10 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 
 - [ ] **Solids from meshes above 100,000 triangles**, with decimation (simplifying) first. *([[CAD-26]], ADR-22)*
 - [ ] **Repair open or broken meshes** before making them solid. *(new)*
-- [X] **Fit arcs to Béziers and splines** instead of short lines. *([[CAD-27]], ADR-22)* → [[CAD-42]]
-- [X] **DXF blocks (INSERT), text and hatches.** *([[CAD-27]])* → [[CAD-41]] [[CAD-42]]
-- [X] **SVG text** (as outlines). *(new)* → [[CAD-41]]
-- [X] **Option to keep ratios** When importing svg/dxf, there should be an option for them to keep their ratios. Moving/scaling should do so with the entire image, not individual lines. → [[CAD-42]]
+- [X] **Fit arcs to Béziers and splines** instead of short lines. *([[CAD-27]], ADR-22)* → [[CAD-42]] ✅
+- [X] **DXF blocks (INSERT), text and hatches.** *([[CAD-27]])* → [[CAD-41]] [[CAD-42]] ✅
+- [X] **SVG text** (as editable text, outlines on conversion). *(new)* → [[CAD-41]] ✅
+- [X] **Option to keep ratios** When importing svg/dxf, there should be an option for them to keep their ratios. Moving/scaling should do so with the entire image, not individual lines. → [[CAD-42]] ✅
 - [ ] **More formats:** IGES, BREP, AMF, colours from 3MF and OBJ. *(new)*
 
 ## Platform and performance

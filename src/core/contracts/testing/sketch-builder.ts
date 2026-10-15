@@ -36,6 +36,11 @@ export class SketchBuilder {
     return id;
   }
 
+  text(anchor: string, text: string, height: number, id = `t${++this.next}`): string {
+    this.entities.push({ id, kind: 'text', anchor, text, height, weight: 'regular', angle: 0, construction: false });
+    return id;
+  }
+
   /** Closed polygon through the given corners; returns the line ids in order. */
   polygon(...corners: [number, number][]): string[] {
     const points = corners.map(([x, y]) => this.point(x, y));

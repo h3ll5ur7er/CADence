@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A 60 × 20 mm name sign: a rounded plate with a hanging hole and its name as text. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="60mm" height="20mm" viewBox="0 0 60 20">
+  <rect x="0" y="0" width="60" height="20" rx="3" fill="none" stroke="black" stroke-width="0.1"/>
+  <circle cx="6" cy="10" r="2" fill="none" stroke="red" stroke-width="0.1"/>
+  <text x="14" y="14.5" font-family="Inter" font-size="12">CAD</text>
+</svg>

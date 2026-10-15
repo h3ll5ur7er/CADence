@@ -2,6 +2,7 @@ import { type ApplicationConfig, isDevMode, provideBrowserGlobalErrorListeners }
 import { provideRouter, withComponentInputBinding } from '@angular/router';
 import { provideServiceWorker } from '@angular/service-worker';
 import { createBrowserCore, createDesktopCore } from '@core/composition';
+import { fontFiles } from '@core/utilities/text';
 import { isTauri } from '@tauri-apps/api/core';
 import { routes } from './app.routes';
 import { provideCore } from './core.providers';
@@ -14,6 +15,7 @@ import { TauriFileSystem } from './platform/tauri-file-system';
  */
 const options = {
   solverWasmUrl: new URL('wasm/planegcs.wasm', document.baseURI).href,
+  fontUrls: { regular: new URL(`fonts/${fontFiles.regular}`, document.baseURI).href, bold: new URL(`fonts/${fontFiles.bold}`, document.baseURI).href },
   geometry: new Worker(new URL('../workers/geometry.worker', import.meta.url), { type: 'module' }),
 };
 

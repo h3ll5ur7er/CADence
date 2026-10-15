@@ -65,6 +65,7 @@ const paths = {
   offset: 'M4 18V8a4 4 0 0 1 4-4h12M8 20v-8a4 4 0 0 1 4-4h8',
   move: 'M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3',
   rotate: 'M20 12a8 8 0 1 1-2.3-5.7M20 4v4h-4',
+  text: 'M5 6V4h14v2M12 4v16M9 20h6',
   project: 'M4 20h16M7 4h10v8H7zM9 12l-2 8M15 12l2 8',
   fit: 'M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5M9 9h6v6H9z',
   perspective: 'M3 20L8 4h8l5 16zM5.5 12h13M10 4l-1 16M14 4l1 16',

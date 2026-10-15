@@ -122,6 +122,7 @@ Drawings keep lines, circles and arcs exact (DXF bulges become arcs); splines, e
 Imported solids enter a component through an **Insert body** feature and an assembly as an instance; the Modeling Engine names their faces `f:<feature>:new:<n>` by position, so references on them survive regeneration as long as the file stays the same.
 *Also decided:* main-thread code may import the kernel-bound engines and Shape Access only as types. A value import had doubled the start-up bundle (94 kB to 178 kB); the architecture test now refuses it.
 *Trade-off:* curves become lines rather than fitted arcs, and a sketch gets one point per line end (no constraints). DXF blocks (INSERT), text and hatches are skipped.
+*Later:* text in [[#ADR-26]]; fitted arcs, blocks, hatches, drawings kept as one piece and inferred relations in [[#ADR-27]].
 
 ## ADR-23
 
@@ -150,3 +151,22 @@ Keys go through one keymap ([[src/app/shared/keymap.ts]]): commands with scopes 
 - *Copies keep intent:* a mirror image is held by symmetric relations; pattern copies keep the relations among their curves and are placed by dimensions (linear) or by equal construction spokes at the pattern angle (circular). Pasted geometry keeps its dimensions' expressions.
 - *Projected geometry* is a `projection` entity (edges or faces) whose points and curves live in the sketch as `<projection>:<n>` and are refreshed from the bodies on every regeneration ([[src/core/managers/design/regeneration.ts]]); the solver keeps their points fixed. Relations to projected points survive while the projection's shape stays the same.
 *Trade-off:* points cannot be put on ellipses or splines, and trim, extend and fillet do not work on them yet. Pattern copies are placed by dimensions rather than by a pattern feature, so changing the spacing means changing each copy's dimensions. A projection whose edge is gone makes the sketch fail until it is deleted.
+
+## ADR-26
+
+**Text is outlines of one bundled open font, computed when a sketch is solved.** A sketch `text` entity is an anchor point, the text, its cap height in mm, a weight (regular or bold) and an angle ([[src/core/contracts/sketch.ts]]). The Sketch Engine lays it out after solving, at the solved anchor, with the bundled **Inter** font (`@fontsource/inter`, SIL Open Font License 1.1) read by **opentype.js** (MIT) ([[src/core/utilities/text/index.ts]]). The outlines are lines and cubic Béziers (quadratic curves raised exactly), so they become profiles, extrude and cut like any curve, and export exactly. Height is the height of capitals, so 10 mm text has 10 mm capitals whatever the font.
+Fonts are files served next to the app (`fonts/`, cached by the service worker for offline use) and fetched once per weight in the window and in the geometry worker; Node tests read them from the package. opentype.js is loaded on first use, so it is not in the start-up bundle.
+Imported SVG `<text>` and DXF `TEXT`/`MTEXT` become editable sketch texts in this font (SVG `font-size` is the em size, converted to cap height); converting a drawing to another format writes the outlines.
+*Why:* outlines keep text a pure function of its few parameters, so it stays editable and needs nothing from the kernel; one open font avoids system-font differences between browsers and the desktop app.
+*Trade-off:* one font family. Glyphs are placed one by one with their advances: Inter's kerning sits in a GPOS lookup opentype.js cannot read, and contextual substitutions are not applied. Characters the font lacks show as its empty glyph. Text cannot carry relations other than through its anchor.
+
+## ADR-27
+
+**Imported drawings: exact where possible, fitted arcs elsewhere; one piece by two handles; relations on request.**
+- *Curves.* Lines, circles, arcs, full ellipses and SVG cubic Béziers stay exact. Splines, partial ellipses, quadratic and elliptical SVG pieces are sampled and fitted with as few lines and arcs as stay within 0.01 mm of the curve ([[src/core/utilities/math/fit.ts]]): greedy, the longest arc or line from each start, lines preferred where straight.
+- *DXF blocks and hatches.* The reader places entities by an affine matrix: `INSERT` with base point, scale, rotation and column/row arrays, nested up to 8 levels; hatch boundaries (polylines with bulges, line, arc, ellipse and spline edges) become curves. Placement keeps curves exact under similarity transforms (mirrors reverse arcs) and samples and fits them under non-uniform scaling ([[src/core/engines/interchange/drawing-readers.ts]]).
+- *One piece.* A `drawing` sketch entity names the imported document and two points: `origin` at the bottom left of the drawing's extent and `handle` at its bottom right. On every regeneration the drawing is read (cached per original) and placed by the similarity that maps its bottom edge onto origin → handle, as generated geometry `<drawing>:<n>` whose points the solver keeps fixed, like projections ([[#ADR-25]]). Moving, turning or dimensioning the two handles moves, turns and scales the whole drawing in proportion; when solving moves a handle, the drawing is placed again and solved once more ([[src/core/managers/design/regeneration.ts]]). Moving any piece moves the handles; deleting any piece deletes the drawing.
+- *Relations* for drawings inserted as curves ([[src/core/engines/sketch/relations.ts]]): none; *inferred* (lines within 0.06° of horizontal or vertical; lines and arcs that meet at a shared end in the same direction become tangent; shared ends are already one point); or *fixed* (every point). An arc with its centre and both ends fixed is pinned once too often, so the solver leaves one coordinate of one end to the arc.
+
+*Why:* a logo or a part outline usually has to keep its proportions, and two points are the smallest handle a constraint solver can move, turn, scale and dimension. Geometry generated from the original keeps the document small and exact.
+*Trade-off:* the drawing scales uniformly (no stretching). While a handle is dragged, the drawing follows on release, not live. Curves of a one-piece drawing cannot be trimmed or edited; insert it as curves for that.

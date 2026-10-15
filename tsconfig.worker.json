@@ -4,5 +4,5 @@
     "lib": ["es2022", "webworker"],
     "types": []
   },
-  "include": ["src/workers/**/*.ts"]
+  "include": ["src/workers/**/*.ts", "src/core/utilities/text/opentype.d.ts"]
 }

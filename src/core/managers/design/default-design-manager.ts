@@ -24,7 +24,7 @@ import type { AnalysisEngine } from '@core/engines/analysis';
 import type { InterchangeEngine } from '@core/engines/interchange';
 import type { ModelingEngine } from '@core/engines/modeling';
 import type { ParameterEngine } from '@core/engines/parameter';
-import type { SketchEngine } from '@core/engines/sketch';
+import { inferRelations, type SketchEngine } from '@core/engines/sketch';
 import type { Clock } from '@core/utilities/clock';
 import type { EventBus } from '@core/utilities/messaging';
 import { applyCommand } from './commands';
@@ -32,6 +32,7 @@ import type {
   DesignCommand,
   DesignManager,
   DesignSession,
+  InsertDrawingOptions,
   DesignState,
   DrawingFormat,
   SketchView,
@@ -133,7 +134,7 @@ class Session implements DesignSession {
     }
     try {
       const kerf = options.compensateKerf && process.kind === 'laser' ? { profiles: view.profiles, kerf: process.kerf } : undefined;
-      const bytes = await this.deps.interchange.exportDrawing(view.sketch, format, kerf);
+      const bytes = await this.deps.interchange.exportDrawing(view.sketch, format, kerf, view.texts);
       const suffix = kerf ? ' (kerf compensated)' : '';
       await this.deps.externalFiles.deliver({
         name: `${this.current.document.name} - ${view.sketch.name}${suffix}.${format}`,
@@ -146,16 +147,31 @@ class Session implements DesignSession {
     }
   }
 
-  async insertDrawing(sketchId: string, documentId: DocumentId, idPrefix: string): Promise<Result<void>> {
+  async insertDrawing(sketchId: string, documentId: DocumentId, idPrefix: string, options: InsertDrawingOptions = {}): Promise<Result<void>> {
     const document = await this.deps.documents.load(documentId);
     if (document?.kind !== 'imported' || (document.format !== 'dxf' && document.format !== 'svg')) {
       return fail({ code: 'invalid-command', message: 'Only imported DXF and SVG drawings can be inserted into a sketch.' });
     }
     const original = await this.deps.assets.fetch(document.assetId);
     if (!original) return fail({ code: 'missing-original', message: `The original of ${document.name} is missing.` });
-    const entities = await this.deps.interchange.readDrawing(original.bytes, document.format, idPrefix);
-    if (!entities.ok) return entities;
-    return this.execute({ type: 'add-sketch-geometry', sketchId, entities: entities.value, constraints: [] });
+    const drawing = await this.deps.interchange.readDrawing(original.bytes, document.format, idPrefix);
+    if (!drawing.ok) return drawing;
+    const { entities, extent } = drawing.value;
+    if (options.onePiece) {
+      // The handles sit at the bottom corners of the drawing: it starts where it was drawn, at its own size.
+      const [origin, handle, id] = [`${idPrefix}o`, `${idPrefix}h`, `${idPrefix}d`];
+      return this.execute({
+        type: 'add-sketch-geometry',
+        sketchId,
+        entities: [
+          { id: origin, kind: 'point', x: extent.min[0], y: extent.min[1] },
+          { id: handle, kind: 'point', x: extent.max[0], y: extent.min[1] },
+          { id, kind: 'drawing', document: documentId, origin, handle, construction: false },
+        ],
+        constraints: [],
+      });
+    }
+    return this.execute({ type: 'add-sketch-geometry', sketchId, entities, constraints: inferRelations(entities, options.relations ?? 'none', idPrefix) });
   }
 
   async exportBodies(format: SolidFormat): Promise<Result<void>> {

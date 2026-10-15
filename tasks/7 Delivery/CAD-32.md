@@ -2,7 +2,7 @@
 id: CAD-32
 title: Web app on GitHub Pages, offline and installable
 type: feature
-status: review
+status: done
 priority: high
 ---
 

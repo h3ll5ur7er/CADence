@@ -1,4 +1,4 @@
-import { type PlaneFrame, type Profile, type Sketch, type SketchCurve, sketchOriginId, type Vec2 } from '@core/contracts';
+import { type PlaneFrame, type Profile, type ProfileEdge, type Sketch, type SketchCurve, sketchOriginId, type TextOutlines, type Vec2 } from '@core/contracts';
 import { ellipseOf, type ParamCurve, sampleCurve, splineBeziers } from '@core/utilities/math';
 
 /** What the 3D scene draws of a sketch that is not being edited: polylines in plane coordinates. */
@@ -59,13 +59,28 @@ export function curvePolyline(e: SketchCurve, at: (id: string) => Vec2): Vec2[] 
   }
 }
 
-export function sketchDisplay(sketch: Sketch, profiles: readonly Profile[], frame: PlaneFrame): SketchDisplay {
+/** A text's outlines as polylines (0.02 mm). */
+export function textPolylines(contours: readonly (readonly ProfileEdge[])[]): Vec2[][] {
+  return contours.map((contour) =>
+    contour.flatMap((edge, i): Vec2[] => {
+      const head = i === 0 ? [edge.start] : [];
+      if (edge.kind === 'bezier') return [...head, ...sampleCurve({ kind: 'bezier', points: [edge.start, edge.c1, edge.c2, edge.end] }, 0, 1, 0.02).slice(1)];
+      return [...head, edge.end];
+    }),
+  );
+}
+
+export function sketchDisplay(sketch: Sketch, profiles: readonly Profile[], frame: PlaneFrame, texts: TextOutlines = new Map()): SketchDisplay {
   const points = pointsOf(sketch);
   const at = (id: string): Vec2 => points.get(id) ?? [0, 0];
   const curves: Vec2[][] = [];
   const construction: Vec2[][] = [];
   for (const e of sketch.entities) {
-    if (e.kind === 'point' || e.kind === 'projection') continue;
+    if (e.kind === 'point' || e.kind === 'projection' || e.kind === 'drawing') continue;
+    if (e.kind === 'text') {
+      (e.construction ? construction : curves).push(...textPolylines(texts.get(e.id) ?? []));
+      continue;
+    }
     (e.construction ? construction : curves).push(curvePolyline(e, at));
   }
   return { id: sketch.id, frame, curves, construction, profiles };

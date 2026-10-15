@@ -25,32 +25,73 @@ const dxf = (header: string, entities: string) => text(`0\nSECTION\n2\nHEADER\n$
 describe('DXF reader', () => {
   it('reads back what the DXF writer wrote', () => {
     const curves = drawingCurves(plate());
-    expect(round(readDxf(text(writeDxf(curves))))).toEqual(round(curves));
+    expect(round(readDxf(text(writeDxf(curves))).curves)).toEqual(round(curves));
   });
 
   it('turns polyline bulges into exact arcs', () => {
     // A 10 × 10 slot: straight sides, half circles at the ends.
     const slot = dxf('', '0\nLWPOLYLINE\n90\n4\n70\n1\n10\n0\n20\n0\n10\n10\n20\n0\n42\n1\n10\n10\n20\n10\n10\n0\n20\n10\n42\n1\n');
-    const curves = round(readDxf(slot));
+    const curves = round(readDxf(slot).curves);
     expect(curves.map((c) => c.kind)).toEqual(['line', 'arc', 'line', 'arc']);
     expect(curves[1]).toEqual({ kind: 'arc', center: [10, 5], radius: 5, startAngle: -1.570796, sweep: 3.141593 });
     expect(curves[3]).toMatchObject({ center: [0, 5], radius: 5, sweep: 3.141593 });
   });
 
-  it('scales by $INSUNITS and samples splines and ellipses within tolerance', () => {
+  it('scales by $INSUNITS and fits splines with lines and arcs within tolerance', () => {
     const inches = dxf('9\n$INSUNITS\n70\n1\n', '0\nLINE\n10\n0\n20\n0\n11\n1\n21\n0\n');
-    expect(readDxf(inches)).toEqual([{ kind: 'line', start: [0, 0], end: [25.4, 0] }]);
+    expect(readDxf(inches).curves).toEqual([{ kind: 'line', start: [0, 0], end: [25.4, 0] }]);
     // A clamped quadratic B-spline from (0,0) to (20,0) with the control point (10,10): y = x(20 − x)/20.
     const spline = dxf('', '0\nSPLINE\n71\n2\n40\n0\n40\n0\n40\n0\n40\n1\n40\n1\n40\n1\n10\n0\n20\n0\n10\n10\n20\n10\n10\n20\n20\n0\n');
-    const lines = readDxf(spline) as Extract<DrawingCurve, { kind: 'line' }>[];
-    expect(lines.length).toBeGreaterThan(8);
-    expect(lines[0]).toMatchObject({ start: [0, 0] });
-    expect(lines.at(-1)?.end[0]).toBeCloseTo(20, 6);
-    for (const line of lines) expect(line.start[1]).toBeCloseTo((line.start[0] * (20 - line.start[0])) / 20, 6);
+    const pieces = readDxf(spline).curves;
+    expect(pieces.length).toBeLessThan(12);
+    expect(pieces.every((c) => c.kind === 'arc' || c.kind === 'line')).toBe(true);
+    // Every piece stays within 0.01 mm of the parabola.
+    const along = pieces.flatMap((c): [number, number][] => {
+      if (c.kind === 'line') return [0, 0.5, 1].map((t) => [c.start[0] + (c.end[0] - c.start[0]) * t, c.start[1] + (c.end[1] - c.start[1]) * t]);
+      if (c.kind !== 'arc') return [];
+      return [0, 0.25, 0.5, 0.75, 1].map((t) => [c.center[0] + c.radius * Math.cos(c.startAngle + c.sweep * t), c.center[1] + c.radius * Math.sin(c.startAngle + c.sweep * t)]);
+    });
+    for (const [x, y] of along) expect(Math.abs(y - (x * (20 - x)) / 20)).toBeLessThan(0.011);
+    expect(Math.min(...along.map((p) => p[0]))).toBeCloseTo(0, 6);
+    expect(Math.max(...along.map((p) => p[0]))).toBeCloseTo(20, 6);
+  });
+
+  it('reads TEXT and MTEXT, aligned, lines of MTEXT one below the other', () => {
+    const { texts } = readDxf(dxf('', '0\nTEXT\n10\n5\n20\n6\n40\n3\n1\nhello\n0\nTEXT\n72\n1\n11\n50\n21\n0\n40\n2\n50\n90\n1\nup\n0\nMTEXT\n10\n0\n20\n100\n40\n6\n1\nfirst\\Psecond\n'));
+    expect(texts[0]).toEqual({ text: 'hello', at: [5, 6], height: 3, angle: 0, align: 'start', weight: 'regular' });
+    expect(texts[1]).toMatchObject({ text: 'up', at: [50, 0], align: 'middle', angle: Math.PI / 2 });
+    expect(texts.slice(2).map((t) => [t.text, t.at[1]])).toEqual([['first', 94], ['second', 84]]);
+  });
+
+  it('places blocks where INSERT puts them: moved, turned, scaled, nested and arrayed', () => {
+    const blocks = '0\nSECTION\n2\nBLOCKS\n' +
+      '0\nBLOCK\n2\nTICK\n10\n1\n20\n0\n0\nLINE\n10\n1\n20\n0\n11\n3\n21\n0\n0\nENDBLK\n' +
+      '0\nBLOCK\n2\nPAIR\n10\n0\n20\n0\n0\nINSERT\n2\nTICK\n10\n0\n20\n0\n0\nINSERT\n2\nTICK\n10\n0\n20\n5\n0\nENDBLK\n' +
+      '0\nENDSEC\n';
+    const file = (entities: string) => text(`${blocks}0\nSECTION\n2\nENTITIES\n${entities}0\nENDSEC\n0\nEOF\n`);
+    const ends = (curves: readonly DrawingCurve[]) => round(curves).map((c) => (c.kind === 'line' ? [c.start, c.end] : c.kind));
+    // The tick runs from its base point 2 to the right; inserted at (10, 10), turned 90°, scaled 2: upwards by 4.
+    expect(ends(readDxf(file('0\nINSERT\n2\nTICK\n10\n10\n20\n10\n41\n2\n42\n2\n50\n90\n')).curves)).toEqual([[[10, 10], [10, 14]]]);
+    // A block of two inserts, arrayed in 2 columns 20 apart.
+    expect(ends(readDxf(file('0\nINSERT\n2\nPAIR\n10\n0\n20\n0\n70\n2\n44\n20\n')).curves)).toEqual([
+      [[0, 0], [2, 0]],
+      [[0, 5], [2, 5]],
+      [[20, 0], [22, 0]],
+      [[20, 5], [22, 5]],
+    ]);
+  });
+
+  it('reads hatch boundaries: polylines with bulges, and edges', () => {
+    const hatch = '0\nHATCH\n91\n2\n' +
+      '92\n2\n72\n1\n73\n1\n93\n2\n10\n0\n20\n0\n42\n1\n10\n10\n20\n0\n42\n1\n' +
+      '92\n1\n93\n2\n72\n1\n10\n20\n20\n0\n11\n30\n21\n0\n72\n2\n10\n25\n20\n0\n40\n5\n50\n0\n51\n180\n73\n1\n';
+    const curves = round(readDxf(dxf('', hatch)).curves);
+    expect(curves.map((c) => c.kind)).toEqual(['arc', 'arc', 'line', 'arc']);
+    expect(curves[3]).toMatchObject({ center: [25, 0], radius: 5 });
   });
 
   it('refuses files without drawable entities', () => {
-    expect(() => readDxf(dxf('', '0\nTEXT\n1\nhello\n'))).toThrow('no lines');
+    expect(() => readDxf(dxf('', '0\nPOINT\n10\n5\n'))).toThrow('no lines');
     expect(() => readDxf(text('0\nEOF\n'))).toThrow('no ENTITIES');
   });
 });
@@ -58,7 +99,7 @@ describe('DXF reader', () => {
 describe('SVG reader', () => {
   it('reads back what the SVG writer wrote', () => {
     const curves = drawingCurves(plate());
-    expect(round(readSvg(text(writeSvg(curves))))).toEqual(round(curves));
+    expect(round(readSvg(text(writeSvg(curves))).curves)).toEqual(round(curves));
   });
 
   it('scales by the root size and viewBox, applies transforms and flips Y', () => {
@@ -68,7 +109,7 @@ describe('SVG reader', () => {
       <path d="M 0 0 C 0 10 10 20 20 20"/>
       <defs><rect width="999" height="999"/></defs>
     </svg>`;
-    const curves = readSvg(text(svg));
+    const curves = readSvg(text(svg)).curves;
     const rect = curves.slice(0, 4).map((c) => (c.kind === 'line' ? c.start : undefined));
     // 0.5 mm per user unit; the bottom of the 100-unit-high view box is y = 0.
     expect(rect).toEqual([
@@ -78,13 +119,12 @@ describe('SVG reader', () => {
       [10, 30],
     ]);
     expect(round([curves[4] as DrawingCurve])).toEqual([{ kind: 'circle', center: [50, 25], radius: 10 }]);
-    const bezier = curves.slice(5) as { kind: 'line'; start: [number, number]; end: [number, number] }[];
-    expect(bezier.length).toBeGreaterThan(8);
-    expect(bezier.at(-1)?.end.map((v) => Math.round(v * 1e6) / 1e6 + 0)).toEqual([10, 40]);
+    // The Bézier stays one exact cubic, placed like everything else.
+    expect(round(curves.slice(5))).toEqual([{ kind: 'bezier', points: [[0, 50], [0, 45], [5, 40], [10, 40]] }]);
   });
 
   it('keeps rounded rectangle corners as arcs', () => {
-    const curves = readSvg(text('<svg viewBox="0 0 10 10" width="10mm" height="10mm"><rect width="10" height="10" rx="2"/></svg>'));
+    const curves = readSvg(text('<svg viewBox="0 0 10 10" width="10mm" height="10mm"><rect width="10" height="10" rx="2"/></svg>')).curves;
     expect(curves.map((c) => c.kind)).toEqual(['line', 'arc', 'line', 'arc', 'line', 'arc', 'line', 'arc']);
     expect(curves.filter((c) => c.kind === 'arc').every((c) => c.kind === 'arc' && Math.abs(c.radius - 2) < 1e-9 && Math.abs(c.sweep - Math.PI / 2) < 1e-9)).toBe(true);
   });
@@ -99,5 +139,16 @@ describe('drawing curves to sketch entities', () => {
     expect(kinds).toEqual({ point: 8, line: 4, circle: 1, arc: 1 });
     expect(entities.every((e) => e.id.startsWith('imp'))).toBe(true);
     expect(new Set(entities.map((e) => e.id)).size).toBe(entities.length);
+  });
+});
+
+describe('SVG text', () => {
+  it('reads text and tspans with their size, weight, anchor and place', () => {
+    const svg = '<svg viewBox="0 0 100 50" width="100mm" height="50mm"><text x="10" y="40" font-size="8" style="font-weight:bold" text-anchor="middle">A&amp;B<tspan x="10" y="20">next</tspan></text></svg>';
+    const { texts } = readSvg(text(svg));
+    expect(texts).toEqual([
+      { text: 'A&B', at: [10, 10], height: 8, angle: 0, align: 'middle', weight: 'bold', em: true },
+      { text: 'next', at: [10, 30], height: 8, angle: 0, align: 'middle', weight: 'bold', em: true },
+    ]);
   });
 });

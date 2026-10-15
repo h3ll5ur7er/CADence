@@ -1,5 +1,5 @@
 import {
-  projectionOf,
+  generatorOf,
   type Sketch,
   type SketchConstraint,
   type SketchEntity,
@@ -40,15 +40,46 @@ function closest(current: number, candidates: readonly number[]): number {
 class Translator {
   readonly primitives: Primitive[] = [];
   private readonly entities: ReadonlyMap<string, SketchEntity>;
+  /** Coordinates of fixed points left to the arcs they lie on (see `redundantPins`). */
+  private readonly unpinned: ReadonlyMap<string, ReadonlySet<'x' | 'y'>>;
 
   constructor(private readonly sketch: Sketch, private readonly values: ReadonlyMap<string, number>) {
     this.entities = new Map(sketch.entities.map((e) => [e.id, e]));
+    this.unpinned = this.redundantPins();
     this.primitives.push({ id: sketchOriginId, type: 'point', x: 0, y: 0, fixed: true });
     // planegcs requires referenced primitives to be pushed first: points, then curves.
     // Points of projected geometry follow the body, not the solver.
-    for (const e of sketch.entities) if (e.kind === 'point') this.primitives.push({ id: e.id, type: 'point', x: e.x, y: e.y, fixed: projectionOf(sketch, e.id) !== undefined });
+    for (const e of sketch.entities) if (e.kind === 'point') this.primitives.push({ id: e.id, type: 'point', x: e.x, y: e.y, fixed: generatorOf(sketch, e.id) !== undefined });
     for (const e of sketch.entities) if (e.kind !== 'point') this.pushCurve(e);
     for (const c of sketch.constraints) this.pushConstraint(c);
+  }
+
+  /**
+   * An arc whose centre and both ends are fixed is pinned once too often: its end must lie on the
+   * circle through its start anyway. One coordinate of one end is left to the arc, the one that moves
+   * most along it, at an end no other arc has taken a coordinate from yet if there is one.
+   */
+  private redundantPins(): Map<string, Set<'x' | 'y'>> {
+    const fixed = new Set(this.sketch.constraints.flatMap((c) => (c.kind === 'fix' ? [c.point] : [])));
+    const unpinned = new Map<string, Set<'x' | 'y'>>();
+    for (const e of this.sketch.entities) {
+      if (e.kind !== 'arc' || ![e.center, e.start, e.end].every((p) => fixed.has(p))) continue;
+      const c = this.position(e.center);
+      // Along the arc, x changes with the radius' y part and y with its x part: leave the one that moves less.
+      const best = (p: string): 'x' | 'y' => {
+        const r = sub(this.position(p), c);
+        return Math.abs(r[0]) > Math.abs(r[1]) ? 'x' : 'y';
+      };
+      const other = (axis: 'x' | 'y') => (axis === 'x' ? 'y' : 'x');
+      const choices: [string, 'x' | 'y'][] = [
+        ...[e.end, e.start].filter((p) => !unpinned.has(p)).map((p): [string, 'x' | 'y'] => [p, best(p)]),
+        ...[e.end, e.start].flatMap((p): [string, 'x' | 'y'][] => [[p, best(p)], [p, other(best(p))]]),
+      ];
+      const choice = choices.find(([p, axis]) => !unpinned.get(p)?.has(axis));
+      if (!choice) continue;
+      unpinned.set(choice[0], new Set([...(unpinned.get(choice[0]) ?? []), choice[1]]));
+    }
+    return unpinned;
   }
 
   private position(id: string): Vec2 {
@@ -108,12 +139,16 @@ class Translator {
       case 'ellipse':
       case 'spline':
       case 'projection':
+      case 'drawing':
+      case 'text':
         return;
       case 'line':
         this.primitives.push({ id: e.id, type: 'line', p1_id: e.start, p2_id: e.end });
         return;
       case 'circle':
         this.primitives.push({ id: e.id, type: 'circle', c_id: e.center, radius: e.radius });
+        // Generated circles keep their size as well as their centre.
+        if (generatorOf(this.sketch, e.id)) this.primitives.push({ id: `${e.id}#r`, type: 'circle_radius', c_id: e.id, radius: e.radius });
         return;
       case 'arc': {
         const center = this.position(e.center);
@@ -184,8 +219,9 @@ class Translator {
         return add('p2p_symmetric_ppp', { p1_id: line.start, p2_id: line.end, p_id: c.point });
       }
       case 'fix':
-        add('coordinate_x', { p_id: c.point, x: c.x }, 'x');
-        return add('coordinate_y', { p_id: c.point, y: c.y }, 'y');
+        if (!this.unpinned.get(c.point)?.has('x')) add('coordinate_x', { p_id: c.point, x: c.x }, 'x');
+        if (!this.unpinned.get(c.point)?.has('y')) add('coordinate_y', { p_id: c.point, y: c.y }, 'y');
+        return;
       case 'distance':
         return add('p2p_distance', { p1_id: c.points[0], p2_id: c.points[1], distance: this.value(c.id) });
       case 'horizontal-distance':

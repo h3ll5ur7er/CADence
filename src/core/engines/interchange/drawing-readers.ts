@@ -1,117 +1,327 @@
 import type { SketchEntity } from '@core/contracts';
-import { angleOf, ccwSweep, type Vec2 } from '@core/utilities/math';
-import { type DrawingCurve, samplePoints } from './drawing';
+import { angleOf, type Bezier, ccwSweep, fitArcs, sampleCurve, type Vec2 } from '@core/utilities/math';
+import type { TextWeight } from '@core/contracts';
+import { type DrawingCurve, paramCurveOf, samplePoints } from './drawing';
 import { parseXml, type XmlElement } from './xml';
 
-/** Largest distance between a curve and the lines that stand in for it (splines, ellipses, Béziers), mm. */
-const flatness = 0.05;
+/** How closely samples follow a curve before lines and arcs are fitted to them (mm). */
+const flatness = 0.002;
+
+type Matrix = readonly [number, number, number, number, number, number]; // a b c d e f, as in SVG
+
+const multiply = (m: Matrix, n: Matrix): Matrix => [
+  m[0] * n[0] + m[2] * n[1],
+  m[1] * n[0] + m[3] * n[1],
+  m[0] * n[2] + m[2] * n[3],
+  m[1] * n[2] + m[3] * n[3],
+  m[0] * n[4] + m[2] * n[5] + m[4],
+  m[1] * n[4] + m[3] * n[5] + m[5],
+];
+const apply = (m: Matrix, [x, y]: Vec2): Vec2 => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+
 
 // ---- DXF -------------------------------------------------------------------------------------
 
 const dxfUnits: Readonly<Record<number, number>> = { 0: 1, 1: 25.4, 2: 304.8, 4: 1, 5: 10, 6: 1000, 8: 0.0000254, 9: 0.0254, 10: 914.4 };
 
+/** A text of a drawing: where its baseline starts (or its middle or end, by `align`), capital height (mm) and direction. */
+export interface DrawingText {
+  readonly text: string;
+  readonly at: Vec2;
+  readonly height: number;
+  readonly angle: number;
+  readonly align: 'start' | 'middle' | 'end';
+  readonly weight: TextWeight;
+  /** `height` is the font size (SVG), not the capital height (DXF). */
+  readonly em?: boolean;
+}
+
+/** What a drawing file holds: curves, and texts (laid out with the bundled font later). */
+export interface ReadDrawing {
+  readonly curves: DrawingCurve[];
+  readonly texts: DrawingText[];
+}
+
 /**
- * ASCII DXF: LINE, CIRCLE, ARC, LWPOLYLINE and POLYLINE (with bulges, as exact arcs), ELLIPSE and
- * SPLINE (as lines). Only the ENTITIES section is read; `$INSUNITS` scales to millimetres.
+ * ASCII DXF: LINE, CIRCLE, ARC, ELLIPSE, LWPOLYLINE and POLYLINE (bulges as exact arcs), SPLINE (fitted
+ * with lines and arcs), TEXT and MTEXT, HATCH boundaries, and blocks placed by INSERT (moved, turned,
+ * scaled, arrayed, nested). `$INSUNITS` scales to millimetres.
  */
-export function readDxf(bytes: Uint8Array): DrawingCurve[] {
+export function readDxf(bytes: Uint8Array): ReadDrawing {
   const rows = new TextDecoder().decode(bytes).split(/\r?\n/);
   const pairs: [number, string][] = [];
   for (let i = 0; i + 1 < rows.length; i += 2) pairs.push([Number((rows[i] as string).trim()), (rows[i + 1] as string).trim()]);
   const unitsAt = pairs.findIndex(([code, value]) => code === 9 && value === '$INSUNITS');
   const scale = unitsAt >= 0 ? (dxfUnits[Number(pairs[unitsAt + 1]?.[1])] ?? 1) : 1;
-  const start = pairs.findIndex(([code, value], i) => code === 0 && value === 'SECTION' && pairs[i + 1]?.[1] === 'ENTITIES');
-  if (start < 0) throw new Error('The DXF file has no ENTITIES section.');
+  const entities = section(pairs, 'ENTITIES');
+  if (!entities) throw new Error('The DXF file has no ENTITIES section.');
+  // Blocks: a BLOCK entity (name 2, base point 10/20) opens one, ENDBLK closes it.
+  const blocks = new Map<string, { base: Vec2; entities: DxfEntity[] }>();
+  let open: { base: Vec2; entities: DxfEntity[] } | undefined;
+  for (const e of section(pairs, 'BLOCKS') ?? []) {
+    if (e.type === 'BLOCK') {
+      open = { base: [code(e, 10), code(e, 20)], entities: [] };
+      blocks.set(text(e, 2), open);
+    } else if (e.type === 'ENDBLK') open = undefined;
+    else open?.entities.push(e);
+  }
+  const drawing: ReadDrawing = { curves: [], texts: [] };
+  emit(entities, [scale, 0, 0, scale, 0, 0], blocks, drawing, 0);
+  if (drawing.curves.length === 0 && drawing.texts.length === 0) throw new Error('The DXF file has no lines, arcs, circles, polylines, splines or text.');
+  return drawing;
+}
 
-  // Entities: a type, then its group codes up to the next 0 code.
+interface DxfEntity {
+  readonly type: string;
+  readonly codes: [number, string][];
+}
+
+/** A section's entities: a type, then its group codes up to the next 0 code. */
+function section(pairs: readonly [number, string][], name: string): DxfEntity[] | undefined {
+  const start = pairs.findIndex(([c, value], i) => c === 0 && value === 'SECTION' && pairs[i + 1]?.[1] === name);
+  if (start < 0) return undefined;
   const entities: { type: string; codes: [number, string][] }[] = [];
   for (let i = start + 2; i < pairs.length; i++) {
-    const [code, value] = pairs[i] as [number, string];
-    if (code === 0) {
+    const [c, value] = pairs[i] as [number, string];
+    if (c === 0) {
       if (value === 'ENDSEC') break;
       entities.push({ type: value, codes: [] });
-    } else entities[entities.length - 1]?.codes.push([code, value]);
+    } else entities[entities.length - 1]?.codes.push([c, value]);
   }
+  return entities;
+}
 
-  const curves: DrawingCurve[] = [];
-  const s = (v: Vec2): Vec2 => [v[0] * scale, v[1] * scale];
+const code = (e: DxfEntity, c: number, fallback = 0) => Number(e.codes.find(([k]) => k === c)?.[1] ?? fallback);
+const codes = (e: DxfEntity, c: number) => e.codes.filter(([k]) => k === c).map(([, v]) => Number(v));
+const text = (e: DxfEntity, c: number) => e.codes.find(([k]) => k === c)?.[1] ?? '';
+
+/** Curves and texts of DXF entities, placed by `m` (units, and the inserts they sit in). */
+function emit(entities: readonly DxfEntity[], m: Matrix, blocks: ReadonlyMap<string, { base: Vec2; entities: DxfEntity[] }>, out: ReadDrawing, depth: number): void {
+  const place = (curves: readonly DrawingCurve[]) => out.curves.push(...placeCurves(curves, m));
   for (let k = 0; k < entities.length; k++) {
-    const { type, codes } = entities[k] as (typeof entities)[number];
-    const get = (code: number, fallback = 0) => Number(codes.find(([c]) => c === code)?.[1] ?? fallback);
-    const all = (code: number) => codes.filter(([c]) => c === code).map(([, v]) => Number(v));
-    switch (type) {
+    const e = entities[k] as DxfEntity;
+    const get = (c: number, fallback = 0) => code(e, c, fallback);
+    switch (e.type) {
       case 'LINE':
-        curves.push({ kind: 'line', start: s([get(10), get(20)]), end: s([get(11), get(21)]) });
+        place([{ kind: 'line', start: [get(10), get(20)], end: [get(11), get(21)] }]);
         break;
       case 'CIRCLE':
-        curves.push({ kind: 'circle', center: s([get(10), get(20)]), radius: get(40) * scale });
+        place([{ kind: 'circle', center: [get(10), get(20)], radius: get(40) }]);
         break;
       case 'ARC': {
         const startAngle = (get(50) * Math.PI) / 180;
-        curves.push({ kind: 'arc', center: s([get(10), get(20)]), radius: get(40) * scale, startAngle, sweep: ccwSweep(startAngle, (get(51) * Math.PI) / 180) });
+        place([{ kind: 'arc', center: [get(10), get(20)], radius: get(40), startAngle, sweep: ccwSweep(startAngle, (get(51) * Math.PI) / 180) }]);
+        break;
+      }
+      case 'ELLIPSE': {
+        const major: Vec2 = [get(11), get(21)];
+        const a = Math.hypot(...major);
+        const from = get(41, 0);
+        place([{ kind: 'ellipse', ellipse: { center: [get(10), get(20)], a, b: a * get(40, 1), rotation: angleOf(major) }, start: from, sweep: ccwSweep(from, get(42, 2 * Math.PI)) }]);
         break;
       }
       case 'LWPOLYLINE': {
         // Each vertex starts at a 10 code; a 42 code after it is that vertex's bulge.
         const vertices: { at: Vec2; bulge: number }[] = [];
-        for (const [code, value] of codes) {
-          if (code === 10) vertices.push({ at: [Number(value), 0], bulge: 0 });
+        for (const [c, value] of e.codes) {
+          if (c === 10) vertices.push({ at: [Number(value), 0], bulge: 0 });
           const last = vertices[vertices.length - 1];
-          if (last && code === 20) last.at = [last.at[0], Number(value)];
-          if (last && code === 42) last.bulge = Number(value);
+          if (last && c === 20) last.at = [last.at[0], Number(value)];
+          if (last && c === 42) last.bulge = Number(value);
         }
-        curves.push(...polyline(vertices.map((v) => ({ at: s(v.at), bulge: v.bulge })), (get(70) & 1) === 1));
+        place(polyline(vertices, (get(70) & 1) === 1));
         break;
       }
       case 'POLYLINE': {
         const vertices: { at: Vec2; bulge: number }[] = [];
         while (entities[k + 1]?.type === 'VERTEX') {
-          const vertex = (entities[++k] as (typeof entities)[number]).codes;
-          const v = (code: number) => Number(vertex.find(([c]) => c === code)?.[1] ?? 0);
-          vertices.push({ at: s([v(10), v(20)]), bulge: v(42) });
+          const vertex = entities[++k] as DxfEntity;
+          vertices.push({ at: [code(vertex, 10), code(vertex, 20)], bulge: code(vertex, 42) });
         }
-        curves.push(...polyline(vertices, (get(70) & 1) === 1));
-        break;
-      }
-      case 'ELLIPSE': {
-        const center = s([get(10), get(20)]);
-        const major = s([get(11), get(21)]);
-        const ratio = get(40, 1);
-        const minor: Vec2 = [-major[1] * ratio, major[0] * ratio];
-        const from = get(41, 0);
-        const to = get(42, 2 * Math.PI);
-        const sweep = ccwSweep(from, to);
-        const at = (t: number): Vec2 => [center[0] + major[0] * Math.cos(t) + minor[0] * Math.sin(t), center[1] + major[1] * Math.cos(t) + minor[1] * Math.sin(t)];
-        curves.push(...lines(sample(at, from, from + sweep, Math.hypot(...major), 'angle')));
+        place(polyline(vertices, (get(70) & 1) === 1));
         break;
       }
       case 'SPLINE': {
         const degree = get(71, 3);
-        const knots = all(40);
-        const xs = all(10);
-        const ys = all(20);
-        const control = xs.map((x, i): Vec2 => s([x, ys[i] ?? 0]));
+        const knots = codes(e, 40);
+        const xs = codes(e, 10);
+        const ys = codes(e, 20);
+        const control = xs.map((x, i): Vec2 => [x, ys[i] ?? 0]);
         if (control.length > degree && knots.length === control.length + degree + 1) {
           const lo = knots[degree] as number;
           const hi = knots[control.length] as number;
           const size = control.slice(1).reduce((sum, p, i) => sum + Math.hypot(p[0] - (control[i] as Vec2)[0], p[1] - (control[i] as Vec2)[1]), 0);
-          // The parameter runs lo…hi; sampling is scaled to it.
-          const points = sample((u) => deBoor(degree, knots, control, Math.min(lo + u * (hi - lo), hi - 1e-12)), 0, 1, size, 'parameter');
-          points[points.length - 1] = deBoor(degree, knots, control, hi - 1e-12);
-          curves.push(...lines(points));
+          // The parameter runs lo…hi; sampling is scaled to it. The samples are then fitted with lines and arcs.
+          const points = sample((u) => apply(m, deBoor(degree, knots, control, Math.min(lo + u * (hi - lo), hi - 1e-12))), 0, 1, size * scaleOf(m), 'parameter');
+          points[points.length - 1] = apply(m, deBoor(degree, knots, control, hi - 1e-12));
+          out.curves.push(...fitted(points));
         } else {
           // Fit points only: connect them.
-          const fit = all(11).map((x, i): Vec2 => s([x, all(21)[i] ?? 0]));
-          curves.push(...lines(fit.length ? fit : control));
+          const fit = codes(e, 11).map((x, i): Vec2 => [x, codes(e, 21)[i] ?? 0]);
+          place(lines(fit.length ? fit : control));
         }
         break;
       }
+      case 'HATCH':
+        place(hatchBoundaries(e));
+        break;
+      case 'TEXT': {
+        // Aligned texts (72: 1 centre, 2 right) are placed by their second point.
+        const align = get(72) === 1 || get(72) === 4 ? 'middle' : get(72) === 2 ? 'end' : 'start';
+        const at: Vec2 = align === 'start' ? [get(10), get(20)] : [get(11), get(21)];
+        const words = text(e, 1);
+        if (words.trim()) out.texts.push(placeText({ text: words, at, height: get(40, 2.5), angle: (get(50) * Math.PI) / 180, align, weight: 'regular' }, m));
+        break;
+      }
+      case 'MTEXT': {
+        // The text comes in 3 chunks then a 1; \P breaks lines; other formatting codes are dropped.
+        const raw = [...e.codes.filter(([c]) => c === 3), ...e.codes.filter(([c]) => c === 1)].map(([, v]) => v).join('');
+        const rows = raw.replace(/\\P/g, '\n').replace(/\\[A-Za-z][^;\\]*;/g, '').replace(/[{}]/g, '').split('\n');
+        const height = get(40, 2.5);
+        const angle = e.codes.some(([c]) => c === 50) ? (get(50) * Math.PI) / 180 : Math.atan2(get(21), get(11, 1));
+        const attach = get(71, 1);
+        const align = [2, 5, 8].includes(attach) ? 'middle' : [3, 6, 9].includes(attach) ? 'end' : 'start';
+        const origin: Vec2 = [get(10), get(20)];
+        // Lines 5/3 of the height apart, the first one's capitals hanging from the attachment point.
+        rows.forEach((row, i) => {
+          const drop = height * (1 + (5 / 3) * i);
+          const at: Vec2 = [origin[0] + Math.sin(angle) * drop, origin[1] - Math.cos(angle) * drop];
+          if (row.trim()) out.texts.push(placeText({ text: row, at, height, angle, align, weight: 'regular' }, m));
+        });
+        break;
+      }
+      case 'INSERT': {
+        const block = blocks.get(text(e, 2));
+        if (!block || depth > 8) break;
+        const [sx, sy, turn] = [get(41, 1), get(42, 1), (get(50) * Math.PI) / 180];
+        const [columns, rows, dx, dy] = [Math.max(1, get(70, 1)), Math.max(1, get(71, 1)), get(44), get(45)];
+        for (let col = 0; col < columns; col++)
+          for (let row = 0; row < rows; row++) {
+            // Block coordinates: from the base point, scaled, turned, moved to the insertion point (and the array cell).
+            const local = multiply(
+              multiply([1, 0, 0, 1, get(10), get(20)], [Math.cos(turn), Math.sin(turn), -Math.sin(turn), Math.cos(turn), 0, 0]),
+              multiply([1, 0, 0, 1, col * dx, row * dy], multiply([sx, 0, 0, sy, 0, 0], [1, 0, 0, 1, -block.base[0], -block.base[1]])),
+            );
+            emit(block.entities, multiply(m, local), blocks, out, depth + 1);
+          }
+        break;
+      }
       default:
-        break; // TEXT, DIMENSION, INSERT, HATCH, … are not geometry to cut.
+        break; // DIMENSION, POINT, … are not geometry to cut.
     }
   }
-  if (curves.length === 0) throw new Error('The DXF file has no lines, arcs, circles, polylines or splines.');
+}
+
+/**
+ * The boundary loops of a HATCH: polyline loops (with bulges) and edge loops of lines, arcs and
+ * ellipses (code 72 1, 2, 3; splines by their control points).
+ */
+function hatchBoundaries(e: DxfEntity): DrawingCurve[] {
+  const c = e.codes;
+  const curves: DrawingCurve[] = [];
+  let i = c.findIndex(([k]) => k === 91);
+  const loops = i >= 0 ? Number(c[i]?.[1]) : 0;
+  const read = (k: number): number => {
+    while (i < c.length && c[i]?.[0] !== k) i++;
+    return Number(c[i++]?.[1] ?? 0);
+  };
+  for (let loop = 0; loop < loops && i < c.length; loop++) {
+    const flags = read(92);
+    if (flags & 2) {
+      const bulges = read(72) !== 0;
+      const closed = read(73) !== 0;
+      const count = read(93);
+      const vertices: { at: Vec2; bulge: number }[] = [];
+      for (let v = 0; v < count; v++) vertices.push({ at: [read(10), read(20)], bulge: bulges ? read(42) : 0 });
+      curves.push(...polyline(vertices, closed || true));
+      continue;
+    }
+    const edges = read(93);
+    for (let k = 0; k < edges; k++) {
+      const kind = read(72);
+      if (kind === 1) curves.push({ kind: 'line', start: [read(10), read(20)], end: [read(11), read(21)] });
+      else if (kind === 2) {
+        const center: Vec2 = [read(10), read(20)];
+        const radius = read(40);
+        const [from, to] = [(read(50) * Math.PI) / 180, (read(51) * Math.PI) / 180];
+        // Clockwise arcs (73 = 0) give their angles mirrored.
+        const ccw = read(73) !== 0;
+        const [a0, a1] = ccw ? [from, to] : [-to, -from];
+        curves.push({ kind: 'arc', center, radius, startAngle: a0, sweep: ccwSweep(a0, a1) });
+      } else if (kind === 3) {
+        const center: Vec2 = [read(10), read(20)];
+        const major: Vec2 = [read(11), read(21)];
+        const ratio = read(40);
+        const [from, to] = [(read(50) * Math.PI) / 180, (read(51) * Math.PI) / 180];
+        const ccw = read(73) !== 0;
+        const a = Math.hypot(...major);
+        const [t0, t1] = ccw ? [from, to] : [-to, -from];
+        curves.push({ kind: 'ellipse', ellipse: { center, a, b: a * ratio, rotation: angleOf(major) }, start: t0, sweep: ccwSweep(t0, t1) });
+      } else if (kind === 4) {
+        const degree = read(94);
+        void degree;
+        const knotCount = read(95);
+        const controlCount = read(96);
+        for (let n = 0; n < knotCount; n++) read(40);
+        const control = Array.from({ length: controlCount }, (): Vec2 => [read(10), read(20)]);
+        curves.push(...lines(control));
+      }
+    }
+  }
   return curves;
+}
+
+/** A text placed by `m`: its anchor moved, its height scaled, its baseline turned. */
+function placeText(t: DrawingText, m: Matrix): DrawingText {
+  const at = apply(m, t.at);
+  const along = apply(m, [t.at[0] + Math.cos(t.angle), t.at[1] + Math.sin(t.angle)]);
+  return { ...t, at, height: t.height * scaleOf(m), angle: Math.atan2(along[1] - at[1], along[0] - at[0]) };
+}
+
+/** How much `m` scales lengths (the square root of its area factor). */
+const scaleOf = (m: Matrix) => Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2]));
+
+/**
+ * Drawing curves placed by an affine matrix: lines and Béziers exactly, circles, arcs and ellipses
+ * exactly where `m` keeps shapes similar (a mirror turns arcs round), otherwise fitted with lines and arcs.
+ */
+function placeCurves(curves: readonly DrawingCurve[], m: Matrix): DrawingCurve[] {
+  const scale = scaleOf(m);
+  const similar = Math.abs(Math.hypot(m[0], m[1]) - Math.hypot(m[2], m[3])) < 1e-9 * Math.max(scale, 1) && Math.abs(m[0] * m[2] + m[1] * m[3]) < 1e-9 * Math.max(scale * scale, 1);
+  const mirrored = m[0] * m[3] - m[1] * m[2] < 0;
+  const turn = Math.atan2(m[1], m[0]);
+  return curves.flatMap((c): DrawingCurve[] => {
+    if (c.kind === 'line') return [{ kind: 'line', start: apply(m, c.start), end: apply(m, c.end) }];
+    if (c.kind === 'bezier') return [{ kind: 'bezier', points: c.points.map((p) => apply(m, p)) as unknown as Bezier }];
+    if (!similar) {
+      const { curve, t0, t1 } = c.kind === 'circle'
+        ? { curve: { kind: 'ellipse' as const, ellipse: { center: c.center, a: c.radius, b: c.radius, rotation: 0 } }, t0: 0, t1: 2 * Math.PI }
+        : c.kind === 'arc'
+          ? { curve: { kind: 'ellipse' as const, ellipse: { center: c.center, a: c.radius, b: c.radius, rotation: 0 } }, t0: c.startAngle, t1: c.startAngle + c.sweep }
+          : paramCurveOf(c);
+      return fitted(sampleCurve(curve, t0, t1, flatness).map((p) => apply(m, p)));
+    }
+    // Angles turn with m; a mirror reflects them (and runs arcs the other way round).
+    const angle = (a: number) => (mirrored ? turn - a : turn + a);
+    if (c.kind === 'circle') return [{ kind: 'circle', center: apply(m, c.center), radius: c.radius * scale }];
+    if (c.kind === 'arc') {
+      const start = mirrored ? angle(c.startAngle + c.sweep) : angle(c.startAngle);
+      return [{ kind: 'arc', center: apply(m, c.center), radius: c.radius * scale, startAngle: start, sweep: c.sweep }];
+    }
+    const e = c.ellipse;
+    const start = mirrored ? -(c.start + c.sweep) : c.start;
+    return [{ kind: 'ellipse', ellipse: { center: apply(m, e.center), a: e.a * scale, b: e.b * scale, rotation: angle(e.rotation) }, start, sweep: c.sweep }];
+  });
+}
+
+/** Lines and arcs within 0.01 mm of the curve sampled (0.008 mm of its samples, which lie within 0.002 mm of it). */
+function fitted(points: readonly Vec2[]): DrawingCurve[] {
+  return fitArcs(points, 0.01 - flatness).map((piece): DrawingCurve => {
+    if (piece.kind === 'line') return { kind: 'line', start: piece.start, end: piece.end };
+    const [from, to] = piece.ccw ? [piece.start, piece.end] : [piece.end, piece.start];
+    const startAngle = angleOf([from[0] - piece.center[0], from[1] - piece.center[1]]);
+    return { kind: 'arc', center: piece.center, radius: piece.radius, startAngle, sweep: ccwSweep(startAngle, angleOf([to[0] - piece.center[0], to[1] - piece.center[1]])) };
+  });
 }
 
 /** Polyline vertices with bulges (tan of a quarter of the arc angle, positive counter-clockwise). */
@@ -158,18 +368,6 @@ function deBoor(degree: number, knots: readonly number[], control: readonly Vec2
 
 // ---- SVG -------------------------------------------------------------------------------------
 
-type Matrix = readonly [number, number, number, number, number, number]; // a b c d e f, as in SVG
-
-const multiply = (m: Matrix, n: Matrix): Matrix => [
-  m[0] * n[0] + m[2] * n[1],
-  m[1] * n[0] + m[3] * n[1],
-  m[0] * n[2] + m[2] * n[3],
-  m[1] * n[2] + m[3] * n[3],
-  m[0] * n[4] + m[2] * n[5] + m[4],
-  m[1] * n[4] + m[3] * n[5] + m[5],
-];
-const apply = (m: Matrix, [x, y]: Vec2): Vec2 => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
-
 const lengthUnits: Readonly<Record<string, number>> = { mm: 1, cm: 10, in: 25.4, pt: 25.4 / 72, pc: 25.4 / 6, px: 25.4 / 96, '': 25.4 / 96 };
 
 function length(text: string | undefined): { value: number; unit: string } | undefined {
@@ -202,7 +400,7 @@ function parseTransform(text: string | undefined): Matrix {
  * with transforms. Sizes follow the root's width and viewBox (otherwise 96 px per inch); Y points up
  * and the bottom left of the view box is the origin.
  */
-export function readSvg(bytes: Uint8Array): DrawingCurve[] {
+export function readSvg(bytes: Uint8Array): ReadDrawing {
   const svg = parseXml(new TextDecoder().decode(bytes)).children.find((e) => e.name === 'svg');
   if (!svg) throw new Error('This is not an SVG drawing.');
   const box = svg.attributes['viewBox']?.trim().split(/[\s,]+/).map(Number);
@@ -215,15 +413,42 @@ export function readSvg(bytes: Uint8Array): DrawingCurve[] {
   // bottom of the view box (or of the page) on the X axis.
   const bottom = box?.length === 4 ? (box[1] as number) + (box[3] as number) : (mm(height) ?? 0) / sy;
   const root: Matrix = [sx, 0, 0, -sy, -(box?.[0] ?? 0) * sx, bottom * sy];
-  const curves: DrawingCurve[] = [];
-  walk(svg, root, curves);
-  if (curves.length === 0) throw new Error('The SVG drawing has no paths or shapes.');
-  return curves;
+  const drawing: ReadDrawing = { curves: [], texts: [] };
+  walk(svg, root, drawing);
+  if (drawing.curves.length === 0 && drawing.texts.length === 0) throw new Error('The SVG drawing has no paths, shapes or text.');
+  return drawing;
 }
 
-const skipped = new Set(['defs', 'clipPath', 'mask', 'symbol', 'marker', 'pattern', 'style', 'title', 'desc', 'metadata', 'text']);
+const skipped = new Set(['defs', 'clipPath', 'mask', 'symbol', 'marker', 'pattern', 'style', 'title', 'desc', 'metadata']);
 
-function walk(element: XmlElement, parent: Matrix, curves: DrawingCurve[]): void {
+/** A style property from the style attribute or the attribute of the same name. */
+const styleOf = (element: XmlElement, name: string): string | undefined =>
+  new RegExp(`(?:^|;)\\s*${name}\\s*:\\s*([^;]+)`).exec(element.attributes['style'] ?? '')?.[1]?.trim() ?? element.attributes[name];
+
+/** The texts of a text element and its tspans, each where its own x and y (or the element's) place it. */
+function svgTexts(element: XmlElement, m: Matrix, inherited: { size: number; weight: TextWeight; align: DrawingText['align'] }): DrawingText[] {
+  const size = Number.parseFloat(styleOf(element, 'font-size') ?? '') || inherited.size;
+  const weightValue = styleOf(element, 'font-weight') ?? '';
+  const weight: TextWeight = /bold|[6-9]00/.test(weightValue) ? 'bold' : weightValue ? 'regular' : inherited.weight;
+  const anchor = styleOf(element, 'text-anchor');
+  const align = anchor === 'middle' ? 'middle' : anchor === 'end' ? 'end' : anchor === 'start' ? 'start' : inherited.align;
+  const own = element.text.replace(/\s+/g, ' ').trim();
+  const x = Number.parseFloat(element.attributes['x'] ?? '0') || 0;
+  const y = Number.parseFloat(element.attributes['y'] ?? '0') || 0;
+  const at = apply(m, [x, y]);
+  // The baseline's direction and the drawing's scale, from the matrix.
+  const along = apply(m, [x + 1, y]);
+  const scale = Math.hypot(along[0] - at[0], along[1] - at[1]);
+  const angle = Math.atan2(along[1] - at[1], along[0] - at[0]);
+  const texts: DrawingText[] = own ? [{ text: own, at, height: size * scale, angle, align, weight, em: true }] : [];
+  for (const span of element.children.filter((c) => c.name === 'tspan')) {
+    texts.push(...svgTexts({ ...span, attributes: { x: span.attributes['x'] ?? element.attributes['x'] ?? '0', y: span.attributes['y'] ?? element.attributes['y'] ?? '0', ...span.attributes } }, m, { size, weight, align }));
+  }
+  return texts;
+}
+
+function walk(element: XmlElement, parent: Matrix, drawing: ReadDrawing): void {
+  const curves = drawing.curves;
   for (const child of element.children) {
     if (skipped.has(child.name) || child.attributes['display'] === 'none' || /display\s*:\s*none/.test(child.attributes['style'] ?? '')) continue;
     const m = multiply(parent, parseTransform(child.attributes['transform']));
@@ -231,6 +456,10 @@ function walk(element: XmlElement, parent: Matrix, curves: DrawingCurve[]): void
     switch (child.name) {
       case 'path':
         curves.push(...pathCurves(child.attributes['d'] ?? '', m));
+        break;
+      case 'text':
+        // Font sizes are em sizes; the engine turns them into capital heights with the font.
+        drawing.texts.push(...svgTexts(child, m, { size: 16, weight: 'regular', align: 'start' }));
         break;
       case 'line':
         curves.push(...placeSegments([{ kind: 'line', from: [n('x1'), n('y1')], to: [n('x2'), n('y2')] }], m));
@@ -264,7 +493,7 @@ function walk(element: XmlElement, parent: Matrix, curves: DrawingCurve[]): void
       case 'g':
       case 'svg':
       case 'a':
-        walk(child, m, curves);
+        walk(child, m, drawing);
         break;
       default:
         break;
@@ -404,40 +633,18 @@ function pathCurves(d: string, m: Matrix, closedShape = false): DrawingCurve[] {
   return curves;
 }
 
-/** Segments to drawing curves in millimetres: exact where the transform keeps circles round, sampled otherwise. */
+/** Segments to drawing curves in millimetres: Béziers exactly; arcs exactly where the transform keeps shapes similar, otherwise fitted. */
 function placeSegments(segments: readonly Segment[], m: Matrix): DrawingCurve[] {
-  const determinant = m[0] * m[3] - m[1] * m[2];
-  const scale = Math.sqrt(Math.abs(determinant));
-  // Rotation and uniform scale (possibly mirrored) keep circles circles.
-  const similar = Math.abs(Math.hypot(m[0], m[1]) - Math.hypot(m[2], m[3])) < 1e-9 * scale && Math.abs(m[0] * m[2] + m[1] * m[3]) < 1e-9 * scale * scale;
-  const mirrored = determinant < 0;
   return segments.flatMap((segment): DrawingCurve[] => {
     if (segment.kind === 'line') return [{ kind: 'line', start: apply(m, segment.from), end: apply(m, segment.to) }];
-    if (segment.kind === 'cubic') {
-      const [p0, p1, p2, p3] = [segment.from, segment.c1, segment.c2, segment.to].map((p) => apply(m, p)) as [Vec2, Vec2, Vec2, Vec2];
-      const at = (t: number): Vec2 => {
-        const u = 1 - t;
-        return [u * u * u * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t * t * t * p3[0], u * u * u * p0[1] + 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t * t * t * p3[1]];
-      };
-      const size = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) + Math.hypot(p2[0] - p1[0], p2[1] - p1[1]) + Math.hypot(p3[0] - p2[0], p3[1] - p2[1]);
-      return lines(sample(at, 0, 1, size, 'parameter'));
-    }
-    const local = (t: number): Vec2 => {
-      const [c, s] = [Math.cos(segment.rotation), Math.sin(segment.rotation)];
-      const x = segment.rx * Math.cos(t);
-      const y = segment.ry * Math.sin(t);
-      return [segment.center[0] + c * x - s * y, segment.center[1] + s * x + c * y];
-    };
-    if (similar && Math.abs(segment.rx - segment.ry) < 1e-9 * segment.rx) {
-      const center = apply(m, segment.center);
-      const from = apply(m, local(segment.start));
-      // Drawing arcs run counter-clockwise; a mirror turns the direction around.
-      const ccw = (segment.sweep > 0) !== mirrored;
-      const startPoint = ccw ? from : apply(m, local(segment.start + segment.sweep));
-      const startAngle = angleOf([startPoint[0] - center[0], startPoint[1] - center[1]]);
-      return [{ kind: 'arc', center, radius: segment.rx * scale, startAngle, sweep: Math.abs(segment.sweep) }];
-    }
-    return lines(sample((t) => apply(m, local(t)), segment.start, segment.start + segment.sweep, Math.max(segment.rx, segment.ry) * scale, 'angle'));
+    if (segment.kind === 'cubic') return [{ kind: 'bezier', points: [segment.from, segment.c1, segment.c2, segment.to].map((p) => apply(m, p)) as unknown as Bezier }];
+    // Counter-clockwise from the earlier parameter, in the path's own coordinates; placeCurves maps it.
+    const [start, sweep] = segment.sweep >= 0 ? [segment.start, segment.sweep] : [segment.start + segment.sweep, -segment.sweep];
+    const local: DrawingCurve =
+      Math.abs(segment.rx - segment.ry) < 1e-9 * segment.rx
+        ? { kind: 'arc', center: segment.center, radius: segment.rx, startAngle: start + segment.rotation, sweep }
+        : { kind: 'ellipse', ellipse: { center: segment.center, a: segment.rx, b: segment.ry, rotation: segment.rotation }, start, sweep };
+    return placeCurves([local], m);
   });
 }
 
@@ -479,7 +686,7 @@ export function sketchEntities(curves: readonly DrawingCurve[], prefix: string):
     }
     return existing;
   };
-  for (const curve of curves) {
+  const add = (curve: DrawingCurve): void => {
     if (curve.kind === 'line') {
       const [start, end] = [pointAt(curve.start), pointAt(curve.end)];
       if (start !== end) entities.push({ id: id(), kind: 'line', start, end, construction: false });
@@ -490,20 +697,18 @@ export function sketchEntities(curves: readonly DrawingCurve[], prefix: string):
       const major: Vec2 = [center[0] + a * Math.cos(rotation), center[1] + a * Math.sin(rotation)];
       entities.push({ id: id(), kind: 'ellipse', center: pointAt(center), major: pointAt(major), minorRadius: b, construction: false });
     } else if (curve.kind === 'bezier' || curve.kind === 'ellipse') {
-      // A lone Bézier or a piece of an ellipse has no sketch entity of its own: short lines within 0.05 mm.
-      const points = samplePoints(curve, 0.05).map(pointAt);
-      for (let i = 1; i < points.length; i++) {
-        if (points[i] !== points[i - 1]) entities.push({ id: id(), kind: 'line', start: points[i - 1] as string, end: points[i] as string, construction: false });
-      }
+      // A lone Bézier or a piece of an ellipse has no sketch entity of its own: lines and arcs within 0.01 mm.
+      for (const piece of fitted(samplePoints(curve, flatness))) add(piece);
     } else {
-      if (curve.radius <= 1e-6) continue;
+      if (curve.radius <= 1e-6) return;
       const polar = (a: number): Vec2 => [curve.center[0] + curve.radius * Math.cos(a), curve.center[1] + curve.radius * Math.sin(a)];
       if (curve.sweep >= 2 * Math.PI - 1e-9) {
         entities.push({ id: id(), kind: 'circle', center: pointAt(curve.center), radius: curve.radius, construction: false });
-        continue;
+        return;
       }
       entities.push({ id: id(), kind: 'arc', center: pointAt(curve.center), start: pointAt(polar(curve.startAngle)), end: pointAt(polar(curve.startAngle + curve.sweep)), construction: false });
     }
-  }
+  };
+  for (const curve of curves) add(curve);
   return entities;
 }

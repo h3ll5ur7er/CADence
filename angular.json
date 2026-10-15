@@ -37,6 +37,16 @@
                 "glob": "replicad_single.wasm",
                 "input": "node_modules/replicad-opencascadejs/dist",
                 "output": "wasm"
+              },
+              {
+                "glob": "inter-latin-{400,700}-normal.woff",
+                "input": "node_modules/@fontsource/inter/files",
+                "output": "fonts"
+              },
+              {
+                "glob": "LICENSE",
+                "input": "node_modules/@fontsource/inter",
+                "output": "fonts"
               }
             ],
             "styles": [

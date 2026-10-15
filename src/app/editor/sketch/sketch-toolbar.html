@@ -34,6 +34,16 @@
         </div>
       }
     </div>
+    @if (store.tool() === 'text') {
+      <label class="sides">
+        <input class="text-input" type="text" aria-label="Text to place" [value]="store.textDraft().text" (input)="setText({ text: $any($event.target).value })" />
+      </label>
+      <label class="sides" title="Height of capital letters">
+        <input type="number" min="0.1" step="0.5" aria-label="Text height" [value]="store.textDraft().height" (change)="setText({ height: +$any($event.target).value })" />
+        mm
+      </label>
+      <label class="sides"><input type="checkbox" aria-label="Bold text" [checked]="store.textDraft().weight === 'bold'" (change)="setText({ weight: $any($event.target).checked ? 'bold' : 'regular' })" /> Bold</label>
+    }
     @if (store.tool() === 'polygon') {
       <label class="sides" title="Sides of the polygon">
         <input type="number" min="3" max="64" aria-label="Polygon sides" [value]="store.polygonSides()" (change)="setSides($any($event.target).value)" />
@@ -135,8 +145,17 @@
         </button>
         @if (insertOpen()) {
           <div class="menu-list" role="menu" aria-label="Imported drawings">
+            <label class="insert-as">
+              Insert as
+              <select aria-label="Insert as" [value]="insertAs()" (change)="insertAs.set($any($event.target).value)">
+                <option value="piece">One piece, keeping its proportions</option>
+                <option value="infer">Curves with the relations they show</option>
+                <option value="none">Curves, free</option>
+                <option value="fix">Curves, fixed</option>
+              </select>
+            </label>
             @for (d of store.importedDrawings(); track d.id) {
-              <button type="button" role="menuitem" (click)="insertOpen.set(false); store.insertDrawing(d.id)">{{ d.name }} ({{ d.format?.toUpperCase() }})</button>
+              <button type="button" role="menuitem" (click)="insertOpen.set(false); insert(d.id)">{{ d.name }} ({{ d.format?.toUpperCase() }})</button>
             }
           </div>
         }

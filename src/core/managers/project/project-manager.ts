@@ -8,6 +8,7 @@ import type {
   ProjectSummary,
   Result,
   SketchEntity,
+  TextOutlines,
   Vec3,
 } from '@core/contracts';
 
@@ -43,7 +44,8 @@ export type ImportedContent =
       /** Whether components and assemblies can use it as a solid (meshes up to a size). */
       readonly usableAsSolid: boolean;
     }
-  | { readonly kind: 'drawing'; readonly entities: readonly SketchEntity[]; readonly min: Vec3; readonly max: Vec3 };
+  /** A drawing's sketch entities, with the outlines of its texts. */
+  | { readonly kind: 'drawing'; readonly entities: readonly SketchEntity[]; readonly texts: TextOutlines; readonly min: Vec3; readonly max: Vec3 };
 
 /** Project and document lifecycle (see docs/Architecture/Components.md#project-manager). */
 export interface ProjectManager {

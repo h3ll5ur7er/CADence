@@ -2,14 +2,16 @@ import {
   type Dimension,
   isDimension,
   type Profile,
+  type ProfileEdge,
   type Sketch,
   type SketchConstraint,
   type SketchEntity,
   sketchOriginId,
+  type TextOutlines,
   type Vec2,
 } from '@core/contracts';
 import { closestParameter, splineBeziers } from '@core/utilities/math';
-import { freeformPieces, pointsOf } from '../../viewport/sketch-display';
+import { freeformPieces, pointsOf, textPolylines } from '../../viewport/sketch-display';
 import { type Affine, applyAffine } from '../../viewport/sketch-planes';
 
 /** Pure view-model helpers for the sketch overlay: SVG paths and screen-space annotations. */
@@ -22,6 +24,8 @@ export function curvePath(entity: SketchEntity, points: ReadonlyMap<string, Vec2
   switch (entity.kind) {
     case 'point':
     case 'projection':
+    case 'drawing':
+    case 'text':
       return '';
     case 'line': {
       const [s, e] = [at(entity.start), at(entity.end)];
@@ -56,6 +60,20 @@ export function curvePath(entity: SketchEntity, points: ReadonlyMap<string, Vec2
   }
 }
 
+/** Closed outlines (of text) as an SVG path in sketch coordinates. */
+export function outlinePath(contours: readonly (readonly ProfileEdge[])[]): string {
+  return contours
+    .map((contour) => {
+      const first = contour[0];
+      if (!first) return '';
+      const pieces = contour.map((e) =>
+        e.kind === 'bezier' ? `C ${n(e.c1[0])} ${n(e.c1[1])} ${n(e.c2[0])} ${n(e.c2[1])} ${n(e.end[0])} ${n(e.end[1])}` : `L ${n(e.end[0])} ${n(e.end[1])}`,
+      );
+      return `M ${n(first.start[0])} ${n(first.start[1])} ${pieces.join(' ')} Z`;
+    })
+    .join(' ');
+}
+
 export function profilePath(profile: Profile): string {
   return [profile.outer, ...profile.holes]
     .map((loop) => `M ${loop.polygon.map(([x, y]) => `${n(x)} ${n(y)}`).join(' L ')} Z`)
@@ -80,8 +98,9 @@ function anchorOf(sketch: Sketch, id: string, points: ReadonlyMap<string, Vec2>)
   const point = points.get(id);
   if (point) return point;
   const e = sketch.entities.find((x) => x.id === id);
-  if (!e || e.kind === 'point' || e.kind === 'projection') return undefined;
+  if (!e || e.kind === 'point' || e.kind === 'projection' || e.kind === 'drawing') return undefined;
   const at = (p: string): Vec2 => points.get(p) ?? [0, 0];
+  if (e.kind === 'text') return at(e.anchor);
   if (e.kind === 'line') {
     const [s, t] = [at(e.start), at(e.end)];
     return [s[0] + (t[0] - s[0]) * 0.25, s[1] + (t[1] - s[1]) * 0.25];
@@ -252,7 +271,7 @@ function segmentDistance(p: Vec2, a: Vec2, b: Vec2): number {
  * The point or curve nearest to `at` within `tolerance` (sketch units); points win over curves.
  * Geometric hit testing: SVG stroke hit areas are unreliable under the plane transform.
  */
-export function hitTest(sketch: Sketch, at: Vec2, tolerance: number): SketchHit | undefined {
+export function hitTest(sketch: Sketch, at: Vec2, tolerance: number, texts: TextOutlines = new Map()): SketchHit | undefined {
   const points = pointsOf(sketch);
   let best: { hit: SketchHit; d: number } | undefined;
   for (const [id, p] of points) {
@@ -263,8 +282,12 @@ export function hitTest(sketch: Sketch, at: Vec2, tolerance: number): SketchHit 
   const point = (id: string): Vec2 => points.get(id) ?? [0, 0];
   for (const e of sketch.entities) {
     let d: number;
-    if (e.kind === 'point' || e.kind === 'projection') continue;
-    if (e.kind === 'line') {
+    if (e.kind === 'point' || e.kind === 'projection' || e.kind === 'drawing') continue;
+    if (e.kind === 'text') {
+      // Text is hit on its outlines.
+      const lines = textPolylines(texts.get(e.id) ?? []);
+      d = Math.min(Infinity, ...lines.flatMap((line) => line.slice(1).map((p, i) => segmentDistance(at, line[i] as Vec2, p))));
+    } else if (e.kind === 'line') {
       d = segmentDistance(at, point(e.start), point(e.end));
     } else if (e.kind === 'circle') {
       const c = point(e.center);

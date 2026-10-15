@@ -68,6 +68,20 @@ describe('InterchangeEngine drawings', () => {
     expect(20 + Math.min(...xs)).toBeLessThan(0.005);
   });
 
+  it('writes text as its outlines', async () => {
+    const b = new SketchBuilder();
+    const label = b.text(b.point(0, 0), 'L', 10);
+    const outline = [
+      [
+        { kind: 'line' as const, start: [0, 0] as const, end: [6, 0] as const, source: label },
+        { kind: 'line' as const, start: [6, 0] as const, end: [6, 10] as const, source: label },
+        { kind: 'line' as const, start: [6, 10] as const, end: [0, 0] as const, source: label },
+      ],
+    ];
+    const svg = text(await engine.exportDrawing(b.build(), 'svg', undefined, new Map([[label, outline]])));
+    expect(svg.match(/<line /g)).toHaveLength(3);
+  });
+
   it('leaves construction geometry out', async () => {
     const svg = text(await engine.exportDrawing(plate(), 'svg'));
     expect(svg).not.toContain('x1="0" y1="0" x2="40" y2="-20"');
@@ -210,8 +224,21 @@ describe('InterchangeEngine imports', () => {
   });
 
   it('reads drawings into sketch entities', async () => {
-    const entities = ok(await engine.readDrawing(await engine.exportDrawing(plate(), 'dxf'), 'dxf', 'd'));
+    const { entities } = ok(await engine.readDrawing(await engine.exportDrawing(plate(), 'dxf'), 'dxf', 'd'));
     expect(entities.filter((e) => e.kind !== 'point').map((e) => e.kind).sort()).toEqual(['arc', 'circle', 'line', 'line', 'line', 'line']);
+  });
+
+  it('reads texts of drawings as editable text, and outlines them when converting', async () => {
+    const svg = new TextEncoder().encode('<svg viewBox="0 0 100 50" width="100mm" height="50mm"><text x="50" y="40" font-size="10" text-anchor="end">Hi</text></svg>');
+    const { entities, texts } = ok(await engine.readDrawing(svg, 'svg', 'd'));
+    const label = entities.find((e) => e.kind === 'text');
+    // An em size of 10 makes capitals about 7.3 tall; the end of the text is at x = 50.
+    expect(label).toMatchObject({ text: 'Hi', height: expect.closeTo(7.275, 2) });
+    const xs = [...texts.values()].flat(2).map((e) => e.end[0]);
+    expect(Math.max(...xs)).toBeLessThan(50);
+    expect(Math.max(...xs)).toBeGreaterThan(48);
+    const dxf = text(ok(await engine.convert(svg, 'svg', 'dxf')));
+    expect(dxf).toContain('POLYLINE');
   });
 
   it('converts between formats of the same kind', async () => {

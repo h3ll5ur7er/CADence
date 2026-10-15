@@ -1,4 +1,4 @@
-import { type Profile, type Sketch, sketchOriginId } from '@core/contracts';
+import { type Profile, type Sketch, sketchOriginId, type TextOutlines } from '@core/contracts';
 import {
   angleOf,
   type Bezier,
@@ -38,12 +38,19 @@ export function samplePoints(curve: Extract<DrawingCurve, { kind: 'bezier' | 'el
   return sampleCurve(c, t0, t1, tolerance);
 }
 
-export function drawingCurves(sketch: Sketch): DrawingCurve[] {
+/** The sketch's curves, with the outlines of its texts (from solving). */
+export function drawingCurves(sketch: Sketch, texts: TextOutlines = new Map()): DrawingCurve[] {
   const points = new Map<string, Vec2>([[sketchOriginId, [0, 0]]]);
   for (const e of sketch.entities) if (e.kind === 'point') points.set(e.id, [e.x, e.y]);
   const at = (id: string): Vec2 => points.get(id) ?? [0, 0];
   return sketch.entities.flatMap((e): DrawingCurve[] => {
-    if (e.kind === 'point' || e.kind === 'projection' || e.construction) return [];
+    if (e.kind === 'point' || e.kind === 'projection' || e.kind === 'drawing' || e.construction) return [];
+    if (e.kind === 'text') {
+      return (texts.get(e.id) ?? []).flat().flatMap((edge): DrawingCurve[] => {
+        if (edge.kind === 'line') return [{ kind: 'line', start: edge.start, end: edge.end }];
+        return edge.kind === 'bezier' ? [{ kind: 'bezier', points: [edge.start, edge.c1, edge.c2, edge.end] }] : [];
+      });
+    }
     if (e.kind === 'line') return [{ kind: 'line', start: at(e.start), end: at(e.end) }];
     if (e.kind === 'circle') return [{ kind: 'circle', center: at(e.center), radius: e.radius }];
     if (e.kind === 'ellipse') return [{ kind: 'ellipse', ellipse: ellipseOf(at(e.center), at(e.major), e.minorRadius), start: 0, sweep: 2 * Math.PI }];
@@ -94,10 +101,10 @@ export interface KerfCompensation {
  * The sketch's curves with every profile outline offset by half the kerf (outer loops grow, holes
  * shrink); curves that bound no profile, such as engraving lines, stay where they are.
  */
-export function compensatedCurves(sketch: Sketch, { profiles, kerf }: KerfCompensation): DrawingCurve[] {
+export function compensatedCurves(sketch: Sketch, { profiles, kerf }: KerfCompensation, texts: TextOutlines = new Map()): DrawingCurve[] {
   const loops = profiles.flatMap((p) => [p.outer, ...p.holes]);
   const bounding = new Set(loops.flatMap((loop) => loop.edges.map((e) => e.source)));
-  const loose = drawingCurves({ ...sketch, entities: sketch.entities.filter((e) => e.kind === 'point' || !bounding.has(e.id)) });
+  const loose = drawingCurves({ ...sketch, entities: sketch.entities.filter((e) => e.kind === 'point' || !bounding.has(e.id)) }, texts);
   const outlines = loops.flatMap((loop) => {
     const moved = offsetLoop(loop.edges, kerf / 2);
     if (!moved) throw new Error(`${sketch.name} has details smaller than the kerf (${num(kerf)} mm).`);

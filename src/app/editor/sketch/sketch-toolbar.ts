@@ -1,12 +1,12 @@
 import { ChangeDetectionStrategy, Component, computed, DestroyRef, inject, signal } from '@angular/core';
-import { isCurve, type SketchEntity, sketchOriginId } from '@core/contracts';
+import { type DocumentId, isCurve, type SketchEntity, sketchOriginId } from '@core/contracts';
 import type { DrawingFormat } from '@core/managers/design';
 import { newId } from '@core/utilities/identity';
 import { Icon, type IconName } from '../../shared/icon';
 import { Shortcuts } from '../../shared/shortcuts';
 import { DesignStore } from './design-store';
 import { linearPatternCommand } from './sketch-patterns';
-import { type ConstraintTool, constraintFor, type Tool } from './sketch-tools';
+import { type ConstraintTool, constraintFor, type TextDraft, type Tool } from './sketch-tools';
 
 interface ToolButton { readonly tool: Tool; readonly icon: IconName; readonly label: string; readonly key?: string }
 
@@ -29,6 +29,7 @@ const shapeTools: readonly ToolButton[] = [
   { tool: 'polygon', icon: 'polygon', label: 'Polygon' },
   { tool: 'ellipse', icon: 'ellipse', label: 'Ellipse' },
   { tool: 'spline', icon: 'spline', label: 'Spline' },
+  { tool: 'text', icon: 'text', label: 'Text' },
   { tool: 'project', icon: 'project', label: 'Project edges or faces of bodies' },
 ];
 
@@ -73,6 +74,7 @@ const hints: Readonly<Record<Tool, string>> = {
   polygon: 'Click the centre, then a corner. Set the number of sides in the toolbar.',
   ellipse: 'Click the centre, the end of the long axis, then how wide the ellipse is.',
   spline: 'Click each point the curve passes through. Double-click to end; click the first point to close it.',
+  text: 'Type the text and its height in the toolbar, then click where its baseline starts. Select a text to change it.',
   project: 'Click edges or faces of bodies in the view: their outline becomes fixed geometry in the sketch that follows the body.',
   trim: 'Click the piece of a curve to cut away, up to where other curves cross it.',
   extend: 'Click near the end of a line or arc to lengthen it to the next curve.',
@@ -114,6 +116,8 @@ export class SketchToolbar {
   protected readonly view = this.store.editedView;
   protected readonly hint = computed(() => hints[this.store.tool()]);
   protected readonly insertOpen = signal(false);
+  /** How drawings go into the sketch: as one piece, or as curves held by the relations they show, nothing, or fixed. */
+  protected readonly insertAs = signal<'piece' | 'infer' | 'none' | 'fix'>('piece');
   /** The kerf of a laser profile, for compensated exports. */
   protected readonly kerf = computed(() => {
     const process = this.store.process();
@@ -178,6 +182,10 @@ export class SketchToolbar {
     if (count >= 2 && count <= 360) this.store.patternCount.set(count);
   }
 
+  protected setText(change: Partial<TextDraft>): void {
+    this.store.textDraft.update((draft) => ({ ...draft, ...change }));
+  }
+
   protected setSides(value: string): void {
     const sides = Math.round(Number(value));
     if (sides >= 3 && sides <= 64) this.store.polygonSides.set(sides);
@@ -204,6 +212,11 @@ export class SketchToolbar {
     const sketchId = this.store.editing();
     const ids = this.store.selection().filter((id) => id !== sketchOriginId);
     if (sketchId && ids.length && (await this.store.run({ type: 'delete-sketch-elements', sketchId, ids }))) this.store.select([]);
+  }
+
+  protected insert(documentId: DocumentId): void {
+    const as = this.insertAs();
+    void this.store.insertDrawing(documentId, as === 'piece' ? { onePiece: true } : { relations: as });
   }
 
   protected export(format: DrawingFormat, compensateKerf = false): void {

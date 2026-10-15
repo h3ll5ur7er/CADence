@@ -205,6 +205,15 @@
       <dt>Profiles</dt>
       <dd data-testid="profile-count">{{ view.profiles.length }}</dd>
     </dl>
+    @if (selectedText(); as t) {
+      <p class="eyebrow">Text</p>
+      <div class="text-form">
+        <label class="field">Text <input aria-label="Text" [value]="t.text" (change)="setText(t, { text: $any($event.target).value })" /></label>
+        <label class="field">Height (mm) <input type="number" min="0.1" step="0.5" aria-label="Height of the text" [value]="t.height" (change)="setText(t, { height: +$any($event.target).value })" /></label>
+        <label class="field">Angle (°) <input type="number" step="5" aria-label="Angle of the text" [value]="round(t.angle * 180 / pi)" (change)="setText(t, { angle: +$any($event.target).value * pi / 180 })" /></label>
+        <label class="check"><input type="checkbox" [checked]="t.weight === 'bold'" (change)="setText(t, { weight: $any($event.target).checked ? 'bold' : 'regular' })" /> Bold</label>
+      </div>
+    }
     @if (view.profiles.length) {
       <p class="eyebrow">Profile areas</p>
       <ul class="areas">

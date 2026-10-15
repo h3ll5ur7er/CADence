@@ -1,11 +1,30 @@
-import { computed, DestroyRef, inject, Injectable, signal } from '@angular/core';
-import { type DocumentId, type Feature, type FeatureType, isSketch, type Parameter, type PlaneRef } from '@core/contracts';
+import { computed, DestroyRef, inject, Injectable, resource, signal } from '@angular/core';
+import {
+  type BodyProperties,
+  type DocumentId,
+  type Feature,
+  type FeatureType,
+  isSketch,
+  manufacturingProfiles,
+  type ManufacturingProfile,
+  type Measurement,
+  type Parameter,
+  type PlaneRef,
+  type Result,
+  type TopologyRef,
+  type ValidationReport,
+} from '@core/contracts';
 import type { DesignCommand, DesignSession, DesignState, DrawingFormat, SketchView, SolidFormat } from '@core/managers/design';
 import { newId } from '@core/utilities/identity';
 import { DESIGN_MANAGER } from '../../core.providers';
 import type { Pick, PickKind } from '../../viewport/picking';
 import { applyPick, defaultFeature, type FeatureDraft, type PickTarget, pickableFor, selectionOf } from '../modeling/feature-drafts';
 import type { Tool } from './sketch-tools';
+
+/** What the properties column shows besides feature dialogs and sketch info. */
+export type SidePanel = 'parameters' | 'measure' | 'check';
+
+const toRef = (pick: Extract<Pick, { kind: 'face' | 'edge' }>): TopologyRef => ({ kind: pick.kind, body: pick.body, name: pick.name, hint: pick.hint });
 
 /**
  * Client-side state of one component editor: the Design session as signals, plus pure UI state
@@ -29,14 +48,47 @@ export class DesignStore {
   readonly draft = signal<FeatureDraft | undefined>(undefined);
   /** A face picked in the 3D view outside dialogs (for sketching on it). */
   readonly pickedFace = signal<Extract<Pick, { kind: 'face' }> | undefined>(undefined);
-  readonly parametersOpen = signal(false);
+  readonly panel = signal<SidePanel | undefined>(undefined);
+  /** Faces and edges picked with the measure tool. */
+  readonly measurePicks = signal<readonly Extract<Pick, { kind: 'face' | 'edge' }>[]>([]);
+  /** The check whose faces are highlighted; the first one with faces when unset. */
+  readonly focusedCheck = signal<string | undefined>(undefined);
 
-  readonly pickable = computed((): ReadonlySet<PickKind> => (this.editing() ? new Set() : pickableFor(this.draft())));
+  readonly pickable = computed((): ReadonlySet<PickKind> => {
+    if (this.editing()) return new Set();
+    if (!this.draft() && this.panel() === 'measure') return new Set<PickKind>(['face', 'edge']);
+    return pickableFor(this.draft());
+  });
   readonly picks = computed((): readonly Pick[] => {
     const draft = this.draft();
     if (draft) return selectionOf(draft);
+    if (this.panel() === 'measure') return this.measurePicks();
     const face = this.pickedFace();
     return face ? [face] : [];
+  });
+
+  /** The manufacturing profile in effect. */
+  readonly process = computed(() => this.state()?.document.process ?? (manufacturingProfiles[0] as ManufacturingProfile));
+
+  /** What the measure tool shows for the current picks; recomputed when the model changes. */
+  readonly measurement = resource({
+    params: () => (this.panel() === 'measure' && this.measurePicks().length ? { picks: this.measurePicks(), state: this.state() } : undefined),
+    loader: ({ params }): Promise<Result<Measurement> | undefined> => this.session?.measure(params.picks.map(toRef)) ?? Promise.resolve(undefined),
+  });
+
+  /** The validation report while the check panel is open; re-run after every change. */
+  readonly report = resource({
+    params: () => (this.panel() === 'check' ? { state: this.state() } : undefined),
+    loader: (): Promise<ValidationReport | undefined> => this.session?.validate() ?? Promise.resolve(undefined),
+  });
+
+  /** Faces the focused check is about, for the viewport. */
+  readonly flagged = computed((): readonly TopologyRef[] => {
+    if (this.panel() !== 'check') return [];
+    const checks = this.report.value()?.checks ?? [];
+    const focused = this.focusedCheck();
+    const check = focused ? checks.find((c) => c.id === focused) : checks.find((c) => c.status !== 'pass' && c.faces?.length);
+    return check?.faces ?? [];
   });
 
   readonly editedView = computed(() => {
@@ -88,6 +140,13 @@ export class DesignStore {
       this.draft.set(applyPick(draft, pick));
       return;
     }
+    if (this.panel() === 'measure') {
+      if (pick.kind === 'profile') return;
+      const picks = this.measurePicks();
+      const same = (p: Pick) => p.kind === pick.kind && p.body === pick.body && p.name === pick.name;
+      this.measurePicks.set(picks.some(same) ? picks.filter((p) => !same(p)) : [...picks, pick]);
+      return;
+    }
     if (pick.kind !== 'face') return;
     const current = this.pickedFace();
     this.pickedFace.set(current?.name === pick.name && current.body === pick.body ? undefined : pick);
@@ -97,7 +156,7 @@ export class DesignStore {
     const state = this.state();
     if (!state) return;
     this.finishEditing();
-    this.parametersOpen.set(false);
+    this.panel.set(undefined);
     this.pickedFace.set(undefined);
     this.draft.set({ mode: 'create', feature: defaultFeature(type, newId(), state) });
   }
@@ -106,7 +165,7 @@ export class DesignStore {
     const feature = this.state()?.document.timeline.find((item): item is Feature => item.id === id && !isSketch(item));
     if (!feature) return;
     this.finishEditing();
-    this.parametersOpen.set(false);
+    this.panel.set(undefined);
     this.draft.set({ mode: 'edit', feature });
   }
 
@@ -137,12 +196,23 @@ export class DesignStore {
     if (result && !result.ok) this.error.set(result.error.message);
   }
 
-  volumes(): Promise<Record<string, number>> {
-    return this.session?.volumes() ?? Promise.resolve({});
+  /** Opens a side panel (or closes it with `undefined`), leaving sketches and dialogs. */
+  openPanel(panel: SidePanel | undefined): void {
+    this.cancelDraft();
+    this.finishEditing();
+    this.pickedFace.set(undefined);
+    this.measurePicks.set([]);
+    this.focusedCheck.set(undefined);
+    this.panel.set(panel);
+  }
+
+  properties(): Promise<BodyProperties[]> {
+    return this.session?.properties() ?? Promise.resolve([]);
   }
 
   /** New sketches start drawing; existing ones start selecting. */
   edit(sketchId: string, tool: Tool = 'select'): void {
+    this.panel.set(undefined);
     this.editing.set(sketchId);
     this.tool.set(tool);
     this.selection.set([]);
@@ -187,14 +257,16 @@ export class DesignStore {
     this.error.set(undefined);
   }
 
-  async exportSketch(sketchId: string, format: DrawingFormat): Promise<void> {
-    const result = await this.session?.exportSketch(sketchId, format);
+  async exportSketch(sketchId: string, format: DrawingFormat, compensateKerf = false): Promise<void> {
+    const result = await this.session?.exportSketch(sketchId, format, { compensateKerf });
     if (result && !result.ok) this.error.set(result.error.message);
   }
 
   private reset(): void {
     this.session = undefined;
     this.state.set(undefined);
+    this.panel.set(undefined);
+    this.measurePicks.set([]);
     this.finishEditing();
     this.error.set(undefined);
   }

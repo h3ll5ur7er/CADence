@@ -219,5 +219,15 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
       });
     case 'delete-parameter':
       return ok({ document: { ...document, parameters: document.parameters.filter((p) => p.id !== command.id) }, parameters: true });
+    case 'set-material':
+      if (!command.material.name.trim() || !(command.material.density > 0)) return invalid('A material needs a name and a density above zero.');
+      return ok({ document: { ...document, material: command.material } });
+    case 'set-process': {
+      const { process } = command;
+      const sizes = process.kind === 'print' ? [...process.bed, process.nozzle, process.layerHeight] : [...process.bed, process.kerf, process.thickness];
+      if (!process.name.trim() || sizes.some((v) => !(v > 0))) return invalid('Every size of a manufacturing profile must be above zero.');
+      if (process.kind === 'print' && !(process.maxOverhang > 0 && process.maxOverhang <= 90)) return invalid('The overhang angle must be between 0° and 90°.');
+      return ok({ document: { ...document, process } });
+    }
   }
 }

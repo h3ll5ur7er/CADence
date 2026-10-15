@@ -1,5 +1,6 @@
 import type { AssetId, DocumentId, ProjectId } from './ids';
 import type { Timestamp } from './project';
+import type { Material, ManufacturingProfile } from './analysis';
 import type { Feature } from './feature';
 import type { Sketch } from './sketch';
 
@@ -44,6 +45,10 @@ export interface ComponentDocument extends DocumentBase {
   readonly parameters: readonly Parameter[];
   readonly timeline: readonly TimelineItem[];
   readonly rollbackIndex: number;
+  /** For mass; `materials[0]` when absent. */
+  readonly material?: Material;
+  /** The machine the component is made on, for validation; `manufacturingProfiles[0]` when absent. */
+  readonly process?: ManufacturingProfile;
 }
 
 export interface AssemblyDocument extends DocumentBase {

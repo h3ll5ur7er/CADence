@@ -1,7 +1,6 @@
-import type { NamedShape } from '@core/access/shape';
-import type { TopologyRef, Vec3 } from '@core/contracts';
+import { baseName, centerOf, type NamedShape } from '@core/access/shape';
+import type { Vec3 } from '@core/contracts';
 import type { Edge, Face, Shape3D } from 'replicad';
-import { length3, sub3 } from './geometry';
 import { sameSurface, type Surface, surfaceOf } from './surfaces';
 
 /**
@@ -16,7 +15,6 @@ export interface NamedSurface {
 }
 
 const round = (v: number) => Math.round(v * 1e4) / 1e4;
-const centerOf = (shape: Face | Edge): Vec3 => shape.boundingBox.center as Vec3;
 const order = (a: Vec3, b: Vec3) => round(a[0]) - round(b[0]) || round(a[1]) - round(b[1]) || round(a[2]) - round(b[2]);
 
 /** Faces of a named shape with their surfaces, to name the faces of a shape derived from it. */
@@ -26,9 +24,6 @@ export function namedSurfaces(named: NamedShape): NamedSurface[] {
     return name ? [{ surface: surfaceOf(face), name: baseName(name) }] : [];
   });
 }
-
-/** A name without the "~2" that tells split pieces apart. */
-const baseName = (name: string) => name.replace(/~\d+$/, '');
 
 /** Appends ~1, ~2, ... to names used more than once, ordered by position. */
 function disambiguate<T extends Face | Edge>(items: { item: T; name: string }[]): Map<number, string> {
@@ -78,29 +73,4 @@ export function nameShape(
   }
   const edges = disambiguate([...adjacent.values()].map(({ edge, faces: names }) => ({ item: edge, name: `e:${[...names].sort().join('|')}` })));
   return { shape, faces, edges };
-}
-
-/** Faces or edges with their names and positions. */
-function elementsOf(named: NamedShape, kind: TopologyRef['kind']): { element: Face | Edge; name: string; center: Vec3 }[] {
-  const elements: (Face | Edge)[] = kind === 'face' ? named.shape.faces : named.shape.edges;
-  const names = kind === 'face' ? named.faces : named.edges;
-  return elements.flatMap((element) => {
-    const name = names.get(element.hashCode);
-    return name ? [{ element, name, center: centerOf(element) }] : [];
-  });
-}
-
-/**
- * Finds the face or edge a reference names: by exact name, then among its split pieces, then (when
- * the name is gone) the nearest element to where it was picked.
- */
-export function resolve(named: NamedShape, ref: TopologyRef): Face | Edge | undefined {
-  const elements = elementsOf(named, ref.kind);
-  const exact = elements.find((e) => e.name === ref.name);
-  if (exact) return exact.element;
-  const nearest = (list: typeof elements) =>
-    ref.hint ? list.sort((a, b) => length3(sub3(a.center, ref.hint as Vec3)) - length3(sub3(b.center, ref.hint as Vec3)))[0] : list[0];
-  const pieces = elements.filter((e) => baseName(e.name) === baseName(ref.name));
-  if (pieces.length) return nearest(pieces)?.element;
-  return undefined;
 }

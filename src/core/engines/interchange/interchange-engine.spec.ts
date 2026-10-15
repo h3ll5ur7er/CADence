@@ -2,6 +2,7 @@ import DxfParser from 'dxf-parser';
 import { JSDOM } from 'jsdom';
 import { describe, expect, it } from 'vitest';
 import { SketchBuilder } from '@core/contracts/testing/sketch-builder';
+import { circleLoop, profile, rectangleLoop } from '@core/contracts/testing/profiles';
 import { createShapeAccess } from '@core/access/shape';
 import { draw, drawCircle, importSTEP, measureVolume, type Shape3D } from 'replicad';
 import { createInterchangeEngine } from './index';
@@ -51,6 +52,30 @@ describe('InterchangeEngine drawings', () => {
   it('leaves construction geometry out', async () => {
     const svg = text(await engine.exportDrawing(plate(), 'svg'));
     expect(svg).not.toContain('x1="0" y1="0" x2="40" y2="-20"');
+  });
+
+  it('compensates the kerf: outlines grow and holes shrink by half the kerf, loose curves stay', async () => {
+    const b = new SketchBuilder();
+    const corners = [b.point(0, 0), b.point(40, 0), b.point(40, 20), b.point(0, 20)];
+    ['bottom', 'right', 'top', 'left'].forEach((side, i) => b.line(corners[i] as string, corners[(i + 1) % 4] as string, false, `r-${side}`));
+    b.circle(b.point(30, 10), 4, false, 'hole');
+    b.line(b.point(5, 5), b.point(15, 5), false, 'engrave');
+    const profiles = [profile(rectangleLoop(0, 0, 40, 20, 'r'), [circleLoop(30, 10, 4, 'hole', false)])];
+    const dxf = new DxfParser().parseSync(text(await engine.exportDrawing(b.build(), 'dxf', { profiles, kerf: 0.2 })));
+    const entities = (dxf?.entities ?? []) as unknown as { type: string; radius?: number; vertices?: { x: number; y: number }[] }[];
+    expect(entities.map((e) => e.type).sort()).toEqual(['ARC', 'ARC', 'LINE', 'LINE', 'LINE', 'LINE', 'LINE']);
+    expect(entities.filter((e) => e.type === 'ARC').map((e) => e.radius)).toEqual([3.9, 3.9]);
+    const xs = entities.filter((e) => e.type === 'LINE').flatMap((e) => e.vertices?.map((v) => v.x) ?? []);
+    expect(Math.min(...xs)).toBeCloseTo(-0.1);
+    expect(Math.max(...xs)).toBeCloseTo(40.1);
+    expect(xs).toContain(5); // the engraving line is not moved
+  });
+
+  it('refuses kerf compensation when a detail is smaller than the kerf', async () => {
+    const b = new SketchBuilder();
+    b.circle(b.point(0, 0), 0.05, false, 'pin');
+    const profiles = [profile(circleLoop(0, 0, 0.05, 'pin', false))];
+    await expect(engine.exportDrawing(b.build(), 'svg', { profiles, kerf: 0.2 })).rejects.toThrow('smaller than the kerf');
   });
 });
 

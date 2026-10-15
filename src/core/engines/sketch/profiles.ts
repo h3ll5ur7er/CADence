@@ -3,9 +3,11 @@ import { contentHash } from '@core/utilities/identity';
 import {
   angleOf,
   ccwSweep,
+  circleCircle,
+  circleLine,
   containsPoint,
-  cross,
   distance,
+  lineLine,
   normalizeAngle,
   polar,
   signedArea,
@@ -82,40 +84,8 @@ function parameterOf(s: Segment, p: Vec2): number | undefined {
   return undefined;
 }
 
-function circleLine(c: Vec2, r: number, a: Vec2, b: Vec2): Vec2[] {
-  const d = sub(b, a);
-  const f = sub(a, c);
-  const A = d[0] ** 2 + d[1] ** 2;
-  const B = 2 * (f[0] * d[0] + f[1] * d[1]);
-  const C = f[0] ** 2 + f[1] ** 2 - r * r;
-  const disc = B * B - 4 * A * C;
-  if (disc < -tolerance) return [];
-  const root = Math.sqrt(Math.max(disc, 0));
-  return [(-B - root) / (2 * A), (-B + root) / (2 * A)].map((t) => [a[0] + t * d[0], a[1] + t * d[1]] as Vec2);
-}
-
-function circleCircle(c1: Vec2, r1: number, c2: Vec2, r2: number): Vec2[] {
-  const d = distance(c1, c2);
-  if (d < tolerance || d > r1 + r2 + tolerance || d < Math.abs(r1 - r2) - tolerance) return [];
-  const a = (r1 * r1 - r2 * r2 + d * d) / (2 * d);
-  const h = Math.sqrt(Math.max(r1 * r1 - a * a, 0));
-  const m: Vec2 = [c1[0] + (a * (c2[0] - c1[0])) / d, c1[1] + (a * (c2[1] - c1[1])) / d];
-  const o: Vec2 = [(h * (c2[1] - c1[1])) / d, (-h * (c2[0] - c1[0])) / d];
-  return [
-    [m[0] + o[0], m[1] + o[1]],
-    [m[0] - o[0], m[1] - o[1]],
-  ];
-}
-
 function intersections(s: Segment, t: Segment): Vec2[] {
-  if (s.kind === 'line' && t.kind === 'line') {
-    const r = sub(s.b, s.a);
-    const q = sub(t.b, t.a);
-    const denominator = cross(r, q);
-    if (Math.abs(denominator) < 1e-12) return [];
-    const u = cross(sub(t.a, s.a), q) / denominator;
-    return [[s.a[0] + u * r[0], s.a[1] + u * r[1]]];
-  }
+  if (s.kind === 'line' && t.kind === 'line') return lineLine(s.a, s.b, t.a, t.b);
   if (s.kind === 'arc' && t.kind === 'arc') return circleCircle(s.c, s.r, t.c, t.r);
   const [line, arc] = (s.kind === 'line' ? [s, t] : [t, s]) as [Extract<Segment, { kind: 'line' }>, Extract<Segment, { kind: 'arc' }>];
   return circleLine(arc.c, arc.r, line.a, line.b);

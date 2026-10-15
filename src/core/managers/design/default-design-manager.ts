@@ -1,6 +1,23 @@
 import type { DocumentAccess } from '@core/access/document';
 import type { ExternalFileAccess } from '@core/access/external-file';
-import { type BodyMesh, type ComponentDocument, type DocumentId, fail, isSketch, ok, type Result } from '@core/contracts';
+import {
+  type BodyMesh,
+  type BodyProperties,
+  type ComponentDocument,
+  type DocumentId,
+  fail,
+  isSketch,
+  manufacturingProfiles,
+  type ManufacturingProfile,
+  type Material,
+  materials,
+  type Measurement,
+  ok,
+  type Result,
+  type TopologyRef,
+  type ValidationReport,
+} from '@core/contracts';
+import type { AnalysisEngine } from '@core/engines/analysis';
 import type { InterchangeEngine } from '@core/engines/interchange';
 import type { ModelingEngine } from '@core/engines/modeling';
 import type { ParameterEngine } from '@core/engines/parameter';
@@ -25,6 +42,7 @@ export interface DesignManagerDependencies {
   readonly parameters: ParameterEngine;
   readonly modeling: ModelingEngine;
   readonly interchange: InterchangeEngine;
+  readonly analysis: AnalysisEngine;
   readonly clock: Clock;
 }
 
@@ -99,24 +117,33 @@ class Session implements DesignSession {
     return { ...solution, frame: view.frame, values: view.values };
   }
 
-  async exportSketch(sketchId: string, format: DrawingFormat): Promise<Result<void>> {
+  async exportSketch(sketchId: string, format: DrawingFormat, options: { readonly compensateKerf?: boolean } = {}): Promise<Result<void>> {
     const view = this.current.derived.sketches.get(sketchId);
     if (!view) return fail({ code: 'invalid-command', message: `Sketch ${sketchId} does not exist.` });
-    const bytes = await this.deps.interchange.exportDrawing(view.sketch, format);
-    await this.deps.externalFiles.deliver({
-      name: `${this.current.document.name} - ${view.sketch.name}.${format}`,
-      mediaType: drawingTypes[format],
-      bytes,
-    });
-    return ok(undefined);
+    const process = processOf(this.current.document);
+    if (options.compensateKerf && process.kind !== 'laser') {
+      return fail({ code: 'not-laser', message: 'Kerf compensation needs a laser cutter as manufacturing profile.' });
+    }
+    try {
+      const kerf = options.compensateKerf && process.kind === 'laser' ? { profiles: view.profiles, kerf: process.kerf } : undefined;
+      const bytes = await this.deps.interchange.exportDrawing(view.sketch, format, kerf);
+      const suffix = kerf ? ' (kerf compensated)' : '';
+      await this.deps.externalFiles.deliver({
+        name: `${this.current.document.name} - ${view.sketch.name}${suffix}.${format}`,
+        mediaType: drawingTypes[format],
+        bytes,
+      });
+      return ok(undefined);
+    } catch (error) {
+      return fail({ code: 'export-failed', message: error instanceof Error ? error.message : String(error) });
+    }
   }
 
   async exportBodies(format: SolidFormat): Promise<Result<void>> {
     const { document, derived } = this.current;
     if (derived.bodies.length === 0) return fail({ code: 'nothing-to-export', message: 'There are no bodies to export yet.' });
-    const name = (id: string) => document.timeline.find((item) => item.id === id)?.name ?? id;
     try {
-      const bytes = await this.deps.interchange.exportBodies(derived.bodies.map((b) => ({ name: name(b.id), key: b.key })), format);
+      const bytes = await this.deps.interchange.exportBodies(this.namedBodies(), format);
       await this.deps.externalFiles.deliver({ name: `${document.name}.${format}`, mediaType: solidTypes[format], bytes });
       return ok(undefined);
     } catch (error) {
@@ -124,8 +151,26 @@ class Session implements DesignSession {
     }
   }
 
-  volumes(): Promise<Record<string, number>> {
-    return this.deps.modeling.volumes(this.current.derived.bodies);
+  measure(refs: readonly TopologyRef[]): Promise<Result<Measurement>> {
+    return this.deps.analysis.measure(this.current.derived.bodies, refs);
+  }
+
+  properties(): Promise<BodyProperties[]> {
+    return this.deps.analysis.properties(this.current.derived.bodies, materialOf(this.current.document).density);
+  }
+
+  async validate(): Promise<ValidationReport> {
+    const { document, derived } = this.current;
+    const profile = processOf(document);
+    const sketches = [...derived.sketches.values()].filter((v) => !v.error).map((v) => ({ sketch: v.sketch, profiles: v.profiles }));
+    const checks = await this.deps.analysis.validate({ bodies: this.namedBodies(), sketches }, profile);
+    return { profile, checks };
+  }
+
+  /** Bodies with the names of the features that made them. */
+  private namedBodies() {
+    const { document, derived } = this.current;
+    return derived.bodies.map((b) => ({ ...b, name: document.timeline.find((item) => item.id === b.id)?.name ?? b.id }));
   }
 
   private async apply(command: DesignCommand): Promise<Result<void>> {
@@ -182,6 +227,9 @@ class Session implements DesignSession {
     return run;
   }
 }
+
+const materialOf = (document: ComponentDocument): Material => document.material ?? (materials[0] as Material);
+const processOf = (document: ComponentDocument): ManufacturingProfile => document.process ?? (manufacturingProfiles[0] as ManufacturingProfile);
 
 /** Stable error codes for the kinds of failure the messages describe. */
 function errorCode(message: string | undefined): string {

@@ -57,10 +57,11 @@ interface DesignSession {
   undo(): Promise<void>;
   redo(): Promise<void>;
   previewDrag(sketchId, pointId, x, y): Promise<SketchView | undefined>;  // solves without committing
-  exportSketch(sketchId, format: 'dxf' | 'svg'): Promise<Result<void>>;
+  exportSketch(sketchId, format: 'dxf' | 'svg', { compensateKerf? }): Promise<Result<void>>;  // kerf: laser profiles only
   exportBodies(format: 'step' | 'stl' | 'obj' | '3mf'): Promise<Result<void>>;
-  volumes(): Promise<Record<string, number>>;  // mm³ per body
-  // later: measure, validate
+  measure(refs: TopologyRef[]): Promise<Result<Measurement>>;  // area, length, radius, distance + points, angle
+  properties(): Promise<BodyProperties[]>;  // volume, area, mass (document material), centre of mass, box
+  validate(): Promise<ValidationReport>;    // the document's manufacturing profile against bodies and sketches
 }
 ```
 
@@ -70,6 +71,7 @@ interface DesignSession {
 - **Features:** `add-feature`, `edit-feature`.
 - **Timeline items:** `suppress-item`, `rename-item`, `delete-item`.
 - **Parameters:** `add-parameter`, `set-parameter`, `delete-parameter`.
+- **Manufacturing:** `set-material` (name and density), `set-process` (a printer or laser profile); both are validated (sizes above zero) and undoable ([[Architecture/Decisions#ADR-19]]).
 
 The state also carries each item's status (ok, error with reason, suppressed), construction planes, body meshes and evaluated parameters.
 
@@ -115,10 +117,10 @@ Engines encapsulate the volatility of an *activity*: an algorithm or a set of bu
 | --- | --- | --- |
 | **Parameter** | `evaluate(expression, kind, scope) → Result<number>` (mm, radians); later `evaluate(parameters)` with dependency ordering | Own recursive-descent parser: arithmetic, `^`, functions (`sin`, `sqrt`, `min`, …), constants, names from the scope, and units (`mm cm m in ft`, `deg rad`) with dimensional analysis. Plain numbers are read as mm or degrees. It is pure and fast, so it is the one **synchronous** engine. |
 | **Sketch** | `solve(sketch, values, drag?) → SketchSolution`: solved geometry, status (under / fully / over-constrained / failed), degrees of freedom, conflicting constraint ids, profiles | planegcs (WASM, loaded lazily on the first solve). Drags pull a point with temporary constraints. For profiles, curves are split at intersections and faces are traced in the planar graph (tangent and curvature order at each vertex). Areas are exact (with circular-segment corrections), and islands become holes. Profile ids derive from the bounding curves, so they survive dimension changes. |
-| **Modeling** | `apply(request) → { bodies, toolKey?, error? }` for extrude, revolve, fillet, chamfer, shell, linear/circular pattern, mirror; `planeOf(bodies, face) → PlaneFrame`; `tessellate(bodies) → BodyMesh[]`; `volumes(bodies)`; later `snapshotBodies`, `restoreBodies` | OCCT (`replicad-opencascadejs`, through `replicad`) in the geometry worker. Generative naming ([[Architecture/Decisions#ADR-15]]); results validated with `BRepCheck_Analyzer`; outcomes cached by request content hash. |
-| **Analysis** | `measure(refs)`; `massProperties(bodyKey, density)`; `checkManufacturability(bodyKey, profile) → ValidationReport` | Geometric checks with OCCT; mesh-based printability checks (overhang, thin walls) are Rust/WASM candidates. |
+| **Modeling** | `apply(request) → { bodies, toolKey?, error? }` for extrude, revolve, fillet, chamfer, shell, linear/circular pattern, mirror; `planeOf(bodies, face) → PlaneFrame`; `tessellate(bodies) → BodyMesh[]`; later `snapshotBodies`, `restoreBodies` | OCCT (`replicad-opencascadejs`, through `replicad`) in the geometry worker. Generative naming ([[Architecture/Decisions#ADR-15]]); results validated with `BRepCheck_Analyzer`; outcomes cached by request content hash. |
+| **Analysis** | `measure(bodies, refs) → Result<Measurement>`; `properties(bodies, density) → BodyProperties[]`; `validate({ bodies, sketches }, profile) → Check[]` | In the geometry worker ([[src/core/engines/analysis/index.ts]]). Measures and mass properties with OCCT (`BRepExtrema_DistShapeShape`, `GProp`). **Print rules:** closed valid solid, build volume (also turned by 90°), overhangs steeper than the profile allows (bed contact excluded), wall thickness by ray casting (fail below one nozzle width, warn below two). **Laser rules:** body thickness = sheet, closed outlines, laser bed, kerf compensation possible. Each check names the faces it is about. TypeScript on cached meshes ([[Architecture/Decisions#ADR-18]]). |
 | **Kinematics** | `solve(assemblyModel, drivers) → InstanceTransforms`; `step(state, dt)` | Joint graph and constraint solver (Newton-Raphson on joint equations); rigid body motion first. |
-| **Interchange** | `exportDrawing(sketch, 'dxf' \| 'svg') → Uint8Array`; later `export(bodies, format)` and `import(bytes, format)` | DXF: ASCII with R12 entities (LINE, CIRCLE, ARC) and `$INSUNITS` set to mm. SVG: sized in mm, Y up, hairline strokes, no fill, which is what laser software expects. Construction geometry is left out. STEP goes through OCCT; STL, OBJ and 3MF are written in TypeScript. One writer per format, in a registry. |
+| **Interchange** | `exportDrawing(sketch, 'dxf' \| 'svg', kerf?) → Uint8Array` (with `kerf`, profile outlines move half a kerf away from the part); `exportBodies(bodies, format)`; later `import(bytes, format)` | DXF: ASCII with R12 entities (LINE, CIRCLE, ARC) and `$INSUNITS` set to mm. SVG: sized in mm, Y up, hairline strokes, no fill, which is what laser software expects. Construction geometry is left out. STEP goes through OCCT; STL, OBJ and 3MF are written in TypeScript. One writer per format, in a registry. |
 
 ## Resource Access
 
@@ -132,7 +134,7 @@ Atomic business verbs over a resource. Implementations vary by host and are chos
 > [!NOTE]
 > Choosing a file to import needs a user gesture, so the **client** shows the picker (or accepts a drop) and passes the file's name and bytes to the Project Manager as an `ExternalFile`. External File Access only delivers files *out* of the app.
 | **Asset Access** | `keep(bytes, meta) → AssetId`, `fetch(assetId)`, `release(assetId)`; `publishResult(documentId, hash, bytes)`, `latestResult(documentId)` | IndexedDB blobs | `projects/<id>/assets/*`, `projects/<id>/results/*` |
-| **Shape Access** | `ready()` (loads OCCT once), `put(key, named shape)`, `get(key)`, `has(key)` | in-worker OCCT shapes with their face and edge names; least recently used ones are evicted and their memory freed | same |
+| **Shape Access** | `ready()` (loads OCCT once), `put(key, named shape)`, `get(key)`, `has(key)`; `find(named, ref)` resolves a persistent reference to its face or edge | in-worker OCCT shapes with their face and edge names; least recently used ones are evicted and their memory freed | same |
 | **External File Access** | `deliver(bytes, suggestedName)` (exports) | download | Tauri dialog and fs plugins |
 
 ## Utilities
@@ -143,5 +145,5 @@ Utilities are generic enough to be used by any system.
 | --- | --- |
 | **Messaging** | Typed request/response RPC over `postMessage` with transferables; in-process typed event bus used for queued manager events. |
 | **Diagnostics** | Structured logging, performance marks and measures, error reporting. |
-| **Math and Units** | Vectors, matrices, transforms, tolerances, unit conversion. |
+| **Math and Units** | Vectors, line and circle intersections, polygon area and containment, loop offsetting (kerf). |
 | **Identity** | Id generation and content hashing (used for caching). |

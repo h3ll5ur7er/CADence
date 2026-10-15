@@ -1,3 +1,4 @@
+export * from './analysis';
 export * from './document';
 export * from './feature';
 export type * from './events';

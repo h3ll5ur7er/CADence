@@ -53,6 +53,11 @@ export class SketchToolbar {
 
   protected readonly view = this.store.editedView;
   protected readonly hint = computed(() => hints[this.store.tool()]);
+  /** The kerf of a laser profile, for compensated exports. */
+  protected readonly kerf = computed(() => {
+    const process = this.store.process();
+    return process.kind === 'laser' ? process.kerf : undefined;
+  });
   protected readonly selected = computed((): SketchEntity[] => {
     const sketch = this.view()?.sketch;
     if (!sketch) return [];
@@ -93,8 +98,8 @@ export class SketchToolbar {
     if (sketchId && ids.length && (await this.store.run({ type: 'delete-sketch-elements', sketchId, ids }))) this.store.select([]);
   }
 
-  protected export(format: DrawingFormat): void {
+  protected export(format: DrawingFormat, compensateKerf = false): void {
     const sketchId = this.store.editing();
-    if (sketchId) void this.store.exportSketch(sketchId, format);
+    if (sketchId) void this.store.exportSketch(sketchId, format, compensateKerf);
   }
 }

@@ -1,5 +1,5 @@
-import { type Sketch, sketchOriginId } from '@core/contracts';
-import { angleOf, ccwSweep, distance, polar, sub, type Vec2 } from '@core/utilities/math';
+import { type Profile, type Sketch, sketchOriginId } from '@core/contracts';
+import { angleOf, ccwSweep, distance, offsetLoop, polar, sub, type Vec2 } from '@core/utilities/math';
 
 /** The drawable (non-construction) curves of a solved sketch, in sketch coordinates (mm). */
 export type DrawingCurve =
@@ -48,3 +48,32 @@ export const num = (value: number): string => {
   const rounded = Math.round(value * 1e6) / 1e6;
   return Object.is(rounded, -0) ? '0' : String(rounded);
 };
+
+/** Kerf compensation: closed outlines of the profiles, moved half a kerf away from the part. */
+export interface KerfCompensation {
+  readonly profiles: readonly Profile[];
+  /** Width of the laser cut, mm. */
+  readonly kerf: number;
+}
+
+/**
+ * The sketch's curves with every profile outline offset by half the kerf (outer loops grow, holes
+ * shrink); curves that bound no profile, such as engraving lines, stay where they are.
+ */
+export function compensatedCurves(sketch: Sketch, { profiles, kerf }: KerfCompensation): DrawingCurve[] {
+  const loops = profiles.flatMap((p) => [p.outer, ...p.holes]);
+  const bounding = new Set(loops.flatMap((loop) => loop.edges.map((e) => e.source)));
+  const loose = drawingCurves({ ...sketch, entities: sketch.entities.filter((e) => e.kind === 'point' || !bounding.has(e.id)) });
+  const outlines = loops.flatMap((loop) => {
+    const moved = offsetLoop(loop.edges, kerf / 2);
+    if (!moved) throw new Error(`${sketch.name} has details smaller than the kerf (${num(kerf)} mm).`);
+    return moved.map((edge): DrawingCurve => {
+      if (edge.kind === 'line') return { kind: 'line', start: edge.start, end: edge.end };
+      // Drawing arcs run counter-clockwise: a clockwise piece is the same arc from its end.
+      const [from, to] = edge.ccw ? [edge.start, edge.end] : [edge.end, edge.start];
+      const startAngle = angleOf(sub(from, edge.center));
+      return { kind: 'arc', center: edge.center, radius: edge.radius, startAngle, sweep: ccwSweep(startAngle, angleOf(sub(to, edge.center))) };
+    });
+  });
+  return [...loose, ...outlines];
+}

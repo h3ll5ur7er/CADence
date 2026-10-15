@@ -82,10 +82,22 @@ Architecture decision records. Each one records what was decided, why, and what 
 
 ## ADR-16
 
-**One geometry worker, engines behind typed RPC, results validated.** The Modeling and Interchange engines run in a dedicated Web Worker with their own Shape Access (an LRU cache of OCCT solids that frees WebAssembly memory). The main thread calls them through `remote<T>()` proxies ([[src/core/utilities/messaging/rpc.ts]]); meshes travel as transferable typed arrays. Every feature result is checked with OCCT's `BRepCheck_Analyzer`, and a shell that leaves the solid unchanged is reported as an error.
+**One geometry worker, engines behind typed RPC, results validated.** The Modeling, Interchange and Analysis engines run in a dedicated Web Worker with their own Shape Access (an LRU cache of OCCT solids that frees WebAssembly memory). The main thread calls them through `remote<T>()` proxies ([[src/core/utilities/messaging/rpc.ts]]); meshes travel as transferable typed arrays. Every feature result is checked with OCCT's `BRepCheck_Analyzer`, and a shell that leaves the solid unchanged is reported as an error.
 *Why:* the UI never blocks on the kernel, and kernel failures become messages instead of broken bodies.
 *Trade-off:* every regeneration costs a few round trips, so outcomes are cached in the worker by content hash and meshes on the main thread by body key.
 
 ## ADR-17
 
 **Regeneration on every command; refusals guard the target.** Each command regenerates the whole timeline, which is cheap thanks to the caches. A command is refused when its own target fails (a feature that cannot be built, a sketch that conflicts). A parameter change is refused when it breaks anything that worked before. Upstream edits that break a later feature are accepted, and the timeline marks that feature as failed with the reason, as in other parametric CAD tools.
+
+## ADR-18
+
+**Manufacturability analysis in TypeScript, on cached fine meshes.** The Analysis Engine runs in the geometry worker next to the shapes. Exact questions (distances, angles, areas, radii, mass properties, closed solids) go to OCCT. The printability checks work on a fine mesh: overhangs from the triangle normals, wall thickness by casting a ray from every triangle into the material through a bounding volume hierarchy ([[src/core/engines/analysis/ray-caster.ts]]).
+*Measured* (Node, a 200 × 200 mm plate with 100 filleted holes, 51,000 triangles): a full print check takes 1.65 s, of which OCCT's meshing is 1.1 s and the TypeScript ray casting 0.18 s. Rust/WASM ([[Architecture/Decisions#ADR-8]]) would speed up the smallest part, so the analysis stays in TypeScript. Meshes are cached by shape key instead, which brings a repeated check down to 0.53 s; unchanged bodies keep their keys, so re-checking after an edit only meshes what changed.
+*Trade-off:* the wall check samples one ray per triangle, so a thin spot inside one large flat triangle can be missed. Curved faces are finely meshed, and flat walls have their thickness measured exactly.
+
+## ADR-19
+
+**Material and manufacturing profile belong to the component; kerf is applied on export.** The material (for mass) and the machine profile (printer or laser, for validation) are stored in the component document and changed by commands (`set-material`, `set-process`), so they are saved, undoable and travel with the design. Presets live in [[src/core/contracts/analysis.ts]]. Kerf compensation is not modelled as geometry: the drawing export offsets every profile loop by half the kerf away from the material ([[src/core/utilities/math/offset.ts]]), extending or trimming neighbouring edges so corners stay sharp. Curves that bound no profile, such as engraving lines, are exported unchanged.
+*Why:* the design stays at its true size for printing and for other cutters. A laser with a different kerf only needs another export.
+*Trade-off:* a machine profile per component rather than per user. Sharing machines between components is left to a later settings store.

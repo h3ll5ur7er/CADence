@@ -31,6 +31,8 @@ export interface ViewportTheme {
   readonly edge: string;
   readonly hover: string;
   readonly selection: string;
+  /** Faces a check flags. */
+  readonly flag: string;
 }
 
 /** Placement matrix of a plane frame: sketch (u, v, 0) to world. */

@@ -1,8 +1,12 @@
 import type {
   BodyMesh,
+  BodyProperties,
   ComponentDocument,
   DocumentId,
   Feature,
+  ManufacturingProfile,
+  Material,
+  Measurement,
   Parameter,
   PlaneFrame,
   PlaneRef,
@@ -12,6 +16,8 @@ import type {
   SketchConstraint,
   SketchEntity,
   SketchStatus,
+  TopologyRef,
+  ValidationReport,
 } from '@core/contracts';
 
 /** Every change to a component is one of these commands (docs/Architecture/Decisions.md#adr-10). Ids come from the caller. */
@@ -32,7 +38,10 @@ export type DesignCommand =
   | { readonly type: 'delete-item'; readonly itemId: string }
   | { readonly type: 'add-parameter'; readonly parameter: Parameter }
   | { readonly type: 'set-parameter'; readonly parameter: Parameter }
-  | { readonly type: 'delete-parameter'; readonly id: string };
+  | { readonly type: 'delete-parameter'; readonly id: string }
+  | { readonly type: 'set-material'; readonly material: Material }
+  /** The machine the component is made on (print or laser profile), for validation and kerf compensation. */
+  | { readonly type: 'set-process'; readonly process: ManufacturingProfile };
 
 /** A solved sketch as the editor shows it. */
 export interface SketchView {
@@ -85,11 +94,16 @@ export interface DesignSession {
   redo(): Promise<void>;
   /** Solves a sketch with a point pulled toward (x, y), without changing the document. */
   previewDrag(sketchId: string, pointId: string, x: number, y: number): Promise<SketchView | undefined>;
-  exportSketch(sketchId: string, format: DrawingFormat): Promise<Result<void>>;
+  /** With `compensateKerf`, outlines are offset for the laser profile's kerf (laser profiles only). */
+  exportSketch(sketchId: string, format: DrawingFormat, options?: { readonly compensateKerf?: boolean }): Promise<Result<void>>;
   /** All bodies, one file. */
   exportBodies(format: SolidFormat): Promise<Result<void>>;
-  /** Volume (mm³) per body id. */
-  volumes(): Promise<Record<string, number>>;
+  /** Area, length, radius, distance and angle of picked faces and edges. */
+  measure(refs: readonly TopologyRef[]): Promise<Result<Measurement>>;
+  /** Volume, mass (from the material), centre of mass and bounding box per body. */
+  properties(): Promise<BodyProperties[]>;
+  /** Checks the bodies and sketches against the manufacturing profile. */
+  validate(): Promise<ValidationReport>;
 }
 
 /** Part design workflow (docs/Architecture/Components.md#design-manager). */

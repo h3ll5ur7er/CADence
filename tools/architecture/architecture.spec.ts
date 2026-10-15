@@ -11,6 +11,7 @@ describe('architecture rules', () => {
     });
     expect(classify('src/core/contracts/project.ts')?.layer).toBe('contracts');
     expect(classify('tools/architecture/rules.ts')).toBeNull();
+    expect(classify('src/automation/mcp.ts')).toEqual({ layer: 'client', component: 'automation' });
   });
 
   it.each([
@@ -21,7 +22,10 @@ describe('architecture rules', () => {
     ['src/core/access/project/indexed-db.ts', 'src/core/contracts/index.ts'],
     ['src/core/managers/project/project-manager.ts', 'src/core/managers/project/events.ts'],
     ['src/core/composition/browser.ts', 'src/core/access/project/index.ts'],
-    ['src/core/access/project/fs.spec.ts', 'src/core/utilities/file-system/testing/node-file-system.ts'],
+    ['src/core/access/project/fs.spec.ts', 'src/core/utilities/file-system/testing/x.ts'],
+    ['src/core/access/project/fs.spec.ts', 'src/core/utilities/file-system/node.ts'],
+    ['src/automation/cli.ts', 'src/core/composition/node.ts'],
+    ['src/core/composition/node.ts', 'src/core/utilities/file-system/node.ts'],
     ['src/app/platform/tauri-file-delivery.ts', 'src/core/access/external-file/index.ts'],
     ['src/app/app.config.ts', 'src/app/platform/tauri-file-system.ts'],
   ])('allows %s → %s', (from, to) => {
@@ -40,6 +44,9 @@ describe('architecture rules', () => {
     ['internals', 'src/core/managers/project/a.ts', 'src/core/access/project/indexed-db.ts'],
     ['platform → manager', 'src/app/platform/x.ts', 'src/core/managers/design/index.ts'],
     ['test support in production code', 'src/core/access/project/fs.ts', 'src/core/utilities/file-system/testing/x.ts'],
+    ['Node code in browser code', 'src/app/home/home.ts', 'src/core/composition/node.ts'],
+    ['Node code in the core', 'src/core/composition/index.ts', 'src/core/utilities/file-system/node.ts'],
+    ['automation → engine', 'src/automation/cli.ts', 'src/core/engines/modeling/index.ts'],
   ])('rejects %s', (_, from, to) => {
     expect(checkImport(from, to)).not.toBeNull();
   });

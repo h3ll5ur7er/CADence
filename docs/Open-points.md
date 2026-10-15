@@ -125,8 +125,11 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 - [X] **Offline use and caching** of the 23 MB kernel through a service worker (installable web app). *(ADR-2 mentions the service worker; not built)* → [[CAD-32]] ✅
 - [ ] **Performance on large models and assemblies:** measure and optimise (meshing in the worker, level of detail). *(new)*
 - [ ] **Rust/WASM where profiling shows a need.** So far it never did (ADR-18). *(ADR-8)*
-- [X] **Scripting API or command line** for automation. *(Volatility analysis, client and host)* → [[CAD-55]]
-- [X] **MCP server** Allow remote control by agentic AI → [[CAD-56]]
+- [X] **Scripting API or command line** for automation. *(Volatility analysis, client and host)* → [[CAD-55]] ✅
+- [X] **MCP server** Allow remote control by agentic AI → [[CAD-56]] ✅
+- [ ] **Publish the command line as a package** (`npx cadence`), so it runs without a copy of the repository. *(ADR-31 trade-off)*
+- [ ] **Pictures for agents:** an MCP tool that renders a component to PNG, so an agent can look at what it made. *(ADR-31 trade-off)*
+- [ ] **MCP over HTTP** from the running app, so an agent can drive the web app's projects directly. *(ADR-31 trade-off)*
 - [ ] **Accessibility review** (keyboard use of the 3D view, screen reader labels). *(new)*
 - [ ] **Translations** of the interface. *(new)*
 - [ ] **macOS and Linux desktop builds.** Only Windows was built and tested. *(new)*

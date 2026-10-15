@@ -17,6 +17,7 @@ How to run, test and build CADence. The rules for code and the definition of don
 | `npm start` | Web app at http://localhost:4200, with projects in this browser's IndexedDB |
 | `npm run desktop` | Desktop app (Tauri) in development mode; starts `npm start` itself, so stop any running dev server first |
 | `npm run desktop:build` | Release build of the desktop app with installers in `src-tauri/target/release/bundle/` (`npx tauri build --no-bundle` builds only the executable) |
+| `npm run build:automation` | The command line and MCP server, `dist/automation/cadence.mjs` (esbuild; packages load from `node_modules`); run it with `npm run cadence -- --help` ([[User-guide/Automation]]) |
 
 Add `?webgl` to the URL to force the WebGL 2 renderer instead of WebGPU. The status bar shows which backend runs.
 
@@ -34,7 +35,7 @@ assets/<asset id>.bin|.json    imported originals and their metadata
 
 | Command | What it does |
 | --- | --- |
-| `npm run verify` | Lint, typecheck, all unit tests and the production build |
+| `npm run verify` | Lint, typecheck, all unit tests, the production build and the command line build |
 | `npm test` | Core tests in Node (`vitest.core.config.ts`), including the [[Architecture#Call rules|architecture test]], then Angular component tests (`ng test`) |
 | `npm run e2e` | Playwright user journeys against the dev server; writes evidence screenshots to `e2e/evidence/` |
 | `npm run e2e:pages` | Builds the web app as GitHub Pages serves it (below `/CADence/`, with the service worker) and runs the journeys in `e2e/pages/` against it: deep links, installability, offline use |
@@ -60,3 +61,4 @@ The published app keeps working offline once it has been used (see [[Architectur
 - New business logic goes in `src/core`, in the component that owns its volatility ([[Architecture/Components]]). The Angular app only renders state and translates gestures into manager calls.
 - Each Resource Access implementation must pass its component's contract suite in `testing/`.
 - Host-specific client code (Tauri) lives in `src/app/platform/` and is chosen in `app.config.ts`.
+- Node-only adapters go in a component's `node.ts`, never in its `index.ts` (which browser code imports). They are typechecked by `tsconfig.automation.json`.

@@ -15,6 +15,7 @@ The responsibilities and service contracts of every component in [[Architecture]
 | **Imported viewer** | Shows imported geometry and metadata; offers conversion and export. |
 | **Viewport** | three.js scene: renders mesh DTOs, picks faces/edges/vertices by their persistent ids, camera navigation, view cube, grid. Pure presentation. |
 | **Desktop shell** | The Tauri app hosting the web client; exposes the native file system and dialogs as IPC commands used by Resource Access. |
+| **Automation** | Node client ([[src/automation/api.ts]]): the scripting API (the Project Manager plus components and assemblies opened for scripting, with shorthand commands for outlines), the command line and the MCP server over it ([[Architecture/Decisions#ADR-31]]). Composed by `createNodeCore` (project folders, exports written to a folder, the kernel in this thread). |
 
 Clients hold UI state in signals derived from the managers' state streams. They never hold domain logic.
 

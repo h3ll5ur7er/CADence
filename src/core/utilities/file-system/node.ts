@@ -1,9 +1,9 @@
 import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import type { FileSystem } from '../index';
+import type { FileSystem } from './index';
 
-/** FileSystem over a real directory, for contract tests of the desktop storage. */
+/** FileSystem over a real directory (Node): project folders for the command line, and contract tests of the desktop storage. */
 export class NodeFileSystem implements FileSystem {
   constructor(private readonly root: string) {}
 

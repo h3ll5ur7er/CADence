@@ -183,8 +183,8 @@ export function createDesktopCore(
   });
 }
 
-/** Composition root without persistence, for component tests and demos. */
-export function createInMemoryCore(options: HostOptions = {}): Core {
+/** Composition root without persistence, for component tests, demos and file conversions. */
+export function createInMemoryCore(options: HostOptions & { readonly externalFiles?: ExternalFileAccess } = {}): Core {
   return createCore({
     kind: 'memory',
     projects: new InMemoryProjectAccess(),

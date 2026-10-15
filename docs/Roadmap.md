@@ -18,7 +18,7 @@ The work is planned in phases. Each phase ends with a running demo and visible e
 | 11. Part modeling II ✅ | Timeline reorder and rollback; more planes and export options; loft, sweep, path patterns; holes and threads; draft, rib, variable fillet; body operations; freeform names | [[CAD-28]] [[CAD-30]] [[CAD-43]] [[CAD-44]] [[CAD-45]] [[CAD-46]] [[CAD-47]] |
 | 12. Parameters and sheet metal ✅ | Display units, project parameters, configurations, sheet metal with flat patterns | [[CAD-48]] [[CAD-49]] [[CAD-50]] [[CAD-51]] |
 | 13. Projects ✅ | Thumbnails, git-based version history with named versions, git sync | [[CAD-52]] [[CAD-53]] [[CAD-54]] |
-| 14. Automation | Scripting API and command line, MCP server for AI agents | [[CAD-55]] [[CAD-56]] |
+| 14. Automation ✅ | Scripting API and command line, MCP server for AI agents | [[CAD-55]] [[CAD-56]] |
 
 The order follows the dependencies: the Sketcher needs the editor shell, Part modeling needs profiles, and Assemblies need regenerated components. Within a phase, tasks are listed in the order they will be done.
 

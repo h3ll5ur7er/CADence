@@ -224,8 +224,21 @@ describe('InterchangeEngine imports', () => {
   });
 
   it('reads drawings into sketch entities', async () => {
-    const entities = ok(await engine.readDrawing(await engine.exportDrawing(plate(), 'dxf'), 'dxf', 'd'));
+    const { entities } = ok(await engine.readDrawing(await engine.exportDrawing(plate(), 'dxf'), 'dxf', 'd'));
     expect(entities.filter((e) => e.kind !== 'point').map((e) => e.kind).sort()).toEqual(['arc', 'circle', 'line', 'line', 'line', 'line']);
+  });
+
+  it('reads texts of drawings as editable text, and outlines them when converting', async () => {
+    const svg = new TextEncoder().encode('<svg viewBox="0 0 100 50" width="100mm" height="50mm"><text x="50" y="40" font-size="10" text-anchor="end">Hi</text></svg>');
+    const { entities, texts } = ok(await engine.readDrawing(svg, 'svg', 'd'));
+    const label = entities.find((e) => e.kind === 'text');
+    // An em size of 10 makes capitals about 7.3 tall; the end of the text is at x = 50.
+    expect(label).toMatchObject({ text: 'Hi', height: expect.closeTo(7.275, 2) });
+    const xs = [...texts.values()].flat(2).map((e) => e.end[0]);
+    expect(Math.max(...xs)).toBeLessThan(50);
+    expect(Math.max(...xs)).toBeGreaterThan(48);
+    const dxf = text(ok(await engine.convert(svg, 'svg', 'dxf')));
+    expect(dxf).toContain('POLYLINE');
   });
 
   it('converts between formats of the same kind', async () => {

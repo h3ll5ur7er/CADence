@@ -1,5 +1,6 @@
 import type { SketchEntity } from '@core/contracts';
 import { angleOf, ccwSweep, type Vec2 } from '@core/utilities/math';
+import type { TextWeight } from '@core/contracts';
 import { type DrawingCurve, samplePoints } from './drawing';
 import { parseXml, type XmlElement } from './xml';
 
@@ -14,7 +15,25 @@ const dxfUnits: Readonly<Record<number, number>> = { 0: 1, 1: 25.4, 2: 304.8, 4:
  * ASCII DXF: LINE, CIRCLE, ARC, LWPOLYLINE and POLYLINE (with bulges, as exact arcs), ELLIPSE and
  * SPLINE (as lines). Only the ENTITIES section is read; `$INSUNITS` scales to millimetres.
  */
-export function readDxf(bytes: Uint8Array): DrawingCurve[] {
+/** A text of a drawing: where its baseline starts (or its middle or end, by `align`), capital height (mm) and direction. */
+export interface DrawingText {
+  readonly text: string;
+  readonly at: Vec2;
+  readonly height: number;
+  readonly angle: number;
+  readonly align: 'start' | 'middle' | 'end';
+  readonly weight: TextWeight;
+  /** `height` is the font size (SVG), not the capital height (DXF). */
+  readonly em?: boolean;
+}
+
+/** What a drawing file holds: curves, and texts (laid out with the bundled font later). */
+export interface ReadDrawing {
+  readonly curves: DrawingCurve[];
+  readonly texts: DrawingText[];
+}
+
+export function readDxf(bytes: Uint8Array): ReadDrawing {
   const rows = new TextDecoder().decode(bytes).split(/\r?\n/);
   const pairs: [number, string][] = [];
   for (let i = 0; i + 1 < rows.length; i += 2) pairs.push([Number((rows[i] as string).trim()), (rows[i + 1] as string).trim()]);
@@ -34,6 +53,7 @@ export function readDxf(bytes: Uint8Array): DrawingCurve[] {
   }
 
   const curves: DrawingCurve[] = [];
+  const texts: DrawingText[] = [];
   const s = (v: Vec2): Vec2 => [v[0] * scale, v[1] * scale];
   for (let k = 0; k < entities.length; k++) {
     const { type, codes } = entities[k] as (typeof entities)[number];
@@ -43,6 +63,31 @@ export function readDxf(bytes: Uint8Array): DrawingCurve[] {
       case 'LINE':
         curves.push({ kind: 'line', start: s([get(10), get(20)]), end: s([get(11), get(21)]) });
         break;
+      case 'TEXT': {
+        // Aligned texts (72: 1 centre, 2 right) are placed by their second point.
+        const align = get(72) === 1 || get(72) === 4 ? 'middle' : get(72) === 2 ? 'end' : 'start';
+        const at = align === 'start' ? s([get(10), get(20)]) : s([get(11), get(21)]);
+        const text = codes.find(([c]) => c === 1)?.[1] ?? '';
+        if (text.trim()) texts.push({ text, at, height: get(40, 2.5) * scale, angle: (get(50) * Math.PI) / 180, align, weight: 'regular' });
+        break;
+      }
+      case 'MTEXT': {
+        // The text comes in 3 chunks then a 1; \P breaks lines; other formatting codes are dropped.
+        const raw = [...codes.filter(([c]) => c === 3), ...codes.filter(([c]) => c === 1)].map(([, v]) => v).join('');
+        const lines = raw.replace(/\\P/g, '\n').replace(/\\[A-Za-z][^;\\]*;/g, '').replace(/[{}]/g, '').split('\n');
+        const height = get(40, 2.5) * scale;
+        const angle = codes.some(([c]) => c === 50) ? (get(50) * Math.PI) / 180 : Math.atan2(get(21), get(11, 1));
+        const attach = get(71, 1);
+        const align = [2, 5, 8].includes(attach) ? 'middle' : [3, 6, 9].includes(attach) ? 'end' : 'start';
+        const origin = s([get(10), get(20)]);
+        // Lines 5/3 of the height apart, the first one's capitals hanging from the attachment point.
+        lines.forEach((line, i) => {
+          const drop = height * (1 + (5 / 3) * i);
+          const at: Vec2 = [origin[0] + Math.sin(angle) * drop, origin[1] - Math.cos(angle) * drop];
+          if (line.trim()) texts.push({ text: line, at, height, angle, align, weight: 'regular' });
+        });
+        break;
+      }
       case 'CIRCLE':
         curves.push({ kind: 'circle', center: s([get(10), get(20)]), radius: get(40) * scale });
         break;
@@ -107,11 +152,11 @@ export function readDxf(bytes: Uint8Array): DrawingCurve[] {
         break;
       }
       default:
-        break; // TEXT, DIMENSION, INSERT, HATCH, … are not geometry to cut.
+        break; // DIMENSION, INSERT, HATCH, … are not geometry to cut.
     }
   }
-  if (curves.length === 0) throw new Error('The DXF file has no lines, arcs, circles, polylines or splines.');
-  return curves;
+  if (curves.length === 0 && texts.length === 0) throw new Error('The DXF file has no lines, arcs, circles, polylines, splines or text.');
+  return { curves, texts };
 }
 
 /** Polyline vertices with bulges (tan of a quarter of the arc angle, positive counter-clockwise). */
@@ -202,7 +247,7 @@ function parseTransform(text: string | undefined): Matrix {
  * with transforms. Sizes follow the root's width and viewBox (otherwise 96 px per inch); Y points up
  * and the bottom left of the view box is the origin.
  */
-export function readSvg(bytes: Uint8Array): DrawingCurve[] {
+export function readSvg(bytes: Uint8Array): ReadDrawing {
   const svg = parseXml(new TextDecoder().decode(bytes)).children.find((e) => e.name === 'svg');
   if (!svg) throw new Error('This is not an SVG drawing.');
   const box = svg.attributes['viewBox']?.trim().split(/[\s,]+/).map(Number);
@@ -215,15 +260,42 @@ export function readSvg(bytes: Uint8Array): DrawingCurve[] {
   // bottom of the view box (or of the page) on the X axis.
   const bottom = box?.length === 4 ? (box[1] as number) + (box[3] as number) : (mm(height) ?? 0) / sy;
   const root: Matrix = [sx, 0, 0, -sy, -(box?.[0] ?? 0) * sx, bottom * sy];
-  const curves: DrawingCurve[] = [];
-  walk(svg, root, curves);
-  if (curves.length === 0) throw new Error('The SVG drawing has no paths or shapes.');
-  return curves;
+  const drawing: ReadDrawing = { curves: [], texts: [] };
+  walk(svg, root, drawing);
+  if (drawing.curves.length === 0 && drawing.texts.length === 0) throw new Error('The SVG drawing has no paths, shapes or text.');
+  return drawing;
 }
 
-const skipped = new Set(['defs', 'clipPath', 'mask', 'symbol', 'marker', 'pattern', 'style', 'title', 'desc', 'metadata', 'text']);
+const skipped = new Set(['defs', 'clipPath', 'mask', 'symbol', 'marker', 'pattern', 'style', 'title', 'desc', 'metadata']);
 
-function walk(element: XmlElement, parent: Matrix, curves: DrawingCurve[]): void {
+/** A style property from the style attribute or the attribute of the same name. */
+const styleOf = (element: XmlElement, name: string): string | undefined =>
+  new RegExp(`(?:^|;)\\s*${name}\\s*:\\s*([^;]+)`).exec(element.attributes['style'] ?? '')?.[1]?.trim() ?? element.attributes[name];
+
+/** The texts of a text element and its tspans, each where its own x and y (or the element's) place it. */
+function svgTexts(element: XmlElement, m: Matrix, inherited: { size: number; weight: TextWeight; align: DrawingText['align'] }): DrawingText[] {
+  const size = Number.parseFloat(styleOf(element, 'font-size') ?? '') || inherited.size;
+  const weightValue = styleOf(element, 'font-weight') ?? '';
+  const weight: TextWeight = /bold|[6-9]00/.test(weightValue) ? 'bold' : weightValue ? 'regular' : inherited.weight;
+  const anchor = styleOf(element, 'text-anchor');
+  const align = anchor === 'middle' ? 'middle' : anchor === 'end' ? 'end' : anchor === 'start' ? 'start' : inherited.align;
+  const own = element.text.replace(/\s+/g, ' ').trim();
+  const x = Number.parseFloat(element.attributes['x'] ?? '0') || 0;
+  const y = Number.parseFloat(element.attributes['y'] ?? '0') || 0;
+  const at = apply(m, [x, y]);
+  // The baseline's direction and the drawing's scale, from the matrix.
+  const along = apply(m, [x + 1, y]);
+  const scale = Math.hypot(along[0] - at[0], along[1] - at[1]);
+  const angle = Math.atan2(along[1] - at[1], along[0] - at[0]);
+  const texts: DrawingText[] = own ? [{ text: own, at, height: size * scale, angle, align, weight, em: true }] : [];
+  for (const span of element.children.filter((c) => c.name === 'tspan')) {
+    texts.push(...svgTexts({ ...span, attributes: { x: span.attributes['x'] ?? element.attributes['x'] ?? '0', y: span.attributes['y'] ?? element.attributes['y'] ?? '0', ...span.attributes } }, m, { size, weight, align }));
+  }
+  return texts;
+}
+
+function walk(element: XmlElement, parent: Matrix, drawing: ReadDrawing): void {
+  const curves = drawing.curves;
   for (const child of element.children) {
     if (skipped.has(child.name) || child.attributes['display'] === 'none' || /display\s*:\s*none/.test(child.attributes['style'] ?? '')) continue;
     const m = multiply(parent, parseTransform(child.attributes['transform']));
@@ -231,6 +303,10 @@ function walk(element: XmlElement, parent: Matrix, curves: DrawingCurve[]): void
     switch (child.name) {
       case 'path':
         curves.push(...pathCurves(child.attributes['d'] ?? '', m));
+        break;
+      case 'text':
+        // Font sizes are em sizes; the engine turns them into capital heights with the font.
+        drawing.texts.push(...svgTexts(child, m, { size: 16, weight: 'regular', align: 'start' }));
         break;
       case 'line':
         curves.push(...placeSegments([{ kind: 'line', from: [n('x1'), n('y1')], to: [n('x2'), n('y2')] }], m));
@@ -264,7 +340,7 @@ function walk(element: XmlElement, parent: Matrix, curves: DrawingCurve[]): void
       case 'g':
       case 'svg':
       case 'a':
-        walk(child, m, curves);
+        walk(child, m, drawing);
         break;
       default:
         break;

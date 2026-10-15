@@ -32,6 +32,7 @@ import {
   type PointRef,
   pointCommand,
   rectangleCommand,
+  textCommand,
 } from './sketch-tools';
 
 const snapPixels = 10;
@@ -281,6 +282,11 @@ export class SketchEditor {
       case 'point':
         await this.store.run(pointCommand(sketchId, ref.at, newId));
         return;
+      case 'text': {
+        const command = textCommand(sketchId, ref, this.store.textDraft(), newId);
+        if (command) await this.store.run(command);
+        return;
+      }
       case 'line': {
         if (clicks.length < 2) return this.pending.set(clicks);
         const [from, to] = clicks as [PointRef, PointRef];

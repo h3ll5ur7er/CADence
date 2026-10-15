@@ -6,7 +6,7 @@ import { Icon, type IconName } from '../../shared/icon';
 import { Shortcuts } from '../../shared/shortcuts';
 import { DesignStore } from './design-store';
 import { linearPatternCommand } from './sketch-patterns';
-import { type ConstraintTool, constraintFor, type Tool } from './sketch-tools';
+import { type ConstraintTool, constraintFor, type TextDraft, type Tool } from './sketch-tools';
 
 interface ToolButton { readonly tool: Tool; readonly icon: IconName; readonly label: string; readonly key?: string }
 
@@ -29,6 +29,7 @@ const shapeTools: readonly ToolButton[] = [
   { tool: 'polygon', icon: 'polygon', label: 'Polygon' },
   { tool: 'ellipse', icon: 'ellipse', label: 'Ellipse' },
   { tool: 'spline', icon: 'spline', label: 'Spline' },
+  { tool: 'text', icon: 'text', label: 'Text' },
   { tool: 'project', icon: 'project', label: 'Project edges or faces of bodies' },
 ];
 
@@ -73,6 +74,7 @@ const hints: Readonly<Record<Tool, string>> = {
   polygon: 'Click the centre, then a corner. Set the number of sides in the toolbar.',
   ellipse: 'Click the centre, the end of the long axis, then how wide the ellipse is.',
   spline: 'Click each point the curve passes through. Double-click to end; click the first point to close it.',
+  text: 'Type the text and its height in the toolbar, then click where its baseline starts. Select a text to change it.',
   project: 'Click edges or faces of bodies in the view: their outline becomes fixed geometry in the sketch that follows the body.',
   trim: 'Click the piece of a curve to cut away, up to where other curves cross it.',
   extend: 'Click near the end of a line or arc to lengthen it to the next curve.',
@@ -176,6 +178,10 @@ export class SketchToolbar {
   protected setPatternCount(value: string): void {
     const count = Math.round(Number(value));
     if (count >= 2 && count <= 360) this.store.patternCount.set(count);
+  }
+
+  protected setText(change: Partial<TextDraft>): void {
+    this.store.textDraft.update((draft) => ({ ...draft, ...change }));
   }
 
   protected setSides(value: string): void {

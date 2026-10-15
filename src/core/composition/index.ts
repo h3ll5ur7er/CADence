@@ -16,13 +16,14 @@ import {
   InMemoryProjectAccess,
   type ProjectAccess,
 } from '@core/access/project';
-import type { DomainEvents } from '@core/contracts';
+import type { DomainEvents, TextWeight } from '@core/contracts';
 import type { AnalysisEngine } from '@core/engines/analysis';
 import type { InterchangeEngine } from '@core/engines/interchange';
 import { createKinematicsEngine } from '@core/engines/kinematics';
 import type { ModelingEngine } from '@core/engines/modeling';
 import { createParameterEngine } from '@core/engines/parameter';
 import { createSketchEngine } from '@core/engines/sketch';
+import { fontSource } from '@core/utilities/text';
 import { type AssemblyManager, createAssemblyManager } from '@core/managers/assembly';
 import { createDesignManager, type DesignManager } from '@core/managers/design';
 import { createProjectManager, type ProjectManager } from '@core/managers/project';
@@ -50,12 +51,15 @@ export interface Host {
   readonly externalFiles: ExternalFileAccess;
   /** Where the browser loads the constraint solver from; Node finds it on its own. */
   readonly solverWasmUrl?: string;
+  /** Where the browser loads the bundled fonts from; Node reads them from the font package. */
+  readonly fontUrls?: Readonly<Record<TextWeight, string>>;
   /** Port to the geometry worker; without it the geometry kernel runs in this thread (Node, tests). */
   readonly geometry?: Port;
 }
 
 export interface HostOptions {
   readonly solverWasmUrl?: string;
+  readonly fontUrls?: Readonly<Record<TextWeight, string>>;
   readonly geometry?: Port;
 }
 
@@ -108,7 +112,7 @@ export function createCore(host: Host): Core {
     designManager: createDesignManager({
       documents,
       externalFiles,
-      sketches: createSketchEngine(host.solverWasmUrl ? { wasmUrl: host.solverWasmUrl } : {}),
+      sketches: createSketchEngine({ ...(host.solverWasmUrl ? { wasmUrl: host.solverWasmUrl } : {}), fonts: fontSource(host.fontUrls) }),
       parameters: createParameterEngine(),
       modeling: geometry.modeling,
       interchange: geometry.interchange,

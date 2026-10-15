@@ -153,9 +153,9 @@ class Session implements DesignSession {
     }
     const original = await this.deps.assets.fetch(document.assetId);
     if (!original) return fail({ code: 'missing-original', message: `The original of ${document.name} is missing.` });
-    const entities = await this.deps.interchange.readDrawing(original.bytes, document.format, idPrefix);
-    if (!entities.ok) return entities;
-    return this.execute({ type: 'add-sketch-geometry', sketchId, entities: entities.value, constraints: [] });
+    const drawing = await this.deps.interchange.readDrawing(original.bytes, document.format, idPrefix);
+    if (!drawing.ok) return drawing;
+    return this.execute({ type: 'add-sketch-geometry', sketchId, entities: drawing.value.entities, constraints: [] });
   }
 
   async exportBodies(format: SolidFormat): Promise<Result<void>> {

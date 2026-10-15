@@ -174,6 +174,15 @@
   }
 }
 
+.sides .text-input {
+  width: 120px;
+}
+
+.sides input[type='checkbox'] {
+  width: auto;
+  height: auto;
+}
+
 .tool.wide {
   display: flex;
   gap: 2px;

@@ -20,6 +20,7 @@ import {
   type Material,
   materials,
   type PlaneRef,
+  type SketchText,
   type TimelineItem,
 } from '@core/contracts';
 import type { SolidFormat } from '@core/managers/design';
@@ -184,6 +185,23 @@ export class ComponentMode {
   /** Back to the theme's colour, opaque; a hidden body stays hidden. */
   protected resetLook(body: string): void {
     void this.store.run({ type: 'set-appearance', body, appearance: this.appearances()[body]?.hidden ? { hidden: true } : {} });
+  }
+
+  protected readonly pi = Math.PI;
+  protected readonly round = (v: number) => Math.round(v * 100) / 100;
+  /** The one text selected in the sketch being edited, for its properties. */
+  protected readonly selectedText = computed(() => {
+    const selection = this.store.selection();
+    const sketch = this.editedSketch()?.sketch;
+    const found = selection.length === 1 ? sketch?.entities.find((e) => e.id === selection[0]) : undefined;
+    return found?.kind === 'text' ? found : undefined;
+  });
+
+  protected setText(text: SketchText, change: Partial<Pick<SketchText, 'text' | 'height' | 'weight' | 'angle'>>): void {
+    const sketchId = this.store.editing();
+    if (!sketchId) return;
+    const next = { ...text, ...change };
+    void this.store.run({ type: 'set-sketch-text', sketchId, textId: text.id, text: next.text, height: next.height, weight: next.weight, angle: next.angle });
   }
 
   /** Changes how a body is shown; one undoable step. */

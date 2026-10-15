@@ -29,6 +29,10 @@ export interface TextPlacement {
 /** A parsed font with a cache of laid-out texts. */
 export interface TextFont {
   outline(text: string, placement: TextPlacement): Contour[];
+  /** How far the baseline of a text runs (mm), for aligning it. */
+  advance(text: string, height: number): number;
+  /** Capital height over font size: an SVG font size of 10 has capitals this many times as tall. */
+  readonly capRatio: number;
 }
 
 /** Loads a font from its bytes (TTF, OTF or WOFF); opentype.js loads on first use. */
@@ -42,6 +46,17 @@ const close = (a: Vec2, b: Vec2) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-9;
 export function fontOf(font: Font): TextFont {
   const capHeight = font.tables.os2?.sCapHeight || font.unitsPerEm * 0.7;
   return {
+    capRatio: capHeight / font.unitsPerEm,
+    advance(text, height) {
+      const size = (height * font.unitsPerEm) / capHeight;
+      const chars = [...text];
+      return chars.reduce((sum, char, i) => {
+        const glyph = font.charToGlyph(char);
+        const next = chars[i + 1];
+        const kerning = next === undefined ? 0 : font.getKerningValue(glyph, font.charToGlyph(next));
+        return sum + (((glyph.advanceWidth ?? 0) + kerning) * size) / font.unitsPerEm;
+      }, 0);
+    },
     outline(text, { at, height, angle }) {
       // Font units → mm, with the capital height as the text height; Y flips (fonts draw downwards).
       const size = (height * font.unitsPerEm) / capHeight;

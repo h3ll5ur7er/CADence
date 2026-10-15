@@ -1,4 +1,5 @@
 import type {
+  TextWeight,
   Dimension,
   GeometricConstraint,
   Sketch,
@@ -21,7 +22,24 @@ export type TransformTool = 'move' | 'rotate';
 /** Tools that copy the selection: across a line clicked next, or around a point clicked next. */
 export type CopyTool = 'mirror' | 'circular-pattern';
 
-export type Tool = 'select' | 'line' | 'rectangle' | 'circle' | 'arc' | 'point' | 'dimension' | 'project' | ShapeTool | EditTool | TransformTool | CopyTool;
+export type Tool = 'select' | 'line' | 'rectangle' | 'circle' | 'arc' | 'point' | 'dimension' | 'project' | 'text' | ShapeTool | EditTool | TransformTool | CopyTool;
+
+/** What the text tool places. */
+export interface TextDraft {
+  readonly text: string;
+  readonly height: number;
+  readonly weight: TextWeight;
+}
+
+/** A text whose baseline starts where the click lands. */
+export function textCommand(sketchId: string, at: PointRef, draft: TextDraft, newId: IdSource): Geometry | undefined {
+  if (!draft.text.trim() || !(draft.height > 0)) return undefined;
+  const entities: SketchEntity[] = [];
+  const constraints: SketchConstraint[] = [];
+  const anchor = resolvePoint(at, newId, entities, constraints);
+  entities.push({ id: newId(), kind: 'text', anchor, text: draft.text, height: draft.height, weight: draft.weight, angle: 0, construction: false });
+  return { type: 'add-sketch-geometry', sketchId, entities, constraints };
+}
 
 /**
  * A position a tool clicked: snapped to an existing point (`id`), or free; a free position snapped onto

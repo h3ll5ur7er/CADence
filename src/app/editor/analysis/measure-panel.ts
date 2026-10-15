@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { Icon } from '../../shared/icon';
+import { bodyNames } from '../modeling/body-names';
 import { DesignStore } from '../sketch/design-store';
 import { degrees, millimetres } from './units';
 
@@ -76,10 +77,11 @@ export class MeasurePanel {
   protected readonly deg = degrees;
 
   protected readonly picks = computed(() => {
-    const timeline = this.store.state()?.document.timeline ?? [];
+    const state = this.store.state();
+    const names = bodyNames(state?.bodies.map((b) => b.body) ?? [], state?.document.timeline ?? []);
     return this.store.measurePicks().map((pick) => ({
       key: `${pick.kind}:${pick.body}:${pick.name}`,
-      label: `${pick.kind === 'face' ? 'Face' : 'Edge'} of ${timeline.find((i) => i.id === pick.body)?.name ?? pick.body}`,
+      label: `${pick.kind === 'face' ? 'Face' : 'Edge'} of ${names.get(pick.body) ?? pick.body}`,
       name: pick.name,
     }));
   });

@@ -12,7 +12,7 @@ Architecture decision records. Each one records what was decided, why, and what 
 ## ADR-2
 
 **OCCT as the B-rep kernel, via `replicad-opencascadejs`.** It is the only mature open-source B-rep kernel that runs in WASM, with booleans, fillets, chamfers, shell, sweeps, lofts and native STEP read/write. `replicad-opencascadejs` is a maintained, trimmed OCCT build (LGPL-2.1, last released 2026-09). The `replicad` library (MIT) may be used *inside* engines as a convenience layer and is never exposed beyond them. The kernel runs in a Web Worker.
-*Trade-off:* a large download (tens of MB, cached by the service worker / bundled on desktop) and LGPL obligations: we ship the WASM unmodified and dynamically loaded, and we credit it in the About dialog. Rejected: Truck (Rust; immature fillets, partial STEP), Manifold (mesh only; no true STEP or fillets).
+*Trade-off:* a large download (tens of MB, cached by the service worker on the web ([[Architecture/Decisions#ADR-23]]), bundled on desktop) and LGPL obligations: we ship the WASM unmodified and dynamically loaded, and we credit it in the About dialog. Rejected: Truck (Rust; immature fillets, partial STEP), Manifold (mesh only; no true STEP or fillets).
 
 ## ADR-3
 
@@ -122,3 +122,10 @@ Drawings keep lines, circles and arcs exact (DXF bulges become arcs); splines, e
 Imported solids enter a component through an **Insert body** feature and an assembly as an instance; the Modeling Engine names their faces `f:<feature>:new:<n>` by position, so references on them survive regeneration as long as the file stays the same.
 *Also decided:* main-thread code may import the kernel-bound engines and Shape Access only as types. A value import had doubled the start-up bundle (94 kB to 178 kB); the architecture test now refuses it.
 *Trade-off:* curves become lines rather than fitted arcs, and a sketch gets one point per line end (no constraints). DXF blocks (INSERT), text and hatches are skipped.
+
+## ADR-23
+
+**Delivery: one CI workflow, GitHub Pages for the web app, Angular's service worker for offline use.** `.github/workflows/ci.yml` checks every push and pull request (`npm run verify`; the Playwright journeys against the dev server and against the Pages build) and, on `master` only and after both passed, publishes the Pages build. The web app is built for its sub-path (`npm run build:pages`, base `/<repository>/`); static hosts answer unknown paths with `404.html`, which is a copy of `index.html`, so deep links open the app. The kernel and solver URLs were already relative to the document and the worker, so nothing else changed.
+Offline use comes from `@angular/service-worker` ([[ngsw-config.json]]): the app shell is cached on install, the WebAssembly kernels (OpenCascade 23 MB, planegcs 1 MB) on first use. Once a part has been modelled online, the app works without a network. A new version downloads in the background and a notice offers to reload. The desktop app registers no service worker: it is installed and bundles everything.
+*Why:* Pages is free, needs no server, and serves from the repository the code lives in; the Angular service worker is maintained with the framework and versions the cache by content hashes, so an update never mixes old and new files.
+*Trade-off:* the kernels are not prefetched, so a browser that never modelled online has no kernel offline; prefetching would cost every first visit 24 MB. CI runs without a GPU, so the journeys there use software WebGL (SwiftShader), never WebGPU.

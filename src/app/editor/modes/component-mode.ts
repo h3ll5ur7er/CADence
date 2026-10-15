@@ -30,6 +30,7 @@ import { Icon, type IconName } from '../../shared/icon';
 import { sketchDisplay } from '../../viewport/sketch-display';
 import { Viewport } from '../../viewport/viewport';
 import { EditorStatus } from '../editor-status';
+import { bodyNames } from '../modeling/body-names';
 import { featureLabels } from '../modeling/feature-drafts';
 import { FeatureDialog } from '../modeling/feature-dialog';
 import { ParametersPanel } from '../modeling/parameters-panel';
@@ -133,9 +134,10 @@ export class ComponentMode {
   });
   protected readonly bodyRows = computed(() => {
     const properties = this.properties.value() ?? [];
+    const names = bodyNames(this.bodies().map((b) => b.body), this.timeline());
     return this.bodies().map((b) => ({
       id: b.body,
-      name: this.timeline().find((i) => i.id === b.body)?.name ?? b.body,
+      name: names.get(b.body) ?? b.body,
       properties: properties.find((p) => p.body === b.body),
     }));
   });

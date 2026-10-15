@@ -56,9 +56,12 @@ export async function screenPositionOf(page: Page, kind: 'face' | 'edge', patter
   );
 }
 
-/** A new project whose component is a 60 × 30 rectangle on XY extruded by the parameter `thickness` (6 mm). */
-export async function plateProject(page: Page, name: string): Promise<void> {
-  await page.goto('/');
+/**
+ * A new project whose component is a 60 × 30 rectangle on XY extruded by the parameter `thickness` (6 mm).
+ * `home` is the home page's URL (below a sub-path for the Pages build).
+ */
+export async function plateProject(page: Page, name: string, home = '/'): Promise<void> {
+  await page.goto(home);
   await page.getByRole('button', { name: 'New project' }).first().click();
   await page.getByRole('textbox', { name: 'Name' }).fill(name);
   await page.getByRole('button', { name: 'Create project' }).click();
@@ -71,8 +74,19 @@ export async function plateProject(page: Page, name: string): Promise<void> {
   await expect(page.getByRole('table', { name: 'Parameters' })).toContainText('6 mm');
   await page.getByRole('button', { name: 'Close parameters' }).click();
 
+  await rectangleSketch(page, 'XY plane (top)', 60, 30);
+  await page.getByRole('button', { name: 'Extrude', exact: true }).click();
+  await expect(page.getByTestId('profile-selection')).toHaveText('1 profile selected');
+  await page.locator('#feature-distance').fill('thickness');
+  await page.locator('#feature-distance').press('Tab');
+  await page.getByRole('button', { name: 'OK' }).click();
+  await expect(page.getByTestId('body-count')).toHaveText('1');
+}
+
+/** A finished sketch on `plane` (a sketch-plane menu item): a rectangle from the origin, `width` along the sketch's X and `height` along its Y. */
+export async function rectangleSketch(page: Page, plane: string, width: number, height: number): Promise<void> {
   await page.getByRole('button', { name: 'New sketch' }).click();
-  await page.getByRole('menuitem', { name: 'XY plane (top)' }).click();
+  await page.getByRole('menuitem', { name: plane }).click();
   await page.waitForTimeout(500);
   const origin = await center(page, 'circle.point.origin');
   await page.getByRole('button', { name: 'Rectangle', exact: true }).click();
@@ -81,20 +95,13 @@ export async function plateProject(page: Page, name: string): Promise<void> {
   await page.getByRole('button', { name: 'Dimension', exact: true }).click();
   await page.mouse.click(origin.x + 120, origin.y);
   await page.mouse.click(origin.x + 120, origin.y + 50);
-  await typeDimension(page, '60');
+  await typeDimension(page, String(width));
   const right = await center(page, '.curve', 1);
   await page.mouse.click(right.x, right.y);
   await page.mouse.click(right.x + 80, right.y);
-  await typeDimension(page, '30');
+  await typeDimension(page, String(height));
   await expect(page.getByTestId('sketch-status')).toHaveText('Fully constrained');
   await page.getByRole('button', { name: 'Finish sketch' }).click();
-
-  await page.getByRole('button', { name: 'Extrude', exact: true }).click();
-  await expect(page.getByTestId('profile-selection')).toHaveText('1 profile selected');
-  await page.locator('#feature-distance').fill('thickness');
-  await page.locator('#feature-distance').press('Tab');
-  await page.getByRole('button', { name: 'OK' }).click();
-  await expect(page.getByTestId('body-count')).toHaveText('1');
 }
 
 /** Sets the `thickness` parameter. */

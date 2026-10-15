@@ -48,9 +48,14 @@ export function describeAssetAccessContract(name: string, create: () => AssetAcc
       const latest = await access.latestResult(asDocumentId('d'));
       expect(latest?.stamp).toBe('t2');
       expect([...(latest?.bytes ?? [])]).toEqual([2, 3]);
+      // Each configuration has a result of its own; discarding the component discards them all.
+      await access.publishResult({ ...result('t3', [4]), configuration: 'big' });
+      expect((await access.latestResult(asDocumentId('d'), 'big'))?.stamp).toBe('t3');
+      expect((await access.latestResult(asDocumentId('d')))?.stamp).toBe('t2');
       await access.discardResult(asDocumentId('d'));
       await access.discardResult(asDocumentId('unknown'));
       expect(await access.latestResult(asDocumentId('d'))).toBeUndefined();
+      expect(await access.latestResult(asDocumentId('d'), 'big')).toBeUndefined();
     });
   });
 }

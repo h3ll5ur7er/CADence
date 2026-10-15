@@ -37,7 +37,8 @@ export class IndexedDbAssetAccess implements AssetAccess {
   }
 
   async discardResult(documentId: DocumentId): Promise<void> {
-    await this.results.delete('results', documentId);
-    await this.results.delete('results', IDBKeyRange.bound(`${documentId}@`, `${documentId}@\uffff`));
+    // Results are a small cache: listing them is cheap.
+    const stored = await this.results.getAll<ComponentResult>('results');
+    for (const { documentId: key } of stored) if (key === documentId || key.startsWith(`${documentId}@`)) await this.results.delete('results', key);
   }
 }

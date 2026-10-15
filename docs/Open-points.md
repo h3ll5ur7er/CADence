@@ -55,10 +55,11 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 - [X] **Body operations:** combine bodies (join/cut/intersect existing bodies), split a body, move or copy a body, scale. *(new)* → [[CAD-46]] ✅ (uniform scale only)
 - [X] **Text on faces**, embossed or engraved. *(new)* → [[CAD-41]] ✅
 - [X] **Pattern along a path.** *(new)* → [[CAD-43]] ✅
-- [X] **Sheet metal** (flanges and unfolding). *(new)* → [[CAD-51]]
-- [X] **Configurations:** variants of one component with other parameter values, also per assembly instance. *(ADR-11 trade-off)* → [[CAD-50]]
-- [X] **Project-wide parameters** shared by several components. *(new)* → [[CAD-49]]
-- [X] **Display units:** the document stores a unit (mm, cm, in), but the editor always shows millimetres. *(Document model)* → [[CAD-48]]
+- [X] **Sheet metal** (flanges and unfolding). *(new)* → [[CAD-51]] ✅
+- [ ] **Sheet metal II:** flanges on flanges in the flat pattern, corner reliefs, hems and miter flanges. *(ADR-29 trade-off)*
+- [X] **Configurations:** variants of one component with other parameter values, also per assembly instance. *(ADR-11 trade-off)* → [[CAD-50]] ✅
+- [X] **Project-wide parameters** shared by several components. *(new)* → [[CAD-49]] ✅
+- [X] **Display units:** the document stores a unit (mm, cm, in), but the editor always shows millimetres. *(Document model)* → [[CAD-48]] ✅
 - [X] **More stable names for freeform faces** (B-spline faces only match by centre and area). *(ADR-15 trade-off)* → [[CAD-47]] ✅
 - [ ] **NURBS**
 - [ ] **Scale bodies per axis.** Needs `BRepBuilderAPI_GTransform`, missing from the bundled OpenCascade build; a custom `replicad-opencascadejs` build could add it (and `gp_Cone`, `gp_Torus`). *(ADR-28)*

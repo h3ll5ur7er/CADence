@@ -4,9 +4,24 @@ Turn sketches into solid parts with features. Each feature is a step in the **Ti
 
 [TOC]
 
+## Units
+
+A component shows and takes lengths in its **unit**: choose millimetres, centimetres or inches under **Units** in the component's properties (the status bar shows it). Dimensions, feature values, sizes, volumes and measures follow it. A plain number typed into a length field is in that unit; it is saved with the unit written out (`2 in`), so changing the unit later never changes the model. Printer and laser profiles stay in millimetres.
+
 ## Parameters
 
 Click **Parameters** in the browser panel to name values: `thickness = 6 mm`, `hole = thickness + 2`. Use the names in any dimension or feature value. Changing a parameter updates everything that uses it. A change that would break the model is refused with the reason, and so is a name that is used twice, reserved (units, functions) or part of a cycle.
+
+- **Project parameters**, in the same panel, are shared by every component of the project: a sheet thickness or a screw size. Changing one updates every component that uses it (assemblies too). A component's own parameter of the same name wins.
+- **Configurations** are variants of the component: named rows of other values for some parameters (*Short*, *Long*; empty cells keep the parameter's own value). **Shown** picks the variant you see and edit. Exports can use any configuration (**Export → With options…**), and every assembly instance can show its own.
+
+## Sheet metal
+
+1. Sketch the flat outline, then **Create → Base flange**. Its **thickness**, **bend radius** (inside) and **K-factor** (where the neutral layer lies, 0.3 to 0.5 for most metals) are the sheet's rules for the whole part.
+2. **Create → Edge flange**: click straight edges of the sheet. Each gets a bend of the sheet's radius and a straight flange of the given length, bent by the angle (90° by default) towards the side of the face the edge is on: pick a top edge to bend up, a bottom edge to bend down.
+3. **Export → Flat pattern (DXF / SVG)** lays the part flat for the laser: each flange is unfolded by the bend allowance, angle × (bend radius + K-factor × thickness), and a bend line marks the middle of every bend. Bend lines are on the layer `BEND` in DXF and blue and dashed in SVG, apart from the outlines to cut.
+
+Flanges on other flanges cannot be unfolded yet, and corners get no relief cuts.
 
 ## Features
 

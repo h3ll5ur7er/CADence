@@ -9,7 +9,7 @@ import { EventBus } from '@core/utilities/messaging';
 import { GitVersionAccess } from '@core/access/version';
 import { createParameterEngine } from '@core/engines/parameter';
 import { MemoryFileSystem } from '@core/utilities/file-system';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createProjectManager, type ProjectManager } from './index';
 
 function unwrap<T>(result: Result<T>): T {
@@ -116,7 +116,7 @@ describe('ProjectManager', () => {
       const document = await manager.createDocument(projectId, 'component', 'Bracket');
       if (!document.ok) throw new Error(document.error.message);
       // A version is recorded a moment after the last change.
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await vi.waitFor(async () => expect(await manager.projectHistory(projectId)).toHaveLength(1), { timeout: 10_000 });
       const [first] = await manager.projectHistory(projectId);
       expect(first?.message).toBe('First version');
       unwrap(await manager.renameDocument(document.value.id, 'Bracket v2'));

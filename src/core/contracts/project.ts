@@ -28,6 +28,15 @@ export function resultStamp(modifiedAt: Timestamp, projectParameters: readonly P
   return `${modifiedAt}#${hash.toString(36)}`;
 }
 
+/** One recorded state of a project in its version history. */
+export interface Version {
+  readonly id: string;
+  readonly time: Timestamp;
+  readonly message: string;
+  /** Names the user gave this version. */
+  readonly names: readonly string[];
+}
+
 export interface ProjectSummary extends Project {
   readonly documentCount: number;
 }

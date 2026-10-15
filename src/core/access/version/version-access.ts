@@ -1,18 +1,11 @@
-import type { ProjectId, Timestamp } from '@core/contracts';
+import type { ProjectId, Timestamp, Version } from '@core/contracts';
+
+export type { Version };
 
 /** A file of a project as recorded in a version: a path inside the project and its text. */
 export interface VersionFile {
   readonly path: string;
   readonly text: string;
-}
-
-/** One recorded state of a project. */
-export interface Version {
-  readonly id: string;
-  readonly time: Timestamp;
-  readonly message: string;
-  /** Names the user gave this version. */
-  readonly names: readonly string[];
 }
 
 /**

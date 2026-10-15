@@ -1,4 +1,3 @@
-import type { Version } from '@core/access/version';
 import type {
   BodyMesh,
   CreatableDocumentKind,
@@ -12,6 +11,7 @@ import type {
   SketchEntity,
   TextOutlines,
   Vec3,
+  Version,
 } from '@core/contracts';
 
 /** A file chosen by the user (picker or drag and drop); reading it is a client concern. */

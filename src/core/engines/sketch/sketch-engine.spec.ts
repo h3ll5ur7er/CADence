@@ -162,4 +162,36 @@ describe('SketchEngine.solve', () => {
     expect(solution.status).toBe('under-constrained');
     expect(solution.degreesOfFreedom).toBe(4);
   });
+
+  it('holds the new relations: level points, symmetry, concentric curves, collinear lines', async () => {
+    const b = new SketchBuilder();
+    const [p, q] = [b.point(1, 2), b.point(9, 5)];
+    b.constrain({ id: 'level', kind: 'horizontal-points', points: [p, q] });
+    const bottom = b.point(0, -10);
+    const axis = b.line(bottom, b.point(0, 10));
+    b.constrain({ id: 'axis', kind: 'vertical', line: axis });
+    const [m, n] = [b.point(-4, 3), b.point(5, 2)];
+    b.constrain({ id: 'mirror', kind: 'symmetric', points: [m, n], line: axis });
+    const c1 = b.circle(b.point(20, 20), 5);
+    const c2 = b.arc(b.point(22, 19), b.point(30, 19), b.point(22, 27));
+    b.constrain({ id: 'same-centre', kind: 'concentric', curves: [c1, c2] });
+    const l1 = b.line(b.point(0, 30), b.point(10, 31));
+    const l2 = b.line(b.point(15, 33), b.point(25, 32));
+    b.constrain({ id: 'in-line', kind: 'collinear', lines: [l1, l2] });
+    const solution = await engine.solve(b.build(), values());
+    expect(solution.status).toBe('under-constrained');
+    expect(point(solution, p)[1]).toBeCloseTo(point(solution, q)[1], 9);
+    const [mx, my] = point(solution, m);
+    const [nx, ny] = point(solution, n);
+    const x = point(solution, bottom)[0];
+    expect(mx + nx).toBeCloseTo(2 * x, 9);
+    expect(my).toBeCloseTo(ny, 9);
+    const centre = (id: string) => solution.sketch.entities.find((e) => e.id === id) as { center: string };
+    expect(point(solution, centre(c1).center)).toEqual(point(solution, centre(c2).center).map((v) => expect.closeTo(v, 9)));
+    const line = (id: string) => solution.sketch.entities.find((e) => e.id === id) as { start: string; end: string };
+    const [a, d] = [point(solution, line(l1).start), point(solution, line(l1).end)];
+    for (const e of [point(solution, line(l2).start), point(solution, line(l2).end)]) {
+      expect((d[0] - a[0]) * (e[1] - a[1]) - (d[1] - a[1]) * (e[0] - a[0])).toBeCloseTo(0, 6);
+    }
+  });
 });

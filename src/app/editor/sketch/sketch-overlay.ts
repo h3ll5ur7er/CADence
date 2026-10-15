@@ -8,7 +8,8 @@ import {
   sketchOriginId,
   type Vec2,
 } from '@core/contracts';
-import { pointsOf } from '../../viewport/sketch-display';
+import { closestParameter, splineBeziers } from '@core/utilities/math';
+import { freeformPieces, pointsOf } from '../../viewport/sketch-display';
 import { type Affine, applyAffine } from '../../viewport/sketch-planes';
 
 /** Pure view-model helpers for the sketch overlay: SVG paths and screen-space annotations. */
@@ -36,6 +37,20 @@ export function curvePath(entity: SketchEntity, points: ReadonlyMap<string, Vec2
       let sweep = Math.atan2(e[1] - c[1], e[0] - c[0]) - Math.atan2(s[1] - c[1], s[0] - c[0]);
       while (sweep <= 0) sweep += 2 * Math.PI;
       return `M ${n(s[0])} ${n(s[1])} A ${n(r)} ${n(r)} 0 ${sweep > Math.PI ? 1 : 0} 1 ${n(e[0])} ${n(e[1])}`;
+    }
+    case 'ellipse': {
+      const [c, m] = [at(entity.center), at(entity.major)];
+      const a = Math.hypot(m[0] - c[0], m[1] - c[1]);
+      const b = n(entity.minorRadius);
+      const turn = n((Math.atan2(m[1] - c[1], m[0] - c[0]) * 180) / Math.PI);
+      const o: Vec2 = [2 * c[0] - m[0], 2 * c[1] - m[1]];
+      return `M ${n(m[0])} ${n(m[1])} A ${n(a)} ${b} ${turn} 1 1 ${n(o[0])} ${n(o[1])} A ${n(a)} ${b} ${turn} 1 1 ${n(m[0])} ${n(m[1])}`;
+    }
+    case 'spline': {
+      const pieces = splineBeziers(entity.points.map(at), entity.closed);
+      const first = pieces[0]?.[0];
+      if (!first) return '';
+      return `M ${n(first[0])} ${n(first[1])} ${pieces.map(([, c1, c2, e]) => `C ${n(c1[0])} ${n(c1[1])} ${n(c2[0])} ${n(c2[1])} ${n(e[0])} ${n(e[1])}`).join(' ')}`;
     }
   }
 }
@@ -70,7 +85,9 @@ function anchorOf(sketch: Sketch, id: string, points: ReadonlyMap<string, Vec2>)
     const [s, t] = [at(e.start), at(e.end)];
     return [s[0] + (t[0] - s[0]) * 0.25, s[1] + (t[1] - s[1]) * 0.25];
   }
+  if (e.kind === 'spline') return at(e.points[0] as string);
   const c = at(e.center);
+  if (e.kind === 'ellipse') return at(e.major);
   const r = e.kind === 'circle' ? e.radius : Math.hypot(at(e.start)[0] - c[0], at(e.start)[1] - c[1]);
   return [c[0], c[1] + r];
 }
@@ -86,6 +103,11 @@ const glyphText: Readonly<Record<string, string>> = {
   'point-on': '◦',
   midpoint: 'M',
   fix: '⚲',
+  'horizontal-points': 'H',
+  'vertical-points': 'V',
+  symmetric: '⇹',
+  concentric: '◎',
+  collinear: '⋯',
 };
 
 const glyphTitle: Readonly<Record<string, string>> = {
@@ -99,12 +121,24 @@ const glyphTitle: Readonly<Record<string, string>> = {
   'point-on': 'Point on curve',
   midpoint: 'Midpoint',
   fix: 'Fixed',
+  'horizontal-points': 'Level (horizontal)',
+  'vertical-points': 'Above each other (vertical)',
+  symmetric: 'Symmetric',
+  concentric: 'Concentric',
+  collinear: 'Collinear',
 };
 
 function firstReference(c: SketchConstraint): string {
   switch (c.kind) {
     case 'coincident':
+    case 'horizontal-points':
+    case 'vertical-points':
+    case 'symmetric':
       return c.points[0];
+    case 'concentric':
+      return c.curves[1];
+    case 'collinear':
+      return c.lines[1];
     case 'horizontal':
     case 'vertical':
       return c.line;
@@ -177,9 +211,17 @@ export function dimensionLabels(sketch: Sketch, values: ReadonlyMap<string, numb
       case 'radius':
       case 'diameter': {
         const curve = sketch.entities.find((e) => e.id === d.curve);
-        const center = curve && curve.kind !== 'point' && curve.kind !== 'line' ? at(curve.center) : ([0, 0] as Vec2);
-        const r = curve?.kind === 'circle' ? curve.radius : curve?.kind === 'arc' ? Math.hypot(at(curve.start)[0] - center[0], at(curve.start)[1] - center[1]) : 0;
-        const rim: Vec2 = [center[0] + r * Math.SQRT1_2, center[1] + r * Math.SQRT1_2];
+        const center = curve && (curve.kind === 'circle' || curve.kind === 'arc' || curve.kind === 'ellipse') ? at(curve.center) : ([0, 0] as Vec2);
+        let rim: Vec2;
+        if (curve?.kind === 'ellipse') {
+          // An ellipse's radius dimension is its minor radius: shown across the major axis.
+          const m = at(curve.major);
+          const l = Math.hypot(m[0] - center[0], m[1] - center[1]) || 1;
+          rim = [center[0] - ((m[1] - center[1]) / l) * curve.minorRadius, center[1] + ((m[0] - center[0]) / l) * curve.minorRadius];
+        } else {
+          const r = curve?.kind === 'circle' ? curve.radius : curve?.kind === 'arc' ? Math.hypot(at(curve.start)[0] - center[0], at(curve.start)[1] - center[1]) : 0;
+          rim = [center[0] + r * Math.SQRT1_2, center[1] + r * Math.SQRT1_2];
+        }
         const [x, y] = screen(rim);
         return { id: d.id, text: (d.kind === 'radius' ? 'R ' : '⌀ ') + formatLength(value), title, x: x + 14, y: y - 14, line: [screen(center), [x, y]] };
       }
@@ -226,6 +268,8 @@ export function hitTest(sketch: Sketch, at: Vec2, tolerance: number): SketchHit 
     } else if (e.kind === 'circle') {
       const c = point(e.center);
       d = Math.abs(Math.hypot(at[0] - c[0], at[1] - c[1]) - e.radius);
+    } else if (e.kind === 'ellipse' || e.kind === 'spline') {
+      d = Math.min(...freeformPieces(e, point).map(({ curve, t0, t1 }) => closestParameter(curve, at, t0, t1).distance));
     } else {
       const [c, s, t] = [point(e.center), point(e.start), point(e.end)];
       const r = Math.hypot(s[0] - c[0], s[1] - c[1]);

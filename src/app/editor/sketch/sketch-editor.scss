@@ -87,6 +87,13 @@ path {
   }
 }
 
+.snap-mark path {
+  fill: none;
+  stroke: var(--sketch);
+  stroke-width: 2px;
+  pointer-events: none;
+}
+
 .leader {
   stroke: var(--text-muted);
   stroke-width: 1px;

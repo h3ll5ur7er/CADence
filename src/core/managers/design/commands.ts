@@ -55,6 +55,15 @@ function references(item: SketchEntity | SketchConstraint): string[] {
       return [item.center, item.major];
     case 'spline':
       return [...item.points];
+    case 'horizontal-points':
+    case 'vertical-points':
+      return [...item.points];
+    case 'symmetric':
+      return [...item.points, item.line];
+    case 'concentric':
+      return [...item.curves];
+    case 'collinear':
+      return [...item.lines];
     case 'coincident':
     case 'distance':
     case 'horizontal-distance':

@@ -17,7 +17,9 @@ import { type Affine, affineScale, applyAffine, invertAffine } from '../../viewp
 import { Autofocus } from '../../shared/autofocus';
 import { Shortcuts } from '../../shared/shortcuts';
 import { DesignStore } from './design-store';
+import { isShapeTool, shapeClicks, shapeCommand } from './shape-tools';
 import { curvePath, dimensionLabels, glyphs, hitTest, profilePath } from './sketch-overlay';
+import { snap } from './snapping';
 import {
   arcCommand,
   circleCommand,
@@ -67,7 +69,16 @@ export class SketchEditor {
   /** Clicks collected by the active drawing tool. */
   protected readonly pending = signal<readonly PointRef[]>([]);
   protected readonly cursor = signal<Vec2 | undefined>(undefined);
-  protected readonly snapped = signal<string | undefined>(undefined);
+  /** Where the next click would land while drawing. */
+  protected readonly snapped = signal<PointRef | undefined>(undefined);
+  /** A marker where a click would land on a line's middle or on a curve, in screen pixels. */
+  protected readonly snapMarker = computed(() => {
+    const ref = this.snapped();
+    const m = this.matrix();
+    if (!ref?.on || !m || this.store.tool() === 'select' || this.store.tool() === 'dimension') return undefined;
+    const [x, y] = applyAffine(m, ref.at[0], ref.at[1]);
+    return { x, y, kind: ref.on.kind, title: ref.on.kind === 'midpoint' ? 'Midpoint' : 'On the curve' };
+  });
   protected readonly hovered = signal<string | undefined>(undefined);
   /** The dimension whose value is being typed; the input sits on its label. */
   private readonly editingDimension = signal<string | undefined>(undefined);
@@ -156,7 +167,7 @@ export class SketchEditor {
     const at = this.toPlane(event);
     if (!at) return;
     this.cursor.set(at);
-    this.snapped.set(this.snapRef(at).id);
+    this.snapped.set(this.snapRef(at));
     this.hovered.set(this.targetOf(event)?.id);
     const drag = this.drag;
     if (!drag) return;
@@ -179,6 +190,12 @@ export class SketchEditor {
 
   /** Double click ends a line chain. */
   protected doubleClick(): void {
+    // A double-click is two clicks first: the spline got its last point twice.
+    if (this.store.tool() === 'spline') {
+      const clicks = this.pending().filter((c, i, all) => i === 0 || Math.hypot(c.at[0] - (all[i - 1] as PointRef).at[0], c.at[1] - (all[i - 1] as PointRef).at[1]) > 1e-9);
+      const command = shapeCommand('spline', this.sketch().id, clicks, this.store.polygonSides(), newId);
+      if (command) void this.store.run(command);
+    }
     this.pending.set([]);
   }
 
@@ -259,8 +276,20 @@ export class SketchEditor {
         await this.store.run(arcCommand(sketchId, center, start.at, end.at, newId));
         return;
       }
-      default:
+      default: {
+        const tool = this.store.tool();
+        if (!isShapeTool(tool)) return;
+        // Clicking a spline's first point again closes it.
+        const first = clicks[0];
+        const m = this.matrix();
+        const closing = tool === 'spline' && clicks.length > 3 && first && m && Math.hypot(ref.at[0] - first.at[0], ref.at[1] - first.at[1]) <= snapPixels / affineScale(m);
+        const all = closing ? [...this.pending(), first] : clicks;
+        if (!closing && all.length < shapeClicks[tool]) return this.pending.set(all);
+        this.pending.set([]);
+        const command = shapeCommand(tool, sketchId, all, this.store.polygonSides(), newId);
+        if (command) await this.store.run(command);
         return;
+      }
     }
   }
 
@@ -322,17 +351,11 @@ export class SketchEditor {
     return applyAffine(invertAffine(m), event.clientX - rect.left, event.clientY - rect.top);
   }
 
-  /** The nearest existing point within a few pixels, else the free position. */
+  /** Where a click lands: an existing point, a line's middle or a curve within a few pixels, else the free position. */
   private snapRef(at: Vec2): PointRef {
     const m = this.matrix();
     if (!m) return { at };
-    const radius = snapPixels / affineScale(m);
-    let best: { id: string; at: Vec2; d: number } | undefined;
-    for (const [id, p] of this.points()) {
-      const d = Math.hypot(p[0] - at[0], p[1] - at[1]);
-      if (d <= radius && (!best || d < best.d)) best = { id, at: p, d };
-    }
-    return best ? { id: best.id, at: best.at } : { at };
+    return snap(this.sketch(), at, snapPixels / affineScale(m), hitPixels / affineScale(m));
   }
 
   /** Labels and badges are hit by the DOM; points and curves geometrically, within a few pixels. */
@@ -373,7 +396,24 @@ export class SketchEditor {
         return `M ${start[0]} ${start[1]} A ${r} ${r} 0 ${sweep > Math.PI ? 1 : 0} 1 ${e[0]} ${e[1]}`;
       }
       default:
-        return undefined;
+        return this.shapePreview(clicks, end);
     }
+  }
+
+  /** What a shape tool would draw if the pointer were its next click: its own geometry, drawn as such. */
+  private shapePreview(clicks: readonly PointRef[], cursor: Vec2): string | undefined {
+    const tool = this.store.tool();
+    if (!isShapeTool(tool)) return undefined;
+    const all = [...clicks, { at: cursor }];
+    let n = 0;
+    const command = shapeCommand(tool, this.sketch().id, all, this.store.polygonSides(), () => `preview-${++n}`);
+    const last = clicks.at(-1);
+    if (!command) return last ? `M ${last.at[0]} ${last.at[1]} L ${cursor[0]} ${cursor[1]}` : undefined;
+    const points = new Map(this.points());
+    for (const e of command.entities) if (e.kind === 'point') points.set(e.id, [e.x, e.y]);
+    return command.entities
+      .filter((e) => e.kind !== 'point')
+      .map((e) => curvePath(e, points))
+      .join(' ');
   }
 }

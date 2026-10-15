@@ -62,6 +62,12 @@ class Translator {
     return e.kind;
   }
 
+  private centerOf(id: string): string {
+    const e = this.entities.get(id);
+    if (e?.kind !== 'circle' && e?.kind !== 'arc' && e?.kind !== 'ellipse') throw new Error(`${id} has no centre`);
+    return e.center;
+  }
+
   private lineDirection(id: string): Vec2 {
     const e = this.entities.get(id);
     if (e?.kind !== 'line') throw new Error(`${id} is not a line`);
@@ -135,6 +141,20 @@ class Translator {
         if (kind === 'line') return add('point_on_line_pl', { p_id: c.point, l_id: c.curve });
         if (kind === 'circle') return add('point_on_circle', { p_id: c.point, c_id: c.curve });
         return add('point_on_arc', { p_id: c.point, a_id: c.curve });
+      }
+      case 'horizontal-points':
+        return add('horizontal_pp', { p1_id: c.points[0], p2_id: c.points[1] });
+      case 'vertical-points':
+        return add('vertical_pp', { p1_id: c.points[0], p2_id: c.points[1] });
+      case 'symmetric':
+        return add('p2p_symmetric_ppl', { p1_id: c.points[0], p2_id: c.points[1], l_id: c.line });
+      case 'concentric':
+        return add('p2p_coincident', { p1_id: this.centerOf(c.curves[0]), p2_id: this.centerOf(c.curves[1]) });
+      case 'collinear': {
+        const second = this.entities.get(c.lines[1]);
+        if (second?.kind !== 'line') throw new Error(`${c.lines[1]} is not a line`);
+        add('parallel', { l1_id: c.lines[0], l2_id: c.lines[1] }, 'parallel');
+        return add('point_on_line_pl', { p_id: second.start, l_id: c.lines[0] }, 'on');
       }
       case 'midpoint': {
         const line = this.entities.get(c.line);

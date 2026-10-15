@@ -46,6 +46,8 @@ export class DesignStore {
   readonly error = signal<string | undefined>(undefined);
   readonly editing = signal<string | undefined>(undefined);
   readonly tool = signal<Tool>('select');
+  /** Corners of the polygon tool. */
+  readonly polygonSides = signal(6);
   readonly selection = signal<readonly string[]>([]);
   /** A solved drag that is not committed yet. */
   readonly preview = signal<SketchView | undefined>(undefined);

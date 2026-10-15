@@ -83,6 +83,15 @@ export type GeometricConstraint =
   /** The point lies on the curve (line, circle or arc). */
   | { readonly id: string; readonly kind: 'point-on'; readonly point: string; readonly curve: string }
   | { readonly id: string; readonly kind: 'midpoint'; readonly point: string; readonly line: string }
+  /** Two points level with each other, or one above the other. */
+  | { readonly id: string; readonly kind: 'horizontal-points'; readonly points: readonly [string, string] }
+  | { readonly id: string; readonly kind: 'vertical-points'; readonly points: readonly [string, string] }
+  /** Two points mirror each other across a line. */
+  | { readonly id: string; readonly kind: 'symmetric'; readonly points: readonly [string, string]; readonly line: string }
+  /** Circles, arcs or ellipses around the same centre. */
+  | { readonly id: string; readonly kind: 'concentric'; readonly curves: readonly [string, string] }
+  /** Two lines on one straight line. */
+  | { readonly id: string; readonly kind: 'collinear'; readonly lines: readonly [string, string] }
   | { readonly id: string; readonly kind: 'fix'; readonly point: string; readonly x: number; readonly y: number };
 
 /** Dimensions: constraints with a value given as an expression ("25", "2 * 10 mm", "45 deg"). */

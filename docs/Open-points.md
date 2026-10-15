@@ -1,139 +1,151 @@
 # Open points
 
-Everything phases 0–6 left out, deferred on purpose, or only half covered, collected from the tasks, the decisions and the phase reports. **Check the box of every point you want implemented**, and add your own at the end of a section or under [Your additions](#your-additions). Checked points become tasks in the next phases; the arrow after a checked point names its task ([[Roadmap]]), and ✅ marks the points that are done.
+What CADence does not do yet: points left open by phases 0–14 (deferred on purpose, trade-offs of decisions, gaps from the phase reports) and ideas for what such an application could do next. Points that were implemented are gone from this page; they live on as tasks ([[Roadmap]]).
 
-Each point says where it comes from: a task, a decision ([[Architecture/Decisions]]), or a phase report. Points marked *(new)* were never discussed but follow naturally from what exists.
+**Check the box of every point you want implemented**, and add your own at the end of a section or under [Your additions](#your-additions). Checked points become tasks in the next phases; the arrow after a checked point names its task, and ✅ marks the points that are done.
+
+Each point says where it comes from: a task, a decision ([[Architecture/Decisions]]), or a phase report. Points marked *(new)* were never discussed.
 
 [TOC]
 
 ## Obligations and housekeeping
 
-- [ ] **About dialog with licence credits.** ADR-2 promises to credit OpenCascade (LGPL-2.1) and planegcs (LGPL) in an About dialog; no such dialog exists yet. The bundled Inter font (SIL Open Font License) and opentype.js (MIT) belong there too (ADR-26). *(ADR-2, ADR-3; an obligation before any release)*
-- [X] **Merge the phase branches into `master`.** Every phase lives on its own branch (`feature/phase-1-foundation` … `feature/phase-6-import`), each built on the previous one; nothing is merged or pushed yet. *(git process)* → [[CAD-31]] ✅
-- [X] **Continuous integration.** `npm run verify` and the Playwright journeys run only locally; there is no CI pipeline. *(new)* → [[CAD-31]] ✅
-- [X] **deployment using github pages** → [[CAD-32]] ✅
-- [ ] **Desktop smoke tests in the repository.** The desktop checks (WebView2 remote debugging, window capture) are scripts outside the repository and run by hand. *(phases 1–6)*
-- [ ] **Desktop installers.** Only the bare executable was built and tested (`tauri build --no-bundle`); the MSI/NSIS installers, code signing and auto-update are untried. *(phase 1)*
-- [ ] **Native save dialog under test.** Exports on desktop go through the Tauri save dialog, which no automated test drives. *(phase 3)*
-- [X] **End-to-end coverage of all features.** Revolve, shell, chamfer, construction planes, circular pattern and mirror are tested in the engine but not clicked through in a browser test. *(phase 3)* → [[CAD-33]] ✅
+- [X] **About dialog with licence credits.** ADR-2 promises to credit OpenCascade (LGPL-2.1) and planegcs (LGPL) in an About dialog; no such dialog exists yet. The bundled Inter font (SIL Open Font License), opentype.js (MIT) and isomorphic-git (MIT) belong there too. *(ADR-2, ADR-3, ADR-26, ADR-30; an obligation before any release)* → [[CAD-57]]
+- [X] **Desktop smoke tests in the repository.** The desktop checks (WebView2 remote debugging, window capture) are scripts outside the repository and run by hand. *(phases 1–6)* → [[CAD-58]]
+- [X] **Desktop installers.** Only the bare executable was built and tested (`tauri build --no-bundle`); the MSI/NSIS installers, code signing and auto-update are untried. *(phase 1)* → [[CAD-59]]
+- [X] **Native save dialog under test.** Exports on desktop go through the Tauri save dialog, which no automated test drives. *(phase 3)* → [[CAD-58]]
 - [ ] **Other browsers.** Browser tests run in Chromium only; Firefox and Safari (WebGL 2 fallback, file APIs) are untested. *(new)*
+- [ ] **Steadier browser journeys.** The git sync journey failed once in a slow run of the whole suite (phase 14); look for timing assumptions before CI shows it again. *(phase 14)*
+- [ ] **Release process:** version numbers, a changelog and release notes in the app ("What's new"). *(new)*
 
 ## Projects and documents
 
-- [X] **Thumbnails** of projects and documents on the home page and in the documents panel. *(Architecture: Home client)* → [[CAD-52]] ✅
-- [ ] **Drag and drop to import** files onto the documents panel or the home page. *(Architecture: Imported files are "picked or dropped"; only the picker exists)*
-- [ ] **Open with CADence** from the operating system (file associations on desktop). *(Volatility analysis, host file exchange)*
-- [ ] **Duplicate** projects and documents. *(Volatility analysis, project workflow)*
-- [ ] **Replace an imported file with a newer version**, keeping the features and instances that use it. *(new)*
-- [ ] **Export or back up a whole project** (one archive with documents and originals), and import it again. *(new)*
-- [X] **Version history** of documents beyond undo (named versions, restore, git based with user settable version tags). *(Volatility analysis: "later versioned or shared")* → [[CAD-53]] ✅
-- [X] **Cloud or git sync** of project folders. *(Volatility analysis, storage medium)* → [[CAD-54]] ✅
-- [ ] **Sync version names** (git tags) along with the versions, and show which versions are on the remote. *(ADR-30 trade-off)*
+- [X] **Drag and drop to import** files onto the documents panel or the home page. The Importing guide already promises it; only the picker exists. *(Architecture: Imported files are "picked or dropped")* → [[CAD-60]]
+- [X] **Open with CADence** from the operating system (file associations on desktop). *(Volatility analysis, host file exchange)* → [[CAD-62]]
+- [X] **Duplicate** projects and documents. *(Volatility analysis, project workflow)* → [[CAD-60]]
+- [X] **Replace an imported file with a newer version**, keeping the features and instances that use it. *(new)* → [[CAD-61]]
+- [X] **Export or back up a whole project** (one archive with documents and originals), and import it again. *(new)* → [[CAD-62]]
+- [X] **Sync version names** (git tags) along with the versions, and show which versions are on the remote. *(ADR-30 trade-off)* → [[CAD-63]]
 - [ ] **Remember the sign-in** for a remote in the operating system's keychain on the desktop, or sign in with OAuth (GitHub, GitLab). *(ADR-30 trade-off)*
+- [ ] **Own CORS proxy for git sync:** a ready-made, self-hostable proxy (e.g. a Cloudflare Worker template), so sign-ins never pass through a third party. *(ADR-30 trade-off)*
 - [ ] **Three-way merge inside a document** (e.g. two people adding different features to one component), instead of choosing one side. *(ADR-30 trade-off)*
-- [ ] **Compare versions** of a component side by side in the viewport. *(new)*
+- [ ] **Compare versions** of a component side by side, or overlaid, in the viewport. *(new)*
 - [ ] **Users, sign-in and sharing.** *(Volatility analysis: deliberately not encapsulated)*
 - [ ] **Real-time collaboration.** Commands keep it possible. *(Volatility analysis: not planned)*
 - [ ] **Large originals in OPFS** instead of IndexedDB, if imports get big. *(ADR-5)*
+- [X] **Templates and starter projects:** new projects from a template (box with lid, wall bracket, enclosure), each with its parameters ready to change. *(new)* → [[CAD-64]]
+- [ ] **Search** across projects and documents, and sorting, folders or tags on the home page. *(new)*
+- [ ] **Trash:** deleted projects and documents can be restored for a while. *(new)*
+- [ ] **Project notes and attachments:** a description, photos, datasheets and links kept with the project. *(new)*
+- [X] **Share a model as one file:** a self-contained HTML viewer (rotate, measure, explode) to send to people without CADence. *(new)* → [[CAD-65]]
 
 ## Sketching
 
-- [X] **Project body edges into a sketch** as reference geometry that follows the body. *([[CAD-29]])* → [[CAD-29]] ✅
-- [X] **Pattern and mirror sketch geometry.** *([[CAD-29]])* → [[CAD-29]] ✅
-- [X] **More drawing tools:** slot, polygon, center rectangle, three-point arc, ellipse, spline, text. *(new; the sketcher has line, rectangle, circle, arc, point)* → [[CAD-37]] [[CAD-41]] ✅
-- [X] **Editing tools:** trim, extend, split, offset, sketch fillet and chamfer. *(new)* → [[CAD-38]] ✅
-- [X] **More relations:** symmetric, concentric, collinear, horizontal/vertical alignment of two points. *(new)* → [[CAD-39]] ✅
-- [X] **Box selection, copy and paste, move and rotate** of sketch geometry. *(new)* → [[CAD-40]] ✅
-- [X] **Constraints for imported drawings** (fix them, or infer horizontal, vertical, tangent). Imported curves arrive unconstrained. *(phase 6, ADR-22)* → [[CAD-42]] ✅
-- [X] **Snap to existing geometry** e.g. if a point is placed on a line, a coincidence relation shall be created automatically. → [[CAD-39]] ✅
+- [X] **Trace a picture:** an image as the sketch background, scaled by a known length, to draw over a photo or a scan. *(new)* → [[CAD-66]]
+- [X] **Explain over-constrained sketches:** show which relations and dimensions conflict, and offer to remove one. *(new)* → [[CAD-68]]
+- [X] **Suggest relations and dimensions** that would fully define a sketch. *(new)* → [[CAD-68]]
+- [X] **Curves from equations** (x(t), y(t)), e.g. involutes and cams. *(new)* → [[CAD-69]]
+- [X] **More fonts** for text: other Google Fonts or the system's fonts. *(new)* → [[CAD-70]]
+- [X] **Text along a curve.** *(new)* → [[CAD-70]]
+- [X] **Highlight** under-defined / open DOF parts in sketches *(your addition)* → [[CAD-68]]
 
 ## Part modeling
 
-- [X] **Reorder the timeline and roll back** to insert features earlier. *([[CAD-28]])* → [[CAD-28]] ✅
-- [X] **More construction planes:** at an angle, midplanes, through three points. *([[CAD-30]])* → [[CAD-30]] ✅
-- [X] **Export options:** choose bodies, mesh quality for STL, 3MF and OBJ. *([[CAD-30]])* → [[CAD-30]] ✅
-- [X] **Loft and sweep.** OpenCascade supports both. *(ADR-2 lists them; not built)* → [[CAD-43]] ✅
-- [X] **Hole feature** with counterbore, countersink and print-friendly options. *(new)* → [[CAD-44]] ✅
-- [X] **Threads**, cosmetic or modelled (screw holes for prints). *(new)* → [[CAD-44]] ✅
-- [X] **Draft, rib, variable fillet.** *(new)* → [[CAD-45]] ✅
-- [X] **Body operations:** combine bodies (join/cut/intersect existing bodies), split a body, move or copy a body, scale. *(new)* → [[CAD-46]] ✅ (uniform scale only)
-- [X] **Text on faces**, embossed or engraved. *(new)* → [[CAD-41]] ✅
-- [X] **Pattern along a path.** *(new)* → [[CAD-43]] ✅
-- [X] **Sheet metal** (flanges and unfolding). *(new)* → [[CAD-51]] ✅
 - [ ] **Sheet metal II:** flanges on flanges in the flat pattern, corner reliefs, hems and miter flanges. *(ADR-29 trade-off)*
-- [X] **Configurations:** variants of one component with other parameter values, also per assembly instance. *(ADR-11 trade-off)* → [[CAD-50]] ✅
-- [X] **Project-wide parameters** shared by several components. *(new)* → [[CAD-49]] ✅
-- [X] **Display units:** the document stores a unit (mm, cm, in), but the editor always shows millimetres. *(Document model)* → [[CAD-48]] ✅
-- [X] **More stable names for freeform faces** (B-spline faces only match by centre and area). *(ADR-15 trade-off)* → [[CAD-47]] ✅
 - [ ] **NURBS**
 - [ ] **Scale bodies per axis.** Needs `BRepBuilderAPI_GTransform`, missing from the bundled OpenCascade build; a custom `replicad-opencascadejs` build could add it (and `gp_Cone`, `gp_Torus`). *(ADR-28)*
 - [ ] **Rib up to the next face** instead of a set depth, and **drill points** at the bottom of blind holes. *(ADR-28 trade-offs)*
+- [X] **Standard parts library:** screws, nuts, washers, bearings, heat-set inserts and magnets by size (ISO/DIN), inserted into components or assemblies, with matching holes. *(new)* → [[CAD-71]]
+- [X] **Gear generator:** spur, helical and rack gears from module and number of teeth, with matching pairs. *(new)* → [[CAD-72]]
+- [X] **Print-friendly generators:** snap fits, living hinges, dovetails and press-fit pegs. *(new)* → [[CAD-73]]
+- [X] **Clearances for prints:** fit classes (press, snug, loose) and a printer-specific offset applied to holes and pegs. *(new)* → [[CAD-74]]
+- [ ] **Lithophanes and image embossing:** a picture turned into relief on a face. *(new)*
+- [ ] **Textures:** knurling and patterned surfaces on faces. *(new)*
+- [ ] **Direct editing of imported solids:** push and pull faces, delete holes and fillets of a STEP part without its history. *(new)*
+- [ ] **Surface modeling:** boundary surfaces, thicken, patch and knit into solids. *(new)*
+- [X] **Timeline folders and notes:** group features, comment why they are there. *(new)* → [[CAD-75]]
+- [X] **Repair broken references** in a dialog: show what a feature lost (a face or an edge) and let the user pick the replacement. *(new)* → [[CAD-76]]
+- [X] **Configurations as a table:** import and export them as CSV. *(new)* → [[CAD-77]]
+
+## Technical drawings
+
+- [X] **Drawings of parts and assemblies:** a new document kind with standard views (front, top, side, isometric), section and detail views, dimensions and notes, a title block, and export as PDF and DXF. Views update when the model changes. *(new)* → [[CAD-87]] [[CAD-88]]
+- [X] **Hole and thread callouts, and a parts list** on drawings, from the model. *(new)* → [[CAD-89]]
 
 ## Viewport and interaction
 
-- [X] **Zoom to fit** in component and assembly mode (only the imported viewer frames its contents). *(phase 6)* → [[CAD-34]] ✅
-- [X] **Pick vertices**, not only faces and edges (for measuring and references). *(Architecture: Viewport client)* → [[CAD-35]] ✅
-- [X] **Show and hide bodies and instances, transparency, colours per body.** *(new)* → [[CAD-35]] ✅
-- [X] **Section view** (a cutting plane through the model). *(new)* → [[CAD-34]] ✅
-- [X] **Orthographic camera** as an option to perspective. *(new)* → [[CAD-34]] ✅
-- [X] **Keyboard shortcut reference** and more shortcuts. *(new)* → [[CAD-36]] ✅
 - [ ] **Light and dark theme switch** in the app (today it follows the system). *(new)*
 - [ ] **Touch and tablet use.** *(new)*
-- [X] **Change control schema** CADence (default), Fusion360, Onshape → [[CAD-36]] ✅
+- [X] **Command palette** (Ctrl+K): find and run any tool or command by name. *(new)* → [[CAD-78]]
+- [ ] **Named views:** save camera positions and section planes, and return to them. *(new)*
+- [X] **Better looks and pictures:** materials with environment lighting, and image and turntable video export with a transparent background. *(new)* → [[CAD-90]]
+- [X] **Surface analysis:** zebra stripes, curvature and draft angle shown on the faces. *(new)* → [[CAD-91]]
+- [ ] **Augmented reality:** look at a part at real size on a phone (WebXR, or a USDZ/glTF export). *(new)*
+- [ ] **Undo history panel:** see the commands that were applied and step back to any of them. *(new)*
+- [ ] **Onboarding:** a short interactive tour and sample projects, with links from tools to the User guide. *(new)*
 
 ## Analysis and manufacturing
 
 - [ ] **Resin (SLA) printer profiles** with their own rules (no nozzle; drain holes, suction cups). *([[CAD-21]])*
 - [ ] **Machine profiles per user,** shared by all components (today each component stores its own). *(ADR-19 trade-off)*
 - [ ] **A finer wall check** that cannot miss a thin spot inside one large flat triangle. *(ADR-18 trade-off)*
-- [ ] **Measure in assemblies,** between instances. *(phase 5)*
+- [X] **Measure in assemblies,** between instances. *(phase 5)* → [[CAD-80]]
 - [ ] **Mass properties of assemblies:** total mass and centre of mass. *(new)*
 - [ ] **Material per body** rather than per component. *(phase 4)*
 - [ ] **Print orientation:** suggest the orientation with the least support. *(new)*
 - [ ] **Print estimates:** filament use and print time. *(new)*
 - [ ] **Arrange parts on the build plate** and export them as one 3MF. *(new)*
+- [ ] **Send to the printer:** open the 3MF in a slicer (PrusaSlicer, OrcaSlicer, Bambu Studio) on the desktop, or upload it to OctoPrint or Klipper (Moonraker). *(new)*
+- [ ] **Cost estimates:** material price per kilogram or per sheet, machine time. *(new)*
 - [ ] **Laser: export a flat face of a body as DXF/SVG,** so parts designed in 3D can be cut. *(new)*
 - [ ] **Laser: nest parts on the sheet** to save material. *(Volatility analysis mentions nesting)*
 - [ ] **Laser: cut and engrave layers** by colour in the exported files. *(new)*
 - [ ] **Laser: finger joints and box generator** for flat-pack designs. *(new)*
+- [ ] **Laser: test patterns** for kerf and power/speed, and raster engraving of pictures. *(new)*
+- [ ] **CNC milling (2.5D CAM):** pockets, profiles and drilling as toolpaths, exported as G-code. *(new)*
+- [X] **Simple strength check (FEA):** a linear static analysis of a part with fixed faces and loads, showing stress and deflection. *(new)* → [[CAD-93]]
 
 ## Assemblies
 
-- [ ] **Drag parts in the 3D view:** free instances anywhere, jointed ones along their free directions. Today they move with fields and sliders. *([[CAD-22]], [[CAD-23]])*
-- [ ] **Joint offsets:** place a joint origin away from the picked face or edge. *(ADR-21 trade-off)*
+- [X] **Drag parts in the 3D view:** free instances anywhere, jointed ones along their free directions. Today they move with fields and sliders. *([[CAD-22]], [[CAD-23]])* → [[CAD-79]]
+- [X] **Joint offsets:** place a joint origin away from the picked face or edge. *(ADR-21 trade-off)* → [[CAD-79]]
 - [ ] **Sub-assemblies** and a STEP product tree that keeps them. *([[CAD-25]])*
-- [ ] **Motion links:** gears, rack and pinion, belts (one joint drives another by a ratio). *(new)*
-- [ ] **Collision detection during motion** (stop or flag where parts hit). *(new)*
+- [X] **Motion links:** gears, rack and pinion, belts (one joint drives another by a ratio). *(new)* → [[CAD-83]]
+- [X] **Collision detection during motion** (stop or flag where parts hit). *(new)* → [[CAD-84]]
 - [ ] **Dynamics:** gravity, forces, contact. Motion is kinematic only. *(ADR-20 trade-off)*
-- [ ] **Smoother motion studies:** easing between keys, speeds (rpm, mm/s) instead of key values. *(new)*
-- [ ] **Exploded views.** *(new)*
-- [ ] **Bill of materials:** parts, counts, materials, masses. *(new)*
-- [ ] **Live updates:** an open assembly updates when a component changes in another tab or window (today on reopening). *(phase 5)*
+- [X] **Smoother motion studies:** easing between keys, speeds (rpm, mm/s) instead of key values. *(new)* → [[CAD-84]]
+- [X] **Exploded views.** *(new)* → [[CAD-85]]
+- [X] **Bill of materials:** parts, counts, materials, masses; exported as CSV. *(new)* → [[CAD-86]]
+- [X] **Assembly instructions:** step-by-step exploded steps, exported as a PDF, for flat-pack and kit builds. *(new)* → [[CAD-85]]
+- [X] **Patterns and mirrors of instances.** *(new)* → [[CAD-81]]
+- [X] **Live updates:** an open assembly updates when a component changes in another tab or window (today on reopening). *(phase 5)* → [[CAD-82]]
 
 ## Import
 
 - [ ] **Solids from meshes above 100,000 triangles**, with decimation (simplifying) first. *([[CAD-26]], ADR-22)*
 - [ ] **Repair open or broken meshes** before making them solid. *(new)*
-- [X] **Fit arcs to Béziers and splines** instead of short lines. *([[CAD-27]], ADR-22)* → [[CAD-42]] ✅
-- [X] **DXF blocks (INSERT), text and hatches.** *([[CAD-27]])* → [[CAD-41]] [[CAD-42]] ✅
-- [X] **SVG text** (as editable text, outlines on conversion). *(new)* → [[CAD-41]] ✅
-- [X] **Option to keep ratios** When importing svg/dxf, there should be an option for them to keep their ratios. Moving/scaling should do so with the entire image, not individual lines. → [[CAD-42]] ✅
-- [ ] **More formats:** IGES, BREP, AMF, colours from 3MF and OBJ. *(new)*
+- [ ] **More formats:** IGES, BREP, AMF, glTF, colours from 3MF and OBJ. *(new)*
+- [X] **Pictures to outlines:** trace a bitmap (logo, drawing) into sketch curves. *(new)* → [[CAD-67]]
+- [ ] **Circuit boards:** import a KiCad board (outline, holes, component heights) to design an enclosure around it. *(new)*
+
+## Automation and AI
+
+- [ ] **Publish the command line as a package** (`npx cadence`), so it runs without a copy of the repository. *(ADR-31 trade-off)*
+- [X] **Pictures for agents:** an MCP tool that renders a component to PNG, so an agent can look at what it made. *(ADR-31 trade-off)* → [[CAD-92]]
+- [ ] **MCP over HTTP** from the running app, so an agent can drive the web app's projects directly. *(ADR-31 trade-off)*
+- [ ] **An assistant in the app:** describe a part or a change in words, and an AI model builds it with the same tools the MCP server offers, step by step in the timeline. *(new)*
+- [ ] **Script console in the app:** run scripts against the open project, and keep them with the project as reusable generators. *(new)*
 
 ## Platform and performance
 
-- [X] **Offline use and caching** of the 23 MB kernel through a service worker (installable web app). *(ADR-2 mentions the service worker; not built)* → [[CAD-32]] ✅
-- [ ] **Performance on large models and assemblies:** measure and optimise (meshing in the worker, level of detail). *(new)*
-- [ ] **Rust/WASM where profiling shows a need.** So far it never did (ADR-18). *(ADR-8)*
-- [X] **Scripting API or command line** for automation. *(Volatility analysis, client and host)* → [[CAD-55]] ✅
-- [X] **MCP server** Allow remote control by agentic AI → [[CAD-56]] ✅
-- [ ] **Publish the command line as a package** (`npx cadence`), so it runs without a copy of the repository. *(ADR-31 trade-off)*
-- [ ] **Pictures for agents:** an MCP tool that renders a component to PNG, so an agent can look at what it made. *(ADR-31 trade-off)*
-- [ ] **MCP over HTTP** from the running app, so an agent can drive the web app's projects directly. *(ADR-31 trade-off)*
+- [X] **Performance on large models and assemblies:** measure and optimise (meshing in the worker, level of detail). *(new)* → [[CAD-94]]
+- [X] **Rust/WASM where profiling shows a need.** So far it never did (ADR-18). *(ADR-8)* → [[CAD-95]]
+- [ ] **Performance budgets in CI:** fail when start-up, regeneration or bundle size get noticeably worse. *(new)*
 - [ ] **Accessibility review** (keyboard use of the 3D view, screen reader labels). *(new)*
 - [ ] **Translations** of the interface. *(new)*
 - [ ] **macOS and Linux desktop builds.** Only Windows was built and tested. *(new)*
+- [ ] **A phone-friendly viewer:** open, view, measure and share models on a phone. *(new)*
 
 ## Your additions
 
-- Additions so far were placed in their sections: deployment on GitHub Pages, NURBS, snapping with automatic relations, control schemes, keeping the ratios of imported drawings, an MCP server.
+- 

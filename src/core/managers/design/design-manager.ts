@@ -63,6 +63,10 @@ export type DesignCommand =
   | { readonly type: 'suppress-item'; readonly itemId: string; readonly suppressed: boolean }
   | { readonly type: 'rename-item'; readonly itemId: string; readonly name: string }
   | { readonly type: 'delete-item'; readonly itemId: string }
+  /** Moves an item to `index` (in the timeline without it); refused when it would come before something it uses, or after something that uses it. */
+  | { readonly type: 'reorder-item'; readonly itemId: string; readonly index: number }
+  /** Puts the rollback marker after the first `position` items (0 … timeline length). */
+  | { readonly type: 'roll-to'; readonly position: number }
   | { readonly type: 'add-parameter'; readonly parameter: Parameter }
   | { readonly type: 'set-parameter'; readonly parameter: Parameter }
   | { readonly type: 'delete-parameter'; readonly id: string }
@@ -97,7 +101,7 @@ export interface SketchView {
 
 /** How a timeline item came out in the last regeneration. */
 export interface ItemStatus {
-  readonly state: 'ok' | 'error' | 'suppressed';
+  readonly state: 'ok' | 'error' | 'suppressed' | 'rolled-back';
   readonly error?: string;
 }
 

@@ -364,6 +364,44 @@ describe('DesignManager', () => {
       expect(await volume()).toBeCloseTo(80 * 30 * 8);
     });
 
+    it('rolls the timeline back, inserts new items at the marker and rolls forward again', async () => {
+      await plate();
+      const fillet = (id: string) => {
+        const edge = session.state().bodies[0]?.edges.find((e) => e.name.includes('f:e1:end') && e.name.includes(':side:ab'));
+        return { id, type: 'fillet' as const, name: '', suppressed: false, edges: [{ kind: 'edge' as const, body: 'e1', name: edge?.name as string }], size: '2' };
+      };
+      unwrap(await session.execute({ type: 'add-feature', feature: fillet('r1') }));
+      const rounded = await volume();
+      unwrap(await session.execute({ type: 'roll-to', position: 2 }));
+      expect(session.state().items.get('r1')).toEqual({ state: 'rolled-back' });
+      expect(await volume()).toBeCloseTo(60 * 30 * 6);
+      // A plane added now comes before the rolled-back fillet, and the marker stays after it.
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'p1', type: 'plane', name: '', suppressed: false, base: 'XY', offset: '20' } }));
+      expect(session.state().document.timeline.map((i) => i.id)).toEqual(['s1', 'e1', 'p1', 'r1']);
+      expect(session.state().document.rollbackIndex).toBe(1);
+      unwrap(await session.execute({ type: 'roll-to', position: 4 }));
+      expect(session.state().items.get('r1')).toEqual({ state: 'ok' });
+      expect(await volume()).toBeCloseTo(rounded);
+      // Deleting a rolled-back item keeps the marker where it is.
+      unwrap(await session.execute({ type: 'roll-to', position: 3 }));
+      unwrap(await session.execute({ type: 'delete-item', itemId: 'r1' }));
+      expect(session.state().document.rollbackIndex).toBe(0);
+    });
+
+    it('reorders the timeline, but never before what an item uses', async () => {
+      await plate();
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'p1', type: 'plane', name: '', suppressed: false, base: 'XY', offset: '20' } }));
+      unwrap(await session.execute({ type: 'reorder-item', itemId: 'p1', index: 0 }));
+      expect(session.state().document.timeline.map((i) => i.id)).toEqual(['p1', 's1', 'e1']);
+      const early = await session.execute({ type: 'reorder-item', itemId: 'e1', index: 1 });
+      expect(early).toMatchObject({ ok: false, error: { message: 'Extrude 1 uses Sketch 1, so it has to come after it.' } });
+      // A sketch on a face of the extrude may not move before it either.
+      unwrap(await session.execute({ type: 'create-sketch', id: 's2', plane: { face: { kind: 'face', body: 'e1', name: 'f:e1:end' } } }));
+      expect(await session.execute({ type: 'reorder-item', itemId: 's2', index: 1 })).toMatchObject({ ok: false });
+      await session.undo();
+      expect(session.state().document.timeline.map((i) => i.id)).toEqual(['p1', 's1', 'e1']);
+    });
+
     it('refuses parameter changes that would break the model', async () => {
       await plate();
       const broken = await session.execute({ type: 'delete-parameter', id: 'pt' });

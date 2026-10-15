@@ -182,6 +182,36 @@
   }
 }
 
+.item.rolled-back .item-name,
+.item.rolled-back cad-icon {
+  opacity: 0.45;
+}
+
+.item.dragging,
+.marker.dragging {
+  opacity: 0.4;
+}
+
+.marker {
+  display: flex;
+  align-items: center;
+  height: 10px;
+  margin: 1px 0;
+  cursor: grab;
+
+  .marker-line {
+    flex: 1;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--accent);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+}
+
 .item.suppressed .item-name {
   color: var(--text-muted);
   text-decoration: line-through;

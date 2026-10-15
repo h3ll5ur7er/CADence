@@ -116,7 +116,12 @@ export class Regeneration {
       const value = this.scope.get(parameter.name);
       return value ? { parameter, display: display(value) } : { parameter };
     });
-    for (const item of document.timeline) {
+    const marker = document.timeline.length - document.rollbackIndex;
+    for (const [index, item] of document.timeline.entries()) {
+      if (index >= marker) {
+        this.items.set(item.id, { state: 'rolled-back' });
+        continue;
+      }
       if (item.suppressed) {
         this.items.set(item.id, { state: 'suppressed' });
         continue;

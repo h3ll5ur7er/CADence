@@ -241,7 +241,58 @@ export class ComponentMode {
     void this.store.exportBodies(format);
   }
 
-  protected open(item: TimelineItem): void {
+  /** The number of items before the rollback marker. */
+  protected readonly marker = computed(() => this.timeline().length - (this.store.state()?.document.rollbackIndex ?? 0));
+  /** The timeline item (or `marker`) being dragged. */
+  protected readonly dragging = signal<string | undefined>(undefined);
+
+  protected startDrag(event: DragEvent, what: string): void {
+    this.dragging.set(what);
+    event.dataTransfer?.setData('text/plain', what);
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+  }
+
+  /** A drop on the item at `index`: before it on its upper half, after it on its lower half. */
+  protected drop(event: DragEvent, index: number): void {
+    event.preventDefault();
+    const what = this.dragging();
+    this.dragging.set(undefined);
+    if (!what) return;
+    const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    const slot = event.clientY < box.top + box.height / 2 ? index : index + 1;
+    void this.moveTo(what, slot);
+  }
+
+  /** Moves the marker or an item to a slot between items (0 … length). */
+  private async moveTo(what: string, slot: number): Promise<void> {
+    if (what === 'marker') {
+      if (slot !== this.marker()) await this.store.run({ type: 'roll-to', position: slot });
+      return;
+    }
+    const from = this.timeline().findIndex((i) => i.id === what);
+    if (from < 0) return;
+    const index = from < slot ? slot - 1 : slot;
+    if (index !== from) await this.store.run({ type: 'reorder-item', itemId: what, index });
+  }
+
+  protected markerKey(event: KeyboardEvent): void {
+    const step = event.key === 'ArrowUp' ? -1 : event.key === 'ArrowDown' ? 1 : 0;
+    if (!step) return;
+    event.preventDefault();
+    const position = this.marker() + step;
+    if (position >= 0 && position <= this.timeline().length) void this.store.run({ type: 'roll-to', position });
+  }
+
+  /** Alt+arrow keys move an item up or down the timeline. */
+  protected itemKey(event: KeyboardEvent, item: TimelineItem, index: number): void {
+    if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
+    event.preventDefault();
+    void this.moveTo(item.id, event.key === 'ArrowUp' ? index - 1 : index + 2);
+  }
+
+  protected async open(item: TimelineItem, index: number): Promise<void> {
+    // A rolled-back item is edited with the model as it was there: roll forward to just after it.
+    if (index >= this.marker() && !(await this.store.run({ type: 'roll-to', position: index + 1 }))) return;
     if (isSketch(item)) {
       this.store.cancelDraft();
       this.store.edit(item.id);

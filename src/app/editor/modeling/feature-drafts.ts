@@ -50,11 +50,14 @@ export function solidProfiles(profiles: readonly Profile[]): string[] {
 /** Sensible starting values: the latest sketch's profiles, the latest extrude/revolve to repeat, the first imported model, and so on. */
 export function defaultFeature(type: FeatureType, id: string, state: DesignState, importedModels: readonly string[] = []): Feature {
   const base = { id, name: '', suppressed: false };
-  const sketches = state.document.timeline.filter(isSketch).filter((s) => (state.sketches.get(s.id)?.profiles.length ?? 0) > 0);
+  // New features go in at the rollback marker: only what comes before it can be used.
+  const { timeline, rollbackIndex } = state.document;
+  const active = timeline.slice(0, timeline.length - rollbackIndex);
+  const sketches = active.filter(isSketch).filter((s) => (state.sketches.get(s.id)?.profiles.length ?? 0) > 0);
   const sketch = sketches.at(-1);
   const profiles = sketch ? solidProfiles(state.sketches.get(sketch.id)?.profiles ?? []) : [];
   const operation = state.bodies.length ? ('join' as const) : ('new-body' as const);
-  const lastTool = state.document.timeline.filter(isToolFeature).at(-1);
+  const lastTool = active.filter(isToolFeature).at(-1);
   const tools = lastTool ? [lastTool.id] : [];
   switch (type) {
     case 'insert':

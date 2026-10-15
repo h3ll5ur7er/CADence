@@ -67,12 +67,14 @@ export class FeatureDialog {
     const sketch = this.store.state()?.sketches.get(f.sketch)?.sketch;
     return (sketch?.entities ?? []).filter((e) => e.kind === 'line' && e.construction).map((e, i) => ({ id: e.id, label: `Construction line ${i + 1}` }));
   });
-  /** Extrudes and revolves before this feature, for patterns and mirrors. */
+  /** Extrudes and revolves before this feature (a new one goes in at the rollback marker), for patterns and mirrors. */
   protected readonly tools = computed(() => {
     const f = this.feature();
-    const timeline = this.store.state()?.document.timeline ?? [];
-    const end = f ? timeline.findIndex((i) => i.id === f.id) : -1;
-    return (end < 0 ? timeline : timeline.slice(0, end)).filter(isToolFeature);
+    const document = this.store.state()?.document;
+    const timeline = document?.timeline ?? [];
+    const at = f ? timeline.findIndex((i) => i.id === f.id) : -1;
+    const end = at >= 0 ? at : timeline.length - (document?.rollbackIndex ?? 0);
+    return timeline.slice(0, end).filter(isToolFeature);
   });
   protected readonly planeFeatures = computed(() =>
     (this.store.state()?.document.timeline ?? []).filter((i) => !isSketch(i) && i.type === 'plane' && i.id !== this.feature()?.id),

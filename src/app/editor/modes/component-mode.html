@@ -40,21 +40,45 @@
         @if (timeline().length === 0) {
           <p class="node-empty">Sketches and features will appear here.</p>
         }
-        <ul aria-label="Timeline">
-          @for (item of timeline(); track item.id) {
+        <ul aria-label="Timeline" [class.drag-active]="dragging()">
+          @for (item of timeline(); track item.id; let i = $index) {
             @let itemStatus = statusOf(item);
+            @if (i === marker() && i < timeline().length) {
+              <li
+              class="marker"
+              draggable="true"
+              tabindex="0"
+              role="separator"
+              aria-label="Rollback marker"
+              title="Drag to roll the model back; new features go here. Arrow keys move it."
+              [class.dragging]="dragging() === 'marker'"
+              (dragstart)="startDrag($event, 'marker')"
+              (dragend)="dragging.set(undefined)"
+              (keydown)="markerKey($event)"
+            >
+              <span class="marker-line"></span>
+            </li>
+            }
             <li
               class="node item"
+              draggable="true"
               [class.active]="store.editing() === item.id || store.draft()?.feature?.id === item.id"
               [class.suppressed]="item.suppressed"
               [class.failed]="itemStatus?.state === 'error'"
+              [class.rolled-back]="itemStatus?.state === 'rolled-back'"
+              [class.dragging]="dragging() === item.id"
+              (dragstart)="startDrag($event, item.id)"
+              (dragend)="dragging.set(undefined)"
+              (dragover)="$event.preventDefault()"
+              (drop)="drop($event, i)"
             >
               <button
                 type="button"
                 class="item-main"
-                [title]="itemStatus?.error ?? 'Edit ' + item.name"
+                [title]="itemStatus?.error ?? (itemStatus?.state === 'rolled-back' ? 'Rolled back: roll forward to edit ' : 'Edit ') + item.name"
                 [attr.aria-label]="'Edit ' + item.name"
-                (click)="open(item)"
+                (click)="open(item, i)"
+                (keydown)="itemKey($event, item, i)"
               >
                 <cad-icon [name]="itemIcons[item.type]" />
                 <span class="item-name">{{ item.name }}</span>
@@ -81,6 +105,22 @@
                   <cad-icon name="trash" [size]="14" />
                 </button>
               </span>
+            </li>
+          }
+          @if (timeline().length && marker() === timeline().length) {
+            <li
+              class="marker"
+              draggable="true"
+              tabindex="0"
+              role="separator"
+              aria-label="Rollback marker"
+              title="Drag to roll the model back; new features go here. Arrow keys move it."
+              [class.dragging]="dragging() === 'marker'"
+              (dragstart)="startDrag($event, 'marker')"
+              (dragend)="dragging.set(undefined)"
+              (keydown)="markerKey($event)"
+            >
+              <span class="marker-line"></span>
             </li>
           }
         </ul>

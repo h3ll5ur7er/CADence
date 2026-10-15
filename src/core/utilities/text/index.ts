@@ -1,4 +1,4 @@
-import type { Font } from 'opentype.js';
+import type { Font, PathCommand } from 'opentype.js';
 import type { Vec2 } from '../math';
 
 /**
@@ -77,10 +77,8 @@ export function fontOf(font: Font): TextFont {
   };
 }
 
-type Command = import('opentype.js').PathCommand;
-
 /** Path commands to closed contours; quadratic curves become exact cubic ones. */
-function glyphContours(commands: readonly Command[], place: (x: number, y: number) => Vec2): Contour[] {
+function glyphContours(commands: readonly PathCommand[], place: (x: number, y: number) => Vec2): Contour[] {
   const contours: Contour[] = [];
   let edges: OutlineEdge[] = [];
   let first: Vec2 | undefined;

@@ -415,6 +415,39 @@ describe('component results and joint frames', () => {
       expect(removed).toBeLessThan(Math.PI * (9 - 6.25) * 3);
     });
   });
+
+  describe('drafts, ribs and variable fillets', () => {
+    it('rounds an edge with a radius that changes along it', async () => {
+      const bodies = ok(await plate());
+      const edge = (await names(bodies)).edges.find((e) => e.includes('f:plate:end') && e.includes('side:plate-bottom')) as string;
+      const refs = [{ kind: 'edge' as const, body: 'plate', name: edge }];
+      const round = async (size: number, endSize?: number) =>
+        volume(ok(await engine.apply({ type: 'fillet', feature: 'r', key: `fillet-${size}-${endSize}`, bodies, edges: refs, size, ...(endSize === undefined ? {} : { endSize }) })));
+      const [small, varying, large] = [await round(1), await round(1, 4), await round(4)];
+      expect(varying).toBeLessThan(small);
+      expect(varying).toBeGreaterThan(large);
+    });
+
+    it('drafts side faces about a neutral plane, keeping their names', async () => {
+      const bodies = ok(await plate(10, 'plate-10'));
+      const sides = ['plate-left', 'plate-right'].map((s) => ({ kind: 'face' as const, body: 'plate', name: `f:plate:side:${s}` }));
+      const drafted = ok(await engine.apply({ type: 'draft', feature: 'd', key: 'draft', bodies, faces: sides, plane: XY, angle: (5 * Math.PI) / 180 }));
+      // Each side leans in by tan 5° × height over the height: the plate loses two triangular prisms.
+      const lean = Math.tan((5 * Math.PI) / 180) * 10;
+      expect(await volume(drafted)).toBeCloseTo(80 * 40 * 10 - 2 * ((lean * 10) / 2) * 40, 1);
+      expect((await names(drafted)).faces).toEqual(expect.arrayContaining(['f:plate:side:plate-left', 'f:plate:side:plate-right']));
+    });
+
+    it('thickens an open line into a rib and joins it', async () => {
+      const bodies = ok(await plate());
+      const path = [{ kind: 'line' as const, start: [10, 10, 0] as const, end: [50, 10, 0] as const }];
+      const ribbed = ok(await engine.apply({ type: 'rib', feature: 'rib', key: 'rib', bodies, frame: XY, path, thickness: 2, depth: 15, direction: 'normal' }));
+      expect(ribbed.map((b) => b.id)).toEqual(['plate']);
+      const added = (await volume(ribbed)) - 80 * 40 * 5;
+      expect(added).toBeGreaterThan(40 * 2 * 10 - 1e-6);
+      expect(added).toBeLessThan((40 + 2) * 2 * 10 + 1e-6);
+    });
+  });
 });
 
 const normal = (f: { u: readonly number[]; v: readonly number[] }) => [

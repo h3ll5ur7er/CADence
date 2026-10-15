@@ -73,6 +73,57 @@
           Radius
           <input id="feature-size" autocomplete="off" [value]="f.size" (change)="set({ size: value($event) })" />
         </label>
+        <label class="field">
+          Radius at the other end (empty: the same)
+          <input id="feature-end-size" autocomplete="off" [value]="f.endSize ?? ''" (change)="set({ endSize: value($event) })" />
+        </label>
+      }
+      @case ('draft') {
+        <p class="count" data-testid="face-selection">{{ f.faces.length }} face{{ f.faces.length === 1 ? '' : 's' }} to draft</p>
+        <label class="field">
+          Neutral plane
+          <select id="feature-plane" [value]="planeValue(f.plane)" (change)="setPlane(value($event), 'plane')">
+            <option value="XY">XY plane</option>
+            <option value="XZ">XZ plane</option>
+            <option value="YZ">YZ plane</option>
+            @for (p of planeFeatures(); track p.id) {
+              <option [value]="'plane:' + p.id">{{ p.name }}</option>
+            }
+            <option value="face">A flat face (pick in the view)…</option>
+          </select>
+        </label>
+        <label class="field">
+          Angle
+          <input id="feature-angle" autocomplete="off" [value]="f.angle" (change)="set({ angle: value($event) })" />
+        </label>
+      }
+      @case ('rib') {
+        <label class="field">
+          Sketch with the rib's curves
+          <select id="feature-sketch" (change)="set({ sketch: value($event) })">
+            @for (s of pathSketches(); track s.id) {
+              <option [value]="s.id" [selected]="s.id === f.sketch">{{ s.name }}</option>
+            }
+          </select>
+        </label>
+        <div class="row two">
+          <label class="field">
+            Thickness
+            <input id="feature-thickness" autocomplete="off" [value]="f.thickness" (change)="set({ thickness: value($event) })" />
+          </label>
+          <label class="field">
+            Depth
+            <input id="feature-depth" autocomplete="off" [value]="f.depth" (change)="set({ depth: value($event) })" />
+          </label>
+        </div>
+        <label class="field">
+          Direction
+          <select id="feature-direction" [value]="f.direction" (change)="set({ direction: $any(value($event)) })">
+            <option value="normal">Along the normal</option>
+            <option value="reverse">Reversed</option>
+            <option value="symmetric">Symmetric</option>
+          </select>
+        </label>
       }
       @case ('chamfer') {
         <p class="count" data-testid="edge-selection">{{ f.edges.length }} edge{{ f.edges.length === 1 ? '' : 's' }} selected</p>

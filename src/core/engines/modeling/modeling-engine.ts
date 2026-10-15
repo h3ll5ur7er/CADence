@@ -53,7 +53,16 @@ export type ModelingRequest = RequestBase &
         readonly angle: number;
         readonly operation: BodyOperation;
       }
-    | { readonly type: 'fillet' | 'chamfer'; readonly edges: readonly TopologyRef[]; readonly size: number }
+    | { readonly type: 'fillet' | 'chamfer'; readonly edges: readonly TopologyRef[]; readonly size: number; readonly endSize?: number }
+    | { readonly type: 'draft'; readonly faces: readonly TopologyRef[]; readonly plane: PlaneFrame; readonly angle: number }
+    | {
+        readonly type: 'rib';
+        readonly frame: PlaneFrame;
+        readonly path: readonly PathPiece[];
+        readonly thickness: number;
+        readonly depth: number;
+        readonly direction: 'normal' | 'reverse' | 'symmetric';
+      }
     | { readonly type: 'shell'; readonly faces: readonly TopologyRef[]; readonly thickness: number }
     | {
         readonly type: 'linear-pattern';

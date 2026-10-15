@@ -184,3 +184,41 @@ test('drills counterbored holes at sketch points and threads one of them', async
   await page.waitForTimeout(800);
   await evidence(page, '50-holes');
 });
+
+test('drafts a side face and stands a rib on the plate', async ({ page }) => {
+  await plateProject(page, 'Draft and rib');
+  const volume = await number(page, 'body-volume');
+
+  await page.getByRole('button', { name: 'Home view' }).click();
+  await page.waitForTimeout(600);
+  await page.getByRole('button', { name: 'Draft', exact: true }).click();
+  const side = await visiblePointOf(page, ':side:');
+  await page.mouse.click(side.x, side.y);
+  await expect(page.getByTestId('face-selection')).toHaveText('1 face to draft');
+  await page.getByRole('button', { name: 'OK' }).click();
+  await expect(page.locator('.item.failed')).toHaveCount(0);
+  await expect.poll(() => number(page, 'body-volume')).toBeLessThan(volume);
+
+  // A line across the top face, thickened and stood up as a rib.
+  const top = await screenPositionOf(page, 'face', ':end$');
+  await page.mouse.click(top.x, top.y);
+  await page.getByRole('button', { name: 'New sketch' }).click();
+  await page.getByRole('menuitem', { name: 'Selected face' }).click();
+  await page.waitForTimeout(600);
+  const origin = await center(page, 'circle.point.origin');
+  await page.getByRole('button', { name: 'Line', exact: true }).click();
+  for (const dx of [-90, 90]) {
+    await page.mouse.move(origin.x + dx, origin.y + 10);
+    await page.mouse.click(origin.x + dx, origin.y + 10);
+  }
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Finish sketch' }).click();
+  const drafted = await number(page, 'body-volume');
+  await fromModelMenu(page, 'Create', 'Rib');
+  await page.getByRole('button', { name: 'OK' }).click();
+  await expect(page.locator('.item.failed')).toHaveCount(0);
+  await expect.poll(() => number(page, 'body-volume')).toBeGreaterThan(drafted + 100);
+  await page.getByRole('button', { name: 'Home view' }).click();
+  await page.waitForTimeout(800);
+  await evidence(page, '51-draft-rib');
+});

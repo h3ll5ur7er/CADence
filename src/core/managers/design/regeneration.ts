@@ -330,6 +330,7 @@ export class Regeneration {
       this.tools.set(feature.id, { feature: feature.id, toolKey: outcome.toolKey, operation: feature.operation });
     }
     if (outcome.toolKey && feature.type === 'hole') this.tools.set(feature.id, { feature: feature.id, toolKey: outcome.toolKey, operation: 'cut' });
+    if (outcome.toolKey && feature.type === 'rib') this.tools.set(feature.id, { feature: feature.id, toolKey: outcome.toolKey, operation: 'join' });
     if (outcome.thread) this.threads.push(outcome.thread);
     return ok(undefined);
   }
@@ -375,7 +376,28 @@ export class Regeneration {
       case 'chamfer': {
         const size = this.value(feature.size, 'length', feature.type === 'fillet' ? 'Radius' : 'Distance');
         if (!size.ok) return size;
+        if (feature.type === 'fillet' && feature.endSize?.trim()) {
+          const endSize = this.value(feature.endSize, 'length', 'End radius');
+          if (!endSize.ok) return endSize;
+          return withKey({ ...base, type: 'fillet', edges: feature.edges, size: size.value, endSize: endSize.value });
+        }
         return withKey({ ...base, type: feature.type, edges: feature.edges, size: size.value });
+      }
+      case 'draft': {
+        const angle = this.value(feature.angle, 'angle', 'Angle');
+        if (!angle.ok) return angle;
+        const plane = await this.frame(feature.plane);
+        if (!plane.ok) return plane;
+        return withKey({ ...base, type: 'draft', faces: feature.faces, plane: plane.value, angle: angle.value });
+      }
+      case 'rib': {
+        const [thickness, depth] = [this.value(feature.thickness, 'length', 'Thickness'), this.value(feature.depth, 'length', 'Depth')];
+        if (!thickness.ok) return thickness;
+        if (!depth.ok) return depth;
+        const path = this.path(feature.sketch);
+        if (!path.ok) return path;
+        if (path.value.flat.closed) return fail({ code: 'invalid-input', message: 'A rib is drawn as an open line or curve; closed outlines are extruded.' });
+        return withKey({ ...base, type: 'rib', frame: path.value.frame, path: path.value.pieces, thickness: thickness.value, depth: depth.value, direction: feature.direction });
       }
       case 'shell': {
         const thickness = this.value(feature.thickness, 'length', 'Thickness');

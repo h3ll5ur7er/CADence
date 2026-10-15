@@ -44,6 +44,8 @@ export const featureLabels: Readonly<Record<FeatureType, string>> = {
   'path-pattern': 'Pattern along a path',
   hole: 'Hole',
   thread: 'Thread',
+  draft: 'Draft',
+  rib: 'Rib',
 };
 
 /** Points of a sketch that no curve uses: where holes go. */
@@ -164,6 +166,12 @@ export function defaultFeature(type: FeatureType, id: string, state: DesignState
     }
     case 'thread':
       return { ...base, type, face: { kind: 'face', body: '', name: '' }, size: 'M6', length: '', modelled: false, flip: false };
+    case 'draft':
+      return { ...base, type, faces: [], plane: 'XY', angle: '3 deg' };
+    case 'rib': {
+      const ribSketch = active.filter(isSketch).at(-1);
+      return { ...base, type, sketch: ribSketch?.id ?? '', thickness: '2', depth: '10', direction: 'normal' };
+    }
   }
 }
 
@@ -193,6 +201,7 @@ export function pickableFor(draft: FeatureDraft | undefined): ReadonlySet<PickKi
     case 'chamfer':
       return new Set<PickKind>(['edge']);
     case 'shell':
+    case 'draft':
     case 'thread':
     case 'combine':
     case 'split':
@@ -238,6 +247,10 @@ export function selectionOf(draft: FeatureDraft): Pick[] {
       return f.profiles.map((profile): Pick => ({ kind: 'profile', sketch: f.sketch, profile }));
     case 'thread':
       return f.face.name ? [pickOf(f.face)] : [];
+    case 'draft':
+      return [...f.faces.map(pickOf), ...planeFace(f.plane)];
+    case 'rib':
+      return [];
     case 'insert':
     case 'combine':
     case 'scale':
@@ -266,6 +279,7 @@ export function applyPick(draft: FeatureDraft, pick: Pick): FeatureDraft {
     if (f.type === 'plane' && f.mode !== 'points') return { mode: draft.mode, feature: { ...f, base: face } };
     if (f.type === 'mirror') return { mode: draft.mode, feature: { ...f, plane: face } };
     if (f.type === 'split') return { mode: draft.mode, feature: { ...f, plane: face } };
+    if (f.type === 'draft') return { mode: draft.mode, feature: { ...f, plane: face } };
   }
   switch (f.type) {
     case 'extrude':
@@ -304,6 +318,8 @@ export function applyPick(draft: FeatureDraft, pick: Pick): FeatureDraft {
     }
     case 'thread':
       return pick.kind === 'face' ? { ...draft, feature: { ...f, face: refOf(pick) } } : draft;
+    case 'draft':
+      return pick.kind === 'face' ? { ...draft, feature: { ...f, faces: toggle(f.faces, refOf(pick), sameRef) } } : draft;
     // Clicking a body picks it: the body to split, or one more (or one less) to combine, move or scale.
     case 'split':
       return pick.kind === 'face' ? { ...draft, feature: { ...f, body: pick.body } } : draft;

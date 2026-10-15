@@ -158,6 +158,25 @@ export interface EdgeTreatmentFeature extends FeatureBase {
   readonly type: 'fillet' | 'chamfer';
   readonly edges: readonly TopologyRef[];
   readonly size: string;
+  /** Fillets only: a radius at the far end of each edge, changing evenly from `size` (empty: the same all along). */
+  readonly endSize?: string;
+}
+
+/** Tilts faces by an angle away from the pull direction (the normal of a neutral plane), hinged on that plane. */
+export interface DraftFeature extends FeatureBase {
+  readonly type: 'draft';
+  readonly faces: readonly TopologyRef[];
+  readonly plane: PlaneRef;
+  readonly angle: string;
+}
+
+/** A rib: the curves of a sketch thickened and extruded along the sketch's normal, joined to what it touches. */
+export interface RibFeature extends FeatureBase {
+  readonly type: 'rib';
+  readonly sketch: string;
+  readonly thickness: string;
+  readonly depth: string;
+  readonly direction: 'normal' | 'reverse' | 'symmetric';
 }
 
 /** Hollows a body: the selected faces are removed, the walls get the given thickness (inward). */
@@ -247,6 +266,8 @@ export interface ScaleFeature extends FeatureBase {
 
 export type Feature =
   | InsertFeature
+  | DraftFeature
+  | RibFeature
   | HoleFeature
   | ThreadFeature
   | LoftFeature
@@ -272,7 +293,7 @@ export type ToolFeature = ExtrudeFeature | RevolveFeature | LoftFeature | SweepF
 export const isToolFeature = (f: { readonly type: string }): f is ToolFeature =>
   f.type === 'extrude' || f.type === 'revolve' || f.type === 'loft' || f.type === 'sweep';
 /** Features whose tool patterns and mirrors can repeat: tool features and holes. */
-export const isRepeatable = (f: { readonly type: string }): f is ToolFeature | HoleFeature => isToolFeature(f) || f.type === 'hole';
+export const isRepeatable = (f: { readonly type: string }): f is ToolFeature | HoleFeature | RibFeature => isToolFeature(f) || f.type === 'hole' || f.type === 'rib';
 
 /** A plane in space: origin and orthonormal in-plane axes (u, v); the normal is u × v. */
 export interface PlaneFrame {

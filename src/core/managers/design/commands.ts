@@ -48,6 +48,8 @@ const featureLabels: Readonly<Record<FeatureType, string>> = {
   'path-pattern': 'Path pattern',
   hole: 'Hole',
   thread: 'Thread',
+  draft: 'Draft',
+  rib: 'Rib',
 };
 
 const invalid = (message: string) => fail({ code: 'invalid-command', message });

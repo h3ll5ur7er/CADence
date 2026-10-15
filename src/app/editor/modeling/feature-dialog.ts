@@ -41,6 +41,8 @@ const hints: Readonly<Record<Feature['type'], string>> = {
   'path-pattern': 'Repeats the selected features along the curves of a sketch, evenly spaced.',
   hole: 'Holes go at the points of a sketch (drawn with the Point tool), into the material below it.',
   thread: 'Click the wall of a hole or a shaft. A thread is shown on the face; modelled threads are cut.',
+  draft: 'Click the faces to taper. They lean away from the pull direction (the neutral plane\'s normal) by the angle.',
+  rib: 'The open curves of a sketch, thickened and extruded along its normal: stiffeners for walls and floors.',
 };
 
 /** Creates or edits one feature. Values are expressions; references are picked in the 3D view. */

@@ -57,6 +57,7 @@ const featureTools: readonly { type: FeatureType; icon: IconName }[] = [
   { type: 'fillet', icon: 'fillet' },
   { type: 'chamfer', icon: 'chamfer' },
   { type: 'shell', icon: 'shell' },
+  { type: 'draft', icon: 'draft' },
   { type: 'plane', icon: 'planeAdd' },
 ];
 
@@ -70,6 +71,7 @@ const featureMenus: readonly { id: string; label: string; icon: IconName; items:
       { type: 'loft', icon: 'loft' },
       { type: 'sweep', icon: 'sweep' },
       { type: 'hole', icon: 'hole' },
+      { type: 'rib', icon: 'rib' },
       { type: 'thread', icon: 'thread' },
       { type: 'insert', icon: 'imported' },
     ],
@@ -119,6 +121,8 @@ const itemIcons: Readonly<Record<TimelineItem['type'], IconName>> = {
   'path-pattern': 'pathPattern',
   hole: 'hole',
   thread: 'thread',
+  draft: 'draft',
+  rib: 'rib',
 };
 
 const exportFormats: readonly { format: SolidFormat; label: string }[] = [

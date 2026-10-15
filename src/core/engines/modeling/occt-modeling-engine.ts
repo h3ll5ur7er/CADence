@@ -3,6 +3,7 @@ import { type BodyMesh, fail, ok, type PlaneFrame, type Result, type TopologyRef
 import { type Edge, type Face, getOC, measureVolume, type Shape3D, Vertex } from 'replicad';
 import { combine, type LoadedBody, renameCopy } from './bodies';
 import { BodyOperationError, combineBodies, splitBody, transformBodies } from './body-operations';
+import { DraftRibError, draftFaces, ribTool } from './draft-rib';
 import { HoleError, holeTool, threadGroove, threadPlacement } from './holes';
 import { add3, cross3, dot3, normalize3, scale3, sub3, toPlane } from './geometry';
 import type { AxisInput, BodyState, ModelingEngine, ModelingOutcome, ModelingRequest, ProjectedCurve, ToolInput } from './modeling-engine';
@@ -29,7 +30,7 @@ export class OcctModelingEngine implements ModelingEngine {
     try {
       outcome = this.compute(request);
     } catch (error) {
-      const message = error instanceof FeatureError || error instanceof BodyOperationError || error instanceof HoleError ? error.message : `The geometry kernel could not build this feature (${describe(error)}).`;
+      const message = error instanceof FeatureError || error instanceof BodyOperationError || error instanceof HoleError || error instanceof DraftRibError ? error.message : `The geometry kernel could not build this feature (${describe(error)}).`;
       outcome = { bodies: request.bodies, error: message };
     }
     this.remember(request.key, outcome);
@@ -164,7 +165,31 @@ export class OcctModelingEngine implements ModelingEngine {
         return this.insert(request.feature, request.key, request.bodies, request.sources);
       case 'fillet':
       case 'chamfer':
-        return this.treatEdges(request.feature, request.key, bodies, request.edges, positive(request.size, request.type === 'fillet' ? 'radius' : 'distance'), request.type);
+        return this.treatEdges(
+          request.feature,
+          request.key,
+          bodies,
+          request.edges,
+          positive(request.size, request.type === 'fillet' ? 'radius' : 'distance'),
+          request.type,
+          request.endSize === undefined ? undefined : positive(request.endSize, 'end radius'),
+        );
+      case 'draft': {
+        if (request.faces.length === 0) throw new FeatureError('Select the faces to draft.');
+        const bodyId = (request.faces[0] as TopologyRef).body;
+        const body = bodies.find((b) => b.state.id === bodyId);
+        if (!body || request.faces.some((r) => r.body !== bodyId)) throw new FeatureError('Select faces of one body.');
+        const faces = request.faces.map((ref) => this.element(body, ref) as Face);
+        const named = draftFaces(body.named, faces, request.plane, request.angle, request.feature);
+        const state = { id: body.state.id, key: `${request.key}:${body.state.id}` };
+        return this.store({ bodies: bodies.map((b) => (b === body ? state : b.state)), stored: [[state.key, named]] });
+      }
+      case 'rib': {
+        const tool = ribTool(request.feature, request.frame, request.path, positive(request.thickness, 'thickness'), positive(request.depth, 'depth'), request.direction);
+        const toolKey = `${request.key}:tool`;
+        this.shapes.put(toolKey, tool);
+        return { ...this.store(combine(bodies, tool, 'join', request.feature, request.key)), toolKey };
+      }
       case 'shell':
         return this.shell(request.feature, request.key, bodies, request.faces, positive(request.thickness, 'thickness'));
       case 'linear-pattern': {
@@ -253,7 +278,7 @@ export class OcctModelingEngine implements ModelingEngine {
     return { ...this.store({ bodies: bodies.map((b) => (b === body ? state : b.state)), stored: [[state.key, named]] }), thread };
   }
 
-  private treatEdges(feature: string, key: string, bodies: LoadedBody[], refs: readonly TopologyRef[], size: number, kind: 'fillet' | 'chamfer'): ModelingOutcome {
+  private treatEdges(feature: string, key: string, bodies: LoadedBody[], refs: readonly TopologyRef[], size: number, kind: 'fillet' | 'chamfer', endSize?: number): ModelingOutcome {
     if (refs.length === 0) throw new FeatureError('Select at least one edge.');
     const role = kind === 'fillet' ? 'round' : 'bevel';
     const stored: [string, NamedShape][] = [];
@@ -262,7 +287,7 @@ export class OcctModelingEngine implements ModelingEngine {
       if (!mine.length) return body.state;
       const edges = mine.map((ref) => this.element(body, ref) as Edge);
       const filter = (finder: { inList(list: Edge[]): typeof finder }) => finder.inList(edges);
-      const shape = kind === 'fillet' ? body.named.shape.fillet(size, filter as never) : body.named.shape.chamfer(size, filter as never);
+      const shape = kind === 'fillet' ? body.named.shape.fillet(endSize === undefined ? size : [size, endSize], filter as never) : body.named.shape.chamfer(size, filter as never);
       // New faces are named after the edge they replace (nearest picked edge).
       const named = nameShape(shape, namedSurfaces(body.named), (face) => `f:${feature}:${role}:${nearestRef(face, mine)}`, feature);
       const state = { id: body.state.id, key: `${key}:${body.state.id}` };

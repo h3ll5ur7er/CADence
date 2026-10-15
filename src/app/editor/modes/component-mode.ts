@@ -15,6 +15,7 @@ import {
   type Appearance,
   type DocumentSummary,
   type FeatureType,
+  generatorOf,
   isCurve,
   isSketch,
   type Material,
@@ -194,7 +195,8 @@ export class ComponentMode {
     const selection = this.store.selection();
     const sketch = this.editedSketch()?.sketch;
     const found = selection.length === 1 ? sketch?.entities.find((e) => e.id === selection[0]) : undefined;
-    return found?.kind === 'text' ? found : undefined;
+    // Texts of a drawing kept as one piece come from the drawing: they cannot be edited on their own.
+    return found?.kind === 'text' && sketch && !generatorOf(sketch, found.id) ? found : undefined;
   });
 
   protected setText(text: SketchText, change: Partial<Pick<SketchText, 'text' | 'height' | 'weight' | 'angle'>>): void {

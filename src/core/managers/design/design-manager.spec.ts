@@ -292,6 +292,43 @@ describe('DesignManager', () => {
     expect(await session.insertDrawing('s1', asDocumentId('nothing'), 'x')).toMatchObject({ ok: false });
   });
 
+  it('inserts a drawing as one piece that moves, turns and scales by its handles', async () => {
+    await storeImported(documents, assets, 'plate', 'svg', plateSvg());
+    unwrap(await session.execute({ type: 'create-sketch', id: 's1', plane: 'XY' }));
+    unwrap(await session.insertDrawing('s1', asDocumentId('plate'), 'imp', { onePiece: true }));
+    const view = () => session.state().sketches.get('s1');
+    const circle = () => view()?.sketch.entities.find((e) => e.kind === 'circle');
+    const point = (id: string) => view()?.sketch.entities.find((e) => e.id === id);
+    expect(view()?.profiles).toHaveLength(2);
+    expect(circle()).toMatchObject({ radius: expect.closeTo(4, 6) });
+    expect(view()?.degreesOfFreedom).toBe(4); // only its two handles move
+    // Twice as wide: everything twice its size, in proportion.
+    unwrap(await session.execute({ type: 'move-point', sketchId: 's1', pointId: 'impo', x: 0, y: 0 }));
+    unwrap(await session.execute({ type: 'move-point', sketchId: 's1', pointId: 'imph', x: 80, y: 0 }));
+    expect(circle()).toMatchObject({ radius: expect.closeTo(8, 6) });
+    const center = circle()?.kind === 'circle' ? point((circle() as { center: string }).center) : undefined;
+    expect(center).toMatchObject({ x: expect.closeTo(60, 6), y: expect.closeTo(20, 6) });
+    // Moving a piece of it moves the whole drawing; deleting a piece deletes it.
+    const line = view()?.sketch.entities.find((e) => e.kind === 'line')?.id as string;
+    unwrap(await session.execute({ type: 'transform-sketch-elements', sketchId: 's1', ids: [line], translate: [5, 0] }));
+    expect(point('impo')).toMatchObject({ x: 5, y: 0 });
+    expect(point('imph')).toMatchObject({ x: 85, y: 0 });
+    // A dimension between the handles sizes it.
+    unwrap(await session.execute({ type: 'add-constraint', sketchId: 's1', constraint: { id: 'w', kind: 'distance', points: ['impo', 'imph'], expression: '100' } }));
+    expect(circle()).toMatchObject({ radius: expect.closeTo(10, 6) });
+    unwrap(await session.execute({ type: 'delete-sketch-elements', sketchId: 's1', ids: [line] }));
+    expect(view()?.sketch.entities).toHaveLength(0);
+  });
+
+  it('inserts a drawing held by the relations it shows', async () => {
+    await storeImported(documents, assets, 'plate', 'svg', plateSvg());
+    unwrap(await session.execute({ type: 'create-sketch', id: 's1', plane: 'XY' }));
+    unwrap(await session.insertDrawing('s1', asDocumentId('plate'), 'imp', { relations: 'infer' }));
+    const kinds = session.state().sketches.get('s1')?.sketch.constraints.map((c) => c.kind);
+    expect(kinds?.filter((k) => k === 'horizontal')).toHaveLength(2);
+    expect(kinds?.filter((k) => k === 'vertical')).toHaveLength(2);
+  });
+
   it('notifies subscribers of every change', async () => {
     const seen: number[] = [];
     session.subscribe((state) => seen.push(state.document.timeline.length));

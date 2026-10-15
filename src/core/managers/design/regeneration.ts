@@ -12,23 +12,40 @@ import {
   originFrames,
   type PlaneFrame,
   type PlaneRef,
-  projectionOf,
+  generatorOf,
   type Result,
   type Sketch,
   sketchOriginId,
+  type SketchDrawing,
+  type SketchEntity,
   type SketchProjection,
   type Vec2,
   type Vec3,
 } from '@core/contracts';
 import type { AssetAccess } from '@core/access/asset';
 import type { DocumentAccess } from '@core/access/document';
-import type { InterchangeEngine } from '@core/engines/interchange';
+import type { DrawingEntities, InterchangeEngine } from '@core/engines/interchange';
 import type { AxisInput, BodyState, ModelingEngine, ModelingRequest, ToolInput } from '@core/engines/modeling';
 import type { ParameterEngine, ParameterError, Quantity, ValueKind } from '@core/engines/parameter';
 import type { DragTarget, SketchEngine } from '@core/engines/sketch';
 import { contentHash } from '@core/utilities/identity';
 import { references } from './commands';
 import type { ItemStatus, ParameterView, SketchView } from './design-manager';
+
+/** Imported drawings read for sketches, by original and id prefix (originals never change). */
+const drawingCache = new Map<string, Promise<Result<DrawingEntities>>>();
+
+/** Whether solving moved a handle point of a drawing kept as one piece. */
+function handlesMoved(before: Sketch, after: Sketch): boolean {
+  const at = (sketch: Sketch, id: string) => sketch.entities.find((e) => e.id === id);
+  return before.entities.some((e) => {
+    if (e.kind !== 'drawing') return false;
+    return [e.origin, e.handle].some((id) => {
+      const [p, q] = [at(before, id), at(after, id)];
+      return p?.kind === 'point' && q?.kind === 'point' && Math.hypot(p.x - q.x, p.y - q.y) > 1e-9;
+    });
+  });
+}
 
 export interface RegenerationEngines {
   readonly sketches: SketchEngine;
@@ -131,9 +148,9 @@ export class Regeneration {
       return fail({ code: 'unsolvable', message: error });
     };
     if (!frame.ok) return unsolved(frame.error.message);
-    const projected = await this.projected(stored, frame.value);
+    const projected = await this.generated(stored, frame.value);
     if (!projected.ok) return unsolved(projected.error.message, frame.value);
-    const sketch = projected.value;
+    let sketch = projected.value;
     const values = new Map<string, number>();
     for (const dimension of sketch.constraints.filter(isDimension)) {
       const value = this.dimension(dimension);
@@ -141,7 +158,14 @@ export class Regeneration {
       values.set(dimension.id, value.value);
     }
     const drag = this.drag?.sketch === sketch.id ? this.drag : undefined;
-    const solution = await this.engines.sketches.solve(sketch, values, drag);
+    let solution = await this.engines.sketches.solve(sketch, values, drag);
+    // Drawings kept as one piece follow their handle points: when solving moved them, place the drawing again and solve once more.
+    if (solution.status !== 'over-constrained' && solution.status !== 'failed' && handlesMoved(sketch, solution.sketch)) {
+      const again = await this.generated(solution.sketch, frame.value);
+      if (!again.ok) return unsolved(again.error.message, frame.value);
+      sketch = again.value;
+      solution = await this.engines.sketches.solve(sketch, values, drag);
+    }
     if (solution.status === 'over-constrained') {
       const kinds = sketch.constraints.filter((c) => solution.conflicting.includes(c.id)).map((c) => constraintLabels[c.kind]);
       return unsolved(`This conflicts with existing constraints (${[...new Set(kinds)].join(', ')}). Remove one of them first.`, frame.value);
@@ -156,10 +180,16 @@ export class Regeneration {
    * The sketch with its projections refreshed from the bodies made so far: their points and curves
    * (ids `<projection>:<n>`) are replaced; relations to ones that no longer exist are dropped.
    */
-  private async projected(sketch: Sketch, frame: PlaneFrame): Promise<Result<Sketch>> {
+  private async generated(sketch: Sketch, frame: PlaneFrame): Promise<Result<Sketch>> {
     const projections = sketch.entities.filter((e): e is SketchProjection => e.kind === 'projection');
-    if (!projections.length) return ok(sketch);
-    const entities = sketch.entities.filter((e) => !projectionOf(sketch, e.id));
+    const drawings = sketch.entities.filter((e): e is SketchDrawing => e.kind === 'drawing');
+    if (!projections.length && !drawings.length) return ok(sketch);
+    const entities = sketch.entities.filter((e) => !generatorOf(sketch, e.id));
+    for (const drawing of drawings) {
+      const pieces = await this.drawingPieces(drawing, sketch);
+      if (!pieces.ok) return pieces;
+      entities.push(...pieces.value);
+    }
     for (const projection of projections) {
       const curves = await this.engines.modeling.project(this.bodies, projection.refs, frame);
       if (!curves.ok) return fail({ code: 'lost-reference', message: `A projected edge no longer exists. Delete the projection and project again. (${curves.error.message})` });
@@ -190,6 +220,72 @@ export class Regeneration {
     const ids = new Set([sketchOriginId, ...entities.map((e) => e.id)]);
     const constraints = sketch.constraints.filter((c) => references(c).every((r) => ids.has(r)));
     return ok({ ...sketch, entities, constraints });
+  }
+
+  /**
+   * The curves and texts of a drawing kept as one piece, placed by its handle points: the bottom left of
+   * the drawing at `origin`, its width along to `handle`.
+   */
+  private async drawingPieces(drawing: SketchDrawing, sketch: Sketch): Promise<Result<SketchEntity[]>> {
+    const read = await this.readDrawing(drawing.document, `${drawing.id}:`);
+    if (!read.ok) return read;
+    const { entities, extent } = read.value;
+    const at = (id: string): Vec2 => {
+      const p = sketch.entities.find((e) => e.id === id);
+      return p?.kind === 'point' ? [p.x, p.y] : [0, 0];
+    };
+    const [o, h] = [at(drawing.origin), at(drawing.handle)];
+    const width = Math.max(extent.max[0] - extent.min[0], 1e-9);
+    const scale = Math.hypot(h[0] - o[0], h[1] - o[1]) / width;
+    const turn = Math.atan2(h[1] - o[1], h[0] - o[0]);
+    const [cos, sin] = [Math.cos(turn) * scale, Math.sin(turn) * scale];
+    const place = (x: number, y: number): Vec2 => {
+      const [u, v] = [x - extent.min[0], y - extent.min[1]];
+      return [o[0] + u * cos - v * sin, o[1] + u * sin + v * cos];
+    };
+    const construction = drawing.construction;
+    return ok(
+      entities.map((e): SketchEntity => {
+        switch (e.kind) {
+          case 'point': {
+            const [x, y] = place(e.x, e.y);
+            return { ...e, x, y };
+          }
+          case 'circle':
+            return { ...e, radius: e.radius * scale, construction };
+          case 'ellipse':
+            return { ...e, minorRadius: e.minorRadius * scale, construction };
+          case 'text':
+            return { ...e, height: e.height * scale, angle: e.angle + turn, construction };
+          case 'line':
+          case 'arc':
+          case 'spline':
+            return { ...e, construction };
+          default:
+            return e;
+        }
+      }),
+    );
+  }
+
+  /** An imported drawing's entities (ids with the prefix), read once per original. */
+  private async readDrawing(documentId: string, prefix: string): Promise<Result<DrawingEntities>> {
+    const document = await this.engines.documents.load(asDocumentId(documentId));
+    if (document?.kind !== 'imported' || (document.format !== 'dxf' && document.format !== 'svg')) {
+      return fail({ code: 'missing-input', message: 'Its imported drawing was deleted. Delete the drawing from the sketch.' });
+    }
+    const key = `${document.assetId}|${prefix}`;
+    let cached = drawingCache.get(key);
+    if (!cached) {
+      cached = (async () => {
+        const original = await this.engines.assets.fetch(document.assetId);
+        if (!original) return fail({ code: 'missing-input', message: 'The original of its imported drawing is missing.' });
+        return this.engines.interchange.readDrawing(original.bytes, document.format as 'dxf' | 'svg', prefix);
+      })();
+      drawingCache.set(key, cached);
+      if (drawingCache.size > 32) drawingCache.delete(drawingCache.keys().next().value as string);
+    }
+    return cached;
   }
 
   private dimension(d: Dimension): Result<number> {

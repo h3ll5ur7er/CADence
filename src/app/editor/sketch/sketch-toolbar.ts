@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, DestroyRef, inject, signal } from '@angular/core';
-import { isCurve, type SketchEntity, sketchOriginId } from '@core/contracts';
+import { type DocumentId, isCurve, type SketchEntity, sketchOriginId } from '@core/contracts';
 import type { DrawingFormat } from '@core/managers/design';
 import { newId } from '@core/utilities/identity';
 import { Icon, type IconName } from '../../shared/icon';
@@ -116,6 +116,8 @@ export class SketchToolbar {
   protected readonly view = this.store.editedView;
   protected readonly hint = computed(() => hints[this.store.tool()]);
   protected readonly insertOpen = signal(false);
+  /** How drawings go into the sketch: as one piece, or as curves held by the relations they show, nothing, or fixed. */
+  protected readonly insertAs = signal<'piece' | 'infer' | 'none' | 'fix'>('piece');
   /** The kerf of a laser profile, for compensated exports. */
   protected readonly kerf = computed(() => {
     const process = this.store.process();
@@ -210,6 +212,11 @@ export class SketchToolbar {
     const sketchId = this.store.editing();
     const ids = this.store.selection().filter((id) => id !== sketchOriginId);
     if (sketchId && ids.length && (await this.store.run({ type: 'delete-sketch-elements', sketchId, ids }))) this.store.select([]);
+  }
+
+  protected insert(documentId: DocumentId): void {
+    const as = this.insertAs();
+    void this.store.insertDrawing(documentId, as === 'piece' ? { onePiece: true } : { relations: as });
   }
 
   protected export(format: DrawingFormat, compensateKerf = false): void {

@@ -123,6 +123,12 @@ export type DrawingFormat = 'dxf' | 'svg';
 export type SolidFormat = 'step' | 'stl' | 'obj' | '3mf';
 
 /** An editing session on one component document. */
+/** How a drawing goes into a sketch: as one piece, or as separate curves held by the relations it shows, fixed, or free. */
+export interface InsertDrawingOptions {
+  readonly onePiece?: boolean;
+  readonly relations?: 'none' | 'infer' | 'fix';
+}
+
 export interface DesignSession {
   state(): DesignState;
   /** Called after every change; returns the unsubscribe function. */
@@ -134,8 +140,12 @@ export interface DesignSession {
   previewDrag(sketchId: string, pointId: string, x: number, y: number): Promise<SketchView | undefined>;
   /** With `compensateKerf`, outlines are offset for the laser profile's kerf (laser profiles only). */
   exportSketch(sketchId: string, format: DrawingFormat, options?: { readonly compensateKerf?: boolean }): Promise<Result<void>>;
-  /** Adds the curves of an imported DXF or SVG document to a sketch (one undoable change); new ids start with `idPrefix`. */
-  insertDrawing(sketchId: string, documentId: DocumentId, idPrefix: string): Promise<Result<void>>;
+  /**
+   * Adds an imported DXF or SVG document to a sketch (one undoable change); new ids start with `idPrefix`.
+   * By default its curves and texts become separate sketch geometry, held by `relations`. As one piece,
+   * the drawing keeps its proportions and moves, turns and scales by two handle points.
+   */
+  insertDrawing(sketchId: string, documentId: DocumentId, idPrefix: string, options?: InsertDrawingOptions): Promise<Result<void>>;
   /** All bodies, one file. */
   exportBodies(format: SolidFormat): Promise<Result<void>>;
   /** Area, length, radius, distance and angle of picked faces and edges. */

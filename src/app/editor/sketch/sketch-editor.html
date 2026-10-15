@@ -41,12 +41,13 @@
       <circle
         class="point"
         [class.origin]="point.origin"
+        [class.handle]="point.handle"
         [class.selected]="highlighted().has(point.id)"
         [class.snapped]="snapped()?.id === point.id && store.tool() !== 'select'"
         [class.hovered]="hovered() === point.id"
         [attr.cx]="point.x"
         [attr.cy]="point.y"
-        [attr.r]="point.origin ? 4.5 : 3.5"
+        [attr.r]="point.origin || point.handle ? 4.5 : 3.5"
       />
     }
     @if (snapMarker(); as mark) {

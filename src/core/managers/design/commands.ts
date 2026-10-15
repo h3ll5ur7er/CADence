@@ -1,5 +1,5 @@
 import {
-  projectionOf,
+  generatorOf,
   appearanceProblem,
   type ComponentDocument,
   fail,
@@ -59,6 +59,8 @@ export function references(item: SketchEntity | SketchConstraint): string[] {
       return [...item.points];
     case 'projection':
       return [];
+    case 'drawing':
+      return [item.origin, item.handle];
     case 'text':
       return [item.anchor];
     case 'horizontal-points':
@@ -152,11 +154,11 @@ function remove(sketch: Sketch, ids: readonly string[]): Sketch {
   const doomed = new Set(ids);
   // Projected geometry goes with its projection, and a projection with any of its curves.
   for (const id of ids) {
-    const owner = projectionOf(sketch, id);
+    const owner = generatorOf(sketch, id);
     if (owner) doomed.add(owner.id);
   }
   for (const e of sketch.entities) {
-    const owner = projectionOf(sketch, e.id);
+    const owner = generatorOf(sketch, e.id);
     if (owner && doomed.has(owner.id)) doomed.add(e.id);
   }
   const removedCurves = sketch.entities.filter((e) => e.kind !== 'point' && (doomed.has(e.id) || references(e).some((r) => doomed.has(r))));
@@ -173,8 +175,10 @@ function remove(sketch: Sketch, ids: readonly string[]): Sketch {
 
 /** Moves and turns elements: their points, and the points their curves use. */
 function transformed(sketch: Sketch, ids: readonly string[], [dx, dy]: readonly [number, number], rotate?: { readonly center: readonly [number, number]; readonly angle: number }): Result<Sketch> {
-  const chosen = sketch.entities.filter((e) => ids.includes(e.id));
-  if (chosen.length !== ids.length || !chosen.length) return invalid('Select sketch elements to move.');
+  if (!ids.length || ids.some((id) => !sketch.entities.some((e) => e.id === id))) return invalid('Select sketch elements to move.');
+  // A piece of a drawing kept as one piece moves the whole drawing, by its handle points.
+  const owners = new Set(ids.map((id) => (generatorOf(sketch, id)?.kind === 'drawing' ? (generatorOf(sketch, id)?.id ?? id) : id)));
+  const chosen = sketch.entities.filter((e) => owners.has(e.id));
   const points = new Set(chosen.flatMap((e) => (e.kind === 'point' ? [e.id] : references(e))));
   points.delete(sketchOriginId);
   const [cos, sin] = rotate ? [Math.cos(rotate.angle), Math.sin(rotate.angle)] : [1, 0];
@@ -267,8 +271,8 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
           ...s,
           entities: s.entities.map((e) => {
             // A projected curve stands for its whole projection: the projection and all its curves switch.
-            const toggled = new Set(command.ids.flatMap((id) => [id, projectionOf(s, id)?.id ?? id]));
-            const owner = projectionOf(s, e.id);
+            const toggled = new Set(command.ids.flatMap((id) => [id, generatorOf(s, id)?.id ?? id]));
+            const owner = generatorOf(s, e.id);
             return e.kind !== 'point' && (toggled.has(e.id) || (owner && toggled.has(owner.id))) ? { ...e, construction: !e.construction } : e;
           }),
         }),

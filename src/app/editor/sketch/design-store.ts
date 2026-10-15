@@ -18,7 +18,7 @@ import {
   type TopologyRef,
   type ValidationReport,
 } from '@core/contracts';
-import type { DesignCommand, DesignSession, DesignState, DrawingFormat, SketchView, SolidFormat } from '@core/managers/design';
+import type { DesignCommand, DesignSession, DesignState, DrawingFormat, InsertDrawingOptions, SketchView, SolidFormat } from '@core/managers/design';
 import { newId } from '@core/utilities/identity';
 import { DESIGN_MANAGER, PROJECT_MANAGER } from '../../core.providers';
 import type { Pick, PickKind, TopologyPick } from '../../viewport/picking';
@@ -289,11 +289,11 @@ export class DesignStore {
     this.error.set(undefined);
   }
 
-  /** Adds an imported drawing's curves to the edited sketch. */
-  async insertDrawing(documentId: DocumentId): Promise<void> {
+  /** Adds an imported drawing to the edited sketch. */
+  async insertDrawing(documentId: DocumentId, options?: InsertDrawingOptions): Promise<void> {
     const sketchId = this.editing();
     if (!sketchId || !this.session) return;
-    const result = await this.session.insertDrawing(sketchId, documentId, `${newId()}-`);
+    const result = await this.session.insertDrawing(sketchId, documentId, `${newId()}-`, options);
     this.error.set(result.ok ? undefined : result.error.message);
   }
 

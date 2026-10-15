@@ -75,6 +75,23 @@ const drawingReaders: Readonly<Record<DrawingFormat, (bytes: Uint8Array) => Read
 export interface DrawingEntities {
   readonly entities: SketchEntity[];
   readonly texts: TextOutlines;
+  /** The box around its points, circles and text outlines. */
+  readonly extent: { readonly min: Vec2; readonly max: Vec2 };
+}
+
+function extentOf(entities: readonly SketchEntity[], texts: TextOutlines): DrawingEntities['extent'] {
+  const points = new Map(entities.flatMap((e): [string, Vec2][] => (e.kind === 'point' ? [[e.id, [e.x, e.y]]] : [])));
+  const corners: Vec2[] = [
+    ...points.values(),
+    ...entities.flatMap((e): Vec2[] => {
+      const c = e.kind === 'circle' ? points.get(e.center) : undefined;
+      return c && e.kind === 'circle' ? [[c[0] - e.radius, c[1] - e.radius], [c[0] + e.radius, c[1] + e.radius]] : [];
+    }),
+    ...[...texts.values()].flat(2).flatMap((edge) => [edge.start, edge.end]),
+  ];
+  const xs = corners.map((p) => p[0]);
+  const ys = corners.map((p) => p[1]);
+  return { min: [Math.min(...xs), Math.min(...ys)], max: [Math.max(...xs), Math.max(...ys)] };
 }
 
 /** Expected failures (unreadable files, unsupported combinations) as results with the reader's message. */
@@ -152,7 +169,7 @@ class DefaultInterchangeEngine implements InterchangeEngine {
         entities.push({ id: anchor, kind: 'point', x: at[0], y: at[1] }, { id, kind: 'text', anchor, text: t.text, height, weight: t.weight, angle: t.angle, construction: false });
         texts.set(id, font.outline(t.text, { at, height, angle: t.angle }).map((contour) => contour.map((edge) => ({ ...edge, source: id }))));
       }
-      return { entities, texts };
+      return { entities, texts, extent: extentOf(entities, texts) };
     });
   }
 

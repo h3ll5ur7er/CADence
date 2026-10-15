@@ -9,7 +9,7 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
-import { isCurve, isDimension, projectionOf, type SketchEntity, sketchOriginId, type Vec2 } from '@core/contracts';
+import { isCurve, isDimension, generatorOf, type SketchEntity, sketchOriginId, type Vec2 } from '@core/contracts';
 import type { SketchView } from '@core/managers/design';
 import { newId } from '@core/utilities/identity';
 import { pointsOf } from '../../viewport/sketch-display';
@@ -130,18 +130,22 @@ export class SketchEditor {
   });
   protected readonly curves = computed(() => {
     const texts = this.view().texts;
-    return this.sketch().entities.flatMap((e) => {
-      if (e.kind === 'text') return [{ id: e.id, d: outlinePath(texts.get(e.id) ?? []), construction: e.construction, projected: false }];
-      return isCurve(e) ? [{ id: e.id, d: curvePath(e, this.points()), construction: e.construction, projected: projectionOf(this.sketch(), e.id) !== undefined }] : [];
+    const sketch = this.sketch();
+    return sketch.entities.flatMap((e) => {
+      const projected = generatorOf(sketch, e.id) !== undefined;
+      if (e.kind === 'text') return [{ id: e.id, d: outlinePath(texts.get(e.id) ?? []), construction: e.construction, projected }];
+      return isCurve(e) ? [{ id: e.id, d: curvePath(e, this.points()), construction: e.construction, projected }] : [];
     });
   });
   protected readonly profiles = computed(() => this.view().profiles.map((p) => ({ id: p.id, d: profilePath(p) })));
   protected readonly screenPoints = computed(() => {
     const m = this.matrix();
     if (!m) return [];
+    // The points a drawing kept as one piece moves, turns and scales by.
+    const handles = new Set(this.sketch().entities.flatMap((e) => (e.kind === 'drawing' ? [e.origin, e.handle] : [])));
     return [...this.points()].map(([id, [x, y]]) => {
       const [sx, sy] = applyAffine(m, x, y);
-      return { id, x: sx, y: sy, origin: id === sketchOriginId };
+      return { id, x: sx, y: sy, origin: id === sketchOriginId, handle: handles.has(id) };
     });
   });
   protected readonly glyphs = computed(() => {
@@ -174,7 +178,8 @@ export class SketchEditor {
     const tool = this.store.tool();
     if (target?.kind === 'dimension') return this.openInline(target.id);
     if (tool === 'select') {
-      if (target?.kind === 'point' && target.id !== sketchOriginId) {
+      // Generated points follow their projection or drawing; a drawing moves by its handles.
+      if (target?.kind === 'point' && target.id !== sketchOriginId && !generatorOf(this.sketch(), target.id)) {
         (event.target as Element).setPointerCapture?.(event.pointerId);
         this.drag = { pointId: target.id, start: [event.clientX, event.clientY], moved: false };
       }

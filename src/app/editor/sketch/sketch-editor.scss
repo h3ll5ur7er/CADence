@@ -76,6 +76,11 @@ path {
     stroke: var(--surface-raised);
   }
 
+  &.handle {
+    stroke: var(--flag);
+    stroke-width: 2.4px;
+  }
+
   &.hovered,
   &.snapped {
     fill: var(--sketch);

@@ -1,6 +1,7 @@
 import { type DrawingCurve, num, samplePoints } from './drawing';
 
-const degrees = (radians: number) => (radians * 180) / Math.PI;
+/** Degrees in [0, 360), as DXF readers expect for arc angles. */
+const degrees = (radians: number) => ((((radians * 180) / Math.PI) % 360) + 360) % 360;
 
 /** DXF group code/value pairs, one per line, as every CAD and laser program reads them. */
 function pairs(...items: (string | number)[]): string {

@@ -34,7 +34,12 @@ export const featureLabels: Readonly<Record<FeatureType, string>> = {
   mirror: 'Mirror',
 };
 
-const loopKey = (loop: ProfileLoop) => loop.edges.map((e) => e.source).sort().join('|');
+/** A loop by its pieces, whichever way round it runs: the curve each comes from and where it ends (a text's letters share one source). */
+const loopKey = (loop: ProfileLoop) =>
+  loop.edges
+    .map((e) => `${e.source}@${[e.start, e.end].map((p) => p.map((v) => v.toFixed(3)).join(',')).sort().join(';')}`)
+    .sort()
+    .join('|');
 
 /** All profiles except those that exactly fill a hole of another: a plate keeps its holes. */
 export function solidProfiles(profiles: readonly Profile[]): string[] {

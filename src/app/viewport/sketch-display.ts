@@ -76,7 +76,7 @@ export function sketchDisplay(sketch: Sketch, profiles: readonly Profile[], fram
   const curves: Vec2[][] = [];
   const construction: Vec2[][] = [];
   for (const e of sketch.entities) {
-    if (e.kind === 'point' || e.kind === 'projection') continue;
+    if (e.kind === 'point' || e.kind === 'projection' || e.kind === 'drawing') continue;
     if (e.kind === 'text') {
       (e.construction ? construction : curves).push(...textPolylines(texts.get(e.id) ?? []));
       continue;

@@ -164,6 +164,8 @@ class Session implements AssemblySession {
   }
 
   async exportAssembly(format: AssemblyFormat): Promise<Result<void>> {
+    // Every part, also those still being regenerated.
+    await this.loaded();
     const bodies = this.readyInstances().flatMap(({ instance, component, transform }) =>
       component.bodies.map((body, k) => ({ name: component.bodies.length > 1 ? `${instance.name} (${k + 1})` : instance.name, key: body.key, transform })),
     );
@@ -178,6 +180,7 @@ class Session implements AssemblySession {
   }
 
   async exportViewer(): Promise<Result<void>> {
+    await this.loaded();
     const parts = this.readyInstances()
       .filter(({ instance }) => !instance.appearance?.hidden)
       .flatMap(({ instance, component, transform }) =>
@@ -248,6 +251,22 @@ class Session implements AssemblySession {
     await this.deps.documents.store(document);
     this.deps.events.publish('documentSaved', { projectId: document.projectId, documentId: document.id });
     this.notify();
+  }
+
+  /** Resolves once no component the assembly shows is still loading (or after `timeout` ms). */
+  private loaded(timeout = 120_000): Promise<void> {
+    const loading = () => this.document.instances.some((i) => this.components.get(sourceKey(i.component, i.configuration))?.view.status === 'loading');
+    if (!loading()) return Promise.resolve();
+    return new Promise((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        this.listeners.delete(check);
+        resolve();
+      };
+      const check = () => (loading() ? undefined : done());
+      const timer = setTimeout(done, timeout);
+      this.listeners.add(check);
+    });
   }
 
   private notify(): void {

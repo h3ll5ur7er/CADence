@@ -5,6 +5,7 @@ import { drawRectangle, measureVolume, type Shape3D } from 'replicad';
 import { type Combined, type LoadedBody, renameCopy } from './bodies';
 import { length3, sub3, toPlane } from './geometry';
 import { nameShape, namedSurfaces } from './naming';
+import { cut, fuse, intersect } from './booleans';
 
 /** A failure the user can act on, reported as the feature's error. */
 export class BodyOperationError extends Error {}
@@ -36,7 +37,7 @@ export function combineBodies(
   if (!tools.length) throw new BodyOperationError('Select at least one body to combine with the target.');
   let shape = target.named.shape;
   for (const tool of tools) {
-    shape = operation === 'join' ? shape.fuse(tool.named.shape) : operation === 'cut' ? shape.cut(tool.named.shape) : shape.intersect(tool.named.shape);
+    shape = operation === 'join' ? fuse(shape, tool.named.shape) : operation === 'cut' ? cut(shape, tool.named.shape) : intersect(shape, tool.named.shape);
   }
   if (isEmpty(shape)) throw new BodyOperationError('Nothing of the target would be left.');
   const candidates = [target, ...tools].flatMap((b) => namedSurfaces(b.named));
@@ -60,8 +61,8 @@ export function splitBody(bodies: readonly LoadedBody[], bodyId: string, frame: 
   // A box on the normal side of the plane, large enough to hold the whole body.
   const size = 2 * (length3(sub3(high, low)) + length3(sub3(center, frame.origin))) + 10;
   const half = drawRectangle(size, size).sketchOnPlane(toPlane(frame)).extrude(size) as Shape3D;
-  const front = shape.intersect(half);
-  const back = shape.cut(half);
+  const front = intersect(shape, half);
+  const back = cut(shape, half);
   if (isEmpty(front) || isEmpty(back)) throw new BodyOperationError('The plane does not cut through the body.');
   const candidates = namedSurfaces(body.named);
   const name = (piece: Shape3D) => nameShape(piece, candidates, () => `f:${feature}:split`, feature);

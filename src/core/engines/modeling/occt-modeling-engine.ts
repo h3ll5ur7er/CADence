@@ -1,6 +1,6 @@
-import { find, type NamedShape, place, type ShapeAccess } from '@core/access/shape';
+import { find, type NamedShape, piecesOf, place, type ShapeAccess } from '@core/access/shape';
 import { type BodyMesh, fail, type Matrix4, ok, type PlaneFrame, type Result, type TopologyRef, type Vec2, type Vec3 } from '@core/contracts';
-import { type Edge, type Face, getOC, measureVolume, type Shape3D, Vertex } from 'replicad';
+import { type Edge, type Face, getOC, makeCompound, makeVertex, measureVolume, type Shape3D, Vertex } from 'replicad';
 import { combine, type LoadedBody, renameCopy } from './bodies';
 import { BodyOperationError, combineBodies, splitBody, transformBodies } from './body-operations';
 import { DraftRibError, draftFaces, ribTool } from './draft-rib';
@@ -14,6 +14,7 @@ import { nameShape, namedSurfaces } from './naming';
 import { readSnapshot, snapshotOf } from './results';
 import { tessellate } from './tessellation';
 import { extrudeTool, loftTool, revolveTool, sweepTool } from './tools';
+import { BooleanError, cut, valid } from './booleans';
 
 /** A failure the user can act on, as opposed to a defect. */
 class FeatureError extends Error {}
@@ -33,7 +34,7 @@ export class OcctModelingEngine implements ModelingEngine {
     try {
       outcome = this.compute(request);
     } catch (error) {
-      const message = error instanceof FeatureError || error instanceof BodyOperationError || error instanceof HoleError || error instanceof PartError || error instanceof DraftRibError || error instanceof FlangeError ? error.message : `The geometry kernel could not build this feature (${describe(error)}).`;
+      const message = error instanceof FeatureError || error instanceof BooleanError || error instanceof BodyOperationError || error instanceof HoleError || error instanceof PartError || error instanceof DraftRibError || error instanceof FlangeError ? error.message : `The geometry kernel could not build this feature (${describe(error)}).`;
       outcome = { bodies: request.bodies, error: message };
     }
     this.remember(request.key, outcome);
@@ -69,7 +70,7 @@ export class OcctModelingEngine implements ModelingEngine {
       const body = this.load(bodies).find((b) => b.state.id === ref.body);
       if (!body) throw new FeatureError(`The body of ${ref.name} no longer exists.`);
       const found = find(body.named, ref);
-      if (!found) throw new FeatureError(`The ${ref.kind} ${ref.name} no longer exists. Pick it again.`);
+      if (!found) throw new FeatureError(missing(body.named, ref));
       if (found instanceof Vertex) return ok(found.asTuple());
       return ok('normalAt' in found ? (found.center.toTuple() as Vec3) : (found.boundingBox.center as Vec3));
     } catch (error) {
@@ -286,8 +287,10 @@ export class OcctModelingEngine implements ModelingEngine {
     for (const input of tools) {
       const tool = this.shapes.get(input.toolKey);
       if (!tool) throw new FeatureError(`The feature ${input.feature} has to be rebuilt first.`);
-      for (let i = 1; i < copies; i++) {
-        const copy = renameCopy(tool, transform(tool.shape.clone(), i), `@${feature}.${i}`);
+      const placed = Array.from({ length: copies - 1 }, (_, i) => renameCopy(tool, transform(tool.shape.clone(), i + 1), `@${feature}.${i + 1}`));
+      // Joins and cuts take all copies in one boolean: one after the other, each copy splits the faces the next one meets (CAD-103).
+      const groups = input.operation === 'join' || input.operation === 'cut' ? [together(placed)] : placed;
+      for (const copy of groups) {
         const combined = this.store(combine(current, copy, input.operation, feature, `${key}:${++step}`));
         current = this.load(combined.bodies);
       }
@@ -314,7 +317,8 @@ export class OcctModelingEngine implements ModelingEngine {
     }
     const thread = { feature: request.feature, size: request.size, origin: place.origin, direction: place.direction, radius: place.radius, length, pitch: p, diameter: d, internal: place.internal };
     if (!request.modelled) return { bodies: request.bodies, thread };
-    const shape = body.named.shape.cut(threadGroove(thread));
+    const shape = cut(body.named.shape, threadGroove(thread, place.length));
+    if (measureVolume(shape) > measureVolume(body.named.shape) - 1e-3 * thread.pitch ** 3) throw new FeatureError('The thread could not be cut. Try a shorter thread, or start it at the other end.');
     const named = nameShape(shape, namedSurfaces(body.named), () => `f:${request.feature}:flank`, request.feature);
     const state = { id: body.state.id, key: `${request.key}:${body.state.id}` };
     return { ...this.store({ bodies: bodies.map((b) => (b === body ? state : b.state)), stored: [[state.key, named]] }), thread };
@@ -330,8 +334,8 @@ export class OcctModelingEngine implements ModelingEngine {
       const edges = mine.map((ref) => this.element(body, ref) as Edge);
       const filter = (finder: { inList(list: Edge[]): typeof finder }) => finder.inList(edges);
       const shape = kind === 'fillet' ? body.named.shape.fillet(endSize === undefined ? size : [size, endSize], filter as never) : body.named.shape.chamfer(size, filter as never);
-      // New faces are named after the edge they replace (nearest picked edge).
-      const named = nameShape(shape, namedSurfaces(body.named), (face) => `f:${feature}:${role}:${nearestRef(face, mine)}`, feature);
+      // New faces are named after the edge they replace: the picked edge nearest to them (CAD-101).
+      const named = nameShape(shape, namedSurfaces(body.named), (face) => `f:${feature}:${role}:${nearestEdge(face, mine, edges)}`, feature);
       const state = { id: body.state.id, key: `${key}:${body.state.id}` };
       stored.push([state.key, named]);
       return state;
@@ -373,7 +377,7 @@ export class OcctModelingEngine implements ModelingEngine {
 
   private element(body: LoadedBody, ref: TopologyRef): Face | Edge {
     const found = find(body.named, ref);
-    if (!found) throw new FeatureError(`The ${ref.kind} ${ref.name} no longer exists. Pick it again.`);
+    if (!found) throw new FeatureError(missing(body.named, ref));
     if (found instanceof Vertex) throw new FeatureError('Pick a face or an edge, not a vertex.');
     return found;
   }
@@ -416,6 +420,16 @@ export class OcctModelingEngine implements ModelingEngine {
     this.outcomes.set(key, outcome);
     if (this.outcomes.size > outcomeCacheSize) this.outcomes.delete(this.outcomes.keys().next().value as string);
   }
+}
+
+/** Copies as one tool: their solids in a compound, with all their names. */
+function together(copies: readonly NamedShape[]): NamedShape {
+  if (copies.length === 1) return copies[0] as NamedShape;
+  return {
+    shape: makeCompound(copies.map((c) => c.shape)) as Shape3D,
+    faces: new Map(copies.flatMap((c) => [...c.faces])),
+    edges: new Map(copies.flatMap((c) => [...c.edges])),
+  };
 }
 
 /** A frame with the given normal; in-plane axes like the origin planes': u follows world X on horizontal planes, else v points up. */
@@ -467,16 +481,6 @@ function axisOf(element: Face | Edge): { origin: Vec3; direction: Vec3 } | undef
   }
 }
 
-/** OpenCascade's topology and geometry check. */
-function valid(shape: Shape3D): boolean {
-  const analyzer = new (getOC().BRepCheck_Analyzer)(shape.wrapped, true, false);
-  try {
-    return analyzer.IsValid();
-  } finally {
-    analyzer.delete();
-  }
-}
-
 /** How far the shapes reach from a point, at most. */
 function reach(shapes: readonly Shape3D[], from: Vec3): number {
   return Math.max(
@@ -498,10 +502,39 @@ function count(value: number): number {
   return value;
 }
 
-function nearestRef(face: Face, refs: readonly TopologyRef[]): string {
-  const center = face.center.toTuple() as Vec3;
-  const distance = (ref: TopologyRef) => (ref.hint ? Math.hypot(...sub3(ref.hint, center)) : Infinity);
-  return [...refs].sort((a, b) => distance(a) - distance(b))[0]?.name ?? 'edge';
+/** The name of the picked edge nearest to a face's centre (refs and edges in the same order). */
+function nearestEdge(face: Face, refs: readonly TopologyRef[], edges: readonly Edge[]): string {
+  const center = makeVertex(face.center.toTuple());
+  let [best, nearest] = ['edge', Infinity];
+  try {
+    refs.forEach((ref, i) => {
+      const d = distanceBetween(center, edges[i] as Edge);
+      if (d < nearest - 1e-9) [best, nearest] = [ref.name, d];
+    });
+  } finally {
+    center.delete();
+  }
+  return best;
+}
+
+/** The shortest distance between two shapes. */
+function distanceBetween(a: Vertex | Face | Edge, b: Face | Edge): number {
+  const tool = new (getOC().BRepExtrema_DistShapeShape)();
+  try {
+    tool.LoadS1(a.wrapped);
+    tool.LoadS2(b.wrapped);
+    tool.Perform();
+    return tool.IsDone() ? tool.Value() : Infinity;
+  } finally {
+    tool.delete();
+  }
+}
+
+/** Why a reference finds nothing: it is gone, or split into pieces without a hint to choose one. */
+function missing(named: NamedShape, ref: TopologyRef): string {
+  const pieces = piecesOf(named, ref);
+  if (!pieces.length) return `The ${ref.kind} ${ref.name} no longer exists. Pick it again.`;
+  return `The ${ref.kind} ${ref.name} is split into ${pieces.length} pieces (${pieces.join(', ')}). Name one of them, or pick it again.`;
 }
 
 function describe(error: unknown): string {

@@ -81,6 +81,6 @@ export function createShapeAccess(options: ShapeAccessOptions = {}): ShapeAccess
   return new KernelShapeAccess(options);
 }
 
-export { baseName, centerOf, find, verticesOf } from './lookup';
+export { baseName, centerOf, find, piecesOf, verticesOf } from './lookup';
 export { place } from './placement';
 export { edgesOf, facesOf } from './topology';

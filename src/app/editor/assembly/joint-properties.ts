@@ -132,26 +132,28 @@ export class JointProperties {
     { key: 'a', label: 'stays' },
     { key: 'b', label: 'moves' },
   ] as const;
-  /** Along the picked frame's X, Y and normal (mm), and the turn about the normal (°). */
+  /** Along the picked frame's X, Y and normal (mm), the tilt about its X and the turn about the normal (°). */
   protected readonly offsetAxes = [
     { label: 'X', index: 0 },
     { label: 'Y', index: 1 },
     { label: 'Z', index: 2 },
+    { label: 'Tilt', index: 4 },
     { label: 'Turn', index: 3 },
   ] as const;
 
-  protected offsetValue(origin: JointOrigin, index: 0 | 1 | 2 | 3): number {
+  protected offsetValue(origin: JointOrigin, index: 0 | 1 | 2 | 3 | 4): number {
     const offset = origin.offset;
-    return this.round(index === 3 ? offset?.angle : offset?.translate[index]);
+    return this.round(index === 3 ? offset?.angle : index === 4 ? offset?.tilt : offset?.translate[index]);
   }
 
   /** Moves one side's joint origin; all zero removes the offset. */
-  protected setOffset(joint: Joint, side: 'a' | 'b', index: 0 | 1 | 2 | 3, event: Event): void {
+  protected setOffset(joint: Joint, side: 'a' | 'b', index: 0 | 1 | 2 | 3 | 4, event: Event): void {
     const value = Number((event.target as HTMLInputElement).value) || 0;
     const current = joint[side].offset ?? { translate: [0, 0, 0], angle: 0 };
-    const offset: JointOffset = index === 3 ? { ...current, angle: value } : { ...current, translate: current.translate.map((v, i) => (i === index ? value : v)) as [number, number, number] };
+    const offset: JointOffset =
+      index === 3 ? { ...current, angle: value } : index === 4 ? { ...current, tilt: value } : { ...current, translate: current.translate.map((v, i) => (i === index ? value : v)) as [number, number, number] };
     const { offset: _old, ...rest } = joint[side];
-    const zero = offset.angle === 0 && offset.translate.every((v) => v === 0);
+    const zero = offset.angle === 0 && !offset.tilt && offset.translate.every((v) => v === 0);
     void this.store.run({ type: 'edit-joint', joint: { ...joint, [side]: zero ? rest : { ...rest, offset } } });
   }
 

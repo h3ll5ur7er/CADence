@@ -97,7 +97,14 @@ export function rasterize(meshes: readonly RasterMesh[], options: RasterOptions)
   const framed = placed.some((m) => m.mesh.focus) ? placed.filter((m) => m.mesh.focus) : placed;
   const all = framed.flatMap((m) => m.points);
   if (!all.length) return pixels;
-  const [minX, maxX, minY, maxY] = [Math.min(...all.map((p) => p[0])), Math.max(...all.map((p) => p[0])), Math.min(...all.map((p) => p[1])), Math.max(...all.map((p) => p[1]))];
+  // In a loop: spreading millions of points into Math.min exceeds the argument limit (CAD-109).
+  let [minX, maxX, minY, maxY] = [Infinity, -Infinity, Infinity, -Infinity];
+  for (const p of all) {
+    if (p[0] < minX) minX = p[0];
+    if (p[0] > maxX) maxX = p[0];
+    if (p[1] < minY) minY = p[1];
+    if (p[1] > maxY) maxY = p[1];
+  }
   const scale = 0.88 * Math.min(width / Math.max(maxX - minX, 1e-9), height / Math.max(maxY - minY, 1e-9));
   const [cx, cy] = [(minX + maxX) / 2, (minY + maxY) / 2];
   const screen = (p: Vec3): Vec3 => [width / 2 + (p[0] - cx) * scale, height / 2 - (p[1] - cy) * scale, p[2]];

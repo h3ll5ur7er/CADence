@@ -57,7 +57,7 @@ export function drawingView(bodies: readonly { readonly id: string; readonly nam
       const tool = place(box, fromFrame(plane.origin, x, cross3(z, x), z));
       owned.push(tool);
       shapes = shapes.map((shape) => {
-        const kept = shape.clone().cut(tool.clone()) as Shape3D;
+        const kept = shape.cut(tool) as Shape3D;
         owned.push(kept);
         return kept;
       });

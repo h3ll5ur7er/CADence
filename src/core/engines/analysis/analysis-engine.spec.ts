@@ -2,7 +2,7 @@ import { createShapeAccess, type NamedShape } from '@core/access/shape';
 import { type Check, type LaserProfile, type PrintProfile, type TopologyRef, type Vec3, vertexName } from '@core/contracts';
 import { SketchBuilder } from '@core/contracts/testing/sketch-builder';
 import { circleLoop, profile, rectangleLoop } from '@core/contracts/testing/profiles';
-import { drawCircle, drawRectangle, type Edge, type Face, makeBaseBox, type Shape3D, weldShellsAndFaces } from 'replicad';
+import { drawCircle, drawRectangle, type Edge, type Face, makeBaseBox, makeCylinder, type Shape3D, weldShellsAndFaces } from 'replicad';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { type AnalysisEngine, createAnalysisEngine, type NamedBody } from './index';
 
@@ -234,5 +234,34 @@ describe('AnalysisEngine interference', () => {
     expect(found[0]).toMatchObject({ a: 'a', b: 'b' });
     expect(found[0]?.volume).toBeCloseTo(2 * 10 * 10, 6);
     expect(found[0]?.center[0]).toBeCloseTo(4, 6); // makeBaseBox is centred on x; the overlap spans 3 to 5
+  });
+
+  it('tells parts in a hole from parts inside a solid by their meshes first (CAD-114)', async () => {
+    const at = (x: number) => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, 0, 1];
+    // A tube and a rod in its bore with 1 mm to spare: boxes overlap, solids do not.
+    const tube = body('tube', makeCylinder(20, 30).cut(makeCylinder(10, 30)));
+    const rod = body('rod', makeCylinder(9, 30));
+    expect(await engine.interference([{ instance: 't', bodies: [tube], transform: at(0) }, { instance: 'r', bodies: [rod], transform: at(0) }])).toEqual([]);
+    // A small cube wholly inside a big one: no surfaces meet, and it overlaps by all its volume.
+    const [big, small] = [body('big', makeBaseBox(20, 20, 20)), body('small', makeBaseBox(2, 2, 2))];
+    const inside = await engine.interference([{ instance: 'b', bodies: [big], transform: at(0) }, { instance: 's', bodies: [small], transform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 5, 1] }]);
+    expect(inside[0]?.volume).toBeCloseTo(8, 6);
+  });
+
+  it('counts slivers of rounding as touching, and checks only the pairs asked for (CAD-112, CAD-114)', async () => {
+    const cube = body('cube', makeBaseBox(10, 10, 10));
+    const at = (x: number) => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, 0, 1];
+    // 0.00005 mm into each other: 0.005 mm³, a ten-thousandth of the cubes' volume is 0.1 mm³.
+    const sliver = await engine.interference([
+      { instance: 'a', bodies: [cube], transform: at(0) },
+      { instance: 'b', bodies: [cube], transform: at(9.99995) },
+    ]);
+    expect(sliver).toEqual([]);
+    const parts = [
+      { instance: 'a', bodies: [cube], transform: at(0) },
+      { instance: 'b', bodies: [cube], transform: at(8) },
+      { instance: 'c', bodies: [cube], transform: at(16) },
+    ];
+    expect((await engine.interference(parts, [['b', 'c']])).map((f) => [f.a, f.b])).toEqual([['b', 'c']]);
   });
 });

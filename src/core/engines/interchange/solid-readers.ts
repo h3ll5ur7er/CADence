@@ -1,6 +1,6 @@
-import type { NamedShape, ShapeAccess } from '@core/access/shape';
+import { adopt, type NamedShape, type ShapeAccess } from '@core/access/shape';
 import type { BodyMesh } from '@core/contracts';
-import { cast, getOC, importSTEP, measureVolume, type Shape3D } from 'replicad';
+import { getOC, importSTEP, measureVolume, type Shape3D } from 'replicad';
 import { read3mf, readObj, readStl, type ReadMesh } from './mesh-readers';
 import { meshVolume, writeStl } from './solids';
 
@@ -16,10 +16,10 @@ export function readMeshes(bytes: Uint8Array, format: MeshFormat): Promise<ReadM
 /** The solids of a STEP file; shells that close are made solid. */
 export async function stepSolids(bytes: Uint8Array): Promise<Shape3D[]> {
   const shape = await importSTEP(new Blob([bytes as BlobPart]));
-  const solids = explore(shape.wrapped, 'TopAbs_SOLID').map((s) => cast(s) as Shape3D);
+  const solids = explore(shape.wrapped, 'TopAbs_SOLID').map((s) => adopt(s) as Shape3D);
   if (solids.length) return solids;
   const shells = explore(shape.wrapped, 'TopAbs_SHELL');
-  const made = shells.map((shell) => cast(new (getOC().BRepBuilderAPI_MakeSolid)(getOC().TopoDS.Shell(shell)).Solid()) as Shape3D).filter((s) => measureVolume(s) > 1e-9);
+  const made = shells.map((shell) => adopt(new (getOC().BRepBuilderAPI_MakeSolid)(getOC().TopoDS.Shell(shell)).Solid()) as Shape3D).filter((s) => measureVolume(s) > 1e-9);
   if (made.length) return made;
   throw new Error('The STEP file holds no solids (only surfaces or curves).');
 }
@@ -45,10 +45,10 @@ export function meshSolid(mesh: ReadMesh): Shape3D {
     for (const face of explore(unify.Shape(), 'TopAbs_FACE')) builder.Add(shell, face);
     unify.delete();
     const made = new oc.BRepBuilderAPI_MakeSolid(shell);
-    const solid = cast(made.Solid()) as Shape3D;
+    const solid = adopt(made.Solid()) as Shape3D;
     made.delete();
     if (measureVolume(solid) >= 0) return solid;
-    const reversed = cast(solid.wrapped.Reversed()) as Shape3D;
+    const reversed = adopt(solid.wrapped.Reversed()) as Shape3D;
     solid.delete();
     return reversed;
   } finally {

@@ -1,6 +1,6 @@
-import type { NamedShape } from '@core/access/shape';
+import { adopt, type NamedShape } from '@core/access/shape';
 import type { PlaneFrame, ThreadMarker, Vec2, Vec3 } from '@core/contracts';
-import { assembleWire, cast, draw, type Drawing, type Face, getOC, makeHelix, makeLine, Plane, type Shape3D } from 'replicad';
+import { assembleWire, draw, type Drawing, type Face, getOC, makeHelix, makeLine, Plane, type Shape3D } from 'replicad';
 import { add3, cross3, dot3, length3, normalize3, normalOf, scale3, sub3, toWorld } from './geometry';
 import { nameShape, namedSurfaces } from './naming';
 import type { Surface } from './surfaces';
@@ -167,7 +167,7 @@ export function threadGroove(marker: ThreadMarker, faceLength: number): Shape3D 
     builder.Add(profile.wrapped, false, false);
     builder.Build();
     builder.MakeSolid();
-    return cast(builder.Shape()) as Shape3D;
+    return adopt(builder.Shape()) as Shape3D;
   } finally {
     builder.delete();
     binormal.delete();

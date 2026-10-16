@@ -14,6 +14,7 @@ import {
   type DomainEvents,
   type Joint,
   type Matrix4,
+  offsetFrame,
   sourceKey,
   originFrames,
   type Result,
@@ -267,6 +268,16 @@ describe('AssemblyManager', () => {
     expect(session.state().components.get(asDocumentId('cube'))?.bodies[0]?.faces).toHaveLength(6);
   });
 
+  it('tilts joint frames about their x axis (CAD-113)', () => {
+    const flat = { origin: [0, 0, 0] as const, u: [1, 0, 0] as const, v: [0, 1, 0] as const };
+    const tilted = offsetFrame(flat, { translate: [0, 0, 5], angle: 0, tilt: 90 });
+    const round = (p: readonly number[]) => p.map((x) => Math.round(x * 1e9) / 1e9 + 0);
+    // Moved 5 mm along the old normal, then v tipped onto the old normal: the joint axis now runs along −y.
+    expect([round(tilted.origin), round(tilted.u), round(tilted.v)]).toEqual([[0, 0, 5], [1, 0, 0], [0, 0, 1]]);
+    const both = offsetFrame(flat, { translate: [0, 0, 0], angle: 90, tilt: 90 });
+    expect([round(both.u), round(both.v)]).toEqual([[0, 0, 1], [-1, 0, 0]]);
+  });
+
   it('moves joint origins by offsets and tells where each joint is', async () => {
     await arm([0]);
     // 10 mm up the hole's axis, and turned a quarter: like the angle at 90°, lifted.
@@ -333,6 +344,12 @@ describe('AssemblyManager', () => {
     await until(() => Math.abs(width() - 90) < 1e-6);
   });
 
+  it('gives an edited joint without a name its own or the default name (CAD-112)', async () => {
+    await arm([0]);
+    unwrap(await session.execute({ type: 'edit-joint', joint: { ...hinge([10]), name: '' } }));
+    expect(session.state().document.joints[0]?.name).toBe('Revolute 1');
+  });
+
   it('links joints: a second hinge turns with the first, the other way', async () => {
     await arm([0]);
     unwrap(await insert('l2', link, translation([0, 80, 0])));
@@ -353,9 +370,28 @@ describe('AssemblyManager', () => {
     await arm([0]);
     const study = { id: 's1', name: '', duration: 1, keys: [{ time: 0, joint: 'hinge', values: [0] }, { time: 1, joint: 'hinge', values: [90] }] };
     unwrap(await session.execute({ type: 'add-study', study }));
-    const hits = unwrap(await session.collisions('s1', 2));
+    const { collisions: hits } = unwrap(await session.collisions('s1', 2));
     expect(hits[0]).toMatchObject({ a: 'b1', b: 'l1', time: 0 });
     expect(hits[0]?.volume).toBeGreaterThan(0);
+  });
+
+  it('moves pattern copies with their originals in studies, and checks them for collisions (CAD-115, CAD-114)', async () => {
+    await arm([0]);
+    // A copy of the link 20 mm above it, and a copy of the base 2 mm above the base (they overlap).
+    unwrap(await session.execute({ type: 'set-pattern', pattern: { id: 'up', name: '', kind: 'linear', instances: ['l1'], direction: [0, 0, 1], origin: [0, 0, 0], count: 2, spacing: 20 } }));
+    unwrap(await session.execute({ type: 'set-pattern', pattern: { id: 'stack', name: '', kind: 'linear', instances: ['b1'], direction: [0, 0, 1], origin: [0, 0, 0], count: 2, spacing: 2 } }));
+    const study = { id: 's1', name: '', duration: 1, keys: [{ time: 0, joint: 'hinge', values: [0] }, { time: 1, joint: 'hinge', values: [90] }] };
+    unwrap(await session.execute({ type: 'add-study', study }));
+    const frames = unwrap(await session.motion('s1', 2));
+    const last = frames.at(-1)?.poses as Record<string, Matrix4>;
+    const tip = (id: string) => transformPoint(last[id] as Matrix4, [35, 5, 2.5]).map((v) => Math.round(v * 1e6) / 1e6);
+    const [link, copy] = [tip('l1'), tip('up/l1/1')];
+    expect(copy).toEqual([link[0], link[1], (link[2] as number) + 20]); // turned with the link, 20 mm higher
+    const progress: number[] = [];
+    const report = unwrap(await session.collisions('s1', 2, { onProgress: (done) => progress.push(done) }));
+    expect(report).toMatchObject({ checked: 3, moments: 3 });
+    expect(progress).toEqual([1, 2, 3]);
+    expect(report.collisions.some((c) => [c.a, c.b].includes('stack/b1/1') && [c.a, c.b].includes('b1'))).toBe(true);
   });
 
   it('explodes the assembly step by step, lists its parts, and makes build instructions', async () => {
@@ -369,6 +405,16 @@ describe('AssemblyManager', () => {
     expect(lifted(session.explode('v1', 0))).toBeCloseTo(2.5);
 
     unwrap(await session.execute({ type: 'set-pattern', pattern: { id: 'p', name: '', kind: 'linear', instances: ['b1'], direction: [0, 1, 0], origin: [0, 0, 0], count: 2, spacing: 100 } }));
+    // Steps move pattern copies too, and a radial step moves each part away from an axis (CAD-110).
+    const refused = await session.execute({ type: 'set-exploded-view', view: { ...view, steps: [{ ...view.steps[0], id: 's2', instances: ['p/b1/7'] }] } as never });
+    expect(refused).toMatchObject({ ok: false, error: { message: '"p/b1/7" is not an instance or a pattern copy of this assembly.' } });
+    const radial = { id: 'v2', name: '', steps: [{ id: 's', instances: ['b1', 'p/b1/1'], direction: [1, 0, 0] as const, distance: 10, radial: true, origin: [0, 60, 2.5] as const }] };
+    unwrap(await session.execute({ type: 'set-exploded-view', view: radial }));
+    const apart = session.explode('v2');
+    const middle = (id: string) => transformPoint(apart.get(id) as Matrix4, [30, 10, 2.5]).map((v) => Math.round(v * 1e6) / 1e6 + 0);
+    // The plates' middles are at y 10 and 110: 50 mm either side of the axis (along x, through y 60, z 2.5); each moves 10 mm away.
+    expect(middle('b1')).toEqual([30, 0, 2.5]);
+    expect(middle('p/b1/1')).toEqual([30, 120, 2.5]);
     const bom = await session.billOfMaterials();
     expect(bom.map((l) => [l.component, l.count])).toEqual([
       ['Base', 2],

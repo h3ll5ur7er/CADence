@@ -166,6 +166,11 @@ describe('KinematicsEngine motion studies', () => {
     expect(camLift(profile, 270)).toBeCloseTo(0);
     expect(camLift(profile, 45)).toBeGreaterThan(0);
     expect(camLift(profile, 45)).toBeLessThan(6);
+    // Flat base circle next to a lobe: the follower never sinks below it, nor rises above the peak.
+    const lobe = [[0, 0], [30, 0], [45, 4], [60, 6], [75, 4], [90, 0], [300, 0]] as const;
+    const lifts = Array.from({ length: 721 }, (_, i) => camLift(lobe, i / 2));
+    expect(Math.min(...lifts)).toBeGreaterThanOrEqual(0);
+    expect(Math.max(...lifts)).toBeLessThanOrEqual(6 + 1e-12);
     const model: KinematicModel = {
       instances: [instance('base', true), instance('cam'), instance('tappet')],
       joints: [joint('shaft', 'revolute', ['base', [0, 0, 0]], ['cam', [0, 0, 0]], [0]), joint('guide', 'slider', ['base', [0, 20, 0]], ['tappet', [0, 0, 0]], [0])],

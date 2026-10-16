@@ -1,7 +1,7 @@
-import type { NamedShape } from '@core/access/shape';
+import { adopt, type NamedShape } from '@core/access/shape';
 import type { PlaneFrame, Profile, ProfileEdge, Vec2, Vec3 } from '@core/contracts';
 import { curveAt, ellipseParameter } from '@core/utilities/math';
-import { assembleWire, cast, type Edge, type Face, getOC, makeBezierCurve, makeLine, makeThreePointArc, makeVertex, type Shape3D, type Sketch, type Wire } from 'replicad';
+import { assembleWire, type Edge, type Face, getOC, makeBezierCurve, makeLine, makeThreePointArc, makeVertex, type Shape3D, type Sketch, type Wire } from 'replicad';
 import { cross3, dot3, length3, normalize3, normalOf, scale3, sub3, toPlane, toWorld, add3 } from './geometry';
 import { nameShape, namedSurfaces } from './naming';
 import { type Line, sameLine, samePlaneIgnoringSide, type Surface } from './surfaces';
@@ -216,7 +216,7 @@ function generatedNames(builder: { Generated(s: unknown): { IsEmpty(): boolean; 
   for (const { edge, source } of sourced) {
     const list = builder.Generated(edge.wrapped);
     while (!list.IsEmpty()) {
-      const generated = cast(list.First() as never);
+      const generated = adopt(list.First() as never);
       if ('normalAt' in generated) names.set((generated as Face).hashCode, `f:${feature}:side:${source}`);
       list.RemoveFirst();
     }
@@ -245,7 +245,7 @@ export function loftTool(feature: string, sections: readonly { readonly frame: P
     builder.CheckCompatibility(false); // the sections are lined up already
     for (const wire of wires) builder.AddWire(wire.wrapped);
     builder.Build();
-    const shape = cast(builder.Shape()) as Shape3D;
+    const shape = adopt(builder.Shape()) as Shape3D;
     const sides = generatedNames(builder as never, sourcedEdges(wires[0] as Wire, first.profile.outer.edges, first.frame), feature);
     const cap = (surface: Surface) => (samePlaneIgnoringSide(surface, planeOf(first.frame)) ? 'start' : samePlaneIgnoringSide(surface, planeOf(last.frame)) ? 'end' : undefined);
     return nameFromHistory(shape, feature, sides, cap);
@@ -264,7 +264,7 @@ function sweptLoop(feature: string, loop: Profile['outer'], frame: PlaneFrame, s
     builder.Add(wire.wrapped, false, false);
     builder.Build();
     builder.MakeSolid();
-    const shape = cast(builder.Shape()) as Shape3D;
+    const shape = adopt(builder.Shape()) as Shape3D;
     return nameFromHistory(shape, feature, generatedNames(builder as never, sourcedEdges(wire, loop.edges, frame), feature), cap);
   } finally {
     builder.delete();

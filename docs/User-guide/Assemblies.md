@@ -34,7 +34,7 @@ Where a joint sits depends on what you click:
 - **Flat face:** its centre, with the axis straight out of the face. Two flat faces meet face to face.
 - **Straight edge:** its middle, with the axis along the edge.
 
-Select a joint to drag its values with the sliders (or type them), to set **limits**, or to **turn the moving side over**. Its **offsets** move each side's joint origin away from what you clicked: X and Y along the face or edge, Z along the joint's axis (mm), and **Turn** about the axis (°). A hinge 10 mm above a plate, or a part turned 45° on its pin, needs no extra geometry. Joints that close a loop, like a four-bar linkage, are kept closed: dragging one joint moves the others. A change that no joint arrangement can satisfy is refused with the reason.
+Select a joint to drag its values with the sliders (or type them), to set **limits**, or to **turn the moving side over**. Its **offsets** move each side's joint origin away from what you clicked: X and Y along the face or edge, Z along the joint's axis (mm), **Tilt** about the frame's X (°), which tips the joint's axis over, and **Turn** about the axis (°). A hinge 10 mm above a plate, a part turned 45° on its pin, or a pushrod sliding at 21° to a cylinder needs no extra geometry. On a round face or edge the axis has no inside; it points along the largest positive world axis, and on a pattern copy of a hole the same way round as on the original. Joints that close a loop, like a four-bar linkage, are kept closed: dragging one joint moves the others. A change that no joint arrangement can satisfy is refused with the reason.
 
 ## Motion links
 
@@ -72,11 +72,12 @@ Click **Motion** to start a study. It has a duration and *keys*: a joint's value
 
 - **Ease** on a key makes the motion into it start and end slowly instead of evenly.
 - **Constant speeds** turn a joint at a speed (rpm) or slide it (mm/s) from where it is at the start, for the whole study; they win over keys of the same joint. Linked joints follow.
-- **Check collisions** plays the study (10 frames a second) and lists the parts that hit each other with the moment they first do. Click one to see it, the parts in pink; **Stop playing at the first hit** ends playback there.
+- **Check collisions** plays the study (10 frames a second) and lists the parts that hit each other with the moment they first do, pattern copies included. Click one to see it, the parts in pink; **Stop playing at the first hit** ends playback there. Pairs that keep their position against each other are tested once, so large assemblies check quickly.
+- Pattern copies move with their originals while a study plays.
 
 ## Exploded views and build instructions
 
-**Explode** starts an exploded view: choose the instances the next step moves, **Add step**, and set its direction and distance. Steps add up, one after the other; the **Shown** slider takes the assembly apart step by step, with lines from where each part was.
+**Explode** starts an exploded view: choose the instances (or pattern copies) the next step moves, **Add step**, and set its direction and distance. **Away from the axis** moves each part straight away from the axis along the direction instead (through the origin), so the cylinders of a radial engine fly out in one step. Steps add up, one after the other; the **Shown** slider takes the assembly apart step by step, with lines from where each part was.
 
 **Build instructions (PDF)** makes an A4 document: the parts list and the assembly taken apart, then one page per step, fitting the parts in the reverse order of the exploded view, and the finished assembly. Pictures are taken from the home direction, all framed alike.
 
@@ -86,5 +87,5 @@ The **bill of materials** (the stacked squares) lists every component (and confi
 
 ## Check and export
 
-- **Check interference** (the overlapping squares) lists every pair of instances whose solids overlap, with the overlapping volume, and shows them in pink. Parts that only touch do not count.
+- **Check interference** (the overlapping squares) lists every pair of instances whose solids overlap, with the overlapping volume, and shows them in pink. Parts that only touch do not count: an overlap below a ten-thousandth of the smaller part's volume (a pin in a hole of its size) is rounding.
 - **Export**: STEP with one named solid per instance, 3MF with one object per instance, or STL and OBJ meshes of the whole assembly.

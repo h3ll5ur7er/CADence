@@ -9,6 +9,7 @@ import {
   offsetLoop,
   type ParamCurve,
   polar,
+  range,
   sampleCurve,
   splineBeziers,
   sub,
@@ -78,10 +79,8 @@ export function boundsOf(curves: readonly DrawingCurve[]): Bounds {
     return [c.startAngle, c.startAngle + c.sweep, ...extremes].map((a) => polar(c.center, c.radius, a));
   });
   if (points.length === 0) return { min: [0, 0], max: [0, 0] };
-  return {
-    min: [Math.min(...points.map((p) => p[0])), Math.min(...points.map((p) => p[1]))],
-    max: [Math.max(...points.map((p) => p[0])), Math.max(...points.map((p) => p[1]))],
-  };
+  const [xs, ys] = [range(points.map((p) => p[0])), range(points.map((p) => p[1]))];
+  return { min: [xs[0], ys[0]], max: [xs[1], ys[1]] };
 }
 
 /** Numbers without float noise ("12.5", not "12.500000000001"). */

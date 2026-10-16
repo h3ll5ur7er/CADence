@@ -98,9 +98,10 @@ export class OcctModelingEngine implements ModelingEngine {
       const element = this.element(body, ref);
       const axis = axisOf(element);
       if (!axis) return fail({ code: 'no-axis', message: 'Joints attach to flat or round faces and to straight or circular edges.' });
-      // A flat face keeps its outward normal; other axes have no inside, so they point along their largest positive world axis.
+      // A flat face keeps its outward normal; other axes have no inside, so they point along their largest positive world axis,
+      // and a pattern copy's the same way round as its original's, turned with the pattern (CAD-112).
       const flat = 'normalAt' in element && element.geomType === 'PLANE';
-      return ok(frameAround(axis.origin, flat ? axis.direction : positive3(axis.direction)));
+      return ok(frameAround(axis.origin, flat ? axis.direction : (this.likeOriginal(body, ref, axis.direction) ?? positive3(axis.direction))));
     } catch (error) {
       return fail({ code: 'lost-reference', message: describe(error) });
     }
@@ -371,6 +372,20 @@ export class OcctModelingEngine implements ModelingEngine {
     if (!edge || edge.geomType !== 'LINE') throw new FeatureError('Pick a straight edge as the axis.');
     const start = edge.startPoint.toTuple() as Vec3;
     return { origin: start, direction: normalize3(sub3(edge.endPoint.toTuple() as Vec3, start)) };
+  }
+
+  /**
+   * A pattern copy's axis (its name ends in `@<pattern>.<n>`) the same way round as its original's:
+   * the copy's surface is the original's turned, so the side the largest-axis rule picked carries over.
+   */
+  private likeOriginal(body: LoadedBody, ref: TopologyRef, direction: Vec3): Vec3 | undefined {
+    const name = ref.name.replace(/@[^@]+\.\d+(?=(~\d+)?$)/, '');
+    if (name === ref.name) return undefined;
+    const original = find(body.named, { kind: ref.kind, body: ref.body, name });
+    if (!original || original instanceof Vertex) return undefined;
+    const own = axisOf(original)?.direction;
+    if (!own) return undefined;
+    return dot3(own, positive3(own)) > 0 ? direction : scale3(direction, -1);
   }
 
   private face(bodies: LoadedBody[], ref: TopologyRef): Face {

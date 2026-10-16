@@ -6,21 +6,17 @@ import { build } from 'esbuild';
 const root = new URL('../../', import.meta.url);
 const read = (path) => readFileSync(new URL(path, root), 'utf8');
 
-/** The types an agent needs to write commands, without their imports. */
-const referenceFiles = [
-  'src/core/managers/design/design-manager.ts',
-  'src/automation/shapes.ts',
-  'src/core/contracts/sketch.ts',
-  'src/core/contracts/feature.ts',
-  'src/core/contracts/document.ts',
-  'src/core/contracts/analysis.ts',
-  'src/core/contracts/appearance.ts',
-  'src/core/managers/assembly/assembly-manager.ts',
-  'src/core/contracts/assembly.ts',
-];
-const reference = referenceFiles
-  .map((path) => `// ${path}\n${read(path).replace(/^import[\s\S]*?;\n/gm, '').trim()}\n`)
-  .join('\n');
+/** The types an agent needs to write commands, without their imports, by topic: each small enough for an agent to read whole (CAD-111). */
+const referenceTopics = {
+  commands: ['src/core/managers/design/design-manager.ts', 'src/automation/shapes.ts'],
+  sketch: ['src/core/contracts/sketch.ts'],
+  features: ['src/core/contracts/feature.ts', 'src/core/contracts/parts.ts'],
+  document: ['src/core/contracts/document.ts', 'src/core/contracts/analysis.ts', 'src/core/contracts/appearance.ts'],
+  assembly: ['src/core/managers/assembly/assembly-manager.ts', 'src/core/contracts/assembly.ts'],
+};
+const reference = Object.fromEntries(
+  Object.entries(referenceTopics).map(([topic, files]) => [topic, files.map((path) => `// ${path}\n${read(path).replace(/^import[\s\S]*?;\n/gm, '').trim()}\n`).join('\n')]),
+);
 
 const { version } = JSON.parse(read('package.json'));
 
@@ -41,7 +37,7 @@ await build({
       name: 'reference',
       setup(b) {
         b.onResolve({ filter: /^cadence:reference$/ }, () => ({ path: 'reference', namespace: 'cadence' }));
-        b.onLoad({ filter: /.*/, namespace: 'cadence' }, () => ({ contents: reference, loader: 'text' }));
+        b.onLoad({ filter: /.*/, namespace: 'cadence' }, () => ({ contents: JSON.stringify(reference), loader: 'json' }));
       },
     },
   ],

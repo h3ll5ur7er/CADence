@@ -390,3 +390,17 @@ Imported SVG `<text>` and DXF `TEXT`/`MTEXT` become editable sketch texts in thi
 *Why:* the stress test ran out of context on large answers and could neither build nor look at the assembly.
 *Trade-off:* an edit's answer leaves out unchanged things, so an agent asks again with a filter when it needs them; the GIF's colours are coarse.
 
+
+## ADR-46
+
+**Large assemblies in motion: copies move, pairs are screened by their meshes, frames of copies follow their originals (CAD-109 to CAD-115).**
+- *Pattern copies* get their poses in every motion frame, the pattern's transform after their original's pose in that frame, and take part in collision checks; exploded view steps may name them, and a *radial* step moves each part away from an axis, so a circular pattern comes apart in one step.
+- *Collision checks of a study* test a pair again only when it moved against itself since it was last tested, so parts that stay put against each other (a case and its covers, a hub and its blades) are tested once. Each pair is screened before the kernel's boolean: boxes from boxes measured once per body, then the meshes (a bounding volume hierarchy with separating axes). Surfaces within the meshes' tolerance of each other are measured by rays through the overlap of their boxes along each axis (each ray's overlap less the tolerance, the least of the three axes): surfaces that only touch, such as a piston in its bore, give nothing and never reach the kernel. Far apart, a pair overlaps only if one lies inside the other (ray parity). The kernel's boolean grows its WebAssembly memory by about 180 KB on every call, freed or not, which is why touching pairs must stay out of it: the radial engine's study ran out of memory after twenty moments. replicad's `cast` and `Transformation` also left handles and builders behind; Shape Access's `adopt` and `place` free them. Progress goes to MCP clients as notifications, and a time limit stops long checks.
+- *Interference* counts an overlap only above a ten-thousandth of the smaller part's volume: a pin in a hole of its size leaves slivers of rounding.
+- *Joint frames on round faces of pattern copies* (names ending in `@<pattern>.<n>`) point the same way round as the original's, turned with the pattern, instead of along their own largest positive world axis. Offsets can *tilt* a frame about its x axis.
+- *Cam profiles* are monotone cubics: they keep the shape of their points and never dip below a flat base circle.
+- *Agents* get brief assembly answers (what was created in full, joint values, moved origins), the command reference by topic with the parts contract, and `near` measured to the faces and edges themselves.
+- *Pictures* bound millions of vertices in loops, never by spreading arrays into `Math.min`.
+
+*Why:* the radial engine ([[CAD-96]]): 121 parts in motion could not be pictured, animated, taken apart or checked within the client's half-hour timeout.
+*Trade-off:* the mesh screening meshes each body once at the printability tolerance (memory for large models); an overlap shallower than the meshes' tolerance counts as touching, and the study's collision volumes come from the kernel only for pairs the rays found. The radial engine's study (65 moments, 121 parts) takes 7 minutes; most of it is the screening in TypeScript. Copies' frames depend on their names, so a copy renamed by later features falls back to the world-axis rule.

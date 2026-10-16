@@ -55,8 +55,12 @@ export interface AnalysisEngine {
   properties(bodies: readonly BodyState[], density: number): Promise<BodyProperties[]>;
   /** The manufacturability rules of the profile's process, applied to the bodies and sketches. */
   validate(subject: ValidationSubject, profile: ManufacturingProfile): Promise<Check[]>;
-  /** Pairs of parts whose solids overlap (touching is fine), with the overlapping volume. */
-  interference(parts: readonly PlacedPart[]): Promise<Interference[]>;
+  /**
+   * Pairs of parts whose solids overlap, with the overlapping volume; only the given pairs of
+   * instances when `pairs` is set. Touching is fine: an overlap below a ten-thousandth of the smaller
+   * part's volume (a pin in a hole of its size) is the kernel's rounding, not interference (CAD-112).
+   */
+  interference(parts: readonly PlacedPart[], pairs?: readonly (readonly [string, string])[]): Promise<Interference[]>;
   /** A linear static strength check of the bodies (their display meshes) under the setup's loads (CAD-93). */
   simulate(meshes: readonly BodyMesh[], setup: SimulationSetup, material: Material): Promise<Result<SimulationResult>>;
 }

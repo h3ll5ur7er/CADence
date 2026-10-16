@@ -36,6 +36,7 @@ import {
 import { InvalidVersionNameError, RemoteError, type Version, type VersionAccess, type VersionFile } from '@core/access/version';
 import type { InterchangeEngine } from '@core/engines/interchange';
 import { readZip, zip } from '@core/utilities/archive';
+import { range } from '@core/utilities/math';
 import { pictureSize } from '@core/utilities/picture';
 import { loadFont } from '@core/utilities/text';
 import type { ParameterEngine } from '@core/engines/parameter';
@@ -677,8 +678,8 @@ export class DefaultProjectManager implements ProjectManager {
         kind: 'drawing',
         entities: drawing.value.entities,
         texts: drawing.value.texts,
-        min: [extent((v) => Math.min(...v)), extentY((v) => Math.min(...v)), 0],
-        max: [extent((v) => Math.max(...v)), extentY((v) => Math.max(...v)), 0],
+        min: [extent((v) => range(v)[0]), extentY((v) => range(v)[0]), 0],
+        max: [extent((v) => range(v)[1]), extentY((v) => range(v)[1]), 0],
       });
     }
     if (isFontFormat(document.format)) {

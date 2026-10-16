@@ -50,6 +50,10 @@ const directions: readonly { readonly label: string; readonly direction: Vec3 }[
                 <input type="number" step="any" [attr.aria-label]="'Distance of step ' + (i + 1)" [value]="step.distance" (change)="saveStep(view, step, { distance: +value($event) })" />
               </label>
             </div>
+            <label class="check">
+              <input type="checkbox" [attr.aria-label]="'Step ' + (i + 1) + ' moves away from the axis'" [checked]="!!step.radial" (change)="saveStep(view, step, { radial: $any($event.target).checked })" />
+              Away from the axis (the direction, through the origin)
+            </label>
           </li>
         } @empty {
           <li class="hint">Each step moves instances apart. Choose them below and add a step.</li>
@@ -85,7 +89,16 @@ export class ExplodePanel {
   protected readonly busy = signal(false);
 
   protected readonly view = computed(() => this.store.state()?.document.explodedViews?.find((v) => v.id === this.viewId()));
-  protected readonly instances = computed(() => this.store.state()?.document.instances ?? []);
+  /** Instances, and the copies their patterns make (CAD-110). */
+  protected readonly instances = computed(() => {
+    const state = this.store.state();
+    if (!state) return [];
+    const copies = [...state.copies].flatMap(([id, copy]) => {
+      const original = state.document.instances.find((i) => i.id === copy.instance);
+      return original ? [{ id, name: `${original.name} (copy ${id.split('/').at(-1)})` }] : [];
+    });
+    return [...state.document.instances.map(({ id, name }) => ({ id, name })), ...copies];
+  });
 
   constructor() {
     // Shows the view as far as the slider says, following edits of its steps.

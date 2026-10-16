@@ -71,20 +71,29 @@ function disambiguate<T extends Face | Edge>(items: readonly Naming<T>[]): Map<n
   return result;
 }
 
-/** Whether a face lies on an earlier face: a point inside it is on that face. */
-function within(face: Face, earlier: Face): boolean {
-  const { uMin, uMax, vMin, vMax } = face.UVBounds;
-  const inside = makeVertex(face.pointOnSurface((uMin + uMax) / 2, (vMin + vMax) / 2).toTuple());
+/** How far a point is from a face (or edge). */
+function distance(point: Vec3, shape: Face | Edge): number {
+  const vertex = makeVertex([...point]);
   const tool = new (getOC().BRepExtrema_DistShapeShape)();
   try {
-    tool.LoadS1(inside.wrapped);
-    tool.LoadS2(earlier.wrapped);
+    tool.LoadS1(vertex.wrapped);
+    tool.LoadS2(shape.wrapped);
     tool.Perform();
-    return tool.IsDone() && tool.Value() < 1e-4;
+    return tool.IsDone() ? tool.Value() : Infinity;
   } finally {
     tool.delete();
-    inside.delete();
+    vertex.delete();
   }
+}
+
+/** Spots in a face's parameter range (replicad takes 0 … 1 across it) to find a point inside it. */
+const spots: readonly (readonly [number, number])[] = [[0.5, 0.5], [0.25, 0.25], [0.75, 0.75], [0.25, 0.75], [0.75, 0.25]];
+
+/** Whether a face lies on an earlier face: a point inside it (not in a hole of it) is on that face. */
+function within(face: Face, earlier: Face): boolean {
+  const points = spots.map(([u, v]) => face.pointOnSurface(u, v).toTuple() as Vec3);
+  const inside = points.find((p) => distance(p, face) < 1e-6) ?? (points[0] as Vec3);
+  return distance(inside, earlier) < 1e-4;
 }
 
 /** Of earlier faces on a face's surface, the one it is a piece of, when they have different names. */

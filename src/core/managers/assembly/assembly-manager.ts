@@ -82,6 +82,8 @@ export interface AssemblySession {
   interference(): Promise<Interference[]>;
   /** STEP keeps one named solid per instance; mesh formats get one object per instance. */
   exportAssembly(format: AssemblyFormat): Promise<Result<void>>;
+  /** The assembly as one HTML file with a viewer (turn, measure, hide, explode), for people without CADence. */
+  exportViewer(): Promise<Result<void>>;
   /** Hands a recorded animation to the user (a download or a save dialog). */
   saveRecording(bytes: Uint8Array, studyName: string): Promise<void>;
   /** Stops listening for component changes. */

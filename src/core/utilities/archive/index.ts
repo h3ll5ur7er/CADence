@@ -1,4 +1,4 @@
-/** A ZIP archive with stored (uncompressed) entries, enough for 3MF packages. */
+/** ZIP archives: written with stored (uncompressed) entries, read with stored or deflated ones (3MF packages, project archives). */
 
 const crcTable = Array.from({ length: 256 }, (_, n) => {
   let c = n;

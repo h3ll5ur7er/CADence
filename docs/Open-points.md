@@ -20,12 +20,12 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 
 ## Projects and documents
 
-- [X] **Drag and drop to import** files onto the documents panel or the home page. The Importing guide already promises it; only the picker exists. *(Architecture: Imported files are "picked or dropped")* → [[CAD-60]]
-- [X] **Open with CADence** from the operating system (file associations on desktop). *(Volatility analysis, host file exchange)* → [[CAD-62]]
-- [X] **Duplicate** projects and documents. *(Volatility analysis, project workflow)* → [[CAD-60]]
-- [X] **Replace an imported file with a newer version**, keeping the features and instances that use it. *(new)* → [[CAD-61]]
-- [X] **Export or back up a whole project** (one archive with documents and originals), and import it again. *(new)* → [[CAD-62]]
-- [X] **Sync version names** (git tags) along with the versions, and show which versions are on the remote. *(ADR-30 trade-off)* → [[CAD-63]]
+- [X] **Drag and drop to import** files onto the documents panel or the home page. The Importing guide already promises it; only the picker exists. *(Architecture: Imported files are "picked or dropped")* → [[CAD-60]] ✅
+- [X] **Open with CADence** from the operating system (file associations on desktop). *(Volatility analysis, host file exchange)* → [[CAD-62]] ✅
+- [X] **Duplicate** projects and documents. *(Volatility analysis, project workflow)* → [[CAD-60]] ✅
+- [X] **Replace an imported file with a newer version**, keeping the features and instances that use it. *(new)* → [[CAD-61]] ✅
+- [X] **Export or back up a whole project** (one archive with documents and originals), and import it again. *(new)* → [[CAD-62]] ✅
+- [X] **Sync version names** (git tags) along with the versions, and show which versions are on the remote. *(ADR-30 trade-off)* → [[CAD-63]] ✅
 - [ ] **Remember the sign-in** for a remote in the operating system's keychain on the desktop, or sign in with OAuth (GitHub, GitLab). *(ADR-30 trade-off)*
 - [ ] **Own CORS proxy for git sync:** a ready-made, self-hostable proxy (e.g. a Cloudflare Worker template), so sign-ins never pass through a third party. *(ADR-30 trade-off)*
 - [ ] **Three-way merge inside a document** (e.g. two people adding different features to one component), instead of choosing one side. *(ADR-30 trade-off)*
@@ -33,11 +33,11 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 - [ ] **Users, sign-in and sharing.** *(Volatility analysis: deliberately not encapsulated)*
 - [ ] **Real-time collaboration.** Commands keep it possible. *(Volatility analysis: not planned)*
 - [ ] **Large originals in OPFS** instead of IndexedDB, if imports get big. *(ADR-5)*
-- [X] **Templates and starter projects:** new projects from a template (box with lid, wall bracket, enclosure), each with its parameters ready to change. *(new)* → [[CAD-64]]
+- [X] **Templates and starter projects:** new projects from a template (box with lid, wall bracket, enclosure), each with its parameters ready to change. *(new)* → [[CAD-64]] ✅
 - [ ] **Search** across projects and documents, and sorting, folders or tags on the home page. *(new)*
 - [ ] **Trash:** deleted projects and documents can be restored for a while. *(new)*
 - [ ] **Project notes and attachments:** a description, photos, datasheets and links kept with the project. *(new)*
-- [X] **Share a model as one file:** a self-contained HTML viewer (rotate, measure, explode) to send to people without CADence. *(new)* → [[CAD-65]]
+- [X] **Share a model as one file:** a self-contained HTML viewer (rotate, measure, explode) to send to people without CADence. *(new)* → [[CAD-65]] ✅
 
 ## Sketching
 

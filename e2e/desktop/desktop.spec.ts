@@ -22,8 +22,8 @@ let app: ChildProcess | undefined;
 let browser: Browser | undefined;
 let page: Page;
 
-async function launch(): Promise<void> {
-  const started = spawn(executable, [], { env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` } });
+async function launch(files: readonly string[] = []): Promise<void> {
+  const started = spawn(executable, files, { env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` } });
   app = started;
   // What the app said, for when it does not come up.
   let output = '';
@@ -83,7 +83,8 @@ function answerSaveDialog(path: string): Promise<string> {
 ${log}`)))));
 }
 
-test.afterAll(quit);
+// Each test starts the app itself; WebView2 shares its browser process with an app still running.
+test.afterEach(quit);
 
 test('models in project folders, exports through the save dialog, and starts again', async () => {
   // The long form of the path: CI runners' temp folder is an 8.3 name (RUNNER~1), which file dialogs may not keep.
@@ -136,6 +137,22 @@ test('models in project folders, exports through the save dialog, and starts aga
   } finally {
     rmSync(work, { recursive: true, force: true });
     // A failed run must not leave its project behind either.
+    if (folder) rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test('opens files it is started with as a project (Open with CADence)', async () => {
+  let folder: string | undefined;
+  try {
+    await launch([join(repository, 'e2e', 'fixtures', 'wedge.stl')]);
+    await expect(page).toHaveURL(/\/projects\/[^/]+\/documents\//);
+    const projectId = /\/projects\/([^/]+)/.exec(page.url())?.[1] as string;
+    folder = join(dataFolder, 'projects', projectId);
+    await expect(page.getByRole('link', { name: 'wedge' })).toBeVisible();
+    await expect(page.getByTestId('imported-size')).toBeVisible();
+    expect(JSON.parse(readFileSync(join(folder, 'project.json'), 'utf8')).name).toBe('wedge');
+  } finally {
+    await quit();
     if (folder) rmSync(folder, { recursive: true, force: true });
   }
 });

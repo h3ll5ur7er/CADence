@@ -33,5 +33,14 @@ Click **Sync with git** (the arrows in the top bar of the editor) and enter the 
 
 To work on a synced project on another device, click **Open from git…** on the home page and enter the same address. The project opens with all its documents, imported files included, and stays synced.
 
-> [!NOTE]
-> Version names stay on the device where you gave them; sync exchanges the versions themselves.
+Version names travel with the versions. A name given to different versions here and in the repository stays as it is on each side, and the sync says which names those are. In the history, versions the repository does not have yet are marked *not synced yet*.
+
+## New projects, copies and files
+
+- **New project** starts from nothing or from a template: *Box with lid*, *Wall bracket* or *Enclosure*. Templates are ordinary projects whose sizes are project parameters (*width*, *wall*, *screw*, …): change them in the Parameters panel and every part follows.
+- **Duplicate** (the two squares on a project card or a document) makes a copy with new ids: a project copy has its own history, a document copy sits next to the original as *Name (copy)*.
+- **Export as one file** (the arrow on a project card) saves the whole project as a `.cadence` file: documents, imported files, parameters and, if you like, the version history. **Open file…** on the home page (or dropping the file there, or double-clicking it on the desktop) opens it again as a project, here or on another device.
+
+## Share a model
+
+**Export → Viewer (HTML, to share)** in a component or an assembly saves one HTML file that anyone can open in a browser, without CADence and offline: turn, pan and zoom the model, hide parts, measure distances between two points, and explode assemblies with a slider.

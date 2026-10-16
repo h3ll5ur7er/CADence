@@ -2,7 +2,7 @@ import type { ProjectId, ProjectRemote, RemoteCredentials, Timestamp } from '@co
 import type * as IsomorphicGit from 'isomorphic-git';
 import type { HttpClient } from 'isomorphic-git';
 import { type FileSystem, joinPath } from '@core/utilities/file-system';
-import { InvalidVersionNameError, RemoteError, type Version, type VersionAccess, type VersionFile } from './version-access';
+import { type HistoryFile, InvalidVersionNameError, RemoteError, type Version, type VersionAccess, type VersionFile } from './version-access';
 
 type Git = typeof IsomorphicGit;
 
@@ -143,11 +143,15 @@ export class GitVersionAccess implements VersionAccess {
       names.set(oid, [...(names.get(oid) ?? []), tag]);
     }
     const log = await git.log({ fs, gitdir, ref: 'main', ...(path ? { filepath: path } : {}) });
+    // What the remote had at the last fetch.
+    const remoteHead = await git.resolveRef({ fs, gitdir, ref: 'refs/remotes/origin/main' }).catch(() => undefined);
+    const shared = remoteHead ? new Set((await git.log({ fs, gitdir, ref: remoteHead })).map((entry) => entry.oid)) : undefined;
     return log.map((entry) => ({
       id: entry.oid,
       time: new Date(entry.commit.committer.timestamp * 1000).toISOString(),
       message: entry.commit.message.trim(),
       names: names.get(entry.oid) ?? [],
+      ...(shared ? { shared: shared.has(entry.oid) } : {}),
     }));
   }
 
@@ -201,6 +205,28 @@ export class GitVersionAccess implements VersionAccess {
     await this.storage.remove(this.gitdirOf(projectId));
   }
 
+  async exportHistory(projectId: ProjectId): Promise<HistoryFile[]> {
+    const files: HistoryFile[] = [];
+    const walk = async (folder: string, prefix: string): Promise<void> => {
+      for (const name of await this.storage.list(folder)) {
+        const path = joinPath(folder, name);
+        if (await this.storage.isDirectory(path)) await walk(path, `${prefix}${name}/`);
+        else files.push({ path: `${prefix}${name}`, bytes: await this.storage.readBytes(path) });
+      }
+    };
+    await walk(this.gitdirOf(projectId), '');
+    return files;
+  }
+
+  async importHistory(projectId: ProjectId, files: readonly HistoryFile[]): Promise<void> {
+    const gitdir = this.gitdirOf(projectId);
+    await this.storage.remove(gitdir);
+    for (const file of files) {
+      if (file.path.split('/').some((part) => part === '..' || part === '')) continue;
+      await this.storage.writeBytes(joinPath(gitdir, file.path), file.bytes);
+    }
+  }
+
   async fetch(projectId: ProjectId, remote: ProjectRemote, credentials?: RemoteCredentials): Promise<string | undefined> {
     const git = await this.open(projectId);
     const http = await loadHttp();
@@ -229,6 +255,36 @@ export class GitVersionAccess implements VersionAccess {
       throw remoteError(error, remote.url);
     }
     if (!result.ok) throw new RemoteError('rejected', `${remote.url} did not take the versions: ${result.error ?? 'no reason given'}.`);
+  }
+
+  async syncNames(projectId: ProjectId, remote: ProjectRemote, credentials?: RemoteCredentials): Promise<string[]> {
+    const git = await this.open(projectId);
+    const gitdir = this.gitdirOf(projectId);
+    const { fs } = this;
+    const http = await loadHttp();
+    try {
+      const theirs = new Map(
+        (await git.listServerRefs({ http, ...this.remoteOptions(remote, credentials), prefix: 'refs/tags/' }))
+          .filter((r) => !r.ref.endsWith('^{}'))
+          .map((r) => [r.ref.slice('refs/tags/'.length), r.oid]),
+      );
+      const conflicts: string[] = [];
+      for (const [name, oid] of theirs) {
+        const ours = await git.resolveRef({ fs, gitdir, ref: `refs/tags/${name}` }).catch(() => undefined);
+        if (ours === undefined) {
+          // Only versions we have can be named here.
+          const known = await git.readCommit({ fs, gitdir, oid }).then(() => true, () => false);
+          if (known) await git.writeRef({ fs, gitdir, ref: `refs/tags/${name}`, value: oid });
+        } else if (ours !== oid) conflicts.push(name);
+      }
+      for (const name of await git.listTags({ fs, gitdir })) {
+        if (theirs.has(name)) continue;
+        await git.push({ fs, http, gitdir, ...this.remoteOptions(remote, credentials), ref: `refs/tags/${name}`, remoteRef: `refs/tags/${name}` });
+      }
+      return conflicts.sort();
+    } catch (error) {
+      throw remoteError(error, remote.url);
+    }
   }
 
   private remoteOptions(remote: ProjectRemote, credentials?: RemoteCredentials) {

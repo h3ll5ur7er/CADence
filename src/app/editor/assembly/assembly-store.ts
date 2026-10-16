@@ -234,6 +234,12 @@ export class AssemblyStore {
     if (result && !result.ok) this.error.set(result.error.message);
   }
 
+  /** The assembly as one HTML file with a viewer, to share. */
+  async exportViewer(): Promise<void> {
+    const result = await this.session?.exportViewer();
+    if (result && !result.ok) this.error.set(result.error.message);
+  }
+
   async saveRecording(bytes: Uint8Array, studyName: string): Promise<void> {
     await this.session?.saveRecording(bytes, studyName);
   }

@@ -111,3 +111,18 @@ ul {
   overflow: hidden;
   border-radius: 3px;
 }
+
+/* Files dragged over the panel are imported when dropped. */
+:host(.dropping) {
+  outline: 2px dashed var(--accent);
+  outline-offset: -6px;
+  background: var(--accent-soft);
+}
+
+.drop-hint {
+  font-size: 11px;
+}
+
+label.icon-btn {
+  cursor: pointer;
+}

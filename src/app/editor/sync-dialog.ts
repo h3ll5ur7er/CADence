@@ -121,7 +121,12 @@ export class SyncDialog {
       this.signIns.remember(url, credentials);
       this.reset();
       if (result.value.kind === 'conflicts') return this.conflicts.set(result.value.conflicts);
-      this.outcome.set(outcomes[result.value.kind]);
+      const names = result.value.nameConflicts ?? [];
+      this.outcome.set(
+        names.length
+          ? `${outcomes[result.value.kind]} The repository gives the names ${names.join(', ')} to other versions; here they stay as they are.`
+          : outcomes[result.value.kind],
+      );
       this.synced.emit();
     } finally {
       this.busy.set(false);

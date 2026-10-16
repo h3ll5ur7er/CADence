@@ -8,7 +8,7 @@ import {
 } from '@angular/core';
 
 /** Shared mechanics of a modal native <dialog> that resolves a promise with the user's answer. */
-abstract class ModalDialog<T> {
+export abstract class ModalDialog<T> {
   protected abstract readonly dialog: Signal<ElementRef<HTMLDialogElement>>;
   private resolve: ((answer: T) => void) | undefined;
 
@@ -130,4 +130,40 @@ export class ConfirmDialog extends ModalDialog<boolean> {
     return false;
   }
 
+}
+
+/** Asks how to export a whole project; resolves `undefined` when cancelled. */
+@Component({
+  selector: 'cad-export-project-dialog',
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  template: `
+    <dialog #dialog class="dialog" aria-labelledby="export-project-heading" (close)="finish(undefined)">
+      <form (submit)="$event.preventDefault(); finish({ history: history.checked })">
+        <h2 id="export-project-heading">Export “{{ name() }}”</h2>
+        <p>The project as one file: its documents, imported files and parameters. Open it again with Open file… on the home page, here or on another device.</p>
+        <label class="check"><input #history type="checkbox" checked /> Include the version history</label>
+        <div class="actions">
+          <button type="button" class="btn" (click)="finish(undefined)">Cancel</button>
+          <button type="submit" class="btn btn-primary">Export</button>
+        </div>
+      </form>
+    </dialog>
+  `,
+  styleUrl: './dialogs.scss',
+  styles: `
+    .check { display: flex; align-items: center; gap: var(--space-2); font-size: 13px; }
+  `,
+})
+export class ExportProjectDialog extends ModalDialog<{ readonly history: boolean } | undefined> {
+  protected readonly dialog = viewChild.required<ElementRef<HTMLDialogElement>>('dialog');
+  protected readonly name = signal('');
+
+  ask(projectName: string): Promise<{ readonly history: boolean } | undefined> {
+    this.name.set(projectName);
+    return this.open();
+  }
+
+  protected dismissed(): undefined {
+    return undefined;
+  }
 }

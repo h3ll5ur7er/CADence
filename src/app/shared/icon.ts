@@ -59,6 +59,8 @@ const paths = {
   thread: 'M7 3v18M17 3v18M7 6l10-2M7 10l10-2M7 14l10-2M7 18l10-2',
   draft: 'M4 20h16M7 20l3-16h4l3 16M3 4h18',
   sheet: 'M3 16l9 4 9-4M3 16l9-4 9 4M3 13l9-4 9 4',
+  copy: 'M9 9h11v11H9zM5 15H4V4h11v1',
+  replace: 'M4 8h13l-3-3M20 16H7l3 3',
   info: 'M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0M12 11v6M12 7.5v.5',
   sync: 'M4 12a8 8 0 0 1 14-5.3M20 3v4h-4M20 12a8 8 0 0 1-14 5.3M4 21v-4h4',
   history: 'M3 12a9 9 0 1 0 3-6.7M3 4v4h4M12 7v5l3 2',

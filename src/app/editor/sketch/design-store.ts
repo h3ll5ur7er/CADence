@@ -252,6 +252,12 @@ export class DesignStore {
     if (result && !result.ok) this.error.set(result.error.message);
   }
 
+  /** The model as one HTML file with a viewer, to share. */
+  async exportViewer(): Promise<void> {
+    const result = await this.session?.exportViewer();
+    if (result && !result.ok) this.error.set(result.error.message);
+  }
+
   /** Opens a side panel (or closes it with `undefined`), leaving sketches and dialogs. */
   openPanel(panel: SidePanel | undefined): void {
     this.cancelDraft();

@@ -1,0 +1,450 @@
+{
+  "id": "enclosure",
+  "name": "Enclosure",
+  "description": "A case for a 70 × 50 mm circuit board, with screw posts at its corners; clearance, wall and height are parameters.",
+  "parameters": [
+    {
+      "id": "p1",
+      "name": "board_w",
+      "expression": "70 mm"
+    },
+    {
+      "id": "p2",
+      "name": "board_d",
+      "expression": "50 mm"
+    },
+    {
+      "id": "p3",
+      "name": "clearance",
+      "expression": "2 mm"
+    },
+    {
+      "id": "p4",
+      "name": "wall",
+      "expression": "2 mm"
+    },
+    {
+      "id": "p5",
+      "name": "height",
+      "expression": "25 mm"
+    },
+    {
+      "id": "p6",
+      "name": "post",
+      "expression": "6 mm"
+    }
+  ],
+  "documents": [
+    {
+      "id": "enclosure-1",
+      "projectId": "template",
+      "name": "Case",
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "modifiedAt": "2026-01-01T00:00:00.000Z",
+      "schemaVersion": 2,
+      "kind": "component",
+      "units": "mm",
+      "parameters": [],
+      "timeline": [
+        {
+          "id": "base",
+          "type": "sketch",
+          "name": "Sketch 1",
+          "suppressed": false,
+          "plane": "XY",
+          "entities": [
+            {
+              "id": "outline:p1",
+              "kind": "point",
+              "x": 0,
+              "y": 0
+            },
+            {
+              "id": "outline:p2",
+              "kind": "point",
+              "x": 78,
+              "y": 0
+            },
+            {
+              "id": "outline:p3",
+              "kind": "point",
+              "x": 78,
+              "y": 58
+            },
+            {
+              "id": "outline:p4",
+              "kind": "point",
+              "x": 0,
+              "y": 58
+            },
+            {
+              "id": "outline:bottom",
+              "kind": "line",
+              "start": "outline:p1",
+              "end": "outline:p2",
+              "construction": false
+            },
+            {
+              "id": "outline:right",
+              "kind": "line",
+              "start": "outline:p2",
+              "end": "outline:p3",
+              "construction": false
+            },
+            {
+              "id": "outline:top",
+              "kind": "line",
+              "start": "outline:p3",
+              "end": "outline:p4",
+              "construction": false
+            },
+            {
+              "id": "outline:left",
+              "kind": "line",
+              "start": "outline:p4",
+              "end": "outline:p1",
+              "construction": false
+            }
+          ],
+          "constraints": [
+            {
+              "id": "outline:fix",
+              "kind": "fix",
+              "point": "outline:p1",
+              "x": 0,
+              "y": 0
+            },
+            {
+              "id": "outline:h1",
+              "kind": "horizontal",
+              "line": "outline:bottom"
+            },
+            {
+              "id": "outline:h2",
+              "kind": "horizontal",
+              "line": "outline:top"
+            },
+            {
+              "id": "outline:v1",
+              "kind": "vertical",
+              "line": "outline:right"
+            },
+            {
+              "id": "outline:v2",
+              "kind": "vertical",
+              "line": "outline:left"
+            },
+            {
+              "id": "outline:width",
+              "kind": "horizontal-distance",
+              "points": [
+                "outline:p1",
+                "outline:p2"
+              ],
+              "expression": "board_w + 2 * (clearance + wall)"
+            },
+            {
+              "id": "outline:height",
+              "kind": "vertical-distance",
+              "points": [
+                "outline:p2",
+                "outline:p3"
+              ],
+              "expression": "board_d + 2 * (clearance + wall)"
+            }
+          ]
+        },
+        {
+          "type": "extrude",
+          "id": "case",
+          "name": "Case",
+          "suppressed": false,
+          "sketch": "base",
+          "profiles": [
+            "1ee9639533841e"
+          ],
+          "distance": "height",
+          "direction": "normal",
+          "operation": "new-body"
+        },
+        {
+          "type": "shell",
+          "id": "hollow",
+          "name": "Hollow",
+          "suppressed": false,
+          "faces": [
+            {
+              "kind": "face",
+              "body": "case",
+              "name": "f:case:end"
+            }
+          ],
+          "thickness": "wall"
+        },
+        {
+          "id": "post-sketch",
+          "type": "sketch",
+          "name": "Sketch 2",
+          "suppressed": false,
+          "plane": "XY",
+          "entities": [
+            {
+              "id": "post1:center",
+              "kind": "point",
+              "x": 7.5,
+              "y": 7.5
+            },
+            {
+              "id": "post1",
+              "kind": "circle",
+              "center": "post1:center",
+              "radius": 3,
+              "construction": false
+            },
+            {
+              "id": "post2:center",
+              "kind": "point",
+              "x": 70.5,
+              "y": 7.5
+            },
+            {
+              "id": "post2",
+              "kind": "circle",
+              "center": "post2:center",
+              "radius": 3,
+              "construction": false
+            },
+            {
+              "id": "post3:center",
+              "kind": "point",
+              "x": 70.5,
+              "y": 50.5
+            },
+            {
+              "id": "post3",
+              "kind": "circle",
+              "center": "post3:center",
+              "radius": 3,
+              "construction": false
+            },
+            {
+              "id": "post4:center",
+              "kind": "point",
+              "x": 7.5,
+              "y": 50.5
+            },
+            {
+              "id": "post4",
+              "kind": "circle",
+              "center": "post4:center",
+              "radius": 3,
+              "construction": false
+            }
+          ],
+          "constraints": [
+            {
+              "id": "post1:fix",
+              "kind": "fix",
+              "point": "post1:center",
+              "x": 7.5,
+              "y": 7.5
+            },
+            {
+              "id": "post1:diameter",
+              "kind": "diameter",
+              "curve": "post1",
+              "expression": "post"
+            },
+            {
+              "id": "post2:fix",
+              "kind": "fix",
+              "point": "post2:center",
+              "x": 70.5,
+              "y": 7.5
+            },
+            {
+              "id": "post2:diameter",
+              "kind": "diameter",
+              "curve": "post2",
+              "expression": "post"
+            },
+            {
+              "id": "post3:fix",
+              "kind": "fix",
+              "point": "post3:center",
+              "x": 70.5,
+              "y": 50.5
+            },
+            {
+              "id": "post3:diameter",
+              "kind": "diameter",
+              "curve": "post3",
+              "expression": "post"
+            },
+            {
+              "id": "post4:fix",
+              "kind": "fix",
+              "point": "post4:center",
+              "x": 7.5,
+              "y": 50.5
+            },
+            {
+              "id": "post4:diameter",
+              "kind": "diameter",
+              "curve": "post4",
+              "expression": "post"
+            }
+          ]
+        },
+        {
+          "type": "extrude",
+          "id": "posts",
+          "name": "Posts",
+          "suppressed": false,
+          "sketch": "post-sketch",
+          "profiles": [
+            "0399139de9fb7a",
+            "0f8704bef8fe54",
+            "116bbb4f304954",
+            "15025f0323b99c"
+          ],
+          "distance": "8 mm",
+          "direction": "normal",
+          "operation": "join"
+        },
+        {
+          "id": "screws",
+          "type": "sketch",
+          "name": "Sketch 3",
+          "suppressed": false,
+          "plane": "XY",
+          "entities": [
+            {
+              "id": "screw1:center",
+              "kind": "point",
+              "x": 7.5,
+              "y": 7.5
+            },
+            {
+              "id": "screw1",
+              "kind": "circle",
+              "center": "screw1:center",
+              "radius": 1.1,
+              "construction": false
+            },
+            {
+              "id": "screw2:center",
+              "kind": "point",
+              "x": 70.5,
+              "y": 7.5
+            },
+            {
+              "id": "screw2",
+              "kind": "circle",
+              "center": "screw2:center",
+              "radius": 1.1,
+              "construction": false
+            },
+            {
+              "id": "screw3:center",
+              "kind": "point",
+              "x": 70.5,
+              "y": 50.5
+            },
+            {
+              "id": "screw3",
+              "kind": "circle",
+              "center": "screw3:center",
+              "radius": 1.1,
+              "construction": false
+            },
+            {
+              "id": "screw4:center",
+              "kind": "point",
+              "x": 7.5,
+              "y": 50.5
+            },
+            {
+              "id": "screw4",
+              "kind": "circle",
+              "center": "screw4:center",
+              "radius": 1.1,
+              "construction": false
+            }
+          ],
+          "constraints": [
+            {
+              "id": "screw1:fix",
+              "kind": "fix",
+              "point": "screw1:center",
+              "x": 7.5,
+              "y": 7.5
+            },
+            {
+              "id": "screw1:diameter",
+              "kind": "diameter",
+              "curve": "screw1",
+              "expression": "2.2 mm"
+            },
+            {
+              "id": "screw2:fix",
+              "kind": "fix",
+              "point": "screw2:center",
+              "x": 70.5,
+              "y": 7.5
+            },
+            {
+              "id": "screw2:diameter",
+              "kind": "diameter",
+              "curve": "screw2",
+              "expression": "2.2 mm"
+            },
+            {
+              "id": "screw3:fix",
+              "kind": "fix",
+              "point": "screw3:center",
+              "x": 70.5,
+              "y": 50.5
+            },
+            {
+              "id": "screw3:diameter",
+              "kind": "diameter",
+              "curve": "screw3",
+              "expression": "2.2 mm"
+            },
+            {
+              "id": "screw4:fix",
+              "kind": "fix",
+              "point": "screw4:center",
+              "x": 7.5,
+              "y": 50.5
+            },
+            {
+              "id": "screw4:diameter",
+              "kind": "diameter",
+              "curve": "screw4",
+              "expression": "2.2 mm"
+            }
+          ]
+        },
+        {
+          "type": "extrude",
+          "id": "screw-holes",
+          "name": "Screw holes",
+          "suppressed": false,
+          "sketch": "screws",
+          "profiles": [
+            "023dbe08712449",
+            "060301def05468",
+            "0c53e96fa2e4a3",
+            "13492780d90770"
+          ],
+          "distance": "8 mm",
+          "direction": "normal",
+          "operation": "cut"
+        }
+      ],
+      "rollbackIndex": 0
+    }
+  ]
+}

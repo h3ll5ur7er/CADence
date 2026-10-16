@@ -65,6 +65,12 @@ Each project has a version history: a git repository with one commit per version
 
 `Project.remote` (`{ url, corsProxy? }`) is where the versions are synced; it is a setting of this device and not part of the versions. Sign-ins are never stored.
 
+## Archives and templates
+
+A project archive (`.cadence`) is a zip with `cadence.json` (`{ format: 'cadence-project', version: 1, name, parameters }`), `documents/<id>.json` (without `projectId`), `originals/<assetId>` and, optionally, `history/…`, the files of the project's git repository. Opening one keeps the documents' ids and history unless this device has those documents already; then they get new ids and the history starts anew.
+
+A template (`ProjectTemplate`, `public/templates/<id>.json`) is `{ id, name, description, parameters, documents }`: a project without originals. Templates are made with the scripting API ([[src/automation/templates.ts]]); a test builds them, compares them with the files and checks their volumes.
+
 ## Component results
 
 The one exception to "geometry is never stored" is the **published result** of a component: the B-rep of each body (OCCT text) with its face and edge names in topological order, written by the Design Manager after every change and stamped with the component's `modifiedAt`. It is a cache, so deleting it is always safe; assemblies request a regeneration when it is missing or its stamp is not the component's `modifiedAt` ([[Architecture/Decisions#ADR-11]]). The stamp also covers the project parameters (`resultStamp`: `modifiedAt#<hash>`), and every configuration has a result of its own, kept under `<component>@<configuration>` (`resultKey`).

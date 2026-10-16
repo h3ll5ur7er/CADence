@@ -1,17 +1,21 @@
-import { ChangeDetectionStrategy, Component, inject, resource, viewChild } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, resource, signal, viewChild } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
-import type { ProjectId, ProjectSummary } from '@core/contracts';
+import type { ProjectId, ProjectSummary, ProjectTemplate } from '@core/contracts';
 import { PROJECT_MANAGER } from '../core.providers';
-import { ConfirmDialog, NameDialog } from '../shared/dialogs';
+import { importAccept } from '../editor/documents-panel';
+import { ConfirmDialog, ExportProjectDialog, NameDialog } from '../shared/dialogs';
+import { carriesFiles, droppedFiles } from '../shared/drop';
+import { FileOpener } from '../shared/file-opener';
 import { plural, relativeTime } from '../shared/format';
 import { Thumbnail } from '../shared/thumbnail';
 import { Icon } from '../shared/icon';
 import { AboutDialog } from '../about/about-dialog';
+import { NewProjectDialog, type TemplateEntry } from './new-project-dialog';
 import { OpenRemoteDialog } from './open-remote-dialog';
 
 @Component({
   selector: 'cad-home-page',
-  imports: [RouterLink, Icon, NameDialog, ConfirmDialog, Thumbnail, OpenRemoteDialog, AboutDialog],
+  imports: [RouterLink, Icon, NameDialog, ConfirmDialog, ExportProjectDialog, NewProjectDialog, Thumbnail, OpenRemoteDialog, AboutDialog],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './home-page.html',
   styleUrl: './home-page.scss',
@@ -21,6 +25,13 @@ export class HomePage {
   private readonly router = inject(Router);
   private readonly nameDialog = viewChild.required(NameDialog);
   private readonly confirmDialog = viewChild.required(ConfirmDialog);
+  private readonly exportDialog = viewChild.required(ExportProjectDialog);
+  private readonly newProjectDialog = viewChild.required(NewProjectDialog);
+  private readonly opener = inject(FileOpener);
+  protected readonly accept = `.cadence,${importAccept}`;
+  protected readonly message = signal<string | undefined>(undefined);
+  /** Files are dragged over the projects. */
+  protected readonly dropping = signal(false);
 
   protected readonly projects = resource({ loader: () => this.projectManager.listProjects() });
   /** A project's picture: its most recently changed document's. */
@@ -29,16 +40,74 @@ export class HomePage {
   protected readonly relativeTime = relativeTime;
 
   protected async createProject(): Promise<void> {
-    const name = await this.nameDialog().ask({
-      heading: 'New project',
-      confirmLabel: 'Create project',
-      initial: 'Untitled project',
-    });
-    if (!name) return;
-    const result = await this.projectManager.createProject(name);
-    if (!result.ok) return;
+    const choice = await this.newProjectDialog().ask(await this.templates());
+    if (!choice) return;
+    const result = choice.template
+      ? await this.projectManager.createFromTemplate({ ...(await this.fetchJson<ProjectTemplate>(`templates/${choice.template}.json`)), name: choice.name })
+      : await this.projectManager.createProject(choice.name);
+    if (!result.ok) return this.failed(result.error.message);
     const { project, firstDocument } = result.value;
     await this.router.navigate(['/projects', project.id, 'documents', firstDocument.id]);
+  }
+
+  /** The templates the app ships (public/templates, made by src/automation/templates.ts). */
+  private async templates(): Promise<readonly TemplateEntry[]> {
+    try {
+      return await this.fetchJson<TemplateEntry[]>('templates/index.json');
+    } catch {
+      return [];
+    }
+  }
+
+  private async fetchJson<T>(path: string): Promise<T> {
+    const response = await fetch(new URL(path, document.baseURI));
+    if (!response.ok) throw new Error(`${path}: ${response.status}`);
+    return (await response.json()) as T;
+  }
+
+  protected picked(input: HTMLInputElement): void {
+    const files = [...(input.files ?? [])];
+    input.value = '';
+    void this.openFiles(files);
+  }
+
+  protected dragOver(event: DragEvent): void {
+    if (!carriesFiles(event)) return;
+    event.preventDefault();
+    this.dropping.set(true);
+  }
+
+  protected dropped(event: DragEvent): void {
+    this.dropping.set(false);
+    if (!carriesFiles(event)) return;
+    event.preventDefault();
+    void this.openFiles(droppedFiles(event));
+  }
+
+  private async openFiles(files: readonly File[]): Promise<void> {
+    if (!files.length) return;
+    const result = await this.opener.open(await Promise.all(files.map(async (file) => ({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) }))));
+    if (!result.ok) return this.failed(result.error.message);
+    this.message.set(undefined);
+    if (result.value) await this.router.navigate(['/projects', result.value.id]);
+  }
+
+  private failed(message: string): void {
+    this.message.set(message);
+    this.projects.reload();
+  }
+
+  protected async duplicate(project: ProjectSummary): Promise<void> {
+    const result = await this.projectManager.duplicateProject(project.id);
+    this.message.set(result.ok ? undefined : result.error.message);
+    this.projects.reload();
+  }
+
+  protected async exportProject(project: ProjectSummary): Promise<void> {
+    const options = await this.exportDialog().ask(project.name);
+    if (!options) return;
+    const result = await this.projectManager.exportProject(project.id, options);
+    this.message.set(result.ok ? undefined : result.error.message);
   }
 
   protected async openProject(project: ProjectSummary): Promise<void> {

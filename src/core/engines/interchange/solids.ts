@@ -1,4 +1,4 @@
-import { zip } from './zip';
+import { zip } from '@core/utilities/archive';
 
 /** A triangulated body to write: positions (xyz) and triangle indices, in millimetres. */
 export interface TriangleMesh {

@@ -1,6 +1,7 @@
-import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, input, output, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import type { DocumentId, CreatableDocumentKind, DocumentKind, DocumentSummary } from '@core/contracts';
+import { carriesFiles, droppedFiles } from '../shared/drop';
 import { Thumbnail } from '../shared/thumbnail';
 import { Icon, type IconName } from '../shared/icon';
 
@@ -12,9 +13,15 @@ const groups: readonly { kind: DocumentKind; label: string; icon: IconName }[] =
   { kind: 'imported', label: 'Imported', icon: 'imported' },
 ];
 
-/** The project's documents, grouped by kind, with create, import, rename and delete. */
+/** The project's documents, grouped by kind, with create, import (picked or dropped), duplicate, replace, rename and delete. */
 @Component({
   selector: 'cad-documents-panel',
+  host: {
+    '[class.dropping]': 'dropping()',
+    '(dragover)': 'dragOver($event)',
+    '(dragleave)': 'dropping.set(false)',
+    '(drop)': 'dropped($event)',
+  },
   imports: [Thumbnail, RouterLink, Icon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './documents-panel.html',
@@ -33,12 +40,37 @@ export class DocumentsPanel {
   readonly rename = output<DocumentSummary>();
   readonly remove = output<DocumentSummary>();
   readonly history = output<DocumentSummary>();
+  readonly duplicate = output<DocumentSummary>();
+  /** A newer file for an imported document. */
+  readonly replace = output<{ readonly document: DocumentSummary; readonly file: File }>();
+  /** Files are dragged over the panel. */
+  protected readonly dropping = signal(false);
 
   protected readonly groups = groups;
   protected readonly accept = importAccept;
 
   protected ofKind(kind: DocumentKind): DocumentSummary[] {
     return this.documents().filter((d) => d.kind === kind);
+  }
+
+  protected replaced(document: DocumentSummary, input: HTMLInputElement): void {
+    const file = input.files?.[0];
+    input.value = '';
+    if (file) this.replace.emit({ document, file });
+  }
+
+  protected dragOver(event: DragEvent): void {
+    if (!carriesFiles(event)) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+    this.dropping.set(true);
+  }
+
+  protected dropped(event: DragEvent): void {
+    this.dropping.set(false);
+    if (!carriesFiles(event)) return;
+    event.preventDefault();
+    for (const file of droppedFiles(event)) this.importFile.emit(file);
   }
 
   protected picked(input: HTMLInputElement): void {

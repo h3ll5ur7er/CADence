@@ -44,6 +44,7 @@ import type {
   SolidFormat,
 } from './design-manager';
 import { type Derived, Regeneration, type RegenerationContext } from './regeneration';
+import { viewerHtml } from '@core/utilities/viewer';
 
 export interface DesignManagerDependencies {
   /** Where project parameters are read. */
@@ -211,6 +212,21 @@ class Session implements DesignSession {
     if (!pattern.ok) return pattern;
     const bytes = await this.deps.interchange.exportOutlines(pattern.value.cuts, pattern.value.bends, format);
     await this.deps.externalFiles.deliver({ name: `${document.name} - flat pattern.${format}`, mediaType: drawingTypes[format], bytes });
+    return ok(undefined);
+  }
+
+  async exportViewer(): Promise<Result<void>> {
+    const { document } = this.current;
+    const names = new Map(this.namedBodies(this.current.derived).map((b) => [b.id, b.name]));
+    const parts = this.state()
+      .bodies.filter((body) => !document.appearances?.[body.body]?.hidden)
+      .map((body) => {
+        const look = document.appearances?.[body.body];
+        return { name: names.get(body.body) ?? body.body, ...(look?.color ? { color: look.color } : {}), opacity: look?.opacity ?? 1, positions: body.positions, normals: body.normals, indices: body.indices, edges: body.edgePositions };
+      });
+    if (parts.length === 0) return fail({ code: 'nothing-to-export', message: 'There are no bodies to show yet.' });
+    const bytes = new TextEncoder().encode(viewerHtml({ title: document.name, parts }));
+    await this.deps.externalFiles.deliver({ name: `${document.name}.html`, mediaType: 'text/html', bytes });
     return ok(undefined);
   }
 

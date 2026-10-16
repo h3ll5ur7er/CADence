@@ -1,5 +1,6 @@
-import { ChangeDetectionStrategy, Component } from '@angular/core';
-import { RouterOutlet } from '@angular/router';
+import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { Router, RouterOutlet } from '@angular/router';
+import { FileOpener, OPENED_FILES } from './shared/file-opener';
 import { UpdateNotice } from './shared/update-notice';
 
 @Component({
@@ -9,4 +10,13 @@ import { UpdateNotice } from './shared/update-notice';
   template: '<router-outlet /><cad-update-notice />',
   styles: ':host { display: contents; }',
 })
-export class App {}
+export class App {
+  constructor() {
+    // Files the app was started with (desktop: Open with CADence) open as a project.
+    const opener = inject(FileOpener);
+    const router = inject(Router);
+    void inject(OPENED_FILES)()
+      .then((files) => opener.open(files))
+      .then((result) => (result.ok && result.value ? router.navigate(['/projects', result.value.id]) : undefined));
+  }
+}

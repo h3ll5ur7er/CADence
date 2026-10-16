@@ -9,6 +9,7 @@ import type {
   ProjectId,
   ProjectRemote,
   ProjectSummary,
+  ProjectTemplate,
   RemoteCredentials,
   Result,
   SketchEntity,
@@ -73,6 +74,19 @@ export interface ProjectManager {
   deleteDocument(id: DocumentId): Promise<void>;
 
   importFile(projectId: ProjectId, file: ExternalFile): Promise<Result<DocumentSummary>>;
+  /** Replaces an imported document's file by a newer one of the same kind (3D or drawing); what uses it regenerates. */
+  replaceImported(id: DocumentId, file: ExternalFile): Promise<Result<void>>;
+
+  /** A copy of the project (documents, originals, parameters) with a history of its own. */
+  duplicateProject(id: ProjectId): Promise<Result<ProjectSummary>>;
+  /** A copy of a document in its project, named "<name> (copy)". */
+  duplicateDocument(id: DocumentId): Promise<Result<DocumentSummary>>;
+  /** Hands the whole project over as one archive file (`.cadence`), with its version history if asked. */
+  exportProject(id: ProjectId, options?: { readonly history?: boolean }): Promise<Result<void>>;
+  /** A new project from an archive file made by `exportProject`. */
+  importProject(file: ExternalFile): Promise<Result<ProjectSummary>>;
+  /** A new project from a template; its first component is ready to open. */
+  createFromTemplate(template: ProjectTemplate): Promise<Result<CreatedProject>>;
 
   /** Records the project as a version now (a few seconds after saves this happens on its own). */
   recordVersion(id: ProjectId, message?: string): Promise<void>;

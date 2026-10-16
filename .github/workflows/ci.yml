@@ -74,8 +74,8 @@ jobs:
             Start-Process "$env:RUNNER_TEMP\webview2.exe" -ArgumentList '/silent', '/install' -Wait
           }
       - run: npm ci
-      - name: Build the desktop app
-        run: npx tauri build --no-bundle
+      - name: Build the desktop app (with WebView2 remote debugging, for the test)
+        run: npx tauri build --no-bundle --config src-tauri/tauri.test.conf.json
       - name: Smoke test (WebView2 remote debugging, the native save dialog)
         run: npm run e2e:desktop
       - name: What the desktop showed, and what ran (on failure)

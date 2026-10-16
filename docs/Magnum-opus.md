@@ -6,7 +6,10 @@ A nine-cylinder radial aircraft engine, modelled entirely by an AI agent through
 
 ## Status
 
-All parts are modelled except the internal ring gear of the propeller reduction, which needs [[CAD-98]]. The assembly (joints, links, patterns, motion study, exploded view) is not started: the MCP server cannot edit assemblies yet ([[CAD-97]]). The plan for it is below, so it can be built as soon as the tools exist.
+All parts are modelled except the internal ring gear of the propeller reduction. The assembly (joints, links, patterns, motion study, exploded view) is not started; the plan for it is below. Every finding is fixed in phase 26 ([[Roadmap]]): the ring gear ([[CAD-98]]) and the assembly tools ([[CAD-97]]) exist now, and the valve train can follow the cam ring ([[CAD-99]]).
+
+> [!NOTE]
+> With phase 26 the existing parts regenerate without errors, but some names changed: gear teeth have fewer faces ([[CAD-107]]), faces split into pieces keep their numbers ([[CAD-104]]), and patterned bodies are numbered without gaps (the master rod's knuckle pins are `kp`, then `kpat`, `kpat:2`, … `kpat:7`).
 
 ## Why a radial engine
 
@@ -32,7 +35,7 @@ Project parameters (used by the components):
 | `head` | 160 mm | Distance of the barrel top from the crank axis |
 
 > [!NOTE]
-> The master rod's small end (110 mm) and the link rod's length (76 mm) are drawn with numbers, not with `rod` and `link`: the sketch shorthands do not take expressions for positions ([[CAD-108]]).
+> The master rod's small end (110 mm) and the link rod's length (76 mm) are drawn with numbers, not with `rod` and `link`: the sketch shorthands did not take expressions for positions. Since [[CAD-108]] they do (`"x": "rod"`).
 
 ## Coordinates
 
@@ -90,7 +93,7 @@ Positions along the crank axis (engine z, mm), needed for joint offsets:
 
 ## Assembly plan
 
-To build once [[CAD-97]] exists:
+With the assembly tools of [[CAD-97]]:
 
 ```mermaid
 flowchart LR
@@ -109,33 +112,33 @@ flowchart LR
 
 - **Grounded:** both crankcase halves, nine barrels (with their transforms), nose case, rear case, stand, ring gear.
 - **Joints:** crankshaft revolute on the crankcase (origins); master rod revolute on the crankpin (origin offset 25 mm along X); piston 1 revolute at the master rod's small end (offset 110); link rod *i* revolute on knuckle pin *i* (offset 35 mm at 40° × *i*); piston *i* revolute at the link rod's small end (offset 76); every piston **cylindrical** in its barrel (barrel origin, piston crown face). Wrist pins rigid in their pistons; sun, crank gear rigid on the crankshaft; hub and spinner rigid on the carrier; lay gear revolute on the nose case at r 54; cam ring and carrier revolute on the crank axis; planets revolute on the carrier's pins. That is nine closed loops through the master rod.
-- **Links:** lay gear from the crankshaft (−48/60), cam ring from the lay gear (−12/96), carrier from the crankshaft (2/7), each planet from the crankshaft (−20/21). The valve train cannot follow the cam: [[CAD-99]].
+- **Links:** lay gear from the crankshaft (−48/60), cam ring from the lay gear (−12/96), carrier from the crankshaft (2/7, a *Sun to planet carrier* link), each planet from the crankshaft (−20/21, *Sun to planet*). The tappets follow the cam ring by cam links ([[CAD-99]]): a profile of five lobes over the ring's turn.
 - **Patterns:** heads, plugs, pushrods, pipes and magnetos: one instance each, rigid on barrel 1, then a circular pattern of 9 about the crank axis. Blades: a circular pattern of 3 on the hub (copies of a turning instance about the same axis turn with it).
 - **Motion study:** a constant crank speed (60 rpm for 2 s shows two turns: the propeller turns 4/7, the cam ring 1/5); collision check on.
 - **Exploded view:** propeller and spinner forward; nose case, carrier, planets, sun, gears along the axis; then for each cylinder heads, barrels and pistons outwards along its own direction (one step per cylinder and part: 27 steps, since a step moves along one direction).
 
 ## Findings
 
-| Task | What | Kind |
-| --- | --- | --- |
-| [[CAD-97]] | The MCP server cannot edit assemblies | missing, blocking |
-| [[CAD-98]] | No internal (ring) gears | missing, blocking |
-| [[CAD-99]] | No cam joints; motion links are linear | missing |
-| [[CAD-100]] | Agents cannot see exploded views or motion | missing |
-| [[CAD-101]] | Round and bevel faces named after the first edge | bug |
-| [[CAD-102]] | `edit_component` answers with everything; a gear overflows the client | improvement, high |
-| [[CAD-103]] | Pad on a revolved body: "not a valid solid" for some sizes | bug, high |
-| [[CAD-104]] | Face names on shared surfaces; `~n` renumbering re-binds references | bug |
-| [[CAD-105]] | Modelled thread ending at a shoulder cuts nothing, reports success | bug |
-| [[CAD-106]] | Loft from a circle into splines twists | bug |
-| [[CAD-107]] | Gear teeth are polygons: 23 faces per tooth | improvement |
-| [[CAD-108]] | MCP and sketcher papercuts | improvement |
+| Task | What | Kind | Fixed by |
+| --- | --- | --- | --- |
+| [[CAD-97]] | The MCP server cannot edit assemblies | missing, blocking | assembly tools ✅ |
+| [[CAD-98]] | No internal (ring) gears | missing, blocking | ring gear parts, planetary links ✅ |
+| [[CAD-99]] | No cam joints; motion links are linear | missing | cam links with a profile ✅ |
+| [[CAD-100]] | Agents cannot see exploded views or motion | missing | pictures exploded, at a moment, animated; free camera, focus, hide, ghost ✅ |
+| [[CAD-101]] | Round and bevel faces named after the first edge | bug | named after the nearest picked edge ✅ |
+| [[CAD-102]] | `edit_component` answers with everything; a gear overflows the client | improvement, high | answers with the changes; filters ✅ |
+| [[CAD-103]] | Pad on a revolved body: "not a valid solid" for some sizes | bug, high | booleans that fall back ✅ |
+| [[CAD-104]] | Face names on shared surfaces; `~n` renumbering re-binds references | bug | kept names ✅ |
+| [[CAD-105]] | Modelled thread ending at a shoulder cuts nothing, reports success | bug | groove stops short; refusals ✅ |
+| [[CAD-106]] | Loft from a circle into splines twists | bug | sections lined up ✅ |
+| [[CAD-107]] | Gear teeth are polygons: 23 faces per tooth | improvement | smooth flanks: 4 to 8 faces ✅ |
+| [[CAD-108]] | MCP and sketcher papercuts | improvement | ✅ |
 
 What worked well: revolves of long outlines, sweeps along line-arc-line paths, lofts through spline sections, circular patterns of cuts and of new bodies, mirrors, configurations (two crankcase halves from one component), the gear generator's geometry, modelled threads (from the shoulder), fillets and chamfers, and `render_picture` for checking every part.
 
 ## Tips for agents
 
 - Sketch outlines with `add-polygon` and many points (fins, grooves) and revolve them: one feature instead of dozens.
-- A part feature (gear, screw) needs a sketch point; add one coincident with the origin.
-- After a face is split by a later feature its name gets `~1`, `~2`; refer to the exact piece, and expect the numbers to move ([[CAD-104]]).
-- Large answers: until [[CAD-102]] is done, keep gears out of components that are edited often, and read oversized answers from the saved file.
+- A part feature (gear, screw) or a hole may sit at the sketch origin: `points: ["origin"]`.
+- After a face is split by a later feature its name gets `~1`, `~2`; refer to the exact piece, or pass a hint (the face's centre from `get_component`). Faces a later feature does not touch keep their numbers.
+- Keep answers small: `edit_component` answers with what changed; ask `get_component` for `only: ["faces"]`, one `body`, a `match` pattern or `near` a point.

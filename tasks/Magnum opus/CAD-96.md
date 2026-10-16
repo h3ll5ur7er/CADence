@@ -11,7 +11,7 @@ Model a nine-cylinder radial aircraft engine through the MCP server, as an AI ag
 
 Done means: every part is modelled, the assembly animates (crank driving all nine pistons, the cam ring and the propeller through the reduction gear) and comes apart in an exploded view, and the findings are filed.
 
-**Status (2026-10-16): stopped, waiting for [[CAD-97]] (assembly) and [[CAD-98]] (ring gear).** All other parts are modelled in the project *Magnum Opus R-9 radial engine*.
+**Status (2026-10-16): unblocked.** All findings ([[CAD-97]] to [[CAD-108]]) are done in phase 26; the ring gear and the assembly can be built now. All other parts are modelled in the project *Magnum Opus R-9 radial engine*, and regenerate without errors with phase 26 (some face and body names changed, see [[Magnum opus#Status]]).
 
 ## Parts (components, through `edit_component`)
 

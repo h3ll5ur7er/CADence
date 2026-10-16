@@ -135,7 +135,7 @@ The toolbar and properties panel show how far the sketch is defined:
 - **N degrees of freedom**: some geometry can still move. What can move is drawn in blue, with arrows at the points showing which way they can go (one arrow: along a line or curve; a cross: anywhere); what is already defined is drawn in the text colour. Add relations or dimensions until nothing can move, or click **Fully define**: CADence adds the relations and dimensions the sketch shows as drawn (horizontal and vertical lines, lengths, sizes, positions from the origin) in one undoable step.
 - **Fully constrained**: nothing can move without changing a dimension (drawn in the text colour).
 
-A change that contradicts existing constraints is refused, and a message names the relations involved and lists those you could remove instead: **Remove and apply** removes that one and makes your change. A change that would shrink a curve to nothing, such as a line both horizontal and vertical, is refused too. Undo and redo with Ctrl+Z and Ctrl+Y.
+A change that contradicts existing constraints is refused, and a message names the relations involved, says whether they only repeat each other (*redundant*, such as a point on a line where that line touches a circle, and on the circle too) or cannot all hold (*contradictory*), and lists those you could remove instead: **Remove and apply** removes that one and makes your change. A change that would shrink a curve to nothing, such as a line both horizontal and vertical, is refused too. Undo and redo with Ctrl+Z and Ctrl+Y.
 
 The **properties panel** lists the sketch's closed regions (profiles) and their areas. A circle inside a rectangle gives two profiles: the plate with a hole, and the disc.
 

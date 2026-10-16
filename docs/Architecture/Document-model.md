@@ -190,8 +190,8 @@ The Modeling Engine names every face after each feature (*generative naming*, [[
 | Face | Name |
 | --- | --- |
 | Extrude cap | `f:<feature>:start` / `f:<feature>:end` |
-| Extrude or revolve side | `f:<feature>:side:<sketch curve id>`, recognised because the curve sweeps exactly that surface (a plane for a line, a cylinder, cone, sphere or torus for others) |
-| Fillet or chamfer face | `f:<feature>:round:<edge name>` / `f:<feature>:bevel:<edge name>` |
+| Extrude or revolve side | `f:<feature>:side:<sketch curve id>`, recognised because the curve sweeps exactly that surface (a plane for a line, a cylinder, cone, sphere or torus for others); when curves of different sketch curves sweep one surface, the face is the one the middle of its own curve passes through ([[CAD-104]]) |
+| Fillet or chamfer face | `f:<feature>:round:<edge name>` / `f:<feature>:bevel:<edge name>`, after the picked edge nearest the face ([[CAD-101]]) |
 | Shell inner face | `f:<feature>:inner` |
 | Pattern or mirror copy | the original's name plus `@<feature>.<n>` |
 | Loft or sweep side | `f:<feature>:side:<sketch curve id>`, from the kernel's history: the faces generated from that profile edge (along the whole path) |
@@ -204,11 +204,13 @@ The Modeling Engine names every face after each feature (*generative naming*, [[
 | Edge flange | `f:<feature>:bend:<edge>` (round), `f:<feature>:flange:<edge>` (flat) |
 | Anything else new | `f:<feature>:new:<n>`, in order of position |
 
-- **Inherited names.** A face that lies on the same exact surface as a face of the feature's inputs keeps that face's name, however it was trimmed. Planes also match with the other side facing (a hole's wall faces the other way to the tool face that cut it). Freeform faces (B-splines, and cones and tori, whose parameters the kernel build cannot read) match when probe points of the earlier face's surface lie on the new face's surface. This is why changing an upstream dimension keeps downstream references valid: the names follow the design intent, not the kernel's numbering.
+- **Kept names.** A face or edge a feature leaves as it was (the same element of the kernel) keeps its name, `~n` included, so references to it hold whatever the feature does elsewhere ([[CAD-104]], [[Architecture/Decisions#ADR-44]]).
+- **Inherited names.** A face that lies on the same exact surface as a face of the feature's inputs keeps that face's name, however it was trimmed; when several earlier faces with different names lie on that surface, it takes the name of the one it is a piece of. Planes also match with the other side facing (a hole's wall faces the other way to the tool face that cut it). Freeform faces (B-splines, and cones and tori, whose parameters the kernel build cannot read) match when probe points of the earlier face's surface lie on the new face's surface. This is why changing an upstream dimension keeps downstream references valid: the names follow the design intent, not the kernel's numbering.
 - **Edges** are named after the faces they separate: `e:<face A>|<face B>`.
 - **Vertices** are named after the edges that meet there: `v:<edge>&<edge>&…`, sorted. A vertex reference that no longer matches resolves only where it was picked.
-- **Repeated names.** When a name occurs more than once (a face split in two), `~1`, `~2` … are appended in order of position.
-- **Resolution.** A reference resolves by exact name, then among the split pieces of that name (nearest to the hint). A reference that cannot be resolved makes its feature fail with "… no longer exists. Pick it again". It is never silently re-bound to a different face.
+- **Repeated names.** When a name occurs more than once (a face split in two), `~1`, `~2` … are appended in order of position, skipping the numbers that kept names hold.
+- **Resolution.** A reference resolves by exact name, then among the split pieces of that name (nearest to the hint). Without a hint, the base name of pieces that lie apart (a shank and a ring a hex split) is refused: "… is split into 2 pieces (…). Name one of them, or pick it again" ([[CAD-105]]); pieces that touch (a hole's two half walls) are one face to the user. A reference that cannot be resolved makes its feature fail with "… no longer exists. Pick it again". It is never silently re-bound to a different face.
+- **Bodies** are named after the feature that made them: `<feature>`, then `<feature>:2`, `:3`, … without gaps.
 
 ## Assemblies
 
@@ -216,7 +218,8 @@ As implemented in [[src/core/contracts/assembly.ts]]:
 
 ```ts
 interface AssemblyDocument { instances: Instance[]; joints: Joint[]; motionStudies: MotionStudy[]; patterns?: InstancePattern[]; links?: MotionLink[]; explodedViews?: ExplodedView[] }
-interface MotionLink { id; name; kind: 'gear' | 'rack' | 'belt'; driver: { joint, dof }; driven: { joint, dof }; ratio; offset }  // driven = offset + ratio × driver
+interface MotionLink { id; name; kind: 'gear' | 'rack' | 'belt' | 'carrier' | 'planet' | 'cam'; driver: { joint, dof }; driven: { joint, dof }; ratio; offset; profile?: [angle, lift][] }
+// driven = offset + ratio × driver; a cam: offset + ratio × lift(driver), its profile smooth over one turn
 interface ExplodedView { id; name; steps: { id; instances: string[]; direction: Vec3; distance }[] }    // steps add up in order
 // MotionStudy: keys may `ease`; drives: { joint, dof, speed }[] (° or mm per second from the start value)
 interface InstancePattern { id; name; kind: 'linear' | 'circular' | 'mirror'; instances: string[]; direction: Vec3; origin: Vec3; count: number; spacing: number }  // copies `<pattern>/<instance>/<k>`

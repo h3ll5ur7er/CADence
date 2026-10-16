@@ -36,7 +36,7 @@ The toolbar above the view has buttons for the everyday features (extrude, revol
 | Shell | faces to open | wall thickness (inward) |
 | Draft | faces to taper; the neutral plane (a plane or a flat face) | angle: the faces lean away from the plane's normal, hinged where they cross it |
 | Construction plane | a flat face, or choose a plane; three vertices for *through three points* | offset; or an axis in the base plane and an angle; or a second, parallel plane (midway) |
-| **Create →** Loft | one profile in each of two or more sketches, in order | smooth or straight between the sections; operation |
+| **Create →** Loft | one profile in each of two or more sketches, in order | smooth or straight between the sections; operation. Sections are lined up first: each runs the same way round as the one before and starts where it matches it best, so a loft from a round shank into blade sections does not twist |
 | **Create →** Sweep | profiles; the path is the curves of another sketch, starting at the profile | operation |
 | **Create →** Hole | (choose the sketch with the hole points) | simple, counterbored or countersunk; diameter; through all or to a depth; teardrop and bridge layer for printing |
 | **Create →** Rib | (choose the sketch with an open line or curve) | thickness, depth, direction |
@@ -60,7 +60,7 @@ Draw the hole centres with the **Point** tool in a sketch on the face, then **Cr
 - **For a screw** fills in the diameter of a clearance hole (ISO 273 medium), a tapping hole or a heat-set insert's hole for M2 to M10.
 - **Fit for printing** widens the hole so a part fits as designed: *press* by nothing, *snug* by 0.15 mm, *loose* by 0.3 mm, each plus the printer's **hole compensation** (set it under **Check manufacturability** with the other printer values; measure it once by printing a test hole).
 
-A **thread** goes on the wall of a hole or a shaft and starts at its open end. ISO metric coarse sizes M2 to M20 are offered; the hole must be between the thread's minor and major diameter (a 5 mm hole for M6), the shaft about its major diameter. A thread is shown as a helix on the face. **Model the thread** cuts the 60° groove into the body instead: slower, but printable.
+A **thread** goes on the wall of a hole or a shaft and starts at its open end. ISO metric coarse sizes M2 to M20 are offered; the hole must be between the thread's minor and major diameter (a 5 mm hole for M6), the shaft about its major diameter. A thread is shown as a helix on the face. **Model the thread** cuts the 60° groove into the body instead: slower, but printable. The groove stops half a groove short of the face's far end, so a thread up to a shoulder (a hex, a flange) is cut too; a thread that would cut nothing is refused.
 
 ### Parts
 
@@ -71,7 +71,8 @@ A **thread** goes on the wall of a hole or a shaft and starts at its open end. I
 | Screw (ISO 4762 socket head), nut (ISO 4032), washer (ISO 7089), heat-set insert | M2 to M10; a screw's length. The head stands on the plane, the shank goes below; an insert goes below the plane. |
 | Ball bearing | 623, 625, 608, 688, 6000, 6001, 6200, 6201 |
 | Magnet | diameter and height |
-| Gear | module, teeth, width, bore, pressure angle, helix angle (0 for a spur gear). **Meshes with a gear of** shows where the mating gear's point goes (the centre distance, along the sketch's X axis) and how far to turn it so the teeth mesh. |
+| Gear | module, teeth, width, bore, pressure angle, helix angle (0 for a spur gear). **Meshes with a gear of** shows where the mating gear's point goes (the centre distance, along the sketch's X axis) and how far to turn it so the teeth mesh. The flanks are smooth involute curves with a fillet at the root: four to eight faces per tooth. |
+| Ring gear (internal) | module, teeth, width, outside diameter, pressure angle, helix angle; the teeth on the inside, a tooth space along the sketch's X axis. **Meshes with a planet of** shows where the planet's point goes ((ring − planet) × module / 2 along X, no turn), the sun that fits between the planets and how fast the carrier turns; a planet needs at least 10 teeth fewer than the ring. |
 | Gear rack | module, teeth, width, height to the pitch line; along the sketch's X axis, teeth towards its Y axis |
 | Snap-fit hook | arm length, width, thickness, hook; the hook points along the sketch's Y axis |
 | Press-fit peg | diameter, height, fit; made smaller by the fit (and the printer's hole compensation), chamfered at the top |

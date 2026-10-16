@@ -289,8 +289,11 @@ export class OcctModelingEngine implements ModelingEngine {
       const tool = this.shapes.get(input.toolKey);
       if (!tool) throw new FeatureError(`The feature ${input.feature} has to be rebuilt first.`);
       const placed = Array.from({ length: copies - 1 }, (_, i) => renameCopy(tool, transform(tool.shape.clone(), i + 1), `@${feature}.${i + 1}`));
-      // Joins and cuts take all copies in one boolean: one after the other, each copy splits the faces the next one meets (CAD-103).
-      const groups = input.operation === 'join' || input.operation === 'cut' ? [together(placed)] : placed;
+      // Joins and cuts take the copies that meet a body in one boolean: one after the other, each copy split the faces the next
+      // one met (CAD-103). A joined copy that meets nothing still starts a body of its own.
+      const meets = (copy: NamedShape) => current.some((b) => !b.named.shape.boundingBox.isOut(copy.shape.boundingBox));
+      const grouped = input.operation === 'join' || input.operation === 'cut' ? placed.filter(meets) : [];
+      const groups = [...(grouped.length ? [together(grouped)] : []), ...placed.filter((copy) => !grouped.includes(copy))];
       for (const copy of groups) {
         const combined = this.store(combine(current, copy, input.operation, feature, `${key}:${++step}`));
         current = this.load(combined.bodies);

@@ -30,6 +30,7 @@ The work is planned in phases. Each phase ends with a running demo and visible e
 | 23. Visuals ✅ | Materials and lighting, picture and video export, surface analysis, pictures for agents | [[CAD-90]] [[CAD-91]] [[CAD-92]] |
 | 24. Simulation ✅ | A simple strength check (linear static FEA) | [[CAD-93]] |
 | 25. Performance ✅ | Large models and assemblies; Rust/WASM where profiling shows a need | [[CAD-94]] [[CAD-95]] |
+| 26. Stress-test findings ✅ | What modelling a radial engine through the MCP server found ([[CAD-96]], [[Magnum opus]]): assemblies, lean answers and pictures of motion for agents; ring gears, smooth teeth and cams; booleans, threads, lofts and names that hold | [[CAD-97]] [[CAD-98]] [[CAD-99]] [[CAD-100]] [[CAD-101]] [[CAD-102]] [[CAD-103]] [[CAD-104]] [[CAD-105]] [[CAD-106]] [[CAD-107]] [[CAD-108]] |
 
 The order follows the dependencies: the Sketcher needs the editor shell, Part modeling needs profiles, and Assemblies need regenerated components. Within a phase, tasks are listed in the order they will be done.
 

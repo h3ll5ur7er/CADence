@@ -129,13 +129,13 @@ test('conflicting constraints are refused with an explanation', async ({ page })
   await page.getByRole('button', { name: /^Vertical \(a line/ }).click();
   await expect(page.getByRole('alert')).toContainText('shrink a line, circle or arc to nothing');
 
-  // Two length dimensions on one line contradict each other.
+  // A second length dimension on the line, of the same value, only repeats the first: redundant (CAD-108).
   await page.getByRole('button', { name: 'Dimension', exact: true }).click();
   await page.mouse.click(line.x, line.y);
   await page.mouse.click(line.x, line.y + 50);
   await page.getByRole('textbox', { name: 'Dimension value' }).press('Enter');
   await page.mouse.click(line.x, line.y);
   await page.mouse.click(line.x, line.y - 50);
-  await expect(page.getByRole('alert')).toContainText('conflicts with existing constraints (distance)');
+  await expect(page.getByRole('alert')).toContainText('already set by existing constraints (distance): it is redundant, not contradictory');
   await evidence(page, '11-sketch-conflict');
 });

@@ -15,6 +15,20 @@ export function valid(shape: Shape3D): boolean {
 /** A boolean the kernel could not do right, in words for the user. */
 export class BooleanError extends Error {}
 
+/** The solids of a shape: itself, or those of a compound. */
+function solidsOf(shape: Shape3D): Shape3D[] {
+  const oc = getOC();
+  if (shape.wrapped.ShapeType() !== oc.TopAbs_ShapeEnum.TopAbs_COMPOUND) return [shape];
+  const solids: Shape3D[] = [];
+  const explorer = new oc.TopExp_Explorer(shape.wrapped, oc.TopAbs_ShapeEnum.TopAbs_SOLID, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
+  try {
+    for (; explorer.More(); explorer.Next()) solids.push(cast(explorer.Current()) as Shape3D);
+  } finally {
+    explorer.delete();
+  }
+  return solids.length ? solids : [shape];
+}
+
 /** Tolerances (mm) for a second and third try, when touching faces leave the exact result invalid. */
 const fuzzyValues = [0, 1e-5, 1e-4];
 
@@ -62,7 +76,9 @@ function plausibleVolume(operation: Operation, shape: Shape3D, tools: readonly S
  * touches a revolved body's cylinder came out "not a valid solid" for some diameters (CAD-103). When
  * no result is right, the boolean is tried again with a small fuzzy tolerance, then tool by tool.
  */
-function boolean(operation: Operation, shape: Shape3D, tools: readonly Shape3D[]): Shape3D {
+function boolean(operation: Operation, shape: Shape3D, given: readonly Shape3D[]): Shape3D {
+  // A compound of tools (pattern copies) counts as its solids, so they can be tried one by one too.
+  const tools = given.flatMap(solidsOf);
   const plausible = plausibleVolume(operation, shape, tools);
   for (const fuzzy of fuzzyValues) {
     const results = build(operation, shape, tools, fuzzy);

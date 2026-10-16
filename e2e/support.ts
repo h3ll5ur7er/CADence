@@ -205,3 +205,39 @@ export async function fromModelMenu(page: Page, menu: 'Create' | 'Pattern' | 'Bo
   await page.getByRole('toolbar', { name: 'Model tools' }).getByRole('button', { name: menu, exact: true }).click();
   await page.getByRole('menuitem', { name: item, exact: true }).click();
 }
+
+/** A sketch on the plate's top face with points `dx` pixels left and right of its origin. */
+export async function topPoints(page: Page, offsets: readonly number[]): Promise<void> {
+  const top = await screenPositionOf(page, 'face', ':end$');
+  await page.mouse.click(top.x, top.y);
+  await page.getByRole('button', { name: 'New sketch' }).click();
+  await page.getByRole('menuitem', { name: 'Selected face' }).click();
+  await page.waitForTimeout(600);
+  const origin = await center(page, 'circle.point.origin');
+  await page.getByRole('button', { name: 'Point', exact: true }).click();
+  for (const dx of offsets) {
+    await page.mouse.move(origin.x + dx, origin.y);
+    await page.mouse.click(origin.x + dx, origin.y);
+  }
+  await page.getByRole('button', { name: 'Finish sketch' }).click();
+}
+
+/** A standard view of the whole assembly. */
+export const standardView = async (page: Page, name: string) => {
+  await page.getByRole('button', { name: `${name} view` }).dispatchEvent('click');
+  await page.waitForTimeout(800);
+  await page.getByRole('button', { name: 'Zoom to fit' }).click();
+  await page.waitForTimeout(600);
+};
+
+/** A revolute joint from the top rim of one plate's hole to the bottom rim of another plate's. */
+export async function hinge(page: Page, stays: number, instance: number): Promise<void> {
+  await page.getByRole('button', { name: 'Joint', exact: true }).click();
+  await standardView(page, 'Home');
+  const top = await rimOf(page, stays, 'top');
+  await page.mouse.click(top.x, top.y);
+  await standardView(page, 'Bottom');
+  const bottom = await rimOf(page, instance, 'bottom');
+  await page.mouse.click(bottom.x, bottom.y);
+  await page.getByRole('button', { name: 'OK' }).click();
+}

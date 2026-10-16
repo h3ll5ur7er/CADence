@@ -145,6 +145,12 @@ describe('ModelingEngine', () => {
       const patterned = ok(await engine.apply({ type: 'circular-pattern', feature: 'pads', key: `pads-${d}`, bodies: padded, tools, axis: zAxis, count: 9, angle: (320 * Math.PI) / 180 }));
       expect((await volume(patterned)) - (await volume(base))).toBeGreaterThan(9 * ((Math.PI * d * d) / 4) * 1);
     }
+    // Holes through the drum's wall, patterned: the copies are cut in one boolean, or one by one when that fails.
+    const hole = await engine.apply({ type: 'extrude', feature: 'hole', key: 'drum-hole', bodies: base, frame: seat, profiles: [profile(circleLoop(0, 0, 10, 'hole'))], distance: 40, direction: 'reverse', operation: 'cut' });
+    const tools = [{ feature: 'hole', toolKey: hole.toolKey as string, operation: 'cut' as const }];
+    const holed = ok(await engine.apply({ type: 'circular-pattern', feature: 'holes', key: 'drum-holes', bodies: ok(hole), tools, axis: zAxis, count: 9, angle: (320 * Math.PI) / 180 }));
+    const one = (await volume(base)) - (await volume(ok(hole)));
+    expect(Math.abs((await volume(base)) - (await volume(holed)) - 9 * one) / (9 * one)).toBeLessThan(1e-3);
   });
 
   it('keeps edge references valid when an earlier dimension changes', async () => {

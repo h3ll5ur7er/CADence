@@ -358,3 +358,35 @@ Imported SVG `<text>` and DXF `TEXT`/`MTEXT` become editable sketch texts in thi
 *Why:* the user asked for large models and assemblies to stay usable, and for Rust only where profiling shows a need. Profiling showed quadratic and cubic algorithms, not a slow language.
 *Trade-off:* the benchmarks run in Node, not in the browser's worker (same kernels, no transfer costs). Meshing remains the kernel's native time, and instances are still drawn one by one.
 
+## ADR-43
+
+**Booleans, threads and lofts: our own calls into the kernel where replicad's defaults fail (CAD-103, CAD-105, CAD-106).**
+- *Booleans* ([[src/core/engines/modeling/booleans.ts]]) build the fuse, cut or common themselves and keep the simplified result (faces and edges on one surface merged) only when it is a valid solid with a plausible volume (a fuse is no smaller than its larger input, a cut no larger than its body). Otherwise they take the unsimplified result, then try again with a fuzzy tolerance of 1e-5 and 1e-4 mm, then tool by tool. replicad simplifies every result, and that broke pads whose end touches a revolved drum for some diameters. Pattern copies are joined or cut in one boolean, since copy after copy each split the faces the next one met.
+- *Modelled threads* stop half a groove short of the face's far end: a groove that reached into a shoulder, or out of the far end, cut nothing, without an error. A thread whose cut removes nothing is refused.
+- *Lofts* line their sections up before lofting ([[src/core/engines/modeling/sections.ts]]): each section runs the same way round as the one before it, starts where it fits that one best (centre and size taken out), and all sections get the same number of edges, split at matching places along them. The kernel's own matching (`CheckCompatibility`) is off: it picked the nearest vertex and twisted a loft from a circle into airfoils half a turn.
+
+*Why:* the stress test ([[CAD-96]]) hit each of these as an error with no way round it, or as wrong geometry reported as a success.
+*Trade-off:* a refused simplification leaves more faces (a split cylinder stays split); the plausibility check measures volumes on every boolean, and the fallbacks cost time only when the first try fails. A thread ending at an open far end is half a groove short. A user cannot yet choose a loft section's start point.
+
+## ADR-44
+
+**Names that hold: faces and edges a feature leaves alone keep their names, `~n` included (CAD-101, CAD-104).**
+- [[src/core/engines/modeling/naming.ts]] looks up every face and edge of a result in the shapes of the bodies it came from. One that is still the same element of the kernel (equal hash, `IsSame`) keeps its full name; the others are numbered `~1`, `~2` … by position, skipping the numbers kept names hold. Tools' names are only stems and are never kept.
+- Of several earlier faces on one surface, a new face takes the name of the one it is a piece of (a point inside it lies on that face). In a tool, the sweep of each sketch curve is recognised by the point its middle passes through, so curves of two outlines on one cylinder are told apart.
+- Round and bevel faces are named after the picked edge nearest them, by geometry; hints are no longer needed.
+- The base name of pieces that lie apart is refused without a hint ([[Architecture/Document-model#Persistent references]]).
+
+*Why:* numbers given by position renumbered faces a feature never touched, so references silently pointed at other faces (a chamfer on the ring above a hex moved to a thread crest).
+*Trade-off:* names now depend on the history of the feature that made them, not only on the final shape; that history is the timeline, which regeneration replays in the same order. Patterned bodies are numbered without gaps, which renames bodies of documents made before (`kpat:3` becomes `kpat:2`).
+
+## ADR-45
+
+**Agents get changes, filters, assemblies and pictures of motion (CAD-97, CAD-100, CAD-102, CAD-108).**
+- *Answers:* `edit_component` and `undo_component` answer with what changed (timeline items, sketches and their profiles, face counts and new face names), not the whole component; `get_component` takes filters (parts, one sketch or body, a name pattern, near a point) and lists face centres and edge middles to pass as hints. A gear's answer went from 165,000 characters to a few hundred.
+- *Assemblies:* the same pattern for assemblies (`get_assembly`, `edit_assembly`, `undo_assembly`), plus checks, mass with the bill of materials, and export. The command reference embeds the assembly commands and contracts. Assembly sessions stay open like components.
+- *Pictures:* the software renderer frames chosen meshes and draws see-through ones over the others; pictures show exploded views and moments of studies. `animate_study` writes a GIF ([[src/core/utilities/picture/gif.ts]], a fixed 252-colour palette and LZW, no dependency) and returns a sheet of moments as one PNG, since agents look at still pictures.
+- *Papercuts:* documents can be renamed and deleted; parts and holes may sit at the sketch origin; a refused sketch says which constraints take part and whether they are redundant or contradictory; shorthand positions take expressions, dimensioned from the origin.
+
+*Why:* the stress test ran out of context on large answers and could neither build nor look at the assembly.
+*Trade-off:* an edit's answer leaves out unchanged things, so an agent asks again with a filter when it needs them; the GIF's colours are coarse.
+

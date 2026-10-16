@@ -38,7 +38,7 @@ assets/<asset id>.bin|.json    imported originals and their metadata
 | `npm run verify` | Lint, typecheck, all unit tests, the production build and the command line build |
 | `npm test` | Core tests in Node (`vitest.core.config.ts`), including the [[Architecture#Call rules|architecture test]], then Angular component tests (`ng test`) |
 | `npm run e2e` | Playwright user journeys against the dev server; writes evidence screenshots to `e2e/evidence/` |
-| `npm run e2e:desktop` | Smoke test of the built desktop app (Windows; build it first with `npx tauri build --no-bundle`): projects as folders, an export through the native save dialog, a restart. It adds a project to the desktop app's folder and deletes it again |
+| `npm run e2e:desktop` | Smoke test of the built desktop app (Windows; build it first with `npx tauri build --no-bundle --config src-tauri/tauri.test.conf.json`, which turns on WebView2 remote debugging on port 9333): projects as folders, an export through the native save dialog, a restart. It adds a project to the desktop app's folder and deletes it again |
 | `npm run e2e:pages` | Builds the web app as GitHub Pages serves it (below `/CADence/`, with the service worker) and runs the journeys in `e2e/pages/` against it: deep links, installability, offline use |
 | `npm run build:pages` | Only that build, into `dist/cadence/browser`; the base path comes from `BASE_HREF` (default `/CADence/`). `node tools/pages/serve.mjs` serves it at http://localhost:4310/CADence/ |
 
@@ -49,7 +49,7 @@ assets/<asset id>.bin|.json    imported originals and their metadata
 | Job | What it does |
 | --- | --- |
 | Lint, types, unit tests, build | `npm run verify` |
-| Desktop smoke test (Windows) | Builds the desktop app (`npx tauri build --no-bundle`, Rust cached) and runs `npm run e2e:desktop` on a Windows runner |
+| Desktop smoke test (Windows) | Builds the desktop app with remote debugging (`npx tauri build --no-bundle --config src-tauri/tauri.test.conf.json`, Rust cached) and runs `npm run e2e:desktop` on a Windows runner |
 | Browser journeys | `npm run e2e`, then `npm run e2e:pages`, in Chromium with software WebGL (the runners have no GPU). Evidence, reports and failure traces are kept as the workflow artifact `journeys` for 14 days |
 | Publish on GitHub Pages | On pushes to `master` only, after both jobs passed: `npm run build:pages` for the repository's name, uploaded and deployed to https://h3ll5ur7er.github.io/CADence/ |
 

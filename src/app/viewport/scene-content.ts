@@ -132,6 +132,43 @@ const finishes: Readonly<Record<NonNullable<Look['finish']>, { readonly roughnes
 };
 
 /**
+ * GPU geometry of a body mesh, shared by every drawing of it (an assembly's many instances of one
+ * component): uploaded once instead of once per instance (CAD-94). Counted, and freed with its last user.
+ */
+const shared = new WeakMap<BodyMesh, { readonly faces: BufferGeometry; readonly edges: BufferGeometry; users: number }>();
+
+function sharedGeometry(mesh: BodyMesh, kind: 'faces' | 'edges'): BufferGeometry {
+  let entry = shared.get(mesh);
+  if (!entry) {
+    const faces = new BufferGeometry();
+    faces.setAttribute('position', new BufferAttribute(mesh.positions, 3));
+    faces.setAttribute('normal', new BufferAttribute(mesh.normals, 3));
+    faces.setIndex(new BufferAttribute(mesh.indices, 1));
+    const edges = new BufferGeometry();
+    edges.setAttribute('position', new Float32BufferAttribute(mesh.edgePositions, 3));
+    for (const geometry of [faces, edges]) geometry.userData = { shared: mesh };
+    entry = { faces, edges, users: 0 };
+    shared.set(mesh, entry);
+  }
+  entry.users++;
+  return entry[kind];
+}
+
+/** Lets go of a geometry; shared ones are freed when nothing draws them any more. */
+export function releaseGeometry(geometry: BufferGeometry): void {
+  const mesh = (geometry.userData as { shared?: BodyMesh }).shared;
+  const entry = mesh && shared.get(mesh);
+  if (!mesh || !entry) {
+    geometry.dispose();
+    return;
+  }
+  if (--entry.users > 0) return;
+  entry.faces.dispose();
+  entry.edges.dispose();
+  shared.delete(mesh);
+}
+
+/**
  * A body: its faces (in its look, or coloured by a surface analysis), its edges, and its section cut.
  * With the results of a strength check, its faces are only picked: the solution's surface is drawn
  * instead, coloured by stress and bent by the displacements (then without edges).
@@ -139,11 +176,14 @@ const finishes: Readonly<Record<NonNullable<Look['finish']>, { readonly roughnes
 export function createBody(mesh: BodyMesh, theme: ViewportTheme, look: Look = { color: theme.body, opacity: 1 }, analysis?: SurfaceAnalysis, field?: StressField): Group {
   const group = new Group();
   group.name = `body-${mesh.body}`;
-  const geometry = new BufferGeometry();
   const results = field?.bodies.get(mesh.body);
-  geometry.setAttribute('position', new BufferAttribute(mesh.positions, 3));
-  geometry.setAttribute('normal', new BufferAttribute(mesh.normals, 3));
-  geometry.setIndex(new BufferAttribute(mesh.indices, 1));
+  // Analysis colours belong to one drawing: its geometry is its own.
+  const geometry = analysis ? new BufferGeometry() : sharedGeometry(mesh, 'faces');
+  if (analysis) {
+    geometry.setAttribute('position', new BufferAttribute(mesh.positions, 3));
+    geometry.setAttribute('normal', new BufferAttribute(mesh.normals, 3));
+    geometry.setIndex(new BufferAttribute(mesh.indices, 1));
+  }
   const finish = finishes[look.finish ?? 'matte'];
   const opacity = Math.min(look.opacity, finish.opacity ?? 1);
   const clear = opacity < 1;
@@ -167,9 +207,10 @@ export function createBody(mesh: BodyMesh, theme: ViewportTheme, look: Look = { 
   faces.castShadow = true;
   faces.receiveShadow = true;
   faces.userData = { body: mesh };
-  const edges = lines(mesh.edgePositions, theme.edge, clear ? Math.max(look.opacity, 0.3) : 1);
+  const edgeOpacity = clear ? Math.max(look.opacity, 0.3) : 1;
+  const edges = new LineSegments(sharedGeometry(mesh, 'edges'), new LineBasicMaterial({ color: new Color(theme.edge), transparent: edgeOpacity < 1, opacity: edgeOpacity }));
   edges.userData = { body: mesh };
-  const cut = new Mesh(geometry, new MeshBasicMaterial({ color: new Color(theme.section), side: BackSide }));
+  const cut = new Mesh(analysis ? geometry : sharedGeometry(mesh, 'faces'), new MeshBasicMaterial({ color: new Color(theme.section), side: BackSide }));
   cut.name = 'cut';
   cut.visible = false;
   group.add(faces, edges, cut);

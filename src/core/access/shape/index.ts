@@ -83,3 +83,4 @@ export function createShapeAccess(options: ShapeAccessOptions = {}): ShapeAccess
 
 export { baseName, centerOf, find, verticesOf } from './lookup';
 export { place } from './placement';
+export { edgesOf, facesOf } from './topology';

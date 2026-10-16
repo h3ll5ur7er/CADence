@@ -1,3 +1,4 @@
+import { edgesOf, facesOf } from '@core/access/shape';
 import type { NamedShape } from '@core/access/shape';
 import { deserializeShape, type Shape3D } from 'replicad';
 
@@ -16,8 +17,8 @@ export function snapshotOf(bodies: readonly { id: string; named: NamedShape }[])
     bodies: bodies.map(({ id, named }) => ({
       id,
       brep: named.shape.serialize(),
-      faces: named.shape.faces.map((f) => named.faces.get(f.hashCode) ?? ''),
-      edges: named.shape.edges.map((e) => named.edges.get(e.hashCode) ?? ''),
+      faces: facesOf(named.shape).map((f) => named.faces.get(f.hashCode) ?? ''),
+      edges: edgesOf(named.shape).map((e) => named.edges.get(e.hashCode) ?? ''),
     })),
   };
   return new TextEncoder().encode(JSON.stringify(snapshot));
@@ -32,7 +33,7 @@ export function readSnapshot(bytes: Uint8Array): { id: string; named: () => Name
       const shape = deserializeShape(body.brep) as Shape3D;
       const byOrder = (names: readonly string[], items: readonly { hashCode: number }[]) =>
         new Map(items.flatMap((item, i) => (names[i] ? [[item.hashCode, names[i]] as const] : [])));
-      return { shape, faces: byOrder(body.faces, shape.faces), edges: byOrder(body.edges, shape.edges) };
+      return { shape, faces: byOrder(body.faces, facesOf(shape)), edges: byOrder(body.edges, edgesOf(shape)) };
     },
   }));
 }

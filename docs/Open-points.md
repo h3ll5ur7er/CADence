@@ -141,8 +141,8 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 
 ## Platform and performance
 
-- [X] **Performance on large models and assemblies:** measure and optimise (meshing in the worker, level of detail). *(new)* → [[CAD-94]]
-- [X] **Rust/WASM where profiling shows a need.** So far it never did (ADR-18). *(ADR-8)* → [[CAD-95]]
+- [X] **Performance on large models and assemblies:** measure and optimise (meshing in the worker, level of detail). *(new)* → [[CAD-94]] ✅
+- [X] **Rust/WASM where profiling shows a need.** So far it never did (ADR-18). *(ADR-8)* → [[CAD-95]] ✅ (measured: it still does not, see [[Architecture/Performance]])
 - [ ] **Performance budgets in CI:** fail when start-up, regeneration or bundle size get noticeably worse. *(new)*
 - [ ] **Accessibility review** (keyboard use of the 3D view, screen reader labels). *(new)*
 - [ ] **Translations** of the interface. *(new)*

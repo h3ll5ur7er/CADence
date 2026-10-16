@@ -299,13 +299,84 @@ class Translator {
   }
 }
 
+/** Ids of sketch entities that a value refers to, anywhere inside it. */
+function references(value: unknown, entities: ReadonlySet<string>, found: string[] = []): string[] {
+  if (typeof value === 'string') {
+    if (entities.has(value)) found.push(value);
+  } else if (Array.isArray(value)) {
+    for (const item of value) references(item, entities, found);
+  } else if (value && typeof value === 'object') {
+    for (const item of Object.values(value)) references(item, entities, found);
+  }
+  return found;
+}
+
+/**
+ * The sketch as groups that do not depend on each other: entities joined by what they are made of
+ * by constraints between them and by what generates them. The origin is fixed, so it joins nothing.
+ */
+export function independentParts(sketch: Sketch): Sketch[] {
+  const ids = new Set(sketch.entities.map((e) => e.id));
+  const parent = new Map<string, string>();
+  const find = (x: string): string => {
+    const p = parent.get(x) ?? x;
+    if (p === x) return x;
+    const root = find(p);
+    parent.set(x, root);
+    return root;
+  };
+  const join = (group: readonly string[]) => {
+    const [first, ...rest] = group.filter((id) => id !== sketchOriginId);
+    if (first !== undefined) for (const id of rest) parent.set(find(id), find(first));
+  };
+  // Generated geometry (projections, drawings, equations) goes with what generates it: `owner:part` ids.
+  for (const e of sketch.entities) join([e.id, ...references({ ...e, id: undefined }, ids), ...(generatorOf(sketch, e.id) ? [e.id.slice(0, e.id.lastIndexOf(':'))] : [])]);
+  const constrained = sketch.constraints.map((c) => ({ c, refs: references({ ...c, id: undefined }, ids).filter((id) => id !== sketchOriginId) }));
+  for (const { refs } of constrained) join(refs);
+  const groups = new Map<string, { entities: SketchEntity[]; constraints: SketchConstraint[] }>();
+  const group = (id: string) => {
+    const root = find(id);
+    let g = groups.get(root);
+    if (!g) groups.set(root, (g = { entities: [], constraints: [] }));
+    return g;
+  };
+  for (const e of sketch.entities) group(e.id).entities.push(e);
+  // A constraint on nothing but the origin goes with the first group, where it fails or does nothing as before.
+  for (const { c, refs } of constrained) (refs[0] !== undefined ? group(refs[0]) : (groups.values().next().value ?? group(sketchOriginId))).constraints.push(c);
+  return [...groups.values()].map((g) => ({ ...sketch, entities: g.entities, constraints: g.constraints }));
+}
+
+const statusRank: Readonly<Record<SketchStatus, number>> = { 'fully-constrained': 0, 'under-constrained': 1, failed: 2, 'over-constrained': 3 };
+
 /** Solves sketches with FreeCAD's planegcs (WebAssembly). One solver instance, reused. */
 export class PlanegcsSolver {
   private wrapper: Promise<GcsWrapper> | undefined;
 
   constructor(private readonly wasmUrl?: string) {}
 
+  /**
+   * Solves each independent part of the sketch on its own: the solver's work grows with the cube of
+   * a system's size, so hundreds of separate holes would otherwise take minutes and run out of memory (CAD-94).
+   */
   async solve(sketch: Sketch, values: ReadonlyMap<string, number>, drag?: DragTarget): Promise<SolveOutcome> {
+    const parts = independentParts(sketch);
+    if (parts.length <= 1) return this.solvePart(sketch, values, drag);
+    const outcomes: SolveOutcome[] = [];
+    for (const part of parts) outcomes.push(await this.solvePart(part, values, drag && part.entities.some((e) => e.id === drag.point) ? drag : undefined));
+    const solved = new Map(outcomes.flatMap((o) => o.sketch.entities.map((e) => [e.id, e] as const)));
+    const status = outcomes.reduce((worst, o) => (statusRank[o.status] > statusRank[worst] ? o.status : worst), 'fully-constrained' as SketchStatus);
+    const failed = status === 'failed' || status === 'over-constrained';
+    const degreesOfFreedom = outcomes.reduce((n, o) => n + o.degreesOfFreedom, 0);
+    return {
+      // A sketch that fails keeps its positions, as when it is solved whole.
+      sketch: failed ? sketch : { ...sketch, entities: sketch.entities.map((e) => solved.get(e.id) ?? e) },
+      status: !failed && degreesOfFreedom === 0 ? 'fully-constrained' : status,
+      degreesOfFreedom,
+      conflicting: outcomes.flatMap((o) => o.conflicting),
+    };
+  }
+
+  private async solvePart(sketch: Sketch, values: ReadonlyMap<string, number>, drag?: DragTarget): Promise<SolveOutcome> {
     const gcs = await this.instance();
     gcs.clear_data();
     const { primitives } = new Translator(sketch, values);

@@ -36,7 +36,7 @@ import type { DragAction, MouseBindings } from '../shared/keymap';
 import { lookOf, type SectionPlane } from './looks';
 import { meshVertices, type Pick, pickAt, type PickKind, pickKey, type TopologyPick } from './picking';
 import type { StressField, SurfaceAnalysis } from './surface-analysis';
-import { createBody, createPlane, createSketch, edgeHighlight, faceHighlight, lines, threadHelix, type ViewportTheme } from './scene-content';
+import { createBody, createPlane, createSketch, edgeHighlight, faceHighlight, lines, releaseGeometry, threadHelix, type ViewportTheme } from './scene-content';
 import type { SketchDisplay } from './sketch-display';
 import type { Affine } from './sketch-planes';
 
@@ -865,7 +865,7 @@ export class ViewportScene {
 function disposeTree(root: Object3D): void {
   root.traverse((object) => {
     if (object instanceof Mesh || object instanceof LineSegments) {
-      object.geometry.dispose();
+      releaseGeometry(object.geometry);
       (object.material as { dispose(): void }).dispose();
     }
   });

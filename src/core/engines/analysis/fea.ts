@@ -1,11 +1,11 @@
 import type { Vec3 } from '@core/contracts';
+import { SolverError, solveStiffness } from './fea-solver';
 
 /**
  * Linear static finite element analysis (CAD-93), pure TypeScript. The body is filled with a grid of
  * cubes (kept where their middle is inside), each split into six tetrahedra the same way so they fit
  * together; nodes on the boundary are moved onto the true surface. Elements are 10-node quadratic
- * tetrahedra, which bend well even when coarse. The stiffness system is solved by conjugate
- * gradients, preconditioned by symmetric Gauss-Seidel sweeps.
+ * tetrahedra, which bend well even when coarse. The stiffness system is solved in `fea-solver.ts`.
  */
 
 /** A body's surface as triangles, each face's triangles named (like a display mesh). */
@@ -422,7 +422,12 @@ export function solveFea(input: FeaInput): FeaOutput {
   }
   if (!fixed.some((f) => f === 1)) throw new FeaError('Hold at least one face fixed.');
 
-  const displacement = conjugateGradients(rowStart, columns, values, forces, fixed);
+  let displacement: Float64Array;
+  try {
+    displacement = solveStiffness({ rowStart, columns, values, positions: Float64Array.from(nodes.flat()) }, forces, fixed);
+  } catch (error) {
+    throw error instanceof SolverError ? new FeaError(error.message) : error;
+  }
 
   // Stresses at the corners of each element, averaged at the nodes; mid-edge nodes take their corners' mean.
   const stressSum = new Float64Array(count);
@@ -458,126 +463,4 @@ export function solveFea(input: FeaInput): FeaOutput {
     stress[id] = ((stress[p] as number) + (stress[q] as number)) / 2;
   }
   return { positions: Float32Array.from(nodes.flat()), displacement: Float32Array.from(displacement), stress, elements: elements.length, surface: Uint32Array.from(surface) };
-}
-
-/**
- * Solves K u = f with K in 3 × 3 block CSR (both halves stored, columns sorted), the `fixed` nodes held
- * at zero: conjugate gradients preconditioned by a symmetric Gauss-Seidel sweep, which needs a few
- * times fewer steps than the diagonal alone on slender parts.
- */
-function conjugateGradients(rowStart: Int32Array, columns: Int32Array, values: Float64Array, f: Float64Array, fixed: Uint8Array): Float64Array {
-  const n = f.length;
-  const nodes = n / 3;
-  // Fixed nodes: their rows and columns cleared and a unit diagonal, so they stay at zero.
-  for (let a = 0; a < nodes; a++)
-    for (let k = rowStart[a] as number; k < (rowStart[a + 1] as number); k++) {
-      const b = columns[k] as number;
-      if (!fixed[a] && !fixed[b]) continue;
-      values.fill(0, k * 9, k * 9 + 9);
-      if (a === b) values[k * 9] = values[k * 9 + 4] = values[k * 9 + 8] = 1;
-    }
-  const diagonalBlock = new Int32Array(nodes);
-  for (let a = 0; a < nodes; a++)
-    for (let k = rowStart[a] as number; k < (rowStart[a + 1] as number); k++) if (columns[k] === a) diagonalBlock[a] = k;
-  const b = Float64Array.from(f, (v, i) => (fixed[Math.floor(i / 3)] ? 0 : v));
-
-  const multiply = (x: Float64Array, y: Float64Array) => {
-    for (let a = 0; a < nodes; a++) {
-      let y0 = 0;
-      let y1 = 0;
-      let y2 = 0;
-      for (let k = rowStart[a] as number; k < (rowStart[a + 1] as number); k++) {
-        const c = (columns[k] as number) * 3;
-        const v = k * 9;
-        const x0 = x[c] as number;
-        const x1 = x[c + 1] as number;
-        const x2 = x[c + 2] as number;
-        y0 += (values[v] as number) * x0 + (values[v + 1] as number) * x1 + (values[v + 2] as number) * x2;
-        y1 += (values[v + 3] as number) * x0 + (values[v + 4] as number) * x1 + (values[v + 5] as number) * x2;
-        y2 += (values[v + 6] as number) * x0 + (values[v + 7] as number) * x1 + (values[v + 8] as number) * x2;
-      }
-      y[a * 3] = y0;
-      y[a * 3 + 1] = y1;
-      y[a * 3 + 2] = y2;
-    }
-  };
-  /** z = M⁻¹ r with M = (D + L) D⁻¹ (D + U): a forward sweep, then a backward one. */
-  const precondition = (r: Float64Array, z: Float64Array) => {
-    for (let a = 0; a < nodes; a++) {
-      let s0 = r[a * 3] as number;
-      let s1 = r[a * 3 + 1] as number;
-      let s2 = r[a * 3 + 2] as number;
-      const diagonal = diagonalBlock[a] as number;
-      for (let k = rowStart[a] as number; k < diagonal; k++) {
-        const c = (columns[k] as number) * 3;
-        const v = k * 9;
-        const z0 = z[c] as number;
-        const z1 = z[c + 1] as number;
-        const z2 = z[c + 2] as number;
-        s0 -= (values[v] as number) * z0 + (values[v + 1] as number) * z1 + (values[v + 2] as number) * z2;
-        s1 -= (values[v + 3] as number) * z0 + (values[v + 4] as number) * z1 + (values[v + 5] as number) * z2;
-        s2 -= (values[v + 6] as number) * z0 + (values[v + 7] as number) * z1 + (values[v + 8] as number) * z2;
-      }
-      const d = diagonal * 9;
-      const z0 = s0 / (values[d] as number);
-      const z1 = (s1 - (values[d + 3] as number) * z0) / (values[d + 4] as number);
-      z[a * 3] = z0;
-      z[a * 3 + 1] = z1;
-      z[a * 3 + 2] = (s2 - (values[d + 6] as number) * z0 - (values[d + 7] as number) * z1) / (values[d + 8] as number);
-    }
-    for (let a = nodes - 1; a >= 0; a--) {
-      const diagonal = diagonalBlock[a] as number;
-      const d = diagonal * 9;
-      let s0 = (values[d] as number) * (z[a * 3] as number);
-      let s1 = (values[d + 4] as number) * (z[a * 3 + 1] as number);
-      let s2 = (values[d + 8] as number) * (z[a * 3 + 2] as number);
-      for (let k = diagonal + 1; k < (rowStart[a + 1] as number); k++) {
-        const c = (columns[k] as number) * 3;
-        const v = k * 9;
-        const z0 = z[c] as number;
-        const z1 = z[c + 1] as number;
-        const z2 = z[c + 2] as number;
-        s0 -= (values[v] as number) * z0 + (values[v + 1] as number) * z1 + (values[v + 2] as number) * z2;
-        s1 -= (values[v + 3] as number) * z0 + (values[v + 4] as number) * z1 + (values[v + 5] as number) * z2;
-        s2 -= (values[v + 6] as number) * z0 + (values[v + 7] as number) * z1 + (values[v + 8] as number) * z2;
-      }
-      const z2 = s2 / (values[d + 8] as number);
-      const z1 = (s1 - (values[d + 5] as number) * z2) / (values[d + 4] as number);
-      z[a * 3 + 2] = z2;
-      z[a * 3 + 1] = z1;
-      z[a * 3] = (s0 - (values[d + 1] as number) * z1 - (values[d + 2] as number) * z2) / (values[d] as number);
-    }
-  };
-  const dotProduct = (u: Float64Array, v: Float64Array) => {
-    let s = 0;
-    for (let i = 0; i < n; i++) s += (u[i] as number) * (v[i] as number);
-    return s;
-  };
-
-  const x = new Float64Array(n);
-  const r = Float64Array.from(b);
-  const z = new Float64Array(n);
-  precondition(r, z);
-  const p = Float64Array.from(z);
-  const q = new Float64Array(n);
-  let rz = dotProduct(r, z);
-  const rz0 = rz;
-  for (let iteration = 0; iteration < 10_000; iteration++) {
-    multiply(p, q);
-    const pq = dotProduct(p, q);
-    if (!(pq > 0)) throw new FeaError('The part is not held enough to stay put: fix more faces.');
-    const alpha = rz / pq;
-    for (let i = 0; i < n; i++) {
-      x[i] = (x[i] as number) + alpha * (p[i] as number);
-      r[i] = (r[i] as number) - alpha * (q[i] as number);
-    }
-    precondition(r, z);
-    const next = dotProduct(r, z);
-    // Settled: the preconditioned residual a millionth of where it started.
-    if (Math.sqrt(next / rz0) < 1e-6) return x;
-    const beta = next / rz;
-    rz = next;
-    for (let i = 0; i < n; i++) p[i] = (z[i] as number) + beta * (p[i] as number);
-  }
-  throw new FeaError('The solution did not settle: the part may be held too loosely.');
 }

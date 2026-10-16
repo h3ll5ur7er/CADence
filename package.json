@@ -12,6 +12,7 @@
     "test": "npm run test:core && npm run test:app",
     "test:core": "vitest run -c vitest.core.config.ts",
     "test:app": "ng test --watch=false",
+    "bench": "vitest run -c vitest.bench.config.ts --silent=false",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.worker.json --noEmit && tsc -p tsconfig.automation.json --noEmit && tsc -p tsconfig.spec.json --noEmit",
     "e2e": "playwright test",

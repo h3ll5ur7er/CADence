@@ -1,4 +1,4 @@
-import { type NamedShape, place, verticesOf } from '@core/access/shape';
+import { edgesOf, facesOf, type NamedShape, place, verticesOf } from '@core/access/shape';
 import { fromFrame } from '@core/utilities/math';
 import type { PlaneFrame, Vec2, Vec3 } from '@core/contracts';
 import { type AnyShape, type Edge, makeBox, makeCompound, makeProjectedEdges, ProjectionCamera, type Shape3D } from 'replicad';
@@ -63,7 +63,7 @@ export function drawingView(bodies: readonly { readonly id: string; readonly nam
       });
       // Faces lying on the cut plane are the cut.
       for (const shape of shapes)
-        for (const face of shape.faces) {
+        for (const face of facesOf(shape)) {
           const [c, m] = [face.center, face.normalAt()];
           const [center, normal] = [c.toTuple() as Vec3, m.toTuple() as Vec3];
           c.delete();
@@ -93,7 +93,7 @@ export function drawingView(bodies: readonly { readonly id: string; readonly nam
     const lines: { name: string; start: Vec2; end: Vec2 }[] = [];
     for (const { named } of bodies) {
       for (const vertex of verticesOf(named)) points.push({ name: vertex.name, at: flat(vertex.point) });
-      for (const edge of named.shape.edges) {
+      for (const edge of edgesOf(named.shape)) {
         const name = named.edges.get(edge.hashCode);
         if (!name) continue;
         for (const curve of projectEdge(edge, flat, n)) {

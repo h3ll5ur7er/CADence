@@ -1,3 +1,4 @@
+import { facesOf } from '@core/access/shape';
 import type { NamedShape } from '@core/access/shape';
 import type { PlaneFrame, Vec3 } from '@core/contracts';
 import { drawRectangle, measureVolume, type Shape3D } from 'replicad';
@@ -9,7 +10,7 @@ import { nameShape, namedSurfaces } from './naming';
 export class BodyOperationError extends Error {}
 
 const emptyVolume = 1e-9;
-const isEmpty = (shape: Shape3D) => shape.faces.length === 0 || measureVolume(shape) < emptyVolume;
+const isEmpty = (shape: Shape3D) => facesOf(shape).length === 0 || measureVolume(shape) < emptyVolume;
 
 function find(bodies: readonly LoadedBody[], id: string): LoadedBody {
   const body = bodies.find((b) => b.state.id === id);

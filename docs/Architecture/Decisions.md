@@ -342,4 +342,19 @@ Imported SVG `<text>` and DXF `TEXT`/`MTEXT` become editable sketch texts in thi
 - *Where:* in the Analysis engine (geometry worker), from the display meshes the session already has, so OCCT is not needed. The setup (fixed faces, loads, element size) is part of the component document; the result is not stored.
 
 *Why:* the user asked for a simple strength check; a hobby part needs a credible number and picture, not a professional solver. Pure TypeScript keeps it in the existing worker with no new build steps.
-*Trade-off:* the grid makes sharp edges slightly round and cannot follow features smaller than an element; slender parts (thin plates, long beams) need many solver steps (seconds), which [[CAD-95]] may speed up; no contact between bodies, no plasticity, no anisotropy of printed parts.
+*Trade-off:* the grid makes sharp edges slightly round and cannot follow features smaller than an element; no contact between bodies, no plasticity, no anisotropy of printed parts. (The solver's slowness on slender parts is fixed by ADR-42.)
+
+## ADR-42
+
+**Performance: measure with benchmarks, fix the algorithms, and keep TypeScript (no Rust/WebAssembly port).**
+- *Benchmarks* (`npm run bench`) build large models through the scripting API and time each step; `e2e/performance.spec.ts` counts the geometries the browser holds. Numbers and history: [[Architecture/Performance]].
+- *Sketches* are solved in independent parts (joined by constraints, shared points and generators; the fixed origin joins nothing), and region finding skips pairs whose boxes do not meet.
+- *Profiles with holes* become one replicad compound blueprint (outline and holes) instead of a boolean cut per hole: the sketch engine already proved the holes lie inside and apart.
+- *Faces and edges* are listed with `facesOf` / `edgesOf` (Shape Access), which deduplicate by OCCT hash code; replicad's getters compare every pair. The order is the same, so names do not change. (Patching replicad itself would be the better fix; it belongs upstream.)
+- *The strength check* uses a two-level preconditioner: Gauss-Seidel sweeps and a coarse correction where regions of the part move as rigid bodies (about 120 regions, 6 motions each, solved by dense Cholesky).
+- *The printability check* meshes at the view's tolerance; *the viewport* shares one GPU geometry among drawings of the same body mesh, counted and freed with the last.
+- *Rust/WebAssembly* was measured on the solver: 1.2× faster than TypeScript, against 5× from the better algorithm. Not ported.
+
+*Why:* the user asked for large models and assemblies to stay usable, and for Rust only where profiling shows a need. Profiling showed quadratic and cubic algorithms, not a slow language.
+*Trade-off:* the benchmarks run in Node, not in the browser's worker (same kernels, no transfer costs). Meshing remains the kernel's native time, and instances are still drawn one by one.
+

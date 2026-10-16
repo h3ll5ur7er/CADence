@@ -2,6 +2,7 @@ import { type Sketch, type SketchPoint, sketchOriginId } from '@core/contracts';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createSketchEngine, type SketchEngine, type SketchSolution } from './index';
 import { SketchBuilder } from '@core/contracts/testing/sketch-builder';
+import { independentParts } from './planegcs-solver';
 
 let engine: SketchEngine;
 beforeAll(() => {
@@ -55,6 +56,37 @@ describe('SketchEngine.solve', () => {
     expect(solution.status).toBe('over-constrained');
     expect(solution.conflicting).toEqual(expect.arrayContaining(['w', 'w2']));
     expect(point(solution, 'p3')).toEqual([31, 15]);
+  });
+
+  it('solves independent parts on their own, and hundreds of separate holes quickly', async () => {
+    const { sketch, values: v } = rectangle();
+    const b = new SketchBuilder();
+    // Ids apart from the rectangle's (p1 …, l1 …).
+    const holes = Array.from({ length: 300 }, (_, i) => {
+      const centre = b.point(5 + (i % 20) * 2, 5 + Math.floor(i / 20) * 2, `hc${i}`);
+      const circle = b.circle(centre, 0.4, false, `h${i}`);
+      b.constrain({ id: `hx${i}`, kind: 'horizontal-distance', points: [sketchOriginId, centre], expression: String(5 + (i % 20) * 2) });
+      b.constrain({ id: `hy${i}`, kind: 'vertical-distance', points: [sketchOriginId, centre], expression: String(5 + Math.floor(i / 20) * 2) });
+      b.constrain({ id: `hd${i}`, kind: 'diameter', curve: circle, expression: '1' });
+      return { x: 5 + (i % 20) * 2, y: 5 + Math.floor(i / 20) * 2 };
+    });
+    const extra = b.build();
+    const both: Sketch = { ...sketch, entities: [...sketch.entities, ...extra.entities], constraints: [...sketch.constraints, ...extra.constraints] };
+    expect(independentParts(both)).toHaveLength(301);
+    const all = new Map([...v, ...holes.flatMap((h, i) => [[`hx${i}`, h.x], [`hy${i}`, h.y], [`hd${i}`, 1]] as [string, number][])]);
+    const started = performance.now();
+    const solution = await engine.solve(both, all);
+    expect(performance.now() - started).toBeLessThan(3000);
+    expect(solution.status).toBe('fully-constrained');
+    expect(point(solution, 'p3')).toEqual([expect.closeTo(40), expect.closeTo(20)]);
+    expect(point(solution, 'hc299')).toEqual([expect.closeTo(43), expect.closeTo(33)]);
+    expect(solution.sketch.entities.find((e) => e.id === 'h0')).toMatchObject({ radius: expect.closeTo(0.5) });
+    // One part over-constrained: the whole sketch says so and keeps its positions.
+    const clash = { ...both, constraints: [...both.constraints, { id: 'w2', kind: 'distance' as const, points: ['p1', 'p2'] as const, expression: '50' }] };
+    const failed = await engine.solve(clash, new Map([...all, ['w2', 50]]));
+    expect(failed.status).toBe('over-constrained');
+    expect(failed.conflicting).toEqual(expect.arrayContaining(['w', 'w2']));
+    expect(point(failed, 'hc0')).toEqual([5, 5]);
   });
 
   it('handles circles, arcs and their dimensions', async () => {

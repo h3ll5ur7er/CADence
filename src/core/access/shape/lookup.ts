@@ -1,3 +1,4 @@
+import { edgesOf, facesOf } from './topology';
 import { type TopologyRef, type Vec3, vertexName } from '@core/contracts';
 import { type Edge, type Face, makeVertex, type Vertex } from 'replicad';
 import type { NamedShape } from './index';
@@ -14,7 +15,7 @@ const sameVertex = 1e-4;
 
 /** Faces or edges with their names and positions. */
 function elementsOf(named: NamedShape, kind: 'face' | 'edge'): { element: Face | Edge; name: string; center: Vec3 }[] {
-  const elements: (Face | Edge)[] = kind === 'face' ? named.shape.faces : named.shape.edges;
+  const elements: (Face | Edge)[] = kind === 'face' ? facesOf(named.shape) : edgesOf(named.shape);
   const names = kind === 'face' ? named.faces : named.edges;
   return elements.flatMap((element) => {
     const name = names.get(element.hashCode);
@@ -25,7 +26,7 @@ function elementsOf(named: NamedShape, kind: 'face' | 'edge'): { element: Face |
 /** The ends of the named edges, each named by the edges that meet there. */
 export function verticesOf(named: NamedShape): { point: Vec3; name: string }[] {
   const corners: { point: Vec3; edges: string[] }[] = [];
-  for (const edge of named.shape.edges) {
+  for (const edge of edgesOf(named.shape)) {
     const name = named.edges.get(edge.hashCode);
     if (!name) continue;
     for (const end of [edge.startPoint, edge.endPoint]) {

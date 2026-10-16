@@ -1,3 +1,4 @@
+import { facesOf } from '@core/access/shape';
 import type { NamedShape } from '@core/access/shape';
 import type { Check, PrintProfile, TopologyRef, Vec3 } from '@core/contracts';
 import { getOC, iterTopo, type Shape3D } from 'replicad';
@@ -71,9 +72,9 @@ export interface Triangles {
 export function triangles(named: NamedShape): Triangles {
   const { shape } = named;
   const box = shape.boundingBox;
-  const tolerance = Math.max(0.005, Math.hypot(box.width, box.height, box.depth) / 4000);
-  const mesh = shape.mesh({ tolerance, angularTolerance: 0.1 });
-  const centers = new Map(shape.faces.map((f) => [f.hashCode, f.center.toTuple() as Vec3]));
+  const tolerance = Math.max(0.01, Math.hypot(box.width, box.height, box.depth) / 2000);
+  const mesh = shape.mesh({ tolerance, angularTolerance: 0.2 });
+  const centers = new Map(facesOf(shape).map((f) => [f.hashCode, f.center.toTuple() as Vec3]));
   return {
     positions: Float32Array.from(mesh.vertices),
     normals: Float32Array.from(mesh.normals),

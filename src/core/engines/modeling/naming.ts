@@ -1,4 +1,4 @@
-import { baseName, centerOf, type NamedShape } from '@core/access/shape';
+import { baseName, centerOf, facesOf, type NamedShape } from '@core/access/shape';
 import type { Vec3 } from '@core/contracts';
 import type { Edge, Face, Shape3D } from 'replicad';
 import { liesOn, samePlaneIgnoringSide, sameSurface, type Surface, surfaceOf } from './surfaces';
@@ -19,7 +19,7 @@ const order = (a: Vec3, b: Vec3) => round(a[0]) - round(b[0]) || round(a[1]) - r
 
 /** Faces of a named shape with their surfaces, to name the faces of a shape derived from it. */
 export function namedSurfaces(named: NamedShape): NamedSurface[] {
-  return named.shape.faces.flatMap((face) => {
+  return facesOf(named.shape).flatMap((face) => {
     const name = named.faces.get(face.hashCode);
     return name ? [{ surface: surfaceOf(face), name: baseName(name) }] : [];
   });
@@ -52,7 +52,7 @@ export function nameShape(
 ): NamedShape {
   const unexplained: { face: Face; surface: Surface }[] = [];
   const faceNames: { item: Face; name: string }[] = [];
-  for (const face of shape.faces) {
+  for (const face of facesOf(shape)) {
     const surface = surfaceOf(face);
     // A hole's walls face the other way to the tool faces that cut them: same plane, other side.
     // A trimmed freeform face lies on the same surface as the face it came from: that face's probes lie on it.
@@ -68,7 +68,7 @@ export function nameShape(
   const faces = disambiguate(faceNames);
 
   const adjacent = new Map<number, { edge: Edge; faces: Set<string> }>();
-  for (const face of shape.faces) {
+  for (const face of facesOf(shape)) {
     const name = faces.get(face.hashCode) as string;
     for (const edge of face.edges) {
       const entry = adjacent.get(edge.hashCode) ?? { edge, faces: new Set<string>() };

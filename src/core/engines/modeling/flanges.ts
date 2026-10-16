@@ -1,3 +1,4 @@
+import { facesOf } from '@core/access/shape';
 import type { NamedShape } from '@core/access/shape';
 import type { FlangeMarker, TopologyRef, Vec3 } from '@core/contracts';
 import { draw, type Edge, type Face, measureArea, Plane, type Shape3D } from 'replicad';
@@ -17,7 +18,7 @@ const tuple = (p: { toTuple(): number[] }) => p.toTuple() as unknown as Vec3;
 
 /** The broad face of the sheet the edge lies on: the largest flat face next to it. */
 function sheetFace(shape: Shape3D, edge: Edge): Face {
-  const next = shape.faces.filter((f) => f.geomType === 'PLANE' && f.edges.some((e) => e.isSame(edge)));
+  const next = facesOf(shape).filter((f) => f.geomType === 'PLANE' && f.edges.some((e) => e.isSame(edge)));
   const face = next.sort((a, b) => measureArea(b) - measureArea(a))[0];
   if (!face) throw new FlangeError('Pick an edge of a flat face of the sheet.');
   return face;

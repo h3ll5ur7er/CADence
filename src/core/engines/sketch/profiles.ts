@@ -196,10 +196,25 @@ function intersections(s: Segment, t: Segment): Vec2[] {
 }
 
 /** Splits every segment wherever another one crosses or touches it. */
+type Box = readonly [number, number, number, number];
+
+/** A box around a segment, a little larger (arcs: their whole circle; curves: everywhere, always tested). */
+function boxOf(s: Segment): Box {
+  const m = tolerance * 10;
+  if (s.kind === 'line') return [Math.min(s.a[0], s.b[0]) - m, Math.min(s.a[1], s.b[1]) - m, Math.max(s.a[0], s.b[0]) + m, Math.max(s.a[1], s.b[1]) + m];
+  if (s.kind === 'arc') return [s.c[0] - s.r - m, s.c[1] - s.r - m, s.c[0] + s.r + m, s.c[1] + s.r + m];
+  return [-Infinity, -Infinity, Infinity, Infinity];
+}
+
+const boxesMeet = (a: Box, b: Box) => a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3];
+
 function split(segments: Segment[]): Segment[] {
   const cuts = segments.map(() => [] as number[]);
+  // Only segments whose boxes meet can cross: sketches with hundreds of separate holes stay fast (CAD-94).
+  const boxes = segments.map(boxOf);
   for (let i = 0; i < segments.length; i++) {
     for (let j = i + 1; j < segments.length; j++) {
+      if (!boxesMeet(boxes[i] as Box, boxes[j] as Box)) continue;
       const s = segments[i] as Segment;
       const t = segments[j] as Segment;
       for (const p of intersections(s, t)) {
@@ -228,24 +243,39 @@ function split(segments: Segment[]): Segment[] {
 /** Builds the graph: vertices merged within tolerance, duplicate and dangling edges removed. */
 function graph(segments: Segment[]): { vertices: Vec2[]; edges: Edge[] } {
   const vertices: Vec2[] = [];
+  // Vertices by grid cell of the merge distance: a point is merged with one in its own or a neighbouring cell.
+  const merge = tolerance * 10;
+  const cells = new Map<string, number[]>();
+  const cellOf = (p: Vec2) => [Math.floor(p[0] / merge), Math.floor(p[1] / merge)];
   const vertexOf = (p: Vec2): number => {
-    const found = vertices.findIndex((v) => distance(v, p) < tolerance * 10);
-    if (found >= 0) return found;
+    const [cx, cy] = cellOf(p) as [number, number];
+    for (let x = cx - 1; x <= cx + 1; x++)
+      for (let y = cy - 1; y <= cy + 1; y++) {
+        const found = cells.get(`${x},${y}`)?.find((i) => distance(vertices[i] as Vec2, p) < merge);
+        if (found !== undefined) return found;
+      }
     vertices.push(p);
+    const key = `${cx},${cy}`;
+    cells.set(key, [...(cells.get(key) ?? []), vertices.length - 1]);
     return vertices.length - 1;
   };
   let edges: Edge[] = [];
+  const between = new Map<string, Edge[]>();
   for (const segment of segments) {
     const u = vertexOf(startOf(segment));
     const v = vertexOf(endOf(segment));
     if (u === v) continue;
-    const duplicate = edges.some((e) => {
+    const pair = u < v ? `${u},${v}` : `${v},${u}`;
+    const duplicate = (between.get(pair) ?? []).some((e) => {
       if (!((e.u === u && e.v === v) || (e.u === v && e.v === u))) return false;
       if (e.segment.kind !== segment.kind) return false;
       if (segment.kind === 'curve') return e.segment.kind === 'curve' && e.segment.source === segment.source && Math.abs(e.segment.t0 - segment.t0) < 1e-9;
       return segment.kind === 'line' || (e.segment.kind === 'arc' && distance(e.segment.c, segment.c) < tolerance && e.u === u);
     });
-    if (!duplicate) edges.push({ u, v, segment });
+    if (duplicate) continue;
+    const edge = { u, v, segment };
+    edges.push(edge);
+    between.set(pair, [...(between.get(pair) ?? []), edge]);
   }
   for (let pruned = true; pruned; ) {
     const degree = new Map<number, number>();
@@ -332,7 +362,9 @@ function faces(edges: Edge[]): HalfEdge[][] {
   for (const list of outgoing.values()) {
     list.sort((a, b) => (Math.abs(a.angle - b.angle) > 1e-9 ? a.angle - b.angle : a.curvature - b.curvature));
   }
-  const twin = (h: HalfEdge) => halfEdges.find((o) => o.edge === h.edge && o.forward !== h.forward) as HalfEdge;
+  const backward = new Map(halfEdges.filter((h) => !h.forward).map((h) => [h.edge, h]));
+  const forward = new Map(halfEdges.filter((h) => h.forward).map((h) => [h.edge, h]));
+  const twin = (h: HalfEdge) => (h.forward ? backward : forward).get(h.edge) as HalfEdge;
   // Turning as far right as possible keeps each traced face on the left of its edges.
   const next = (h: HalfEdge): HalfEdge => {
     const around = outgoing.get(h.to) as HalfEdge[];
@@ -370,19 +402,18 @@ export function findProfiles(sketch: Sketch, texts: TextOutlines = new Map()): P
   const { vertices, edges } = graph(split(segmentsOf(sketch, texts)));
   if (edges.length === 0) return [];
   const componentOf = components(edges);
-  const traced = faces(edges).map((loop) => ({
-    loop,
-    area: loopArea(loop, vertices),
-    polygon: loop.flatMap(samples),
-    component: componentOf((loop[0] as HalfEdge).from),
-  }));
+  const traced = faces(edges).map((loop) => {
+    const polygon = loop.flatMap(samples);
+    const box = polygon.reduce((b, p): Box => [Math.min(b[0], p[0]), Math.min(b[1], p[1]), Math.max(b[2], p[0]), Math.max(b[3], p[1])], [Infinity, Infinity, -Infinity, -Infinity] as Box);
+    return { loop, area: loopArea(loop, vertices), polygon, box, component: componentOf((loop[0] as HalfEdge).from) };
+  });
   const bounded = traced.filter((f) => f.area > tolerance);
   const boundaries = traced.filter((f) => f.area < -tolerance);
   const holes = new Map<(typeof bounded)[number], typeof boundaries>();
   for (const boundary of boundaries) {
     const probe = vertices[(boundary.loop[0] as HalfEdge).from] as Vec2;
     const around = bounded
-      .filter((f) => f.component !== boundary.component && containsPoint(f.polygon, probe))
+      .filter((f) => f.component !== boundary.component && boxesMeet(f.box, [probe[0], probe[1], probe[0], probe[1]]) && containsPoint(f.polygon, probe))
       .sort((a, b) => a.area - b.area)[0];
     if (around) holes.set(around, [...(holes.get(around) ?? []), boundary]);
   }

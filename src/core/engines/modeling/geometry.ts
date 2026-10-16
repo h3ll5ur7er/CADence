@@ -1,6 +1,6 @@
 import type { PlaneFrame, Profile, ProfileLoop, Vec2, Vec3 } from '@core/contracts';
 import { ccwSweep, ellipseParameter } from '@core/utilities/math';
-import { draw, type Drawing, Plane } from 'replicad';
+import { CompoundBlueprint, draw, Drawing, Plane } from 'replicad';
 
 /** 3D vector helpers on tuples. */
 export const add3 = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -54,12 +54,15 @@ export function loopDrawing(loop: ProfileLoop): Drawing {
   return pen.close();
 }
 
-/** One drawing for several profiles: outer loops fused, holes cut. */
+/** One drawing for several profiles: outer loops fused, holes inside them. */
 export function profilesDrawing(profiles: readonly Profile[]): Drawing {
   let result: Drawing | undefined;
   for (const profile of profiles) {
-    let drawing = loopDrawing(profile.outer);
-    for (const hole of profile.holes) drawing = drawing.cut(loopDrawing(hole));
+    // A profile's holes lie inside its outer loop and apart from each other (the sketch engine found
+    // them so): they make one compound directly. Cutting them one by one took minutes for hundreds (CAD-94).
+    const drawing = profile.holes.length
+      ? new Drawing(new CompoundBlueprint([loopDrawing(profile.outer).blueprint, ...profile.holes.map((hole) => loopDrawing(hole).blueprint)]))
+      : loopDrawing(profile.outer);
     result = result ? result.fuse(drawing) : drawing;
   }
   if (!result) throw new Error('Select at least one profile.');

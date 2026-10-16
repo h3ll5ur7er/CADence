@@ -37,6 +37,7 @@ assets/<asset id>.bin|.json    imported originals and their metadata
 | --- | --- |
 | `npm run verify` | Lint, typecheck, all unit tests, the production build and the command line build |
 | `npm test` | Core tests in Node (`vitest.core.config.ts`), including the [[Architecture#Call rules|architecture test]], then Angular component tests (`ng test`) |
+| `npm run bench` | Benchmarks of large models (minutes; not part of the tests): prints a table of timings ([[Architecture/Performance]]) |
 | `npm run e2e` | Playwright user journeys against the dev server; writes evidence screenshots to `e2e/evidence/` |
 | `npm run e2e:desktop` | Smoke test of the built desktop app (Windows; build it first with `npx tauri build --no-bundle --config src-tauri/tauri.test.conf.json`, which turns on WebView2 remote debugging on port 9333): projects as folders, an export through the native save dialog, a restart. It adds a project to the desktop app's folder and deletes it again |
 | `npm run e2e:pages` | Builds the web app as GitHub Pages serves it (below `/CADence/`, with the service worker) and runs the journeys in `e2e/pages/` against it: deep links, installability, offline use |

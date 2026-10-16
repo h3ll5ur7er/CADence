@@ -1,3 +1,4 @@
+import { facesOf } from '@core/access/shape';
 import type { NamedShape } from '@core/access/shape';
 import type { BodyMesh, MeshEdge, MeshFace, Vec3 } from '@core/contracts';
 import type { BodyState } from './modeling-engine';
@@ -9,7 +10,7 @@ export function tessellate(state: BodyState, named: NamedShape): BodyMesh {
   const size = Math.hypot(box.width, box.height, box.depth);
   const tolerance = Math.max(0.01, size / 2000);
   const mesh = shape.mesh({ tolerance, angularTolerance: 0.2 });
-  const faceByHash = new Map(shape.faces.map((f) => [f.hashCode, f]));
+  const faceByHash = new Map(facesOf(shape).map((f) => [f.hashCode, f]));
   const faces: MeshFace[] = mesh.faceGroups.map((group) => {
     const face = faceByHash.get(group.faceId);
     return {

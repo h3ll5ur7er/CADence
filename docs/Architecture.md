@@ -169,6 +169,7 @@ src/
 src-tauri/                Desktop shell (Rust)
 e2e/                      Playwright specs and evidence screenshots
 tools/architecture/       The architecture test (call rules over the import graph)
+tools/benchmark/          Benchmarks of large models (npm run bench, [[Architecture/Performance]])
 ```
 
 `src/core` has no dependency on Angular. It runs under Node in unit tests, and both OCCT and planegcs load in Node, so engines are tested headless.

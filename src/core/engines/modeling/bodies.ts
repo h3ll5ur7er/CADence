@@ -1,3 +1,4 @@
+import { edgesOf, facesOf } from '@core/access/shape';
 import type { NamedShape } from '@core/access/shape';
 import type { BodyOperation } from '@core/contracts';
 import { measureVolume, type Shape3D } from 'replicad';
@@ -17,7 +18,7 @@ export interface Combined {
 }
 
 const emptyVolume = 1e-9;
-const isEmpty = (shape: Shape3D) => shape.faces.length === 0 || measureVolume(shape) < emptyVolume;
+const isEmpty = (shape: Shape3D) => facesOf(shape).length === 0 || measureVolume(shape) < emptyVolume;
 
 function overlaps(a: Shape3D, b: Shape3D): boolean {
   return !a.boundingBox.isOut(b.boundingBox);
@@ -30,7 +31,7 @@ export function renameCopy(source: NamedShape, copy: Shape3D, suffix: string): N
       const name = names.get((from[i] as { hashCode: number }).hashCode);
       return name ? [[element.hashCode, `${name}${suffix}`]] : [];
     }));
-  return { shape: copy, faces: map(source.shape.faces, copy.faces, source.faces), edges: map(source.shape.edges, copy.edges, source.edges) };
+  return { shape: copy, faces: map(facesOf(source.shape), facesOf(copy), source.faces), edges: map(edgesOf(source.shape), edgesOf(copy), source.edges) };
 }
 
 /**

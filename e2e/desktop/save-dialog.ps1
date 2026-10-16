@@ -19,18 +19,23 @@ $isDialog = New-Object System.Windows.Automation.PropertyCondition($A::ClassName
 $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
 $dialog = $null
 $name = $null
+$fallback = $null
 while (-not $name -and (Get-Date) -lt $deadline) {
   foreach ($window in $A::RootElement.FindAll($scope::Children, $ofProcess)) {
     $candidates = @($window.FindAll($scope::Descendants, $isDialog))
     if ($window.Current.ClassName -eq '#32770') { $candidates = @($window) + $candidates }
     foreach ($candidate in $candidates) {
       $field = $candidate.FindFirst($scope::Descendants, (Control '1001' 'Edit'))
-      if ($field) { $dialog = $candidate; $name = $field; break }
+      if (-not $field) { continue }
+      # A dialog on screen first: the process keeps hidden ones too (the first of those is the fallback).
+      if (-not $candidate.Current.IsOffscreen) { $dialog = $candidate; $name = $field; break }
+      if (-not $fallback) { $fallback = @($candidate, $field) }
     }
     if ($name) { break }
   }
   if (-not $name) { Start-Sleep -Milliseconds 250 }
 }
+if (-not $name -and $fallback) { $dialog, $name = $fallback }
 if (-not $name) { throw "No save dialog with a file name field in process $ProcessId within $TimeoutSeconds s" }
 
 # UI Automation can find these controls but not operate them: Win32 messages can.
@@ -52,5 +57,6 @@ while ((Get-Date) -lt $closed) {
   if ($dialog.Current.IsOffscreen) { exit 0 }
   Start-Sleep -Milliseconds 250
 }
-$texts = @($A::RootElement.FindAll($scope::Children, $ofProcess) | ForEach-Object { $_.FindAll($scope::Descendants, [System.Windows.Automation.Condition]::TrueCondition) } | ForEach-Object { $_.Current.Name } | Where-Object { $_ } | Select-Object -First 30)
-throw "The save dialog stayed open; it shows: $($texts -join ' | '); the file name field says: $($name.Current.Name)" 
+$texts = @($dialog.FindAll($scope::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name } | Where-Object { $_ } | Select-Object -First 40)
+$value = try { $name.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value } catch { '?' }
+throw "The save dialog stayed open; it shows: $($texts -join ' | '); the file name field holds: $value" 

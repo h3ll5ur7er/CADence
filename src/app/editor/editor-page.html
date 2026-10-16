@@ -20,6 +20,9 @@
       <span class="synced-dot" aria-hidden="true"></span>
     }
   </button>
+  <button type="button" class="icon-btn" aria-label="About CADence" title="About CADence" (click)="about.open()">
+    <cad-icon name="info" />
+  </button>
   <button type="button" class="icon-btn" aria-label="Settings and shortcuts" title="Settings and shortcuts (?)" (click)="settings.open()">
     <cad-icon name="settings" />
   </button>
@@ -92,6 +95,7 @@
 
 <cad-name-dialog />
 <cad-settings-dialog #settings />
+<cad-about-dialog #about />
 <cad-confirm-dialog />
 <cad-history-dialog #historyDialog (restored)="documents.reload(); project.reload()" />
 <cad-sync-dialog (synced)="refresh()" />

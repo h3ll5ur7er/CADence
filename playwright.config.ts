@@ -5,7 +5,7 @@ const port = 4300;
 /** End-to-end tests against the dev build. Screenshots for phase evidence land in e2e/evidence/. */
 export default defineConfig({
   testDir: 'e2e',
-  testIgnore: 'pages/**', // against the production build: playwright.pages.config.ts
+  testIgnore: ['pages/**', 'desktop/**'], // against the production build and the desktop app: playwright.pages.config.ts, playwright.desktop.config.ts
   fullyParallel: false,
   // CI runners are slower and have no GPU: one browser at a time, more patience, and software WebGL (not WebGPU).
   workers: process.env['CI'] ? 1 : undefined,

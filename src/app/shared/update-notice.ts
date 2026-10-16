@@ -1,24 +1,15 @@
-import { ChangeDetectionStrategy, Component, InjectionToken, inject, signal } from '@angular/core';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { SwUpdate } from '@angular/service-worker';
-import { merge } from 'rxjs';
-import { filter } from 'rxjs/operators';
+import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { AppUpdates } from './app-updates';
 
-/** Reloads the page (replaced in tests). */
-export const RELOAD = new InjectionToken<() => void>('Reload', { factory: () => () => location.reload() });
-
-/**
- * The web app runs from its service worker's cache, also offline. When a newer version has been
- * downloaded in the background, this offers to switch to it; the desktop app has no service worker.
- */
+/** Offers to switch to a newer version of CADence when one is ready (web) or available (desktop). */
 @Component({
   selector: 'cad-update-notice',
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    @if (ready()) {
+    @if (updates.available(); as update) {
       <div class="notice" role="status">
-        <span>A new version of CADence is ready.</span>
-        <button type="button" class="btn btn-primary" (click)="reload()">Reload</button>
+        <span>{{ update.message }}</span>
+        <button type="button" class="btn btn-primary" [disabled]="busy()" (click)="apply()">{{ busy() ? 'Installing…' : update.action }}</button>
       </div>
     }
   `,
@@ -40,14 +31,15 @@ export const RELOAD = new InjectionToken<() => void>('Reload', { factory: () => 
   `,
 })
 export class UpdateNotice {
-  protected readonly ready = signal(false);
-  protected readonly reload = inject(RELOAD);
+  protected readonly updates = inject(AppUpdates);
+  protected readonly busy = signal(false);
 
-  constructor() {
-    const updates = inject(SwUpdate);
-    if (!updates.isEnabled) return;
-    merge(updates.versionUpdates.pipe(filter((e) => e.type === 'VERSION_READY')), updates.unrecoverable)
-      .pipe(takeUntilDestroyed())
-      .subscribe(() => this.ready.set(true));
+  protected async apply(): Promise<void> {
+    this.busy.set(true);
+    try {
+      await this.updates.apply();
+    } finally {
+      this.busy.set(false);
+    }
   }
 }

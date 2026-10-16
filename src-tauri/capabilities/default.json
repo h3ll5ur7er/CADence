@@ -1,8 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Window permissions: core APIs and read/write access to the app data folder, where project folders live.",
-  "windows": ["main"],
+  "description": "Window permissions: core APIs, read/write access to the app data folder, where project folders live, save dialogs, opening web links in the browser, and updates (check, install, restart).",
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "fs:allow-exists",
@@ -15,9 +17,19 @@
     "fs:allow-remove",
     "fs:allow-stat",
     "dialog:allow-save",
+    "opener:allow-open-url",
+    "updater:default",
+    "process:allow-restart",
     {
       "identifier": "fs:scope",
-      "allow": [{ "path": "$APPDATA" }, { "path": "$APPDATA/**" }]
+      "allow": [
+        {
+          "path": "$APPDATA"
+        },
+        {
+          "path": "$APPDATA/**"
+        }
+      ]
     }
   ]
 }

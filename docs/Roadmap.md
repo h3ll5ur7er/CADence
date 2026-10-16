@@ -19,7 +19,20 @@ The work is planned in phases. Each phase ends with a running demo and visible e
 | 12. Parameters and sheet metal ✅ | Display units, project parameters, configurations, sheet metal with flat patterns | [[CAD-48]] [[CAD-49]] [[CAD-50]] [[CAD-51]] |
 | 13. Projects ✅ | Thumbnails, git-based version history with named versions, git sync | [[CAD-52]] [[CAD-53]] [[CAD-54]] |
 | 14. Automation ✅ | Scripting API and command line, MCP server for AI agents | [[CAD-55]] [[CAD-56]] |
+| 15. Release and desktop ✅ | About dialog with licence credits; desktop smoke tests in CI; installers and auto-update | [[CAD-57]] [[CAD-58]] [[CAD-59]] |
+| 16. Projects II | Drag and drop, duplicates; replacing imported files; project archives and file associations; synced version names; templates; sharing a model as one HTML file | [[CAD-60]] [[CAD-61]] [[CAD-62]] [[CAD-63]] [[CAD-64]] [[CAD-65]] |
+| 17. Sketcher III | Tracing pictures and turning them into outlines; sketch diagnostics (open degrees of freedom, conflicts, suggestions); equation curves; more fonts and text along curves | [[CAD-66]] [[CAD-67]] [[CAD-68]] [[CAD-69]] [[CAD-70]] |
+| 18. Part modeling III | Standard parts library, gear generator, print-friendly generators, clearances for prints | [[CAD-71]] [[CAD-72]] [[CAD-73]] [[CAD-74]] |
+| 19. Workflow | Timeline folders and notes, repairing broken references, configurations as CSV, command palette | [[CAD-75]] [[CAD-76]] [[CAD-77]] [[CAD-78]] |
+| 20. Assemblies II | Dragging parts and joint offsets, measuring and mass of assemblies, instance patterns, live updates | [[CAD-79]] [[CAD-80]] [[CAD-81]] [[CAD-82]] |
+| 21. Motion and assembly documents | Motion links, smoother motion with collisions, exploded views and instructions, bill of materials | [[CAD-83]] [[CAD-84]] [[CAD-85]] [[CAD-86]] |
+| 22. Technical drawings | Drawing documents with views, dimensions and notes, callouts and parts lists; PDF and DXF | [[CAD-87]] [[CAD-88]] [[CAD-89]] |
+| 23. Visuals | Materials and lighting, picture and video export, surface analysis, pictures for agents | [[CAD-90]] [[CAD-91]] [[CAD-92]] |
+| 24. Simulation | A simple strength check (linear static FEA) | [[CAD-93]] |
+| 25. Performance | Large models and assemblies; Rust/WASM where profiling shows a need | [[CAD-94]] [[CAD-95]] |
 
 The order follows the dependencies: the Sketcher needs the editor shell, Part modeling needs profiles, and Assemblies need regenerated components. Within a phase, tasks are listed in the order they will be done.
 
 Phases 7 to 14 come from the points checked in [[Open points]]: delivery first, so every later phase is built and published by CI; then the viewport and the sketcher, which later modeling features build on; text before the features that use it; projects and automation last, since they wrap everything else.
+
+Phases 15 to 25 come from the second round of [[Open points]]: release obligations and the desktop first; then projects (archives come before file associations), the sketcher and part modeling, which drawings and assemblies build on; assemblies before technical drawings, whose parts lists use the bill of materials; visuals, simulation and performance last, measured on everything before them.

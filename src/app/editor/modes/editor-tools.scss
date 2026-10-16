@@ -306,8 +306,18 @@
 
 .look {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-2);
   align-items: center;
+
+  .finish {
+    height: 24px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--surface-raised);
+    color: var(--text);
+    font: 12px var(--font);
+  }
 
   input[type='color'] {
     width: 32px;

@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNodeCore } from '@core/composition/node';
+import { decodePicture } from '@core/utilities/picture';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Cadence, type ComponentSummary } from './api';
 import { desktopFolder, type Io, parseArguments, runCli } from './cli';
@@ -79,6 +80,16 @@ describe('the MCP server', () => {
     expect(path.startsWith(exports)).toBe(true);
     expect(readFileSync(path).byteLength).toBeGreaterThan(84);
     expect(text(await call('command_reference'))).toBe('// the types');
+
+    // A picture to look at: the plate from above, grey on white, with its hole.
+    const picture = (await call('render_picture', { document, view: 'top', width: 120, height: 80 })) as { result: { content: { type: string; data: string; mimeType: string }[] } };
+    const [image] = picture.result.content;
+    expect(image).toMatchObject({ type: 'image', mimeType: 'image/png' });
+    const pixels = await decodePicture(new Uint8Array(Buffer.from(image?.data ?? '', 'base64')));
+    expect([pixels.width, pixels.height]).toEqual([120, 80]);
+    const at = (x: number, y: number) => Array.from(pixels.data.subarray((y * 120 + x) * 4, (y * 120 + x) * 4 + 3));
+    expect(at(1, 1)).toEqual([255, 255, 255]); // the ground
+    expect(at(90, 40)[0]).toBeLessThan(230); // the plate
 
     // A refused command says which and why; the commands before it stay.
     const refused = (await call('edit_component', { document, commands: [{ type: 'rename-item', itemId: 'e1', name: 'Plate' }, { type: 'delete-item', itemId: 'nothing' }] })) as {

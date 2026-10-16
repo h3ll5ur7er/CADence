@@ -709,6 +709,10 @@ export class DefaultProjectManager implements ProjectManager {
     return ok({ kind: 'model', ...model.value });
   }
 
+  async deliverFile(file: { readonly name: string; readonly mediaType: string; readonly bytes: Uint8Array }): Promise<void> {
+    await this.deps.externalFiles.deliver(file);
+  }
+
   async exportImported(id: DocumentId, format: ImportFormat): Promise<Result<void>> {
     const original = await this.original(id);
     if (!original.ok) return original;

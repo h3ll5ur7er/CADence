@@ -123,4 +123,6 @@ export interface ProjectManager {
   previewImported(id: DocumentId): Promise<Result<ImportedContent>>;
   /** Hands the imported file to the user in another format (drawings as drawings, 3D files as 3D files). */
   exportImported(id: DocumentId, format: ImportFormat): Promise<Result<void>>;
+  /** Hands a file the editor made (a picture, a video) to the user: a download or a save dialog. */
+  deliverFile(file: { readonly name: string; readonly mediaType: string; readonly bytes: Uint8Array }): Promise<void>;
 }

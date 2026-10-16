@@ -8,13 +8,19 @@ export interface Appearance {
   readonly color?: string;
   /** From 0.1 (nearly clear) to 1 (opaque). */
   readonly opacity?: number;
+  /** How the surface takes light in the realistic look (absent: matte). */
+  readonly finish?: Finish;
 }
+
+export type Finish = 'matte' | 'plastic' | 'metal' | 'glass' | 'wood';
+export const finishes: readonly Finish[] = ['matte', 'plastic', 'metal', 'glass', 'wood'];
 
 export const minimumOpacity = 0.1;
 
 /** Why an appearance cannot be stored, or `undefined` when it can. */
 export function appearanceProblem(appearance: Appearance): string | undefined {
   if (appearance.color !== undefined && !/^#[0-9a-f]{6}$/i.test(appearance.color)) return 'A colour is written #rrggbb.';
+  if (appearance.finish !== undefined && !finishes.includes(appearance.finish)) return 'That finish does not exist.';
   if (appearance.opacity !== undefined && !(appearance.opacity >= minimumOpacity && appearance.opacity <= 1)) {
     return `Opacity goes from ${minimumOpacity} to 1.`;
   }
@@ -23,4 +29,4 @@ export function appearanceProblem(appearance: Appearance): string | undefined {
 
 /** True when the appearance only holds defaults, so nothing needs storing. */
 export const isDefaultAppearance = (appearance: Appearance): boolean =>
-  !appearance.hidden && appearance.color === undefined && (appearance.opacity === undefined || appearance.opacity === 1);
+  !appearance.hidden && appearance.color === undefined && (appearance.opacity === undefined || appearance.opacity === 1) && (appearance.finish === undefined || appearance.finish === 'matte');

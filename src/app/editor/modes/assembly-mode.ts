@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, DestroyRef, effect, inject, input, signal, untracked, viewChild } from '@angular/core';
-import { type Appearance, type DocumentId, type DocumentSummary, type Matrix4, sourceKey, type Vec3 } from '@core/contracts';
+import { type Appearance, type DocumentId, type Finish, finishes, type DocumentSummary, type Matrix4, sourceKey, type Vec3 } from '@core/contracts';
 import type { AssemblyFormat } from '@core/managers/assembly';
 import { newId } from '@core/utilities/identity';
 import { compose, rotation, translation } from '@core/utilities/math';
@@ -15,6 +15,7 @@ import { MotionPanel } from '../assembly/motion-panel';
 import { PatternPanel } from '../assembly/pattern-panel';
 import { ExplodePanel } from '../assembly/explode-panel';
 import { LinkPanel } from '../assembly/link-panel';
+import { PictureDialog } from '../picture-dialog';
 import { EditorStatus } from '../editor-status';
 import { ThumbnailSaver } from '../thumbnail-saver';
 
@@ -36,7 +37,7 @@ const positionOf = (m: Matrix4): Position => {
 /** Assembly mode: instances of components, joints between them, motion studies. */
 @Component({
   selector: 'cad-assembly-mode',
-  imports: [Viewport, Icon, JointPanel, JointProperties, MotionPanel, PatternPanel, LinkPanel, ExplodePanel],
+  imports: [Viewport, PictureDialog, Icon, JointPanel, JointProperties, MotionPanel, PatternPanel, LinkPanel, ExplodePanel],
   providers: [AssemblyStore],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './assembly-mode.html',
@@ -52,6 +53,8 @@ export class AssemblyMode {
   protected readonly relativeTime = relativeTime;
   protected readonly mm = millimetres;
   protected readonly grams = grams;
+  protected readonly finishes = finishes;
+  protected readonly finishLabels: Readonly<Record<Finish, string>> = { matte: 'Matte', plastic: 'Plastic', metal: 'Metal', glass: 'Glass', wood: 'Wood' };
   protected readonly at = point;
   protected readonly round = (v: number) => Math.round(v * 100) / 100;
   protected readonly positionFields = [
@@ -63,6 +66,7 @@ export class AssemblyMode {
   /** The theme's body colour, for the colour field of instances that have none of their own. */
   protected readonly defaultColor = getComputedStyle(document.documentElement).getPropertyValue('--body').trim() || '#a9b6c2';
   private readonly viewport = viewChild.required(Viewport);
+  protected readonly pictureDialog = viewChild.required(PictureDialog);
   protected readonly capture = (fps: number) => this.viewport().captureStream(fps);
 
   protected setConfiguration(instanceId: string, configuration: string): void {

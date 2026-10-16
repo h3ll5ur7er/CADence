@@ -27,6 +27,7 @@ That builds `dist/automation/cadence.mjs`. Run it with `npm run cadence -- <comm
 | `projects` | Lists the projects |
 | `documents <project>` | Lists a project's documents |
 | `export <project> <document> <format>` | Exports a component: `step`, `stl`, `obj`, `3mf`; `dxf` or `svg` of a sketch (`--sketch <id>`) or of the flat pattern (`--flat-pattern`) |
+| `picture <project> <document> <file>` | A PNG of a component or an assembly: `--view iso` (default), `front`, `back`, `top`, `bottom`, `left` or `right`; `--width`, `--height` (800 × 600); `--white` for a white background |
 | `convert <input> <output>` | Converts a file, formats from the extensions: `bracket.step` to `bracket.stl`, `logo.svg` to `logo.dxf` |
 | `run <script> [arguments]` | Runs a script (below) |
 | `open-git <url>` | Opens a project from a git repository (`--cors-proxy <url>` if needed) |
@@ -108,6 +109,7 @@ The server tells the agent how to model when it connects, and offers these tools
 | `undo_component` | Undoes the last change |
 | `component_properties`, `check_component` | Mass properties; the print or laser checks |
 | `export_component`, `export_imported` | Files for printing, cutting or other CAD programs; returns the path |
+| `render_picture` | A picture of a component or an assembly from a view, returned as an image the agent can look at |
 | `command_reference` | Every command and feature as TypeScript types with their documentation |
 
 Ask the agent for a part ("a wall bracket for a 25 mm pipe, 4 mm thick, with two screw holes, as a 3MF"), and open the result in the desktop app, or sync it to the web app through git.

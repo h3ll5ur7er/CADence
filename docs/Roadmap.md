@@ -27,7 +27,7 @@ The work is planned in phases. Each phase ends with a running demo and visible e
 | 20. Assemblies II ✅ | Dragging parts and joint offsets, measuring and mass of assemblies, instance patterns, live updates | [[CAD-79]] [[CAD-80]] [[CAD-81]] [[CAD-82]] |
 | 21. Motion and assembly documents ✅ | Motion links, smoother motion with collisions, exploded views and instructions, bill of materials | [[CAD-83]] [[CAD-84]] [[CAD-85]] [[CAD-86]] |
 | 22. Technical drawings ✅ | Drawing documents with views, dimensions and notes, callouts and parts lists; PDF and DXF | [[CAD-87]] [[CAD-88]] [[CAD-89]] |
-| 23. Visuals | Materials and lighting, picture and video export, surface analysis, pictures for agents | [[CAD-90]] [[CAD-91]] [[CAD-92]] |
+| 23. Visuals ✅ | Materials and lighting, picture and video export, surface analysis, pictures for agents | [[CAD-90]] [[CAD-91]] [[CAD-92]] |
 | 24. Simulation | A simple strength check (linear static FEA) | [[CAD-93]] |
 | 25. Performance | Large models and assemblies; Rust/WASM where profiling shows a need | [[CAD-94]] [[CAD-95]] |
 

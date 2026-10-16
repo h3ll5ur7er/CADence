@@ -1,6 +1,7 @@
 import type { Appearance, BodyMesh, Matrix4 as Placement, PlaneFrame, ThreadMarker, Vec3 } from '@core/contracts';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import {
   Box3,
   ClippingGroup,
@@ -20,6 +21,9 @@ import {
   PerspectiveCamera,
   Plane,
   PlaneGeometry,
+  PMREMGenerator,
+  ShadowMaterial,
+  type Texture,
   Quaternion,
   Raycaster,
   Scene,
@@ -31,6 +35,7 @@ import {
 import type { DragAction, MouseBindings } from '../shared/keymap';
 import { lookOf, type SectionPlane } from './looks';
 import { meshVertices, type Pick, pickAt, type PickKind, pickKey, type TopologyPick } from './picking';
+import type { SurfaceAnalysis } from './surface-analysis';
 import { createBody, createPlane, createSketch, edgeHighlight, faceHighlight, lines, threadHelix, type ViewportTheme } from './scene-content';
 import type { SketchDisplay } from './sketch-display';
 import type { Affine } from './sketch-planes';
@@ -134,6 +139,14 @@ export class ViewportScene {
   private initialized = false;
   private pressed: { x: number; y: number } | undefined;
   private handle: { readonly controls: TransformControls; readonly proxy: Object3D } | undefined;
+  /** Faces coloured by a surface analysis instead of their looks. */
+  private analysis: SurfaceAnalysis | undefined;
+  /** What the bodies were last set to, to draw them again when the analysis changes. */
+  private lastBodies: { readonly meshes: readonly BodyMesh[]; readonly appearances: Readonly<Record<string, Appearance>> } = { meshes: [], appearances: {} };
+  private readonly sun: DirectionalLight;
+  private readonly sky: HemisphereLight;
+  /** The realistic look: an environment to reflect, and a ground that takes shadows. */
+  private realistic: { readonly environment: Texture; readonly ground: Mesh } | undefined;
   private handleDragging = false;
 
   /** `eventTarget` wraps the canvas and its overlays, so overlay events not handled there reach the navigation. */
@@ -152,10 +165,12 @@ export class ViewportScene {
     this.controls.screenSpacePanning = true;
     this.controls.addEventListener('change', () => this.requestRender());
 
-    this.scene.add(new HemisphereLight(0xffffff, 0x8899aa, 1.6));
+    this.sky = new HemisphereLight(0xffffff, 0x8899aa, 1.6);
+    this.scene.add(this.sky);
     const sun = new DirectionalLight(0xffffff, 1.4);
     sun.position.set(300, -400, 600);
-    this.scene.add(sun);
+    this.sun = sun;
+    this.scene.add(sun, sun.target);
     this.grid = createGrid(theme);
     this.scene.add(this.grid);
     this.origin = createOrigin(theme);
@@ -198,14 +213,77 @@ export class ViewportScene {
 
   /** The component's bodies, in their appearances; hidden ones are neither drawn nor picked. */
   setBodies(meshes: readonly BodyMesh[], appearances: Readonly<Record<string, Appearance>> = {}): void {
+    this.lastBodies = { meshes, appearances };
     const shown = meshes.flatMap((mesh) => {
       const look = lookOf(this.theme.body, appearances[mesh.body]);
       return look ? [{ mesh, look }] : [];
     });
     this.meshes = shown.map((s) => s.mesh);
-    this.replace(this.bodies, shown.map(({ mesh, look }) => createBody(mesh, this.theme, look)));
+    this.replace(this.bodies, shown.map(({ mesh, look }) => createBody(mesh, this.theme, look, this.analysis)));
     this.showCuts();
     this.updateHighlights();
+    this.placeGround();
+  }
+
+  /** Colours the faces by a surface analysis (CAD-91), or shows their looks again. */
+  setAnalysis(analysis: SurfaceAnalysis | undefined): void {
+    if (JSON.stringify(analysis) === JSON.stringify(this.analysis)) return;
+    this.analysis = analysis;
+    this.setBodies(this.lastBodies.meshes, this.lastBodies.appearances);
+    this.setParts([...this.partEntries.values()].map((e) => e.part));
+  }
+
+  /**
+   * The realistic look (CAD-90): the room's light reflected by the finishes, and shadows on a ground
+   * under the model; or the plain look again.
+   */
+  async setRealistic(on: boolean): Promise<void> {
+    if (on === !!this.realistic) return;
+    if (!on) {
+      const realistic = this.realistic as NonNullable<typeof this.realistic>;
+      this.realistic = undefined;
+      this.scene.environment = null;
+      realistic.environment.dispose();
+      this.scene.remove(realistic.ground);
+      this.renderer.shadowMap.enabled = false;
+      this.sun.castShadow = false;
+      this.sky.intensity = 1.6;
+      this.requestRender();
+      return;
+    }
+    if (!this.initialized) await this.renderer.init();
+    const generator = new PMREMGenerator(this.renderer);
+    const target = await generator.fromSceneAsync(new RoomEnvironment(), 0.04);
+    generator.dispose();
+    const ground = new Mesh(new PlaneGeometry(1, 1), new ShadowMaterial({ opacity: 0.22 }));
+    ground.receiveShadow = true;
+    ground.name = 'ground';
+    this.realistic = { environment: target.texture, ground };
+    this.scene.environment = target.texture;
+    this.scene.add(ground);
+    this.renderer.shadowMap.enabled = true;
+    this.sun.castShadow = true;
+    this.sun.shadow.mapSize.set(2048, 2048);
+    this.sky.intensity = 0.6;
+    this.placeGround();
+  }
+
+  /** The ground under the model and the sun's shadow box around it. */
+  private placeGround(): void {
+    const realistic = this.realistic;
+    if (!realistic) return;
+    const box = new Box3().setFromObject(this.model);
+    if (box.isEmpty()) return;
+    const center = box.getCenter(new Vector3());
+    const size = Math.max(box.getSize(new Vector3()).length(), 1);
+    realistic.ground.position.set(center.x, center.y, box.min.z - size * 0.002);
+    realistic.ground.scale.set(size * 4, size * 4, 1);
+    this.sun.target.position.copy(center);
+    this.sun.position.copy(center).add(new Vector3(0.45, -0.6, 0.9).multiplyScalar(size * 2));
+    const camera = this.sun.shadow.camera;
+    [camera.left, camera.right, camera.top, camera.bottom, camera.near, camera.far] = [-size, size, size, -size, 0.1, size * 5];
+    camera.updateProjectionMatrix();
+    this.requestRender();
   }
 
   /**
@@ -217,7 +295,7 @@ export class ViewportScene {
     for (const part of parts) {
       if (part.appearance?.hidden) continue;
       const looks = part.bodies.map((b) => (part.flagged ? { color: this.theme.flag, opacity: 1 } : lookOf(this.theme.body, part.bodyAppearances?.[b.body], part.appearance)));
-      const signature = `${part.bodies.map((b) => b.key).join('|')}:${JSON.stringify(looks)}`;
+      const signature = `${part.bodies.map((b) => b.key).join('|')}:${JSON.stringify(looks)}:${JSON.stringify(this.analysis ?? null)}`;
       let entry = this.partEntries.get(part.id);
       if (!entry || entry.signature !== signature) {
         if (entry) this.drop(entry.group);
@@ -227,7 +305,7 @@ export class ViewportScene {
         group.matrixAutoUpdate = false;
         part.bodies.forEach((mesh, i) => {
           const look = looks[i];
-          if (look) group.add(createBody(mesh, this.theme, look));
+          if (look) group.add(createBody(mesh, this.theme, look, this.analysis));
         });
         this.parts.add(group);
         entry = { group, signature, part };
@@ -240,6 +318,7 @@ export class ViewportScene {
     this.partEntries = next;
     this.showCuts();
     this.updateHighlights();
+    this.placeGround();
   }
 
   private drop(group: Group): void {
@@ -610,6 +689,48 @@ export class ViewportScene {
    * A picture of the model from the home direction, framed to fit (without the grid, origin, planes
    * and highlights), cropped to `width` × `height`, as PNG bytes.
    */
+  /**
+   * A picture of what the view shows, as it is seen now, at any size (CAD-90): helpers (grid,
+   * origin, planes, highlights) left out, on white or a transparent ground.
+   */
+  async picture(width: number, height: number, transparent: boolean): Promise<Uint8Array | undefined> {
+    const helpers = [this.grid, this.origin, this.planes, this.highlights, this.annotations];
+    const shown = helpers.map((h) => h.visible);
+    const [pixelRatio, size] = [this.renderer.getPixelRatio(), { ...this.size }];
+    for (const h of helpers) h.visible = false;
+    try {
+      this.renderer.setPixelRatio(1);
+      this.renderer.setSize(width, height, false);
+      this.perspective.aspect = width / height;
+      this.perspective.updateProjectionMatrix();
+      this.setOrthographicHeight(this.orthographic.top - this.orthographic.bottom, false, width / height);
+      this.renderer.render(this.scene, this.camera);
+      const picture = document.createElement('canvas');
+      [picture.width, picture.height] = [width, height];
+      const context = picture.getContext('2d');
+      if (!context) return undefined;
+      if (!transparent) {
+        context.fillStyle = '#ffffff';
+        context.fillRect(0, 0, width, height);
+      }
+      context.drawImage(this.renderer.domElement, 0, 0, width, height);
+      const blob = await new Promise<Blob | null>((resolve) => picture.toBlob(resolve, 'image/png'));
+      return blob ? new Uint8Array(await blob.arrayBuffer()) : undefined;
+    } finally {
+      helpers.forEach((h, i) => (h.visible = shown[i] as boolean));
+      this.resize(size.width, size.height, pixelRatio);
+    }
+  }
+
+  /** Turns the camera about the vertical axis through what it looks at (radians), for turntables. */
+  orbit(angle: number): void {
+    const offset = this.camera.position.clone().sub(this.controls.target);
+    offset.applyAxisAngle(new Vector3(0, 0, 1), angle);
+    this.camera.position.copy(this.controls.target).add(offset);
+    this.camera.lookAt(this.controls.target);
+    this.requestRender();
+  }
+
   async snapshot(width = 320, height = 200, type: 'image/png' | 'image/jpeg' = 'image/png', frame?: { readonly min: Vec3; readonly max: Vec3 }): Promise<Uint8Array | undefined> {
     const box = frame ? new Box3(new Vector3(...frame.min), new Vector3(...frame.max)) : new Box3().setFromObject(this.model);
     if (box.isEmpty()) box.setFromObject(this.sketches);
@@ -669,10 +790,9 @@ export class ViewportScene {
   }
 
   /** Sizes the orthographic view to show `height` millimetres (`reset`: at zoom 1). */
-  private setOrthographicHeight(height: number, reset: boolean): void {
+  private setOrthographicHeight(height: number, reset: boolean, aspect = this.size.width / Math.max(this.size.height, 1)): void {
     const camera = this.orthographic;
     const half = height / 2;
-    const aspect = this.size.width / Math.max(this.size.height, 1);
     Object.assign(camera, { top: half, bottom: -half, left: -half * aspect, right: half * aspect });
     if (reset) camera.zoom = 1;
     camera.updateProjectionMatrix();

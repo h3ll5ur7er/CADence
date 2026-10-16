@@ -18,6 +18,7 @@ import {
   ShapeGeometry,
 } from 'three/webgpu';
 import type { Look } from './looks';
+import { analysisColors, type SurfaceAnalysis } from './surface-analysis';
 import type { SketchDisplay } from './sketch-display';
 
 /** Colours resolved from the CSS design tokens, so the 3D scene follows the app theme. */
@@ -121,28 +122,45 @@ export function createSketch(display: SketchDisplay, theme: ViewportTheme): Grou
  * (colour, transparency). Its inside faces, drawn flat in the section colour, show only in a section
  * view: where the cut opens the body they read as its cut surface.
  */
-export function createBody(mesh: BodyMesh, theme: ViewportTheme, look: Look = { color: theme.body, opacity: 1 }): Group {
+/** Roughness and metalness by finish (CAD-90); glass is also see-through, wood warm. */
+const finishes: Readonly<Record<NonNullable<Look['finish']>, { readonly roughness: number; readonly metalness: number; readonly opacity?: number; readonly tint?: string }>> = {
+  matte: { roughness: 0.55, metalness: 0.05 },
+  plastic: { roughness: 0.3, metalness: 0 },
+  metal: { roughness: 0.22, metalness: 1 },
+  glass: { roughness: 0.05, metalness: 0, opacity: 0.35 },
+  wood: { roughness: 0.75, metalness: 0, tint: '#a06a3b' },
+};
+
+/** A body: its faces (in its look, or coloured by a surface analysis), its edges, and its section cut. */
+export function createBody(mesh: BodyMesh, theme: ViewportTheme, look: Look = { color: theme.body, opacity: 1 }, analysis?: SurfaceAnalysis): Group {
   const group = new Group();
   group.name = `body-${mesh.body}`;
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new BufferAttribute(mesh.positions, 3));
   geometry.setAttribute('normal', new BufferAttribute(mesh.normals, 3));
   geometry.setIndex(new BufferAttribute(mesh.indices, 1));
-  const clear = look.opacity < 1;
+  const finish = finishes[look.finish ?? 'matte'];
+  const opacity = Math.min(look.opacity, finish.opacity ?? 1);
+  const clear = opacity < 1;
+  const offset = { polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 };
+  if (analysis) geometry.setAttribute('color', new BufferAttribute(analysisColors(mesh, analysis), 3));
   const faces = new Mesh(
     geometry,
-    new MeshStandardMaterial({
-      color: new Color(look.color),
-      roughness: 0.55,
-      metalness: 0.05,
-      polygonOffset: true,
-      polygonOffsetFactor: 1,
-      polygonOffsetUnits: 1,
-      transparent: clear,
-      opacity: look.opacity,
-      depthWrite: !clear,
-    }),
+    analysis
+      ? new MeshBasicMaterial({ vertexColors: true, ...offset })
+      : new MeshStandardMaterial({
+          // Wood without a colour of its own is wood-coloured.
+          color: new Color(finish.tint && look.color === theme.body ? finish.tint : look.color),
+          roughness: finish.roughness,
+          metalness: finish.metalness,
+          ...offset,
+          transparent: clear,
+          opacity,
+          depthWrite: !clear,
+        }),
   );
+  faces.castShadow = true;
+  faces.receiveShadow = true;
   faces.userData = { body: mesh };
   const edges = lines(mesh.edgePositions, theme.edge, clear ? Math.max(look.opacity, 0.3) : 1);
   edges.userData = { body: mesh };

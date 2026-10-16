@@ -25,6 +25,7 @@ import {
   materials,
   type PlaneRef,
   type SketchText,
+  type TextPath,
   type TimelineItem,
 } from '@core/contracts';
 import type { SolidFormat } from '@core/managers/design';
@@ -44,6 +45,8 @@ import { featureLabels } from '../modeling/feature-drafts';
 import { FeatureDialog } from '../modeling/feature-dialog';
 import { ParametersPanel } from '../modeling/parameters-panel';
 import { DesignStore } from '../sketch/design-store';
+import { describeConstraint } from '../sketch/sketch-overlay';
+import { googleFont, SYSTEM_FONTS } from '../../shared/fonts';
 import { SketchEditor } from '../sketch/sketch-editor';
 import { SketchToolbar } from '../sketch/sketch-toolbar';
 
@@ -158,6 +161,15 @@ export class ComponentMode {
     void this.store.run({ type: 'set-units', units });
   }
   protected readonly store = inject(DesignStore);
+  /** The relations and dimensions a refused sketch change conflicts with, in words. */
+  protected readonly conflicts = computed(() => {
+    const conflict = this.store.conflict();
+    const sketch = this.store.state()?.sketches.get(conflict?.sketchId ?? '')?.sketch;
+    return (conflict?.constraints ?? []).flatMap((id) => {
+      const constraint = sketch?.constraints.find((c) => c.id === id);
+      return constraint ? [{ id, label: describeConstraint(constraint) }] : [];
+    });
+  });
   protected readonly originVisible = signal(true);
   /** The open toolbar menu: sketch, export, or one of the feature menus. */
   protected readonly menu = signal<string | undefined>(undefined);
@@ -265,11 +277,77 @@ export class ComponentMode {
     return found?.kind === 'text' && sketch && !generatorOf(sketch, found.id) ? found : undefined;
   });
 
-  protected setText(text: SketchText, change: Partial<Pick<SketchText, 'text' | 'height' | 'weight' | 'angle'>>): void {
+  protected setText(text: SketchText, change: Partial<Pick<SketchText, 'text' | 'height' | 'weight' | 'angle'>> & { font?: string | null; along?: TextPath | null }): void {
     const sketchId = this.store.editing();
     if (!sketchId) return;
     const next = { ...text, ...change };
-    void this.store.run({ type: 'set-sketch-text', sketchId, textId: text.id, text: next.text, height: next.height, weight: next.weight, angle: next.angle });
+    const font = next.font ?? undefined;
+    const along = next.along ?? undefined;
+    void this.store.run({
+      type: 'set-sketch-text',
+      sketchId,
+      textId: text.id,
+      text: next.text,
+      height: next.height,
+      weight: next.weight,
+      angle: next.angle,
+      ...(font ? { font } : {}),
+      ...(along ? { along } : {}),
+    });
+  }
+
+  /** Fonts on this computer (desktop only). */
+  protected readonly systemFonts = inject(SYSTEM_FONTS);
+  /** Where a new font for the selected text comes from, while one is being chosen. */
+  protected readonly fontSource = signal<'google' | 'system' | undefined>(undefined);
+  protected readonly fontFilter = signal('');
+  private readonly systemFontList = resource({
+    params: () => (this.fontSource() === 'system' ? true : undefined),
+    loader: () => this.systemFonts?.list() ?? Promise.resolve([]),
+  });
+  protected readonly systemFontMatches = computed(() => {
+    const find = this.fontFilter().trim().toLowerCase();
+    return (this.systemFontList.value() ?? []).filter((name) => name.toLowerCase().includes(find)).slice(0, 40);
+  });
+
+  protected chooseFont(text: SketchText, value: string): void {
+    if (value === 'google' || value === 'system') return this.fontSource.set(value);
+    this.fontSource.set(undefined);
+    this.setText(text, { font: value || null });
+  }
+
+  protected async getGoogleFont(text: SketchText, family: string, bold: boolean): Promise<void> {
+    if (!family.trim()) return;
+    try {
+      const document = await this.store.importFont(await googleFont(family, bold));
+      if (document) this.setText(text, { font: document.id });
+      this.fontSource.set(undefined);
+    } catch (error) {
+      this.store.error.set((error as Error).message);
+    }
+  }
+
+  protected async pickSystemFont(text: SketchText, name: string): Promise<void> {
+    if (!this.systemFonts) return;
+    const document = await this.store.importFont(await this.systemFonts.read(name));
+    if (document) this.setText(text, { font: document.id });
+    this.fontSource.set(undefined);
+  }
+
+  /** The curves of the edited sketch a text can follow. */
+  protected readonly textCurves = computed(() => {
+    const sketch = this.editedSketch()?.sketch;
+    const counts = new Map<string, number>();
+    const names: Record<string, string> = { line: 'Line', arc: 'Arc', circle: 'Circle', ellipse: 'Ellipse', spline: 'Spline' };
+    return (sketch?.entities ?? []).filter(isCurve).map((curve) => {
+      const n = (counts.get(curve.kind) ?? 0) + 1;
+      counts.set(curve.kind, n);
+      return { id: curve.id, label: `${names[curve.kind] ?? curve.kind} ${n}` };
+    });
+  });
+
+  protected setAlong(text: SketchText, curve: string): void {
+    this.setText(text, { along: curve ? { curve, offset: 0, reversed: false } : null });
   }
 
   /** Changes how a body is shown; one undoable step. */

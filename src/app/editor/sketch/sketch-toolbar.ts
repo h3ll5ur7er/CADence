@@ -110,6 +110,8 @@ export class SketchToolbar {
   protected readonly linearOpen = signal(false);
   /** Distance of the offset form, while it is open. */
   protected readonly offsetDistance = signal<number | undefined>(undefined);
+  /** The form for a curve from equations is open. */
+  protected readonly equationOpen = signal(false);
   protected readonly canOffset = computed(() => this.selected().some((e) => e.kind === 'line' || e.kind === 'arc' || e.kind === 'circle'));
   protected readonly constraintTools = constraintTools;
 
@@ -219,9 +221,49 @@ export class SketchToolbar {
     if (sketchId && ids.length && (await this.store.run({ type: 'delete-sketch-elements', sketchId, ids }))) this.store.select([]);
   }
 
+  protected async addEquation(x: string, y: string, from: string, to: string, samples: string): Promise<void> {
+    const sketch = this.view()?.sketch;
+    if (!sketch) return;
+    const entity = { id: newId(), kind: 'equation', x, y, from, to, samples: Number(samples) || 73, construction: false } as const;
+    if (await this.store.run({ type: 'add-sketch-geometry', sketchId: sketch.id, entities: [entity], constraints: [] })) this.equationOpen.set(false);
+  }
+
+  /** The font new texts are placed in: an imported one, or the bundled Inter (''). */
+  protected setDraftFont(font: string): void {
+    this.store.textDraft.update(({ font: _old, ...draft }) => (font ? { ...draft, font } : draft));
+  }
+
+  protected async fullyDefine(): Promise<void> {
+    const sketch = this.view()?.sketch;
+    if (sketch) await this.store.fullyDefine(sketch.id);
+  }
+
   protected insert(documentId: DocumentId): void {
     const as = this.insertAs();
-    void this.store.insertDrawing(documentId, as === 'piece' ? { onePiece: true } : { relations: as });
+    const picture = this.store.importedPictures().some((d) => d.id === documentId);
+    const trace = picture ? { trace: { threshold: this.traceThreshold(), smooth: this.traceSmooth() } } : {};
+    void this.store.insertDrawing(documentId, { ...(as === 'piece' ? { onePiece: true } : { relations: as }), ...trace });
+  }
+
+  /** How dark a picture's pixels must be to be traced (0 black … 1 white), and whether outlines are smoothed. */
+  protected readonly traceThreshold = signal(0.5);
+  protected readonly traceSmooth = signal(true);
+  /** The Picture menu is open. */
+  protected readonly pictureOpen = signal(false);
+  /** The pictures behind the edited sketch, with their names. */
+  protected readonly sketchPictures = computed(() => {
+    const names = new Map(this.store.importedPictures().map((d) => [d.id as string, d.name]));
+    return (this.view()?.sketch.entities ?? []).flatMap((e) => (e.kind === 'picture' ? [{ ...e, name: names.get(e.document) ?? 'Picture' }] : []));
+  });
+
+  protected setPicture(picture: { id: string; opacity: number; hidden: boolean }, change: { opacity?: number; hidden?: boolean }): void {
+    const sketchId = this.view()?.sketch.id;
+    if (sketchId) void this.store.run({ type: 'set-sketch-picture', sketchId, pictureId: picture.id, opacity: change.opacity ?? picture.opacity, hidden: change.hidden ?? picture.hidden });
+  }
+
+  protected removePicture(id: string): void {
+    const sketchId = this.view()?.sketch.id;
+    if (sketchId) void this.store.run({ type: 'delete-sketch-elements', sketchId, ids: [id] });
   }
 
   protected export(format: DrawingFormat, compensateKerf = false): void {

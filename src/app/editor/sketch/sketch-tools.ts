@@ -32,6 +32,8 @@ export interface TextDraft {
   readonly text: string;
   readonly height: number;
   readonly weight: TextWeight;
+  /** An imported font document; absent: the bundled one. */
+  readonly font?: string;
 }
 
 /** A text whose baseline starts where the click lands. */
@@ -40,7 +42,7 @@ export function textCommand(sketchId: string, at: PointRef, draft: TextDraft, ne
   const entities: SketchEntity[] = [];
   const constraints: SketchConstraint[] = [];
   const anchor = resolvePoint(at, newId, entities, constraints);
-  entities.push({ id: newId(), kind: 'text', anchor, text: draft.text, height: draft.height, weight: draft.weight, angle: 0, construction: false });
+  entities.push({ id: newId(), kind: 'text', anchor, text: draft.text, height: draft.height, weight: draft.weight, angle: 0, construction: false, ...(draft.font ? { font: draft.font } : {}) });
   return { type: 'add-sketch-geometry', sketchId, entities, constraints };
 }
 

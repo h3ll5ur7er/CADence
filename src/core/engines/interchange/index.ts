@@ -3,6 +3,7 @@ import { place, type ShapeAccess } from '@core/access/shape';
 import {
   fail,
   type ImportFormat,
+  isModelFormat,
   type Matrix4,
   type MeshQuality,
   ok,
@@ -12,6 +13,7 @@ import {
   type SketchEntity,
   type TextOutlines,
   type TextWeight,
+  type TraceSettings,
   type Vec2,
 } from '@core/contracts';
 import { exportSTEP, type Shape3D } from 'replicad';
@@ -19,11 +21,14 @@ import { compensatedCurves, type DrawingCurve, drawingCurves, type KerfCompensat
 import { type DrawingText, type ReadDrawing, readDxf, readSvg, sketchEntities } from './drawing-readers';
 import { fontSource, type TextFont } from '@core/utilities/text';
 import { writeDxf } from './dxf';
+import { tracePicture } from './picture-trace';
 import { displayMeshes, type MeshImport, meshSolid, readMeshes, solidTriangleLimit, stepSolids, store } from './solid-readers';
 import { type TriangleMesh, write3mf, writeObj, writeStl } from './solids';
 import { writeSvg } from './svg';
 
 export type DrawingFormat = 'dxf' | 'svg';
+/** Pictures, which drawings can be traced from. */
+export type PictureFormat = 'png' | 'jpg';
 export type SolidFormat = 'step' | 'stl' | 'obj' | '3mf';
 export type { KerfCompensation } from './drawing';
 export type { MeshImport } from './solid-readers';
@@ -66,9 +71,9 @@ export interface InterchangeEngine {
   /** A DXF or SVG drawing as sketch entities (ids start with `idPrefix`); meeting ends share points. */
   /**
    * The curves and texts of a DXF or SVG drawing as sketch entities (ids start with `idPrefix`),
-   * with the outlines of its texts.
+   * with the outlines of its texts; of a picture (PNG, JPEG), the outlines of its dark shapes.
    */
-  readDrawing(bytes: Uint8Array, format: DrawingFormat, idPrefix: string): Promise<Result<DrawingEntities>>;
+  readDrawing(bytes: Uint8Array, format: DrawingFormat | PictureFormat, idPrefix: string, trace?: TraceSettings): Promise<Result<DrawingEntities>>;
   /** A file in another format: drawings to drawings, 3D files to 3D files (meshes to STEP within the solid limit). */
   convert(bytes: Uint8Array, from: ImportFormat, to: ImportFormat): Promise<Result<Uint8Array>>;
 }
@@ -173,8 +178,13 @@ class DefaultInterchangeEngine implements InterchangeEngine {
     });
   }
 
-  readDrawing(bytes: Uint8Array, format: DrawingFormat, idPrefix: string): Promise<Result<DrawingEntities>> {
+  readDrawing(bytes: Uint8Array, format: DrawingFormat | PictureFormat, idPrefix: string, trace?: TraceSettings): Promise<Result<DrawingEntities>> {
     return attempt(async () => {
+      if (format === 'png' || format === 'jpg') {
+        const entities = sketchEntities(await tracePicture(bytes, trace), idPrefix);
+        if (!entities.length) throw new Error('No dark shapes were found in the picture. Try a lighter threshold.');
+        return { entities, texts: new Map(), extent: extentOf(entities, new Map()) };
+      }
       const drawing = drawingReaders[format](bytes);
       const entities = sketchEntities(drawing.curves, idPrefix);
       const texts = new Map<string, readonly (readonly ProfileEdge[])[]>();
@@ -193,6 +203,8 @@ class DefaultInterchangeEngine implements InterchangeEngine {
   convert(bytes: Uint8Array, from: ImportFormat, to: ImportFormat): Promise<Result<Uint8Array>> {
     return attempt(async () => {
       if (from === to) return bytes;
+      if (!isModelFormat(from) && !isDrawing(from)) throw new Error('Pictures and fonts are not converted; trace a picture into a sketch, or use a font for sketch texts.');
+      if (!isModelFormat(to) && !isDrawing(to)) throw new Error('Files convert to drawings and 3D files only.');
       if (isDrawing(from) || isDrawing(to)) {
         if (!isDrawing(from) || !isDrawing(to)) throw new Error('Drawings convert to drawings, and 3D files to 3D files.');
         const drawing = drawingReaders[from](bytes);

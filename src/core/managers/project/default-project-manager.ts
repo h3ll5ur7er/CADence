@@ -18,6 +18,8 @@ import {
   type DomainEvents,
   fail,
   type ImportFormat,
+  isFontFormat,
+  isModelFormat,
   ok,
   type Parameter,
   type Project,
@@ -34,6 +36,8 @@ import {
 import { InvalidVersionNameError, RemoteError, type Version, type VersionAccess, type VersionFile } from '@core/access/version';
 import type { InterchangeEngine } from '@core/engines/interchange';
 import { readZip, zip } from '@core/utilities/archive';
+import { pictureSize } from '@core/utilities/picture';
+import { loadFont } from '@core/utilities/text';
 import type { ParameterEngine } from '@core/engines/parameter';
 import type { Clock } from '@core/utilities/clock';
 import type { EventBus } from '@core/utilities/messaging';
@@ -92,6 +96,11 @@ const mediaTypes: Readonly<Record<ImportFormat, string>> = {
   '3mf': 'model/3mf',
   dxf: 'image/vnd.dxf',
   svg: 'image/svg+xml',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  ttf: 'font/ttf',
+  otf: 'font/otf',
+  woff: 'font/woff',
 };
 
 const formatsByExtension: Readonly<Record<string, ImportFormat>> = {
@@ -102,6 +111,12 @@ const formatsByExtension: Readonly<Record<string, ImportFormat>> = {
   '3mf': '3mf',
   dxf: 'dxf',
   svg: 'svg',
+  png: 'png',
+  jpg: 'jpg',
+  jpeg: 'jpg',
+  ttf: 'ttf',
+  otf: 'otf',
+  woff: 'woff',
 };
 
 const formatOf = (fileName: string): ImportFormat | undefined => {
@@ -664,6 +679,29 @@ export class DefaultProjectManager implements ProjectManager {
         min: [extent((v) => Math.min(...v)), extentY((v) => Math.min(...v)), 0],
         max: [extent((v) => Math.max(...v)), extentY((v) => Math.max(...v)), 0],
       });
+    }
+    if (isFontFormat(document.format)) {
+      // A sample of the font, as a drawing.
+      const font = await loadFont(bytes.slice().buffer);
+      const sample = 'AaBbCc 0123 ÄÖÜ';
+      const contours = font.outline(sample, { at: [0, 0], height: 10, angle: 0 });
+      const points = contours.flat().flatMap((edge) => [edge.start, edge.end]);
+      const extent = (axis: 0 | 1, pick: (...v: number[]) => number) => (points.length ? pick(...points.map((p) => p[axis])) : 0);
+      return ok({
+        kind: 'drawing',
+        entities: [
+          { id: 'a', kind: 'point', x: 0, y: 0 },
+          { id: 't', kind: 'text', anchor: 'a', text: sample, height: 10, weight: 'regular', angle: 0, construction: false, font: id },
+        ],
+        texts: new Map([['t', contours.map((contour) => contour.map((edge) => ({ ...edge, source: 't' })))]]),
+        min: [extent(0, Math.min), extent(1, Math.min), 0],
+        max: [extent(0, Math.max), extent(1, Math.max), 0],
+      });
+    }
+    if (!isModelFormat(document.format)) {
+      const size = pictureSize(bytes);
+      if (!size) return fail({ code: 'unreadable', message: `${document.fileName} is not a PNG or JPEG picture.` });
+      return ok({ kind: 'picture', width: size.width, height: size.height, mediaType: size.mediaType, bytes });
     }
     const model = await this.deps.interchange.readMesh(bytes, document.format, `preview:${document.assetId}`);
     if (!model.ok) return model;

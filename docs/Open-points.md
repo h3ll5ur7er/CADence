@@ -41,13 +41,13 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 
 ## Sketching
 
-- [X] **Trace a picture:** an image as the sketch background, scaled by a known length, to draw over a photo or a scan. *(new)* → [[CAD-66]]
-- [X] **Explain over-constrained sketches:** show which relations and dimensions conflict, and offer to remove one. *(new)* → [[CAD-68]]
-- [X] **Suggest relations and dimensions** that would fully define a sketch. *(new)* → [[CAD-68]]
-- [X] **Curves from equations** (x(t), y(t)), e.g. involutes and cams. *(new)* → [[CAD-69]]
-- [X] **More fonts** for text: other Google Fonts or the system's fonts. *(new)* → [[CAD-70]]
-- [X] **Text along a curve.** *(new)* → [[CAD-70]]
-- [X] **Highlight** under-defined / open DOF parts in sketches *(your addition)* → [[CAD-68]]
+- [X] **Trace a picture:** an image as the sketch background, scaled by a known length, to draw over a photo or a scan. *(new)* → [[CAD-66]] ✅
+- [X] **Explain over-constrained sketches:** show which relations and dimensions conflict, and offer to remove one. *(new)* → [[CAD-68]] ✅
+- [X] **Suggest relations and dimensions** that would fully define a sketch. *(new)* → [[CAD-68]] ✅
+- [X] **Curves from equations** (x(t), y(t)), e.g. involutes and cams. *(new)* → [[CAD-69]] ✅
+- [X] **More fonts** for text: other Google Fonts or the system's fonts. *(new)* → [[CAD-70]] ✅
+- [X] **Text along a curve.** *(new)* → [[CAD-70]] ✅
+- [X] **Highlight** under-defined / open DOF parts in sketches *(your addition)* → [[CAD-68]] ✅
 
 ## Part modeling
 
@@ -125,7 +125,7 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 - [ ] **Solids from meshes above 100,000 triangles**, with decimation (simplifying) first. *([[CAD-26]], ADR-22)*
 - [ ] **Repair open or broken meshes** before making them solid. *(new)*
 - [ ] **More formats:** IGES, BREP, AMF, glTF, colours from 3MF and OBJ. *(new)*
-- [X] **Pictures to outlines:** trace a bitmap (logo, drawing) into sketch curves. *(new)* → [[CAD-67]]
+- [X] **Pictures to outlines:** trace a bitmap (logo, drawing) into sketch curves. *(new)* → [[CAD-67]] ✅
 - [ ] **Circuit boards:** import a KiCad board (outline, holes, component heights) to design an enclosure around it. *(new)*
 
 ## Automation and AI

@@ -113,7 +113,7 @@ As implemented in [[src/core/contracts/sketch.ts]]:
 interface Sketch {
   id: string; type: 'sketch'; name: string; suppressed: boolean;
   plane: 'XY' | 'XZ' | 'YZ';         // origin planes now; construction planes and faces in phase 3
-  entities: SketchEntity[];           // points, lines, circles, arcs, ellipses, splines (each curve has a construction flag), projections
+  entities: SketchEntity[];           // points, lines, circles, arcs, ellipses, splines (each curve has a construction flag), projections, texts, drawings, equations, pictures
   constraints: SketchConstraint[];    // geometric relations and dimensions
 }
 ```
@@ -124,6 +124,9 @@ interface Sketch {
 - **Geometric constraints:** coincident, horizontal, vertical, parallel, perpendicular, equal (lengths or radii), tangent, point-on (line, circle or arc), midpoint, fix.
 - **Dimensions** store an **expression**, not a number: distance, horizontal and vertical distance, point-to-line distance, radius, diameter, angle. `"2 * 20 mm"` and `"1 in"` are valid values. Signs and orientation (which side, which of the supplementary angles) follow the current geometry, so a dimension never flips the sketch over.
 - **Points store their last solved positions.** The solver needs a starting guess, and the document opens exactly as last seen, even before solving.
+- **Generated geometry.** Projections, drawings kept as one piece and equation curves (`{ kind: 'equation', x, y, from, to, samples }`) generate their points and curves (`<id>:<n>`) on every regeneration; generated points are fixed for the solver. A drawing of a picture carries `trace: { threshold, smooth }`.
+- **Pictures** (`{ kind: 'picture', document, origin, handle, opacity, hidden }`) are shown behind the sketch, placed by two ordinary points; they are not geometry.
+- **Texts** may name an imported font (`font`, a document id) and follow a curve (`along: { curve, offset, reversed }`).
 
 ### Features
 

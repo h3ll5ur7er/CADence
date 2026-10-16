@@ -71,3 +71,30 @@
     font-size: 13px;
   }
 }
+
+.font-form {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+
+  .hint {
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+}
+
+.font-list {
+  max-height: 180px;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  .btn {
+    width: 100%;
+    justify-content: flex-start;
+    font-size: 12px;
+  }
+}

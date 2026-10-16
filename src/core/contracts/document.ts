@@ -27,7 +27,11 @@ export function lengthExpression(typed: string, unit: LengthUnit): string {
   const text = typed.trim();
   return unit !== 'mm' && /^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(text) ? `${text} ${unit}` : text;
 }
-export type ImportFormat = 'step' | 'stl' | 'obj' | '3mf' | 'dxf' | 'svg';
+export type ImportFormat = 'step' | 'stl' | 'obj' | '3mf' | 'dxf' | 'svg' | 'png' | 'jpg' | 'ttf' | 'otf' | 'woff';
+
+/** 3D files: what components insert as bodies and assemblies as parts. */
+export type ModelFormat = 'step' | 'stl' | 'obj' | '3mf';
+export const isModelFormat = (format: ImportFormat | undefined): format is ModelFormat => format === 'step' || format === 'stl' || format === 'obj' || format === '3mf';
 
 export interface DocumentSummary {
   readonly id: DocumentId;
@@ -114,6 +118,11 @@ export function summarize(document: CadDocument): DocumentSummary {
 }
 
 /** Imported documents a part or assembly can use as a solid. */
-export const isImportedModel = (d: DocumentSummary): boolean => d.kind === 'imported' && d.format !== undefined && d.format !== 'dxf' && d.format !== 'svg';
+export const isImportedModel = (d: DocumentSummary): boolean => d.kind === 'imported' && isModelFormat(d.format);
 /** Imported documents a sketch can take curves from. */
 export const isImportedDrawing = (d: DocumentSummary): boolean => d.kind === 'imported' && (d.format === 'dxf' || d.format === 'svg');
+/** Imported PNG and JPEG pictures: backgrounds to trace over in sketches, or outlines to trace. */
+export const isImportedPicture = (d: DocumentSummary): boolean => d.kind === 'imported' && (d.format === 'png' || d.format === 'jpg');
+/** Imported fonts (TTF, OTF, WOFF), for sketch texts. */
+export const isFontFormat = (format: ImportFormat | undefined): format is 'ttf' | 'otf' | 'woff' => format === 'ttf' || format === 'otf' || format === 'woff';
+export const isImportedFont = (d: DocumentSummary): boolean => d.kind === 'imported' && isFontFormat(d.format);

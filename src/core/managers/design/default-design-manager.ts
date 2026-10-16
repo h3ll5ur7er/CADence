@@ -22,6 +22,10 @@ import {
   resultStamp,
   type TopologyRef,
   type ValidationReport,
+  type SketchConstraint,
+  type SketchFreedom,
+  isFontFormat,
+  isModelFormat,
 } from '@core/contracts';
 import type { AnalysisEngine } from '@core/engines/analysis';
 import type { InterchangeEngine } from '@core/engines/interchange';
@@ -43,7 +47,7 @@ import type {
   SketchView,
   SolidFormat,
 } from './design-manager';
-import { type Derived, Regeneration, type RegenerationContext } from './regeneration';
+import { type Derived, importedFonts, Regeneration, type RegenerationContext } from './regeneration';
 import { viewerHtml } from '@core/utilities/viewer';
 
 export interface DesignManagerDependencies {
@@ -148,10 +152,22 @@ class Session implements DesignSession {
     return this.serialized(() => this.travel(this.redoStack, this.undoStack));
   }
 
+  async freedom(sketchId: string): Promise<SketchFreedom> {
+    const view = this.current.derived.sketches.get(sketchId);
+    if (!view || view.error) return { points: [], radii: [] };
+    return this.deps.sketches.freedom(view.sketch, view.values);
+  }
+
+  async suggestConstraints(sketchId: string, idPrefix: string): Promise<SketchConstraint[]> {
+    const view = this.current.derived.sketches.get(sketchId);
+    if (!view || view.error) return [];
+    return (await this.deps.sketches.suggest(view.sketch, view.values, idPrefix)).constraints;
+  }
+
   async previewDrag(sketchId: string, pointId: string, x: number, y: number): Promise<SketchView | undefined> {
     const view = this.current.derived.sketches.get(sketchId);
     if (!view || view.error) return undefined;
-    const solution = await this.deps.sketches.solve(view.sketch, view.values, { point: pointId, x, y });
+    const solution = await this.deps.sketches.solve(view.sketch, view.values, { point: pointId, x, y }, importedFonts(this.deps.documents, this.deps.assets));
     if (solution.status === 'over-constrained' || solution.status === 'failed') return undefined;
     return { ...solution, frame: view.frame, values: view.values };
   }
@@ -180,12 +196,14 @@ class Session implements DesignSession {
 
   async insertDrawing(sketchId: string, documentId: DocumentId, idPrefix: string, options: InsertDrawingOptions = {}): Promise<Result<void>> {
     const document = await this.deps.documents.load(documentId);
-    if (document?.kind !== 'imported' || (document.format !== 'dxf' && document.format !== 'svg')) {
-      return fail({ code: 'invalid-command', message: 'Only imported DXF and SVG drawings can be inserted into a sketch.' });
+    if (document?.kind !== 'imported' || isModelFormat(document.format) || isFontFormat(document.format)) {
+      return fail({ code: 'invalid-command', message: 'Only imported DXF and SVG drawings, and pictures to trace, can be inserted into a sketch.' });
     }
     const original = await this.deps.assets.fetch(document.assetId);
     if (!original) return fail({ code: 'missing-original', message: `The original of ${document.name} is missing.` });
-    const drawing = await this.deps.interchange.readDrawing(original.bytes, document.format, idPrefix);
+    const picture = document.format === 'png' || document.format === 'jpg';
+    const trace = picture ? (options.trace ?? { threshold: 0.5, smooth: true }) : undefined;
+    const drawing = await this.deps.interchange.readDrawing(original.bytes, document.format, idPrefix, trace);
     if (!drawing.ok) return drawing;
     const { entities, extent } = drawing.value;
     if (options.onePiece) {
@@ -197,7 +215,7 @@ class Session implements DesignSession {
         entities: [
           { id: origin, kind: 'point', x: extent.min[0], y: extent.min[1] },
           { id: handle, kind: 'point', x: extent.max[0], y: extent.min[1] },
-          { id, kind: 'drawing', document: documentId, origin, handle, construction: false },
+          { id, kind: 'drawing', document: documentId, origin, handle, construction: false, ...(trace ? { trace } : {}) },
         ],
         constraints: [],
       });
@@ -289,7 +307,12 @@ class Session implements DesignSession {
       }
     }
     const status = target ? derived.items.get(target) : undefined;
-    if (status?.state === 'error') return fail({ code: errorCode(status.error), message: status.error ?? 'This change fails.' });
+    if (status?.state === 'error') {
+      // Contradicting relations point at the ones the sketch had before, so the client can offer to remove one.
+      const before = target ? this.current.derived.sketches.get(target)?.sketch.constraints.map((c) => c.id) : undefined;
+      const related = target ? derived.sketches.get(target)?.conflicting?.filter((id) => before?.includes(id)) : undefined;
+      return fail({ code: errorCode(status.error), message: status.error ?? 'This change fails.', ...(related?.length ? { related } : {}) });
+    }
     // Solved positions become the stored ones, so a drag stays where it was dropped.
     const timeline = document.timeline.map((item) => (isSketch(item) ? (derived.sketches.get(item.id)?.error ? item : (derived.sketches.get(item.id)?.sketch ?? item)) : item));
     const next = { ...document, timeline, modifiedAt: this.deps.clock().toISOString() };

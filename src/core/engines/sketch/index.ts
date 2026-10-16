@@ -1,6 +1,9 @@
-import { type Profile, type ProfileEdge, type Sketch, sketchOriginId, type TextOutlines, type TextWeight } from '@core/contracts';
-import { fontSource, type TextFont } from '@core/utilities/text';
+import { isCurve, type Profile, type ProfileEdge, type Sketch, type SketchConstraint, type SketchFreedom, type SketchText, sketchOriginId, type TextOutlines, type TextWeight } from '@core/contracts';
+import type { Vec2 } from '@core/utilities/math';
+import { fontSource, loadFont, type TextFont } from '@core/utilities/text';
 import { type DragTarget, PlanegcsSolver, type SolveOutcome } from './planegcs-solver';
+import { sketchFreedom, suggestConstraints } from './diagnostics';
+import { measured, sketchPath } from './path';
 import { findProfiles } from './profiles';
 
 export type { DragTarget } from './planegcs-solver';
@@ -19,8 +22,16 @@ export interface SketchSolution extends SolveOutcome {
  * Solves sketch constraints and finds closed profiles (docs/Architecture/Components.md#engines).
  * Dimension values are already evaluated (mm, radians) and keyed by constraint id.
  */
+/** The files of imported fonts, by document id; `key` changes when the file does. */
+export type FontFiles = (documentId: string) => Promise<{ readonly key: string; readonly bytes: Uint8Array } | undefined>;
+
 export interface SketchEngine {
-  solve(sketch: Sketch, values: ReadonlyMap<string, number>, drag?: DragTarget): Promise<SketchSolution>;
+  /** With `fonts`, texts in imported fonts are laid out in them (others in the bundled Inter). */
+  solve(sketch: Sketch, values: ReadonlyMap<string, number>, drag?: DragTarget, fonts?: FontFiles): Promise<SketchSolution>;
+  /** The points (and circle sizes) that the sketch's relations and dimensions leave free. */
+  freedom(sketch: Sketch, values: ReadonlyMap<string, number>): Promise<SketchFreedom>;
+  /** Relations and dimensions (ids start with `idPrefix`) that would fully define the sketch as it is drawn. */
+  suggest(sketch: Sketch, values: ReadonlyMap<string, number>, idPrefix: string): Promise<{ constraints: SketchConstraint[]; degreesOfFreedom: number }>;
 }
 
 export interface SketchEngineOptions {
@@ -39,22 +50,61 @@ class DefaultSketchEngine implements SketchEngine {
     this.fonts = options.fonts ?? fontSource();
   }
 
-  async solve(sketch: Sketch, values: ReadonlyMap<string, number>, drag?: DragTarget): Promise<SketchSolution> {
+  /** Imported fonts, parsed once per file. */
+  private readonly documentFonts = new Map<string, Promise<TextFont>>();
+
+  async solve(sketch: Sketch, values: ReadonlyMap<string, number>, drag?: DragTarget, fonts?: FontFiles): Promise<SketchSolution> {
     const outcome = await this.solver.solve(sketch, values, drag);
-    const texts = await this.textsOf(outcome.sketch);
+    const texts = await this.textsOf(outcome.sketch, fonts);
     return { ...outcome, profiles: findProfiles(outcome.sketch, texts), texts };
   }
 
-  /** Lays out each text at its solved anchor; fonts load on the first text. */
-  private async textsOf(sketch: Sketch): Promise<TextOutlines> {
+  freedom(sketch: Sketch, values: ReadonlyMap<string, number>): Promise<SketchFreedom> {
+    return sketchFreedom(this.solver, sketch, values);
+  }
+
+  suggest(sketch: Sketch, values: ReadonlyMap<string, number>, idPrefix: string): Promise<{ constraints: SketchConstraint[]; degreesOfFreedom: number }> {
+    return suggestConstraints(this.solver, sketch, values, idPrefix);
+  }
+
+  /** A text's font: its imported font when it has one (and the file is there), else the bundled one. */
+  private async fontOf(text: SketchText, fonts?: FontFiles): Promise<TextFont> {
+    const file = text.font && fonts ? await fonts(text.font) : undefined;
+    if (!file) return this.fonts(text.weight);
+    let font = this.documentFonts.get(file.key);
+    if (!font) {
+      font = loadFont(file.bytes.slice().buffer);
+      this.documentFonts.set(file.key, font);
+    }
+    return font.catch(() => this.fonts(text.weight));
+  }
+
+  /** How a text along a curve is placed at each distance; undefined when the curve is gone. */
+  private placeAlong(sketch: Sketch, text: SketchText): ((distance: number) => { at: Vec2; angle: number }) | undefined {
+    const along = text.along;
+    const curve = along && sketch.entities.find((e) => e.id === along.curve);
+    if (!along || !curve || !isCurve(curve)) return undefined;
+    const path = sketchPath({ ...sketch, entities: [...sketch.entities.filter((e) => e.kind === 'point'), { ...curve, construction: false }] });
+    if (!path.ok) return undefined;
+    const measure = measured(path.value);
+    return (distance) => {
+      const { point, direction } = measure.at(along.reversed ? measure.length - along.offset - distance : along.offset + distance);
+      const [dx, dy] = along.reversed ? [-direction[0], -direction[1]] : direction;
+      return { at: point, angle: Math.atan2(dy, dx) };
+    };
+  }
+
+  /** Lays out each text at its solved anchor, or along its curve; fonts load on the first text. */
+  private async textsOf(sketch: Sketch, fonts?: FontFiles): Promise<TextOutlines> {
     const texts = new Map<string, readonly (readonly ProfileEdge[])[]>();
     for (const e of sketch.entities) {
       if (e.kind !== 'text' || !e.text.trim() || !(e.height > 0)) continue;
       const anchor = sketch.entities.find((p) => p.id === e.anchor);
       const at = anchor?.kind === 'point' ? ([anchor.x, anchor.y] as const) : e.anchor === sketchOriginId ? ([0, 0] as const) : undefined;
       if (!at) continue;
-      const font = await this.fonts(e.weight);
-      const contours = font.outline(e.text, { at, height: e.height, angle: e.angle });
+      const font = await this.fontOf(e, fonts);
+      const along = this.placeAlong(sketch, e);
+      const contours = along ? font.outlineAlong(e.text, e.height, along) : font.outline(e.text, { at, height: e.height, angle: e.angle });
       texts.set(e.id, contours.map((contour) => contour.map((edge): ProfileEdge => ({ ...edge, source: e.id }))));
     }
     return texts;

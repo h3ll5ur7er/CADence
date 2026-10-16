@@ -21,7 +21,7 @@ The work is planned in phases. Each phase ends with a running demo and visible e
 | 14. Automation ✅ | Scripting API and command line, MCP server for AI agents | [[CAD-55]] [[CAD-56]] |
 | 15. Release and desktop ✅ | About dialog with licence credits; desktop smoke tests in CI; installers and auto-update | [[CAD-57]] [[CAD-58]] [[CAD-59]] |
 | 16. Projects II ✅ | Drag and drop, duplicates; replacing imported files; project archives and file associations; synced version names; templates; sharing a model as one HTML file | [[CAD-60]] [[CAD-61]] [[CAD-62]] [[CAD-63]] [[CAD-64]] [[CAD-65]] |
-| 17. Sketcher III | Tracing pictures and turning them into outlines; sketch diagnostics (open degrees of freedom, conflicts, suggestions); equation curves; more fonts and text along curves | [[CAD-66]] [[CAD-67]] [[CAD-68]] [[CAD-69]] [[CAD-70]] |
+| 17. Sketcher III ✅ | Tracing pictures and turning them into outlines; sketch diagnostics (open degrees of freedom, conflicts, suggestions); equation curves; more fonts and text along curves | [[CAD-66]] [[CAD-67]] [[CAD-68]] [[CAD-69]] [[CAD-70]] |
 | 18. Part modeling III | Standard parts library, gear generator, print-friendly generators, clearances for prints | [[CAD-71]] [[CAD-72]] [[CAD-73]] [[CAD-74]] |
 | 19. Workflow | Timeline folders and notes, repairing broken references, configurations as CSV, command palette | [[CAD-75]] [[CAD-76]] [[CAD-77]] [[CAD-78]] |
 | 20. Assemblies II | Dragging parts and joint offsets, measuring and mass of assemblies, instance patterns, live updates | [[CAD-79]] [[CAD-80]] [[CAD-81]] [[CAD-82]] |

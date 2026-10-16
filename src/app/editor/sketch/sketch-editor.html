@@ -14,6 +14,9 @@
 >
   @if (matrix()) {
     <g [attr.transform]="transform()">
+      @for (picture of pictures(); track picture.id) {
+        <image class="picture" data-testid="sketch-picture" preserveAspectRatio="none" [attr.href]="picture.url" [attr.width]="picture.width" [attr.height]="picture.height" [attr.opacity]="picture.opacity" [attr.transform]="picture.matrix" />
+      }
       @for (profile of profiles(); track profile.id) {
         <path class="profile" fill-rule="evenodd" [attr.d]="profile.d" />
       }
@@ -22,6 +25,8 @@
           class="curve"
           [class.construction]="curve.construction"
           [class.projected]="curve.projected"
+          [class.defined]="!fully() && freedom.hasValue() && !free().entities.has(curve.id)"
+          [class.free]="free().entities.has(curve.id)"
           [class.selected]="highlighted().has(curve.id)"
           [class.hovered]="hovered() === curve.id"
           [attr.d]="curve.d"
@@ -42,6 +47,7 @@
         class="point"
         [class.origin]="point.origin"
         [class.handle]="point.handle"
+        [class.free]="free().points.has(point.id)"
         [class.selected]="highlighted().has(point.id)"
         [class.snapped]="snapped()?.id === point.id && store.tool() !== 'select'"
         [class.hovered]="hovered() === point.id"
@@ -49,6 +55,9 @@
         [attr.cy]="point.y"
         [attr.r]="point.origin || point.handle ? 4.5 : 3.5"
       />
+    }
+    @for (arrow of arrows(); track arrow.id) {
+      <path class="freedom" data-testid="freedom-arrow" [attr.transform]="'translate(' + arrow.x + ' ' + arrow.y + ')'" [attr.d]="arrow.d" />
     }
     @if (snapMarker(); as mark) {
       <g class="snap-mark" [attr.data-snap]="mark.kind">

@@ -28,7 +28,9 @@ import { createSketchEngine } from '@core/engines/sketch';
 import { cubeStl, plateSvg } from '@core/contracts/testing/files';
 import { steppingClock } from '@core/utilities/clock';
 import { EventBus } from '@core/utilities/messaging';
+import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { png } from '@core/utilities/picture/testing';
 import { createDesignManager, type DesignSession } from './index';
 
 function unwrap<T>(result: Result<T>): T {
@@ -347,6 +349,108 @@ describe('DesignManager', () => {
     unwrap(await session.execute({ type: 'create-sketch', id: 's1', plane: 'XY' }));
     await session.undo();
     expect(seen).toEqual([1, 0]);
+  });
+
+  describe('sketch helpers', () => {
+    it('draws curves from equations, following the parameters', async () => {
+      unwrap(await session.execute({ type: 'add-parameter', parameter: { id: 'r', name: 'r', expression: '10 mm' } }));
+      unwrap(await session.execute({ type: 'create-sketch', id: 's1', plane: 'XY' }));
+      unwrap(
+        await session.execute({
+          type: 'add-sketch-geometry',
+          sketchId: 's1',
+          entities: [{ id: 'eq', kind: 'equation', x: 'r * cos(t)', y: 'r * sin(t)', from: '0', to: '360', samples: 73, construction: false }],
+          constraints: [],
+        }),
+      );
+      const view = session.state().sketches.get('s1');
+      expect(view?.sketch.entities.filter((e) => e.id.startsWith('eq:') && e.kind === 'point')).toHaveLength(72);
+      expect(view?.profiles[0]?.area).toBeCloseTo(Math.PI * 100, 0);
+      unwrap(await session.execute({ type: 'set-parameter', parameter: { id: 'r', name: 'r', expression: '20 mm' } }));
+      expect(session.state().sketches.get('s1')?.profiles[0]?.area).toBeCloseTo(Math.PI * 400, -1);
+      // A broken expression is refused with its reason.
+      const broken = await session.execute({ type: 'add-sketch-geometry', sketchId: 's1', entities: [{ id: 'bad', kind: 'equation', x: 'q * t', y: 't', from: '0', to: '1', samples: 5, construction: false }], constraints: [] });
+      expect(broken).toMatchObject({ ok: false, error: { message: expect.stringContaining('q * t') } });
+    });
+
+    it('sets texts in imported fonts and along curves', async () => {
+      await storeImported(documents, assets, 'font', 'woff', new Uint8Array(readFileSync('node_modules/@fontsource/inter/files/inter-latin-700-normal.woff')));
+      unwrap(await session.execute({ type: 'create-sketch', id: 's1', plane: 'XY' }));
+      unwrap(
+        await session.execute({
+          type: 'add-sketch-geometry',
+          sketchId: 's1',
+          entities: [
+            { id: 'c', kind: 'point', x: 0, y: 0 },
+            { id: 'ring', kind: 'circle', center: 'c', radius: 30, construction: true },
+            { id: 'a', kind: 'point', x: -40, y: -50 },
+            { id: 't', kind: 'text', anchor: 'a', text: 'IIII', height: 5, weight: 'regular', angle: 0, construction: false },
+          ],
+          constraints: [],
+        }),
+      );
+      const width = (id: string) => {
+        const points = (session.state().sketches.get('s1')?.texts.get(id) ?? []).flat().flatMap((e) => [e.start[0], e.end[0]]);
+        return Math.max(...points) - Math.min(...points);
+      };
+      const regular = width('t');
+      // In the imported (bold) font the same text runs wider.
+      unwrap(await session.execute({ type: 'set-sketch-text', sketchId: 's1', textId: 't', text: 'IIII', height: 5, weight: 'regular', angle: 0, font: 'font' }));
+      expect(width('t')).toBeGreaterThan(regular);
+      // Along the circle (counter-clockwise) letters stand on its left: inside it, within the text height.
+      const radii = async (reversed: boolean) => {
+        unwrap(await session.execute({ type: 'set-sketch-text', sketchId: 's1', textId: 't', text: 'IIII', height: 5, weight: 'regular', angle: 0, along: { curve: 'ring', offset: 10, reversed } }));
+        const r = (session.state().sketches.get('s1')?.texts.get('t') ?? []).flat().map((e) => Math.hypot(e.start[0], e.start[1]));
+        return [Math.min(...r), Math.max(...r)];
+      };
+      const [innerMin, innerMax] = await radii(false);
+      expect(innerMin).toBeGreaterThan(24.9);
+      expect(innerMax).toBeLessThan(30.1);
+      // The other side: outside it.
+      const [outerMin, outerMax] = await radii(true);
+      expect(outerMin).toBeGreaterThan(29.9);
+      expect(outerMax).toBeLessThan(35.1);
+    });
+
+    it('traces pictures into curves', async () => {
+      // A white picture with a black 96 × 48 pixel block: 25.4 × 12.7 mm at 96 pixels an inch.
+      await storeImported(documents, assets, 'logo', 'png', await png(120, 80, (x, y) => x >= 10 && x < 106 && y >= 16 && y < 64));
+      unwrap(await session.execute({ type: 'create-sketch', id: 's1', plane: 'XY' }));
+      unwrap(await session.insertDrawing('s1', asDocumentId('logo'), 'p-', { relations: 'none', trace: { threshold: 0.5, smooth: false } }));
+      const view = session.state().sketches.get('s1');
+      expect(view?.profiles).toHaveLength(1);
+      expect(view?.profiles[0]?.area).toBeCloseTo(25.4 * 12.7, 1);
+    });
+
+    it('names the relations a refused one conflicts with, and finds what is still free', async () => {
+      unwrap(await session.execute({ type: 'create-sketch', id: 's1', plane: 'XY' }));
+      unwrap(
+        await session.execute({
+          type: 'add-sketch-geometry',
+          sketchId: 's1',
+          entities: [
+            { id: 'a', kind: 'point', x: 0, y: 0 },
+            { id: 'b', kind: 'point', x: 10, y: 1 },
+            { id: 'l', kind: 'line', start: 'a', end: 'b', construction: false },
+          ],
+          constraints: [
+            { id: 'h', kind: 'horizontal', line: 'l' },
+            { id: 'd', kind: 'distance', points: ['a', 'b'], expression: '10' },
+          ],
+        }),
+      );
+      // Horizontal and 10 long: its horizontal extent is 10 already.
+      const refused = await session.execute({ type: 'add-constraint', sketchId: 's1', constraint: { id: 'w', kind: 'horizontal-distance', points: ['a', 'b'], expression: '5' } });
+      // The solver names the existing ones that take part (the new one is not offered for removal).
+      const related = refused.ok ? [] : (refused.error.related ?? []);
+      expect(related.length).toBeGreaterThan(0);
+      expect(related.every((id) => id === 'h' || id === 'd')).toBe(true);
+      const freedom = await session.freedom('s1');
+      expect(freedom.points.map((p) => p.point).sort()).toEqual(['a', 'b']);
+      const suggested = await session.suggestConstraints('s1', 'x');
+      unwrap(await session.execute({ type: 'add-sketch-geometry', sketchId: 's1', entities: [], constraints: suggested }));
+      expect(session.state().sketches.get('s1')?.status).toBe('fully-constrained');
+    });
   });
 
   describe('part modeling', () => {

@@ -19,10 +19,13 @@ import type {
   Sketch,
   SketchConstraint,
   SketchEntity,
+  SketchFreedom,
   SketchStatus,
   TextOutlines,
+  TextPath,
   TextWeight,
   ThreadMarker,
+  TraceSettings,
   TopologyRef,
   ValidationReport,
   Vec2,
@@ -48,7 +51,10 @@ export type DesignCommand =
       readonly translate: Vec2;
       readonly rotate?: { readonly center: Vec2; readonly angle: number };
     }
-  /** Changes what a sketch text says, how tall and bold it is, and its direction (radians). */
+  /**
+   * Changes what a sketch text says, how tall and bold it is, its direction (radians), its font (an
+   * imported font document; absent: the bundled one) and the curve it follows (absent: none).
+   */
   | {
       readonly type: 'set-sketch-text';
       readonly sketchId: string;
@@ -57,7 +63,11 @@ export type DesignCommand =
       readonly height: number;
       readonly weight: TextWeight;
       readonly angle: number;
+      readonly font?: string;
+      readonly along?: TextPath;
     }
+  /** How a picture behind a sketch shows: its opacity (0.05 … 1), or not at all. */
+  | { readonly type: 'set-sketch-picture'; readonly sketchId: string; readonly pictureId: string; readonly opacity: number; readonly hidden: boolean }
   /** Trim, extend, split, offset, fillet or chamfer sketch curves; new ids start with `idPrefix`. */
   | { readonly type: 'edit-sketch'; readonly sketchId: string; readonly operation: SketchOperation; readonly idPrefix: string }
   /** Adds a feature at the end of the timeline; an empty name gets the next default ("Extrude 2"). */
@@ -107,6 +117,8 @@ export interface SketchView {
   readonly values: ReadonlyMap<string, number>;
   /** Why the sketch could not be placed or solved. */
   readonly error?: string;
+  /** When relations and dimensions contradict each other: the ones involved. */
+  readonly conflicting?: readonly string[];
 }
 
 /** How a timeline item came out in the last regeneration. */
@@ -155,6 +167,8 @@ export interface ExportOptions {
 export interface InsertDrawingOptions {
   readonly onePiece?: boolean;
   readonly relations?: 'none' | 'infer' | 'fix';
+  /** For pictures (PNG, JPEG): how their dark shapes are traced into outlines. */
+  readonly trace?: TraceSettings;
 }
 
 export interface DesignSession {
@@ -164,12 +178,16 @@ export interface DesignSession {
   execute(command: DesignCommand): Promise<Result<void>>;
   undo(): Promise<void>;
   redo(): Promise<void>;
+  /** The points (and circle sizes) of a sketch that its relations and dimensions leave free. */
+  freedom(sketchId: string): Promise<SketchFreedom>;
+  /** Relations and dimensions (ids start with `idPrefix`) that would fully define a sketch as drawn; add them with `add-sketch-geometry`. */
+  suggestConstraints(sketchId: string, idPrefix: string): Promise<SketchConstraint[]>;
   /** Solves a sketch with a point pulled toward (x, y), without changing the document. */
   previewDrag(sketchId: string, pointId: string, x: number, y: number): Promise<SketchView | undefined>;
   /** With `compensateKerf`, outlines are offset for the laser profile's kerf (laser profiles only). */
   exportSketch(sketchId: string, format: DrawingFormat, options?: { readonly compensateKerf?: boolean }): Promise<Result<void>>;
   /**
-   * Adds an imported DXF or SVG document to a sketch (one undoable change); new ids start with `idPrefix`.
+   * Adds an imported DXF or SVG document, or the outlines traced from a picture, to a sketch (one undoable change); new ids start with `idPrefix`.
    * By default its curves and texts become separate sketch geometry, held by `relations`. As one piece,
    * the drawing keeps its proportions and moves, turns and scales by two handle points.
    */

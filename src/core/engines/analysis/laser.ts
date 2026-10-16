@@ -16,7 +16,7 @@ export function laserChecks(bodies: readonly LoadedBody[], sketches: readonly So
   ];
 }
 
-const isCut = (e: SolvedSketch['sketch']['entities'][number]) => e.kind !== 'point' && !e.construction;
+const isCut = (e: SolvedSketch['sketch']['entities'][number]) => e.kind !== 'point' && e.kind !== 'picture' && !e.construction;
 
 /** Laser-cut parts are flat: each body should be exactly one sheet thick. */
 function sheetCheck(bodies: readonly LoadedBody[], profile: LaserProfile): Check {

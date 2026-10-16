@@ -3,9 +3,11 @@ import {
   Component,
   computed,
   DestroyRef,
+  effect,
   type ElementRef,
   inject,
   input,
+  resource,
   signal,
   viewChild,
 } from '@angular/core';
@@ -18,7 +20,7 @@ import { Autofocus } from '../../shared/autofocus';
 import { Shortcuts } from '../../shared/shortcuts';
 import { DesignStore } from './design-store';
 import { isShapeTool, shapeClicks, shapeCommand } from './shape-tools';
-import { curvePath, dimensionLabels, glyphs, hitTest, outlinePath, profilePath } from './sketch-overlay';
+import { curvePath, dimensionLabels, freedomArrows, freeEntities, glyphs, hitTest, outlinePath, profilePath } from './sketch-overlay';
 import { boxSelect, copySelection, pasted } from './selection';
 import { circularPatternCommand, mirrorCommand } from './sketch-patterns';
 import { snap } from './snapping';
@@ -101,6 +103,10 @@ export class SketchEditor {
   });
 
   constructor() {
+    // Pictures behind the sketch load once each.
+    effect(() => {
+      for (const e of this.sketch().entities) if (e.kind === 'picture') void this.store.loadPicture(e.document);
+    });
     const stop = inject(Shortcuts).register('sketch', {
       cancel: () => this.escape(),
       'sketch-delete': () => void this.deleteSelection(),
@@ -138,6 +144,24 @@ export class SketchEditor {
     });
   });
   protected readonly profiles = computed(() => this.view().profiles.map((p) => ({ id: p.id, d: profilePath(p) })));
+  /**
+   * Pictures behind the sketch, placed in sketch coordinates: the bottom left corner at the origin
+   * point, the width along to the handle point (pixel rows run downward, the sketch's y upward).
+   */
+  protected readonly pictures = computed(() => {
+    const loaded = this.store.pictures();
+    const points = this.points();
+    return this.sketch().entities.flatMap((e) => {
+      const picture = e.kind === 'picture' && !e.hidden ? loaded.get(e.document) : undefined;
+      if (e.kind !== 'picture' || !picture) return [];
+      const [o, h] = [points.get(e.origin) ?? [0, 0], points.get(e.handle) ?? [0, 0]];
+      const s = Math.hypot(h[0] - o[0], h[1] - o[1]) / picture.width;
+      const turn = Math.atan2(h[1] - o[1], h[0] - o[0]);
+      const [cos, sin] = [Math.cos(turn) * s, Math.sin(turn) * s];
+      const matrix = `matrix(${cos} ${sin} ${sin} ${-cos} ${o[0] - sin * picture.height} ${o[1] + cos * picture.height})`;
+      return [{ id: e.id, url: picture.url, width: picture.width, height: picture.height, opacity: e.opacity, matrix }];
+    });
+  });
   protected readonly screenPoints = computed(() => {
     const m = this.matrix();
     if (!m) return [];
@@ -164,6 +188,24 @@ export class SketchEditor {
   });
   protected readonly highlighted = computed(() => new Set([...this.store.selection(), ...this.picked()]));
   protected readonly fully = computed(() => this.view().status === 'fully-constrained');
+  /** What the relations and dimensions leave free, while the sketch is not fully constrained (sketches of up to 200 points). */
+  protected readonly freedom = resource({
+    params: () => (this.view().status === 'under-constrained' && this.points().size <= 200 ? this.view() : undefined),
+    loader: ({ params }) => this.store.freedom(params.sketch.id),
+  });
+  /** Entities and points that can still move, drawn apart from the defined ones. */
+  protected readonly free = computed(() => {
+    const freedom = this.view().status === 'under-constrained' ? this.freedom.value() : undefined;
+    return {
+      entities: freedom ? freeEntities(this.sketch(), freedom) : new Set<string>(),
+      points: new Set(freedom?.points.map((p) => p.point) ?? []),
+    };
+  });
+  protected readonly arrows = computed(() => {
+    const m = this.matrix();
+    const freedom = this.view().status === 'under-constrained' ? this.freedom.value() : undefined;
+    return m && freedom ? freedomArrows(freedom, this.points(), m) : [];
+  });
   /** What the active tool would add, drawn in sketch coordinates. */
   protected readonly rubberBand = computed(() => this.preview());
 

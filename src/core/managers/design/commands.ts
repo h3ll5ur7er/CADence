@@ -12,6 +12,7 @@ import {
   type Result,
   type Sketch,
   type SketchConstraint,
+  isCurve,
   type SketchEntity,
   sketchOriginId,
   type TimelineItem,
@@ -73,8 +74,10 @@ export function references(item: SketchEntity | SketchConstraint): string[] {
     case 'spline':
       return [...item.points];
     case 'projection':
+    case 'equation':
       return [];
     case 'drawing':
+    case 'picture':
       return [item.origin, item.handle];
     case 'text':
       return [item.anchor];
@@ -344,20 +347,33 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
             // A projected curve stands for its whole projection: the projection and all its curves switch.
             const toggled = new Set(command.ids.flatMap((id) => [id, generatorOf(s, id)?.id ?? id]));
             const owner = generatorOf(s, e.id);
-            return e.kind !== 'point' && (toggled.has(e.id) || (owner && toggled.has(owner.id))) ? { ...e, construction: !e.construction } : e;
+            return e.kind !== 'point' && e.kind !== 'picture' && (toggled.has(e.id) || (owner && toggled.has(owner.id))) ? { ...e, construction: !e.construction } : e;
           }),
         }),
       );
     case 'delete-sketch-elements':
       return withSketch(document, command.sketchId, (s) => ok(remove(s, command.ids)));
+    case 'set-sketch-picture':
+      return withSketch(document, command.sketchId, (s) => {
+        const target = s.entities.find((e) => e.id === command.pictureId && e.kind === 'picture');
+        if (!target) return invalid(`Picture ${command.pictureId} does not exist.`);
+        if (!(command.opacity >= 0.05 && command.opacity <= 1)) return invalid('Opacity goes from 0.05 to 1.');
+        return ok({ ...s, entities: s.entities.map((e) => (e === target ? { ...e, opacity: command.opacity, hidden: command.hidden } : e)) });
+      });
     case 'set-sketch-text':
       return withSketch(document, command.sketchId, (s) => {
         const target = s.entities.find((e) => e.id === command.textId && e.kind === 'text');
         if (!target) return invalid(`Text ${command.textId} does not exist.`);
         const problem = textProblem(command.text, command.height);
         if (problem) return invalid(problem);
-        const { text, height, weight, angle } = command;
-        return ok({ ...s, entities: s.entities.map((e) => (e === target ? { ...e, text, height, weight, angle } : e)) });
+        const { text, height, weight, angle, font, along } = command;
+        if (along && !s.entities.some((e) => e.id === along.curve && isCurve(e))) return invalid(`Curve ${along.curve} does not exist.`);
+        const changed = (e: SketchEntity): SketchEntity => {
+          if (e.kind !== 'text') return e;
+          const { font: _font, along: _along, ...rest } = e;
+          return { ...rest, text, height, weight, angle, ...(font ? { font } : {}), ...(along ? { along } : {}) };
+        };
+        return ok({ ...s, entities: s.entities.map((e) => (e === target ? changed(e) : e)) });
       });
     case 'transform-sketch-elements':
       return withSketch(document, command.sketchId, (s) => transformed(s, command.ids, command.translate, command.rotate));

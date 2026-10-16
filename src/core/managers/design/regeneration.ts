@@ -8,6 +8,8 @@ import {
   type FlangeMarker,
   generatorOf,
   isDimension,
+  isFontFormat,
+  isModelFormat,
   isSketch,
   isToolFeature,
   type LengthUnit,
@@ -23,6 +25,8 @@ import {
   type Sketch,
   type SketchDrawing,
   type SketchEntity,
+  type SketchEquation,
+  type TraceSettings,
   sketchOriginId,
   type SketchProjection,
   type ThreadMarker,
@@ -34,7 +38,7 @@ import type { DocumentAccess } from '@core/access/document';
 import type { DrawingEntities, InterchangeEngine } from '@core/engines/interchange';
 import type { AxisInput, BodyState, ModelingEngine, ModelingRequest, PathPiece, Placement, ToolInput } from '@core/engines/modeling';
 import type { ParameterEngine, ParameterError, Quantity, ValueKind } from '@core/engines/parameter';
-import { type DragTarget, placesAlong, type SketchEngine, type SketchPath, sketchPath } from '@core/engines/sketch';
+import { type DragTarget, type FontFiles, placesAlong, type SketchEngine, type SketchPath, sketchPath } from '@core/engines/sketch';
 import { contentHash } from '@core/utilities/identity';
 import { references } from './commands';
 import type { ItemStatus, ParameterView, SketchView } from './design-manager';
@@ -91,6 +95,16 @@ export interface Derived {
   readonly flanges: readonly FlangeMarker[];
   readonly parameters: ParameterView[];
   readonly parameterError?: ParameterError;
+}
+
+/** The files of a project's imported fonts, for sketch texts (keyed by original, so a replaced font is read again). */
+export function importedFonts(documents: Pick<DocumentAccess, 'load'>, assets: Pick<AssetAccess, 'fetch'>): FontFiles {
+  return async (documentId) => {
+    const document = await documents.load(asDocumentId(documentId));
+    if (document?.kind !== 'imported' || !isFontFormat(document.format)) return undefined;
+    const original = await assets.fetch(document.assetId);
+    return original ? { key: document.assetId, bytes: original.bytes } : undefined;
+  };
 }
 
 const constraintLabels: Readonly<Record<string, string>> = {
@@ -194,8 +208,8 @@ export class Regeneration {
 
   private async sketch(stored: Sketch): Promise<Result<void>> {
     const frame = await this.frame(stored.plane);
-    const unsolved = (error: string, f: PlaneFrame = originFrames.XY) => {
-      this.sketches.set(stored.id, { sketch: stored, frame: f, status: 'failed', degreesOfFreedom: 0, profiles: [], texts: new Map(), values: new Map(), error });
+    const unsolved = (error: string, f: PlaneFrame = originFrames.XY, conflicting?: readonly string[]) => {
+      this.sketches.set(stored.id, { sketch: stored, frame: f, status: 'failed', degreesOfFreedom: 0, profiles: [], texts: new Map(), values: new Map(), error, ...(conflicting ? { conflicting } : {}) });
       return fail({ code: 'unsolvable', message: error });
     };
     if (!frame.ok) return unsolved(frame.error.message);
@@ -209,17 +223,19 @@ export class Regeneration {
       values.set(dimension.id, value.value);
     }
     const drag = this.drag?.sketch === sketch.id ? this.drag : undefined;
-    let solution = await this.engines.sketches.solve(sketch, values, drag);
+    const fonts = importedFonts(this.engines.documents, this.engines.assets);
+    let solution = await this.engines.sketches.solve(sketch, values, drag, fonts);
     // Drawings kept as one piece follow their handle points: when solving moved them, place the drawing again and solve once more.
     if (solution.status !== 'over-constrained' && solution.status !== 'failed' && handlesMoved(sketch, solution.sketch)) {
       const again = await this.generated(solution.sketch, frame.value);
       if (!again.ok) return unsolved(again.error.message, frame.value);
       sketch = again.value;
-      solution = await this.engines.sketches.solve(sketch, values, drag);
+      solution = await this.engines.sketches.solve(sketch, values, drag, fonts);
     }
     if (solution.status === 'over-constrained') {
       const kinds = sketch.constraints.filter((c) => solution.conflicting.includes(c.id)).map((c) => constraintLabels[c.kind]);
-      return unsolved(`This conflicts with existing constraints (${[...new Set(kinds)].join(', ')}). Remove one of them first.`, frame.value);
+      const removable = await this.removable(sketch, values, solution.conflicting, fonts);
+      return unsolved(`This conflicts with existing constraints (${[...new Set(kinds)].join(', ')}). Remove one of them first.`, frame.value, removable);
     }
     if (solution.status === 'failed') return unsolved('The sketch cannot satisfy these constraints. Check the dimension values.', frame.value);
     if (collapses(solution.sketch)) return unsolved('This would shrink a line, circle or arc to nothing.', frame.value);
@@ -234,8 +250,14 @@ export class Regeneration {
   private async generated(sketch: Sketch, frame: PlaneFrame): Promise<Result<Sketch>> {
     const projections = sketch.entities.filter((e): e is SketchProjection => e.kind === 'projection');
     const drawings = sketch.entities.filter((e): e is SketchDrawing => e.kind === 'drawing');
-    if (!projections.length && !drawings.length) return ok(sketch);
+    const equations = sketch.entities.filter((e): e is SketchEquation => e.kind === 'equation');
+    if (!projections.length && !drawings.length && !equations.length) return ok(sketch);
     const entities = sketch.entities.filter((e) => !generatorOf(sketch, e.id));
+    for (const equation of equations) {
+      const pieces = this.equationPieces(equation);
+      if (!pieces.ok) return pieces;
+      entities.push(...pieces.value);
+    }
     for (const drawing of drawings) {
       const pieces = await this.drawingPieces(drawing, sketch);
       if (!pieces.ok) return pieces;
@@ -274,11 +296,50 @@ export class Regeneration {
   }
 
   /**
+   * The relations and dimensions whose removal would let an over-constrained sketch solve: among
+   * those the solver names and those on the same points and curves (the solver may name only one).
+   */
+  private async removable(sketch: Sketch, values: ReadonlyMap<string, number>, conflicting: readonly string[], fonts: FontFiles): Promise<string[]> {
+    const named = sketch.constraints.filter((c) => conflicting.includes(c.id));
+    const involved = new Set(named.flatMap(references));
+    const suspects = sketch.constraints.filter((c) => conflicting.includes(c.id) || references(c).some((r) => involved.has(r))).slice(0, 40);
+    const removable: string[] = [];
+    for (const suspect of suspects) {
+      const trial = await this.engines.sketches.solve({ ...sketch, constraints: sketch.constraints.filter((c) => c !== suspect) }, values, undefined, fonts);
+      if (trial.status !== 'over-constrained' && trial.status !== 'failed') removable.push(suspect.id);
+    }
+    return removable;
+  }
+
+  /** The points an equation curve passes through, and the smooth curve through them. */
+  private equationPieces(equation: SketchEquation): Result<SketchEntity[]> {
+    const from = this.value(equation.from, 'scalar', 't from');
+    if (!from.ok) return from;
+    const to = this.value(equation.to, 'scalar', 't to');
+    if (!to.ok) return to;
+    const samples = Math.min(400, Math.max(3, Math.round(equation.samples)));
+    const at: Vec2[] = [];
+    for (let i = 0; i < samples; i++) {
+      const scope = new Map(this.scope).set('t', { value: from.value + ((to.value - from.value) * i) / (samples - 1), length: 0, angle: 0 });
+      const x = this.engines.parameters.evaluate(equation.x, 'length', scope);
+      const y = this.engines.parameters.evaluate(equation.y, 'length', scope);
+      if (!x.ok || !y.ok) return fail({ code: 'invalid-expression', message: `Equation curve "${!x.ok ? equation.x : equation.y}": ${(!x.ok ? x : (y as { error: { message: string } })).error.message}` });
+      at.push([x.value, y.value]);
+    }
+    // It closes when it ends where it starts.
+    const first = at[0] as Vec2;
+    const last = at[at.length - 1] as Vec2;
+    const closed = Math.hypot(last[0] - first[0], last[1] - first[1]) < 1e-6 * Math.max(1, ...at.map((p) => Math.hypot(p[0], p[1])));
+    const points = (closed ? at.slice(0, -1) : at).map((p, i): SketchEntity => ({ id: `${equation.id}:${i + 1}`, kind: 'point', x: p[0], y: p[1] }));
+    return ok([...points, { id: `${equation.id}:curve`, kind: 'spline', points: points.map((p) => p.id), closed, construction: equation.construction }]);
+  }
+
+  /**
    * The curves and texts of a drawing kept as one piece, placed by its handle points: the bottom left of
    * the drawing at `origin`, its width along to `handle`.
    */
   private async drawingPieces(drawing: SketchDrawing, sketch: Sketch): Promise<Result<SketchEntity[]>> {
-    const read = await this.readDrawing(drawing.document, `${drawing.id}:`);
+    const read = await this.readDrawing(drawing.document, `${drawing.id}:`, drawing.trace);
     if (!read.ok) return read;
     const { entities, extent } = read.value;
     const at = (id: string): Vec2 => {
@@ -320,18 +381,18 @@ export class Regeneration {
   }
 
   /** An imported drawing's entities (ids with the prefix), read once per original. */
-  private async readDrawing(documentId: string, prefix: string): Promise<Result<DrawingEntities>> {
+  private async readDrawing(documentId: string, prefix: string, trace?: TraceSettings): Promise<Result<DrawingEntities>> {
     const document = await this.engines.documents.load(asDocumentId(documentId));
-    if (document?.kind !== 'imported' || (document.format !== 'dxf' && document.format !== 'svg')) {
+    if (document?.kind !== 'imported' || isModelFormat(document.format) || isFontFormat(document.format)) {
       return fail({ code: 'missing-input', message: 'Its imported drawing was deleted. Delete the drawing from the sketch.' });
     }
-    const key = `${document.assetId}|${prefix}`;
+    const key = `${document.assetId}|${prefix}|${trace ? JSON.stringify(trace) : ''}`;
     let cached = drawingCache.get(key);
     if (!cached) {
       cached = (async () => {
         const original = await this.engines.assets.fetch(document.assetId);
         if (!original) return fail({ code: 'missing-input', message: 'The original of its imported drawing is missing.' });
-        return this.engines.interchange.readDrawing(original.bytes, document.format as 'dxf' | 'svg', prefix);
+        return this.engines.interchange.readDrawing(original.bytes, document.format as 'dxf' | 'svg' | 'png' | 'jpg', prefix, trace);
       })();
       drawingCache.set(key, cached);
       if (drawingCache.size > 32) drawingCache.delete(drawingCache.keys().next().value as string);
@@ -378,7 +439,7 @@ export class Regeneration {
       case 'insert': {
         const document = await this.engines.documents.load(asDocumentId(feature.document));
         const format = document?.kind === 'imported' ? document.format : undefined;
-        if (!document || document.kind !== 'imported' || format === undefined || format === 'dxf' || format === 'svg') {
+        if (!document || document.kind !== 'imported' || !isModelFormat(format)) {
           return fail({ code: 'missing-input', message: 'Its imported 3D file was deleted or is not a 3D file.' });
         }
         const original = await this.engines.assets.fetch(document.assetId);
@@ -704,8 +765,8 @@ export class Regeneration {
     const line = view?.sketch.entities.find((e) => e.id === ref.line);
     if (!view || line?.kind !== 'line') return fail({ code: 'missing-input', message: 'Its axis line is missing.' });
     const point = (id: string): Vec3 => {
-      const p = id === sketchOriginId ? { x: 0, y: 0 } : view.sketch.entities.find((e) => e.id === id && e.kind === 'point');
-      const [x, y] = p && 'x' in p ? [p.x, p.y] : [0, 0];
+      const p = id === sketchOriginId ? undefined : view.sketch.entities.find((e) => e.id === id);
+      const [x, y] = p?.kind === 'point' ? [p.x, p.y] : [0, 0];
       return add(view.frame.origin, add(scale(view.frame.u, x), scale(view.frame.v, y)));
     };
     const start = point(line.start);

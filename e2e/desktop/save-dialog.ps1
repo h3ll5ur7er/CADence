@@ -42,6 +42,8 @@ if (-not $name) { throw "No save dialog with a file name field in process $Proce
 Add-Type -Namespace Win32 -Name Messages -MemberDefinition @'
 [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr wParam, string lParam);
 [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+[DllImport("user32.dll")] public static extern bool IsWindow(IntPtr window);
+[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr window);
 '@
 $WM_SETTEXT = 0x000C
 $BM_CLICK = 0x00F5
@@ -51,10 +53,10 @@ if (-not $save) { throw 'No Save button in the save dialog' }
 [void][Win32.Messages]::SendMessage([IntPtr]$save.Current.NativeWindowHandle, $BM_CLICK, [IntPtr]::Zero, [IntPtr]::Zero)
 
 # The dialog closes once it took the path; if it stays, say what it shows (a question, another name).
+$window = [IntPtr]$dialog.Current.NativeWindowHandle
 $closed = (Get-Date).AddSeconds(10)
 while ((Get-Date) -lt $closed) {
-  try { $null = $dialog.Current.Name } catch { exit 0 }
-  if ($dialog.Current.IsOffscreen) { exit 0 }
+  if (-not [Win32.Messages]::IsWindow($window) -or -not [Win32.Messages]::IsWindowVisible($window)) { exit 0 }
   Start-Sleep -Milliseconds 250
 }
 $texts = @($dialog.FindAll($scope::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name } | Where-Object { $_ } | Select-Object -First 40)

@@ -42,6 +42,8 @@ ${webView2Report()}`);
   browser = connected;
   await expect.poll(() => connected.contexts()[0]?.pages().length ?? 0).toBeGreaterThan(0);
   page = connected.contexts()[0]?.pages()[0] as Page;
+  // Remote debugging can answer before the app's page has loaded (about:blank).
+  await expect.poll(() => page.url(), { timeout: 60_000 }).toMatch(/^(https?|tauri):/);
 }
 
 /** What WebView2 was started with, what listens, and the Edge/WebView2 policies: why remote debugging may be off. */

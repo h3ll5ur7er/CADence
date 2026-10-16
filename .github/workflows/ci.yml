@@ -76,6 +76,9 @@ jobs:
       - run: npm ci
       - name: Build the desktop app (with WebView2 remote debugging, for the test)
         run: npx tauri build --no-bundle --config src-tauri/tauri.test.conf.json
+      - name: A screen the app's window fits on (the runner starts at 1024 × 768)
+        shell: pwsh
+        run: Set-DisplayResolution -Width 1920 -Height 1080 -Force
       - name: Smoke test (WebView2 remote debugging, the native save dialog)
         run: npm run e2e:desktop
       - name: What the desktop showed, and what ran (on failure)

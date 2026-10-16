@@ -16,6 +16,7 @@ import {
   type PartFeature,
   type PartSpec,
   type PlaneRef,
+  type TopologyRef,
   type Result,
   type SketchPoint,
   sketchOriginId,
@@ -581,6 +582,31 @@ describe('DesignManager', () => {
       expect(session.state().document.rollbackIndex).toBe(0);
     });
 
+    it('finds the edges a feature lost, offers the nearest ones, and repairs it', async () => {
+      await plate();
+      const name = session.state().bodies[0]?.edges.find((e) => e.name.includes('f:e1:end') && e.name.includes(':side:ab'))?.name as string;
+      // A fillet on the front top edge (y = 0, z = 6), picked at its middle.
+      const edge = { kind: 'edge' as const, body: 'e1', name, hint: [30, 0, 6] as const };
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'r1', type: 'fillet', name: '', suppressed: false, edges: [edge], size: '0.5' } }));
+      // A chamfer put in before it takes that edge away.
+      unwrap(await session.execute({ type: 'roll-to', position: 2 }));
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'c1', type: 'chamfer', name: '', suppressed: false, edges: [edge], size: '1' } }));
+      unwrap(await session.execute({ type: 'roll-to', position: 4 }));
+      expect(session.state().items.get('r1')?.state).toBe('error');
+
+      const broken = unwrap(await session.brokenReferences('r1'));
+      expect(broken).toHaveLength(1);
+      expect(broken[0]?.ref.name).toBe(name);
+      const best = broken[0]?.candidates[0];
+      expect(best?.ref.kind).toBe('edge');
+      expect(best?.distance).toBeLessThan(1.1);
+      expect(unwrap(await session.brokenReferences('c1'))).toEqual([]);
+
+      unwrap(await session.execute({ type: 'replace-reference', itemId: 'r1', from: edge, to: best?.ref as TopologyRef }));
+      expect(session.state().items.get('r1')).toEqual({ state: 'ok' });
+      expect(unwrap(await session.brokenReferences('r1'))).toEqual([]);
+    });
+
     it('reorders the timeline, but never before what an item uses', async () => {
       await plate();
       unwrap(await session.execute({ type: 'add-feature', feature: { id: 'p1', type: 'plane', name: '', suppressed: false, base: 'XY', offset: '20' } }));
@@ -593,6 +619,43 @@ describe('DesignManager', () => {
       expect(await session.execute({ type: 'reorder-item', itemId: 's2', index: 1 })).toMatchObject({ ok: false });
       await session.undo();
       expect(session.state().document.timeline.map((i) => i.id)).toEqual(['p1', 's1', 'e1']);
+    });
+
+    it('groups timeline items in folders, keeps notes, and suppresses a folder at once', async () => {
+      await plate();
+      const plane = (id: string) => ({ id, type: 'plane' as const, name: '', suppressed: false, base: 'XY' as const, offset: '20' });
+      unwrap(await session.execute({ type: 'add-feature', feature: plane('p1') }));
+      unwrap(await session.execute({ type: 'add-feature', feature: plane('p2') }));
+      const folders = () => session.state().document.folders;
+      unwrap(await session.execute({ type: 'set-folder', folder: { id: 'f1', name: '', first: 's1', last: 'e1', note: ' The base plate ' } }));
+      expect(folders()).toEqual([{ id: 'f1', name: 'Folder 1', first: 's1', last: 'e1', note: 'The base plate' }]);
+      // Folders do not overlap, and run forwards.
+      expect(await session.execute({ type: 'set-folder', folder: { id: 'f2', name: 'Planes', first: 'e1', last: 'p2' } })).toMatchObject({ ok: false });
+      expect(await session.execute({ type: 'set-folder', folder: { id: 'f2', name: 'Planes', first: 'p2', last: 'p1' } })).toMatchObject({ ok: false });
+      unwrap(await session.execute({ type: 'set-folder', folder: { id: 'f2', name: 'Planes', first: 'p1', last: 'p2' } }));
+
+      // Suppressing a folder suppresses its items: the plate goes.
+      unwrap(await session.execute({ type: 'suppress-folder', folderId: 'f1', suppressed: true }));
+      expect(session.state().document.timeline.filter((i) => i.suppressed).map((i) => i.id)).toEqual(['s1', 'e1']);
+      expect(session.state().bodies).toHaveLength(0);
+      unwrap(await session.execute({ type: 'suppress-folder', folderId: 'f1', suppressed: false }));
+
+      // A moved item leaves its folder; one dropped between a folder's items joins it.
+      unwrap(await session.execute({ type: 'reorder-item', itemId: 'p2', index: 0 }));
+      expect(folders()?.find((f) => f.id === 'f2')).toMatchObject({ first: 'p1', last: 'p1' });
+      unwrap(await session.execute({ type: 'reorder-item', itemId: 'p1', index: 2 }));
+      expect(session.state().document.timeline.map((i) => i.id)).toEqual(['p2', 's1', 'p1', 'e1']);
+      // Now in the plate's folder; the planes' folder, left empty, goes.
+      expect(folders()).toMatchObject([{ id: 'f1', first: 's1', last: 'e1' }]);
+      unwrap(await session.execute({ type: 'delete-item', itemId: 'p1' }));
+      expect(folders()).toMatchObject([{ id: 'f1', first: 's1', last: 'e1' }]);
+      unwrap(await session.execute({ type: 'delete-folder', folderId: 'f1' }));
+      expect(session.state().document.folders).toBeUndefined();
+
+      unwrap(await session.execute({ type: 'set-note', itemId: 'e1', note: 'Thickness from the parameter' }));
+      expect(session.state().document.timeline.find((i) => i.id === 'e1')?.note).toBe('Thickness from the parameter');
+      unwrap(await session.execute({ type: 'set-note', itemId: 'e1', note: '' }));
+      expect(session.state().document.timeline.find((i) => i.id === 'e1')).not.toHaveProperty('note');
     });
 
     it('copies, splits and combines bodies with parameters', async () => {
@@ -700,6 +763,24 @@ describe('DesignManager', () => {
       expect(await volume()).toBeCloseTo(60 * 15 * 6);
       expect((await assets.latestResult(documentId))?.stamp).toContain('#');
       stop();
+    });
+
+    it('exports the configuration table as CSV and reads it back with checks', async () => {
+      await plate();
+      unwrap(await session.execute({ type: 'set-configurations', configurations: [{ id: 'big', name: 'Big', values: { width: '80 mm' } }, { id: 'thin', name: 'Thin', values: { thickness: '2 mm' } }] }));
+      unwrap(await session.exportConfigurations());
+      const file = files.delivered.at(-1);
+      expect(file?.name).toBe('Component 1 configurations.csv');
+      expect(new TextDecoder().decode(file?.bytes)).toBe('Configuration,width,thickness\r\nBig,80 mm,\r\nThin,,2 mm\r\n');
+
+      // Changed in a spreadsheet: Big wider, Thin gone, Tiny new (semicolons, as some spreadsheets write).
+      const read = unwrap(session.readConfigurations('Configuration;width;thickness\nBig;100 mm;\nTiny;20 mm;1 mm\n'));
+      expect(read).toMatchObject({ added: ['Tiny'], changed: ['Big'], removed: ['Thin'], problems: [] });
+      expect(read.configurations[0]).toEqual({ id: 'big', name: 'Big', values: { width: '100 mm' } });
+      expect(unwrap(session.readConfigurations('Configuration,width\nOdd,40 apples\n')).problems).toHaveLength(1);
+      expect(session.readConfigurations('Configuration,depth\nX,4\n')).toMatchObject({ ok: false, error: { message: expect.stringContaining('depth') } });
+      unwrap(await session.execute({ type: 'set-configurations', configurations: read.configurations }));
+      expect(session.state().document.configurations?.map((c) => c.name)).toEqual(['Big', 'Tiny']);
     });
 
     it('keeps configurations: variants it shows, exports and publishes results of', async () => {

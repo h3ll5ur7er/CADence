@@ -61,6 +61,21 @@ export type TimelineItem = Sketch | Feature;
 
 export const isSketch = (item: TimelineItem): item is Sketch => item.type === 'sketch';
 
+/** A group of consecutive timeline items, from `first` to `last` in timeline order; folders do not nest. */
+export interface TimelineFolder {
+  readonly id: string;
+  readonly name: string;
+  readonly first: string;
+  readonly last: string;
+  readonly note?: string;
+}
+
+/** The ids of a folder's items, in timeline order (none when its ends are missing or out of order). */
+export function folderItems(folder: TimelineFolder, timeline: readonly TimelineItem[]): string[] {
+  const [from, to] = [timeline.findIndex((i) => i.id === folder.first), timeline.findIndex((i) => i.id === folder.last)];
+  return from < 0 || to < from ? [] : timeline.slice(from, to + 1).map((i) => i.id);
+}
+
 /** A named variant of a component: other values for some of its (or its project's) parameters. */
 export interface Configuration {
   readonly id: string;
@@ -78,6 +93,8 @@ export interface ComponentDocument extends DocumentBase {
   /** The configuration being edited and shown (absent: the parameters' own values). */
   readonly configuration?: string;
   readonly timeline: readonly TimelineItem[];
+  /** Folders grouping timeline items. */
+  readonly folders?: readonly TimelineFolder[];
   /**
    * How many items at the end of the timeline are rolled back: they are kept but not run, and new
    * items are inserted before them. 0 puts the rollback marker at the end.

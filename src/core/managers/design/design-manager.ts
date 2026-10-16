@@ -9,6 +9,7 @@ import type {
   LengthUnit,
   ManufacturingProfile,
   Material,
+  TimelineFolder,
   Measurement,
   MeshQuality,
   Parameter,
@@ -30,6 +31,9 @@ import type {
   ValidationReport,
   Vec2,
 } from '@core/contracts';
+
+import type { ConfigurationImport } from './configurations';
+import type { BrokenReference } from './references';
 
 /** Every change to a component is one of these commands (docs/Architecture/Decisions.md#adr-10). Ids come from the caller. */
 export type DesignCommand =
@@ -79,6 +83,16 @@ export type DesignCommand =
   | { readonly type: 'delete-item'; readonly itemId: string }
   /** Moves an item to `index` (in the timeline without it); refused when it would come before something it uses, or after something that uses it. */
   | { readonly type: 'reorder-item'; readonly itemId: string; readonly index: number }
+  /** Makes an item refer to `to` wherever it referred to `from` (a lost face, edge or vertex); accepted even while the item still fails. */
+  | { readonly type: 'replace-reference'; readonly itemId: string; readonly from: TopologyRef; readonly to: TopologyRef }
+  /** A note on a timeline item (empty: none). */
+  | { readonly type: 'set-note'; readonly itemId: string; readonly note: string }
+  /** Groups the items from `first` to `last` in a new folder (an empty name gets "Folder 2" and so on), or changes a folder; folders may not overlap. */
+  | { readonly type: 'set-folder'; readonly folder: TimelineFolder }
+  /** Removes a folder; its items stay. */
+  | { readonly type: 'delete-folder'; readonly folderId: string }
+  /** Suppresses or unsuppresses every item of a folder. */
+  | { readonly type: 'suppress-folder'; readonly folderId: string; readonly suppressed: boolean }
   /** Puts the rollback marker after the first `position` items (0 … timeline length). */
   | { readonly type: 'roll-to'; readonly position: number }
   | { readonly type: 'add-parameter'; readonly parameter: Parameter }
@@ -196,6 +210,12 @@ export interface DesignSession {
   exportFlatPattern(format: DrawingFormat): Promise<Result<void>>;
   /** All bodies, one file. */
   exportBodies(format: SolidFormat, options?: ExportOptions): Promise<Result<void>>;
+  /** The faces, edges and vertices an item refers to that the bodies before it no longer have, with candidates to replace them. */
+  brokenReferences(itemId: string): Promise<Result<readonly BrokenReference[]>>;
+  /** The configuration table as a CSV file (a column per parameter). */
+  exportConfigurations(): Promise<Result<void>>;
+  /** Reads a configuration table from CSV and checks it; apply it with `set-configurations`. */
+  readConfigurations(csv: string): Result<ConfigurationImport>;
   /** The shown bodies as one HTML file with a viewer (turn, measure, hide), for people without CADence. */
   exportViewer(): Promise<Result<void>>;
   /** Area, length, radius, distance and angle of picked faces and edges. */

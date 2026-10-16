@@ -1,6 +1,8 @@
 import { DefaultDesignManager, type DesignManagerDependencies } from './default-design-manager';
 import type { DesignManager } from './design-manager';
 
+export type { ConfigurationImport } from './configurations';
+export type { BrokenReference } from './references';
 export type { DesignManagerDependencies } from './default-design-manager';
 export type {
   DesignCommand,

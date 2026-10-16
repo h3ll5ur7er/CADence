@@ -142,8 +142,15 @@ export class SettingsDialog {
   protected readonly shortcuts = computed(() => shortcutGroups(this.settings.controls()));
 
   constructor() {
-    const stop = inject(Shortcuts).register('app', { help: () => this.open() });
-    inject(DestroyRef).onDestroy(stop);
+    const shortcuts = inject(Shortcuts);
+    const stops = [
+      shortcuts.register('app', { help: () => this.open() }),
+      shortcuts.registerActions([
+        { label: 'Settings', group: 'Settings', run: () => this.open() },
+        ...controlSchemes.map((scheme) => ({ label: `Controls: ${scheme.label}`, group: 'Settings', run: () => this.settings.controls.set(scheme.id) })),
+      ]),
+    ];
+    inject(DestroyRef).onDestroy(() => stops.forEach((stop) => stop()));
   }
 
   open(): void {

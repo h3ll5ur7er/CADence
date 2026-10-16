@@ -1,4 +1,5 @@
 import { TestBed } from '@angular/core/testing';
+import { fuzzyScore } from './command-palette';
 import { Shortcuts } from './shortcuts';
 import { SETTINGS_STORAGE, UserSettings } from './user-settings';
 
@@ -49,5 +50,28 @@ describe('Shortcuts and user settings', () => {
     press('e'); // Onshape extrudes with Shift+E
     press('E', { shiftKey: true });
     expect(ran).toEqual(['extrude']);
+  });
+  it('lists what can run now for the command palette', () => {
+    const shortcuts = TestBed.inject(Shortcuts);
+    TestBed.inject(UserSettings).controls.set('cadence');
+    const noop = () => undefined;
+    const stop = shortcuts.register('modeling', { extrude: noop });
+    const withdraw = shortcuts.registerActions([{ label: 'Loft', group: 'Create', run: noop }]);
+    expect(shortcuts.available().map((a) => [a.label, a.group, a.keys])).toEqual([
+      ['Extrude', 'Model', ['E']],
+      ['Loft', 'Create', undefined],
+    ]);
+    stop();
+    withdraw();
+    expect(shortcuts.available()).toEqual([]);
+  });
+
+  it('finds commands by their letters in order, best matches first', () => {
+    expect(fuzzyScore('lft', 'Loft')).toBeDefined();
+    expect(fuzzyScore('ld', 'Loft')).toBeUndefined();
+    const ranked = ['Export STL (for slicers)', 'Extrude', 'Text'].sort((a, b) => (fuzzyScore('ext', b) ?? -1e9) - (fuzzyScore('ext', a) ?? -1e9));
+    expect(ranked[0]).toBe('Extrude');
+    // Word starts count: "cp" ranks "Circular pattern" above "Scope".
+    expect((fuzzyScore('cp', 'Circular pattern') as number) > (fuzzyScore('cp', 'Scope') as number)).toBe(true);
   });
 });

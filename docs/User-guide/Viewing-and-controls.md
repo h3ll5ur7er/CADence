@@ -34,11 +34,15 @@ Looks are saved with the document and can be undone like any change.
 
 ## Keyboard shortcuts
 
-Press **?** for the full list of the chosen control style. Shortcuts never fire while you type in a field. With the CADence style:
+Press **?** for the full list of the chosen control style. Shortcuts never fire while you type in a field.
+
+**Ctrl+K** opens the **command palette**: type a few letters of any tool, feature, command, document or setting (`lft` finds *Loft*) and press Enter. It lists what can run where you are (in a sketch, the sketch tools), with their shortcuts.
+
+With the CADence style:
 
 | Where | Keys |
 | --- | --- |
-| Everywhere | **?** shortcuts and settings · **Ctrl+Z** undo · **Ctrl+Y** or **Ctrl+Shift+Z** redo · **Esc** cancel |
+| Everywhere | **Ctrl+K** command palette · **?** shortcuts and settings · **Ctrl+Z** undo · **Ctrl+Y** or **Ctrl+Shift+Z** redo · **Esc** cancel |
 | View | **F** zoom to fit · **H** home · **1**–**6** front, back, left, right, top, bottom · **O** perspective or orthographic · **Shift+X** section on or off |
 | Part modeling | **S** new sketch · **E** extrude · **R** revolve · **Shift+F** fillet · **Shift+C** chamfer · **Shift+L** shell · **Shift+P** construction plane · **M** measure · **Shift+V** parameters |
 | Sketch | **S** select · **L** line · **R** rectangle · **C** circle · **A** arc · **P** point · **D** dimension · **X** construction · **Delete** delete · **Enter** finish |

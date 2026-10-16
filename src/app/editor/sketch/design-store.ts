@@ -22,7 +22,7 @@ import {
   type LengthUnit,
   type SketchFreedom,
 } from '@core/contracts';
-import type { DesignCommand, DesignSession, DesignState, DrawingFormat, ExportOptions, InsertDrawingOptions, SketchView, SolidFormat } from '@core/managers/design';
+import type { BrokenReference, ConfigurationImport, DesignCommand, DesignSession, DesignState, DrawingFormat, ExportOptions, InsertDrawingOptions, SketchView, SolidFormat } from '@core/managers/design';
 import { newId } from '@core/utilities/identity';
 import { DESIGN_MANAGER, PROJECT_MANAGER } from '../../core.providers';
 import { pictureUrl } from '../../shared/picture-url';
@@ -32,9 +32,11 @@ import type { SketchClipboard } from './selection';
 import type { TextDraft, Tool } from './sketch-tools';
 
 /** What the properties column shows besides feature dialogs and sketch info. */
-export type SidePanel = 'parameters' | 'measure' | 'check';
+export type SidePanel = 'parameters' | 'measure' | 'check' | 'repair';
 
 const toRef = (pick: TopologyPick): TopologyRef => ({ kind: pick.kind, body: pick.body, name: pick.name, hint: pick.hint });
+const pickOfRef = (ref: TopologyRef): Pick =>
+  ref.kind === 'face' ? { kind: 'face', body: ref.body, name: ref.name, hint: ref.hint ?? [0, 0, 0], planar: false } : { kind: ref.kind, body: ref.body, name: ref.name, hint: ref.hint ?? [0, 0, 0] };
 
 /**
  * Client-side state of one component editor: the Design session as signals, plus pure UI state
@@ -90,6 +92,12 @@ export class DesignStore {
     this.projectDocuments.set(await this.projects.listDocuments(this.projectId));
     return result.value;
   }
+  /** The item whose lost references are being repaired, and where the rollback marker was before. */
+  readonly repairing = signal<{ readonly itemId: string; readonly restore: number } | undefined>(undefined);
+  /** What the repaired item lost, with candidates. */
+  readonly broken = signal<readonly BrokenReference[]>([]);
+  /** Which lost reference a pick in the view replaces. */
+  readonly repairTarget = signal(0);
   /** Faces, edges and vertices picked with the measure tool. */
   readonly measurePicks = signal<readonly TopologyPick[]>([]);
   /** The check whose faces are highlighted; the first one with faces when unset. */
@@ -99,12 +107,18 @@ export class DesignStore {
     // While sketching, the project tool picks edges and faces of bodies to project.
     if (this.editing()) return this.tool() === 'project' ? new Set<PickKind>(['edge', 'face']) : new Set<PickKind>();
     if (!this.draft() && this.panel() === 'measure') return new Set<PickKind>(['face', 'edge', 'vertex']);
+    if (!this.draft() && this.panel() === 'repair') {
+      const target = this.broken()[this.repairTarget()];
+      return new Set<PickKind>(target ? [target.ref.kind] : []);
+    }
     return pickableFor(this.draft());
   });
   readonly picks = computed((): readonly Pick[] => {
     const draft = this.draft();
     if (draft) return selectionOf(draft);
     if (this.panel() === 'measure') return this.measurePicks();
+    // While repairing, the candidates for the lost reference light up.
+    if (this.panel() === 'repair') return (this.broken()[this.repairTarget()]?.candidates ?? []).map(({ ref }) => pickOfRef(ref));
     const face = this.pickedFace();
     return face ? [face] : [];
   });
@@ -227,6 +241,11 @@ export class DesignStore {
       this.measurePicks.set(picks.some(same) ? picks.filter((p) => !same(p)) : [...picks, pick]);
       return;
     }
+    if (this.panel() === 'repair') {
+      const target = this.broken()[this.repairTarget()];
+      if (target && pick.kind === target.ref.kind) void this.replaceReference(target.ref, toRef(pick));
+      return;
+    }
     if (pick.kind !== 'face') return;
     const current = this.pickedFace();
     this.pickedFace.set(current?.name === pick.name && current.body === pick.body ? undefined : pick);
@@ -296,6 +315,19 @@ export class DesignStore {
     if (result && !result.ok) this.error.set(result.error.message);
   }
 
+  async exportConfigurations(): Promise<void> {
+    const result = await this.session?.exportConfigurations();
+    if (result && !result.ok) this.error.set(result.error.message);
+  }
+
+  /** A configuration table read from CSV, checked; `undefined` (with the error shown) when the file cannot be used. */
+  readConfigurations(csv: string): ConfigurationImport | undefined {
+    const result = this.session?.readConfigurations(csv);
+    if (result && !result.ok) this.error.set(result.error.message);
+    else this.error.set(undefined);
+    return result?.ok ? result.value : undefined;
+  }
+
   /** The model as one HTML file with a viewer, to share. */
   async exportViewer(): Promise<void> {
     const result = await this.session?.exportViewer();
@@ -304,12 +336,44 @@ export class DesignStore {
 
   /** Opens a side panel (or closes it with `undefined`), leaving sketches and dialogs. */
   openPanel(panel: SidePanel | undefined): void {
+    const repair = this.repairing();
+    if (repair && panel !== 'repair') {
+      // Leaving a repair rolls the model forward to where it was.
+      this.repairing.set(undefined);
+      this.broken.set([]);
+      void this.run({ type: 'roll-to', position: Math.min(repair.restore, this.state()?.document.timeline.length ?? 0) });
+    }
     this.cancelDraft();
     this.finishEditing();
     this.pickedFace.set(undefined);
     this.measurePicks.set([]);
     this.focusedCheck.set(undefined);
     this.panel.set(panel);
+  }
+
+  /** Rolls the model back to just before the item and lists what it lost, to pick replacements. */
+  async startRepair(itemId: string): Promise<void> {
+    const document = this.state()?.document;
+    if (!document || this.repairing()) return;
+    const index = document.timeline.findIndex((i) => i.id === itemId);
+    const restore = document.timeline.length - document.rollbackIndex;
+    this.openPanel('repair');
+    this.repairing.set({ itemId, restore });
+    this.repairTarget.set(0);
+    if (restore > index) await this.run({ type: 'roll-to', position: index });
+    await this.loadBroken();
+  }
+
+  async replaceReference(from: TopologyRef, to: TopologyRef): Promise<void> {
+    const repair = this.repairing();
+    if (repair && (await this.run({ type: 'replace-reference', itemId: repair.itemId, from, to }))) await this.loadBroken();
+  }
+
+  private async loadBroken(): Promise<void> {
+    const repair = this.repairing();
+    const result = repair ? await this.session?.brokenReferences(repair.itemId) : undefined;
+    this.broken.set(result?.ok ? result.value : []);
+    this.repairTarget.set(0);
   }
 
   properties(): Promise<BodyProperties[]> {

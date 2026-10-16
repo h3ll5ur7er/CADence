@@ -232,6 +232,8 @@ export interface Sketch {
   readonly type: 'sketch';
   readonly name: string;
   readonly suppressed: boolean;
+  /** Why the sketch is there. */
+  readonly note?: string;
   readonly plane: SketchPlane;
   readonly entities: readonly SketchEntity[];
   readonly constraints: readonly SketchConstraint[];

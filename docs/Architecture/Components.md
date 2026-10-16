@@ -73,6 +73,9 @@ interface DesignSession {
   insertDrawing(sketchId, importedDocumentId, idPrefix): Promise<Result<void>>;  // DXF/SVG curves into a sketch, one undoable change
   exportBodies(format: 'step' | 'stl' | 'obj' | '3mf'): Promise<Result<void>>;
   measure(refs: TopologyRef[]): Promise<Result<Measurement>>;  // area, length, radius, distance + points, angle
+  brokenReferences(itemId): Promise<Result<BrokenReference[]>>;  // what an item lost, against the bodies just before it, with the nearest candidates
+  exportConfigurations(): Promise<Result<void>>;                   // the configuration table as CSV
+  readConfigurations(csv): Result<ConfigurationImport>;            // read and checked (new, changed, removed, values that fail); applied with set-configurations
   properties(): Promise<BodyProperties[]>;  // volume, area, mass (document material), centre of mass, box
   validate(): Promise<ValidationReport>;    // the document's manufacturing profile against bodies and sketches
 }

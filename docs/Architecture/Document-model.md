@@ -97,6 +97,7 @@ interface Parameter { id: ParameterId; name: string; expression: string; comment
 Expressions may reference other parameters by name, use units (`10 mm + 0.5 in`) and functions (`sin`, `max`, ...). Feature and constraint values are expressions too, so `"height / 2"` works everywhere a number does.
 
 - **Project parameters** (`Project.parameters`) are in scope in every component of the project; a component parameter of the same name wins. Changing them publishes `projectParametersChanged`.
+- **Folders** (`ComponentDocument.folders`): `{ id, name, first, last, note? }`, the items from `first` to `last` in timeline order; folders do not overlap. After a reorder or a delete each folder keeps its remaining items, from the first to the last of them (so items dropped in between join it); an emptied folder goes. Every timeline item may carry a `note`.
 - **Configurations** (`ComponentDocument.configurations`): `{ id, name, values: Record<parameter name, expression> }`. `configuration` is the one shown and edited; regeneration replaces the named parameters' expressions with its values. An assembly `Instance.configuration` shows another one (`sourceKey`: `<component>@<configuration>`).
 
 ## Timeline items

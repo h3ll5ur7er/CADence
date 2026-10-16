@@ -26,8 +26,11 @@ import {
   type PlaneRef,
   type SketchText,
   type TextPath,
+  folderItems,
+  type TimelineFolder,
   type TimelineItem,
 } from '@core/contracts';
+import { newId } from '@core/utilities/identity';
 import type { SolidFormat } from '@core/managers/design';
 import { NameDialog } from '../../shared/dialogs';
 import { CheckPanel } from '../analysis/check-panel';
@@ -44,6 +47,8 @@ import { bodyNames } from '../modeling/body-names';
 import { featureLabels } from '../modeling/feature-drafts';
 import { FeatureDialog } from '../modeling/feature-dialog';
 import { ParametersPanel } from '../modeling/parameters-panel';
+import { FolderDialog, NoteDialog } from '../modeling/timeline-dialogs';
+import { RepairPanel } from '../modeling/repair-panel';
 import { DesignStore } from '../sketch/design-store';
 import { describeConstraint } from '../sketch/sketch-overlay';
 import { googleFont, SYSTEM_FONTS } from '../../shared/fonts';
@@ -147,7 +152,7 @@ const exportFormats: readonly { format: SolidFormat; label: string }[] = [
 /** Part modeling mode: sketches, features, parameters and bodies. */
 @Component({
   selector: 'cad-component-mode',
-  imports: [Viewport, Icon, SketchEditor, SketchToolbar, NameDialog, FeatureDialog, ParametersPanel, MeasurePanel, CheckPanel],
+  imports: [Viewport, Icon, SketchEditor, SketchToolbar, NameDialog, FolderDialog, NoteDialog, FeatureDialog, ParametersPanel, MeasurePanel, CheckPanel, RepairPanel],
   providers: [DesignStore],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './component-mode.html',
@@ -190,6 +195,9 @@ export class ComponentMode {
   protected readonly grams = grams;
   protected readonly point = point;
   private readonly nameDialog = viewChild.required(NameDialog);
+  protected readonly isSketch = isSketch;
+  private readonly folderDialog = viewChild.required(FolderDialog);
+  private readonly noteDialog = viewChild.required(NoteDialog);
 
   protected readonly timeline = computed(() => this.store.state()?.document.timeline ?? []);
   protected readonly displays = computed(() => {
@@ -248,6 +256,14 @@ export class ComponentMode {
         redo: () => void this.store.redo(),
         cancel: () => (this.store.draft() ? this.store.cancelDraft() : this.menu.set(undefined)),
       }),
+      shortcuts.registerActions([
+        ...featureMenus.flatMap((menu) => menu.items.map((item) => ({ label: featureLabels[item.type], group: menu.label, run: () => this.startFeature(item.type) }))),
+        { label: 'Check manufacturability', group: 'Inspect', run: () => this.togglePanel('check') },
+        { label: 'New folder in the timeline', group: 'Timeline', run: () => void this.newFolder() },
+        { label: 'Export configurations as CSV', group: 'Parameters', run: () => void this.store.exportConfigurations() },
+        ...exportFormats.map((f) => ({ label: `Export ${f.label}`, group: 'Export', run: () => void this.store.exportBodies(f.format) })),
+        { label: 'Export a viewer (HTML)', group: 'Export', run: () => void this.store.exportViewer() },
+      ]),
       shortcuts.register('modeling', {
         'new-sketch': () => this.menu.set('sketch'),
         extrude: feature('extrude'),
@@ -488,6 +504,67 @@ export class ComponentMode {
 
   protected sketchStatus(item: TimelineItem): keyof typeof statusLabels | undefined {
     return isSketch(item) ? this.store.state()?.sketches.get(item.id)?.status : undefined;
+  }
+
+  protected readonly folders = computed(() => this.store.state()?.document.folders ?? []);
+  /** The folder each timeline item is in. */
+  protected readonly folderOf = computed(() => new Map(this.folders().flatMap((f) => folderItems(f, this.timeline()).map((id) => [id, f] as const))));
+  /** Folders shown closed (not stored: how the timeline is looked at, not what it is). */
+  protected readonly collapsed = signal<ReadonlySet<string>>(new Set());
+
+  protected folderStartingAt(item: TimelineItem): TimelineFolder | undefined {
+    return this.folders().find((f) => f.first === item.id);
+  }
+
+  protected inClosedFolder(item: TimelineItem): boolean {
+    const folder = this.folderOf().get(item.id);
+    return !!folder && this.collapsed().has(folder.id);
+  }
+
+  protected toggleFolder(folder: TimelineFolder): void {
+    this.collapsed.update((open) => {
+      const next = new Set(open);
+      if (!next.delete(folder.id)) next.add(folder.id);
+      return next;
+    });
+  }
+
+  /** Whether every item of the folder is suppressed. */
+  protected folderSuppressed(folder: TimelineFolder): boolean {
+    const ids = new Set(folderItems(folder, this.timeline()));
+    return this.timeline().filter((i) => ids.has(i.id)).every((i) => i.suppressed);
+  }
+
+  protected suppressFolder(folder: TimelineFolder): void {
+    void this.store.run({ type: 'suppress-folder', folderId: folder.id, suppressed: !this.folderSuppressed(folder) });
+  }
+
+  /** Rolls the model back to the end of the folder: what it holds and everything before. */
+  protected rollToFolder(folder: TimelineFolder): void {
+    void this.store.run({ type: 'roll-to', position: this.timeline().findIndex((i) => i.id === folder.last) + 1 });
+  }
+
+  protected async newFolder(): Promise<void> {
+    // Starts with the latest item before the marker that is in no folder.
+    const free = this.timeline().slice(0, Math.max(1, this.marker())).filter((i) => !this.folderOf().has(i.id));
+    const item = free.at(-1) ?? this.timeline()[0];
+    if (!item) return;
+    const folder = await this.folderDialog().ask({ heading: 'New folder', folder: { id: newId(), name: '', first: item.id, last: item.id }, items: this.timeline() });
+    if (folder) await this.store.run({ type: 'set-folder', folder });
+  }
+
+  protected async editFolder(folder: TimelineFolder): Promise<void> {
+    const changed = await this.folderDialog().ask({ heading: `Edit ${folder.name}`, folder, items: this.timeline() });
+    if (changed) await this.store.run({ type: 'set-folder', folder: changed });
+  }
+
+  protected removeFolder(folder: TimelineFolder): void {
+    void this.store.run({ type: 'delete-folder', folderId: folder.id });
+  }
+
+  protected async editNote(item: TimelineItem): Promise<void> {
+    const note = await this.noteDialog().ask(item.name, item.note ?? '');
+    if (note !== undefined && note.trim() !== (item.note ?? '')) await this.store.run({ type: 'set-note', itemId: item.id, note });
   }
 
   protected async rename(item: TimelineItem): Promise<void> {

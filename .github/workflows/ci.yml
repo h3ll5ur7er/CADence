@@ -78,6 +78,18 @@ jobs:
         run: npx tauri build --no-bundle
       - name: Smoke test (WebView2 remote debugging, the native save dialog)
         run: npm run e2e:desktop
+      - name: What the desktop showed, and what ran (on failure)
+        if: failure()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force test-results | Out-Null
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+          [System.Drawing.Graphics]::FromImage($bitmap).CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+          $bitmap.Save('test-results/desktop-screen.png')
+          Get-Process | Where-Object { $_.ProcessName -match 'cadence|webview' } | Format-Table Id, ProcessName, SessionId, MainWindowTitle
+          Get-ChildItem "$env:LOCALAPPDATA\dev.cadence.app" -Recurse -Depth 2 -ErrorAction SilentlyContinue | Select-Object -First 30 FullName
       - name: Keep the evidence
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4

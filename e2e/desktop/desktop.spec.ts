@@ -26,9 +26,18 @@ async function launch(files: readonly string[] = []): Promise<void> {
   port++;
   const started = spawn(executable, files, { env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` } });
   app = started;
-  await expect
-    .poll(() => fetch(`http://127.0.0.1:${port}/json/version`).then((r) => r.ok, () => false), { timeout: 60_000, message: 'WebView2 remote debugging' })
-    .toBe(true);
+  // What the app said, for when it does not come up.
+  let output = '';
+  started.stdout?.on('data', (chunk: Buffer) => (output += chunk.toString()));
+  started.stderr?.on('data', (chunk: Buffer) => (output += chunk.toString()));
+  started.on('error', (error) => (output += `could not start: ${error.message}
+`));
+  try {
+    await expect.poll(() => fetch(`http://127.0.0.1:${port}/json/version`).then((r) => r.ok, () => false), { timeout: 90_000 }).toBe(true);
+  } catch {
+    const state = started.exitCode === null ? 'still running' : `exited with ${started.exitCode}`;
+    throw new Error(`No WebView2 remote debugging on port ${port}: the app is ${state}; its output: ${output || 'none'}`);
+  }
   const connected = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
   browser = connected;
   await expect.poll(() => connected.contexts()[0]?.pages().length ?? 0).toBeGreaterThan(0);

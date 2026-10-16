@@ -56,8 +56,28 @@ Draw the hole centres with the **Point** tool in a sketch on the face, then **Cr
 
 - **Teardrop** gives holes that lie on their side a pointed top, so they print without support.
 - **Bridge layer** leaves one printer layer (the profile's layer height) over a counterbored hole, so the counterbore's floor prints as a bridge; drill it out after printing.
+- **For a screw** fills in the diameter of a clearance hole (ISO 273 medium), a tapping hole or a heat-set insert's hole for M2 to M10.
+- **Fit for printing** widens the hole so a part fits as designed: *press* by nothing, *snug* by 0.15 mm, *loose* by 0.3 mm, each plus the printer's **hole compensation** (set it under **Check manufacturability** with the other printer values; measure it once by printing a test hole).
 
 A **thread** goes on the wall of a hole or a shaft and starts at its open end. ISO metric coarse sizes M2 to M20 are offered; the hole must be between the thread's minor and major diameter (a 5 mm hole for M6), the shaft about its major diameter. A thread is shown as a helix on the face. **Model the thread** cuts the 60° groove into the body instead: slower, but printable.
+
+### Parts
+
+**Create → Part** puts a ready-made part at every point of a sketch (drawn with the **Point** tool), standing on the sketch plane; **On the other side** puts it below. **Turned by** turns it about the point. Like any feature it can make a new body, join, cut or intersect: a cut nut or bearing makes a pocket for it.
+
+| Part | Sizes |
+| --- | --- |
+| Screw (ISO 4762 socket head), nut (ISO 4032), washer (ISO 7089), heat-set insert | M2 to M10; a screw's length. The head stands on the plane, the shank goes below; an insert goes below the plane. |
+| Ball bearing | 623, 625, 608, 688, 6000, 6001, 6200, 6201 |
+| Magnet | diameter and height |
+| Gear | module, teeth, width, bore, pressure angle, helix angle (0 for a spur gear). **Meshes with a gear of** shows where the mating gear's point goes (the centre distance, along the sketch's X axis) and how far to turn it so the teeth mesh. |
+| Gear rack | module, teeth, width, height to the pitch line; along the sketch's X axis, teeth towards its Y axis |
+| Snap-fit hook | arm length, width, thickness, hook; the hook points along the sketch's Y axis |
+| Press-fit peg | diameter, height, fit; made smaller by the fit (and the printer's hole compensation), chamfered at the top |
+| Dovetail | width, depth, length, angle, fit; a rail along the sketch's Y axis, or a slot when it cuts (wider by the fit) |
+| Living hinge | length, width, depth; a groove across a plate that leaves a thin web to flex: cut it as deep as the plate less about two layers |
+
+All sizes are expressions, so they can use parameters.
 
 ## Sketch on a face
 

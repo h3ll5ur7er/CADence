@@ -130,6 +130,7 @@ export class CheckPanel {
         { label: 'Nozzle', unit: 'mm', value: p.nozzle, set: (v) => ({ ...p, ...renamed, nozzle: v }) },
         { label: 'Layer height', unit: 'mm', value: p.layerHeight, set: (v) => ({ ...p, ...renamed, layerHeight: v }) },
         { label: 'Max overhang', unit: '°', value: p.maxOverhang, set: (v) => ({ ...p, ...renamed, maxOverhang: v }) },
+        { label: 'Hole compensation', unit: 'mm', value: p.holeCompensation ?? 0, set: (v) => ({ ...p, ...renamed, holeCompensation: v }) },
       ];
     }
     return [

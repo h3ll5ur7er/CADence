@@ -262,3 +262,14 @@ Imported SVG `<text>` and DXF `TEXT`/`MTEXT` become editable sketch texts in thi
 
 *Why:* the user asked for what CAD users expect (Fusion's blue/black and its conflict hints, tracing, fonts); reusing the drawing and import paths keeps each new kind of input small.
 *Trade-off:* freedom directions are sampled, not derived (a point on a curve shows the direction where it is now); suggested dimensions are plain values, not design intent; traced outlines are polygonal before smoothing; only 8-bit PNGs are read outside the app; text along a curve does not stretch letters to the curvature.
+
+## ADR-35
+
+**Part modeling III: parts are one feature, `part`, placed at sketch points like holes; the catalogue lives in the contracts and fits are resolved by the Design Manager.**
+- *One feature.* Screws, nuts, washers, inserts, magnets, bearings, gears, racks and the printing parts share placement (sketch points, a turn, a flip) and operations, so they are one `part` feature with a `PartSpec` union instead of a dozen feature types. A cut part is the pocket for it.
+- *Catalogue in the contracts* ([[src/core/contracts/parts.ts]]): ISO 4762/4032/7089 sizes, ISO 273 clearance and tapping drills, typical heat-set inserts and bearings, as plain data the client (hole presets, size lists) and the Design Manager share.
+- *Sizes resolved before the engine.* The Design Manager evaluates the spec's expressions and the catalogue into a `PartSolid` in millimetres and applies fits: holes and dovetail slots get wider, pegs narrower, by `fitAllowance` plus the print profile's `holeCompensation`. The Modeling Engine only builds shapes ([[src/core/engines/modeling/parts.ts]]).
+- *Gears* are involute outlines (polylines, 8 steps a flank) extruded, with a twist for helical gears. A matching gear is not generated: the dialog shows the centre distance and the half-tooth turn for the second gear's point, so both stay ordinary, editable parts.
+
+*Why:* the user asked for parts for printed mechanisms; one feature keeps the timeline, dialog, patterns and scripting simple, and placing at sketch points reuses what holes already do.
+*Trade-off:* standard parts go into components as bodies, not into assemblies as library instances (a component holding the part does that); screws have no modelled thread; gear teeth are polygonal, and meshing gears have no backlash beyond the printer's.

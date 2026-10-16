@@ -1,10 +1,13 @@
 import {
   asDocumentId,
   type AxisRef,
+  bearings,
+  type BodyOperation,
   type ComponentDocument,
   type Dimension,
   fail,
   type Feature,
+  fitAllowance,
   type FlangeMarker,
   generatorOf,
   isDimension,
@@ -14,10 +17,12 @@ import {
   isToolFeature,
   type LengthUnit,
   lengthUnitSize,
+  metric,
   metricThreads,
   ok,
   originFrames,
   type Parameter,
+  type PartSpec,
   type PlaneFrame,
   type PlaneRef,
   type Profile,
@@ -26,17 +31,17 @@ import {
   type SketchDrawing,
   type SketchEntity,
   type SketchEquation,
-  type TraceSettings,
   sketchOriginId,
   type SketchProjection,
   type ThreadMarker,
+  type TraceSettings,
   type Vec2,
   type Vec3,
 } from '@core/contracts';
 import type { AssetAccess } from '@core/access/asset';
 import type { DocumentAccess } from '@core/access/document';
 import type { DrawingEntities, InterchangeEngine } from '@core/engines/interchange';
-import type { AxisInput, BodyState, ModelingEngine, ModelingRequest, PathPiece, Placement, ToolInput } from '@core/engines/modeling';
+import type { AxisInput, BodyState, ModelingEngine, ModelingRequest, PathPiece, Placement, ToolInput, PartSolid } from '@core/engines/modeling';
 import type { ParameterEngine, ParameterError, Quantity, ValueKind } from '@core/engines/parameter';
 import { type DragTarget, type FontFiles, placesAlong, type SketchEngine, type SketchPath, sketchPath } from '@core/engines/sketch';
 import { contentHash } from '@core/utilities/identity';
@@ -150,6 +155,8 @@ export class Regeneration {
   private bodies: readonly BodyState[] = [];
   /** The layer left over counterbored holes for printing: the printer's layer height. */
   private layer = 0.2;
+  /** What the printer needs added to holes (and taken off pegs) for parts to fit as designed. */
+  private compensation = 0;
   private scope: ReadonlyMap<string, Quantity> = new Map();
 
   constructor(
@@ -159,7 +166,10 @@ export class Regeneration {
 
   /** Runs the timeline with the project's parameters (the component's own of the same name win). */
   async run(document: ComponentDocument, context: RegenerationContext = {}): Promise<Derived> {
-    if (document.process?.kind === 'print') this.layer = document.process.layerHeight;
+    if (document.process?.kind === 'print') {
+      this.layer = document.process.layerHeight;
+      this.compensation = document.process.holeCompensation ?? 0;
+    }
     // A configuration's values replace the parameters' expressions, by name.
     const chosen = context.configuration ?? document.configuration;
     const values = document.configurations?.find((c) => c.id === chosen)?.values ?? {};
@@ -309,6 +319,79 @@ export class Regeneration {
       if (trial.status !== 'over-constrained' && trial.status !== 'failed') removable.push(suspect.id);
     }
     return removable;
+  }
+
+  /** A part's sizes in millimetres and radians: from the catalogue and its expressions, with fits applied. */
+  private partSolid(part: PartSpec, operation: BodyOperation): Result<PartSolid> {
+    const lengths = (entries: Record<string, string>): Result<Record<string, number>> => {
+      const out: Record<string, number> = {};
+      for (const [name, expression] of Object.entries(entries)) {
+        const kind = name.endsWith('Angle') || name === 'angle' ? 'angle' : name === 'teeth' ? 'scalar' : 'length';
+        const value = this.value(expression, kind, name);
+        if (!value.ok) return value;
+        out[name] = value.value;
+      }
+      return ok(out);
+    };
+    const num = (values: Record<string, number>, name: string) => values[name] as number;
+    switch (part.kind) {
+      case 'screw': {
+        const size = metric[part.size];
+        const v = lengths({ length: part.length });
+        return v.ok ? ok({ kind: 'screw', diameter: size.d, length: num(v.value, 'length'), head: size.head.diameter, headHeight: size.head.height, socket: size.head.socket }) : v;
+      }
+      case 'nut':
+        return ok({ kind: 'nut', diameter: metric[part.size].d, acrossFlats: metric[part.size].nut.acrossFlats, height: metric[part.size].nut.height });
+      case 'washer': {
+        const { inner, outer, thickness } = metric[part.size].washer;
+        return ok({ kind: 'ring', inner, outer, height: thickness, below: false });
+      }
+      case 'insert': {
+        const { diameter, length } = metric[part.size].insert;
+        return ok({ kind: 'ring', inner: metric[part.size].d, outer: diameter, height: length, below: true });
+      }
+      case 'bearing': {
+        const { bore, outer, width } = bearings[part.size];
+        return ok({ kind: 'ring', inner: bore, outer, height: width, below: false });
+      }
+      case 'magnet': {
+        const v = lengths({ diameter: part.diameter, height: part.height });
+        return v.ok ? ok({ kind: 'post', diameter: num(v.value, 'diameter'), height: num(v.value, 'height'), chamfer: 0 }) : v;
+      }
+      case 'peg': {
+        const v = lengths({ diameter: part.diameter, height: part.height });
+        // A peg is made smaller, by its fit and the printer's compensation.
+        return v.ok ? ok({ kind: 'post', diameter: num(v.value, 'diameter') - fitAllowance[part.fit] - this.compensation, height: num(v.value, 'height'), chamfer: 0.4 }) : v;
+      }
+      case 'gear': {
+        const v = lengths({ module: part.module, teeth: part.teeth, width: part.width, bore: part.bore, pressureAngle: part.pressureAngle, helixAngle: part.helixAngle });
+        if (!v.ok) return v;
+        const g = v.value;
+        return ok({ kind: 'gear', module: num(g, 'module'), teeth: num(g, 'teeth'), width: num(g, 'width'), bore: num(g, 'bore'), pressureAngle: num(g, 'pressureAngle'), helixAngle: num(g, 'helixAngle') });
+      }
+      case 'rack': {
+        const v = lengths({ module: part.module, teeth: part.teeth, width: part.width, height: part.height, pressureAngle: part.pressureAngle });
+        if (!v.ok) return v;
+        const g = v.value;
+        return ok({ kind: 'rack', module: num(g, 'module'), teeth: num(g, 'teeth'), width: num(g, 'width'), height: num(g, 'height'), pressureAngle: num(g, 'pressureAngle') });
+      }
+      case 'snap-fit': {
+        const v = lengths({ length: part.length, width: part.width, thickness: part.thickness, hook: part.hook });
+        if (!v.ok) return v;
+        return ok({ kind: 'snap-fit', length: num(v.value, 'length'), width: num(v.value, 'width'), thickness: num(v.value, 'thickness'), hook: num(v.value, 'hook') });
+      }
+      case 'dovetail': {
+        const v = lengths({ width: part.width, depth: part.depth, length: part.length, angle: part.angle });
+        if (!v.ok) return v;
+        // Cut into a body it is a slot: wider by the fit.
+        const widen = operation === 'cut' ? fitAllowance[part.fit] + this.compensation : 0;
+        return ok({ kind: 'dovetail', width: num(v.value, 'width') + widen, depth: num(v.value, 'depth'), length: num(v.value, 'length'), angle: num(v.value, 'angle') });
+      }
+      case 'living-hinge': {
+        const v = lengths({ length: part.length, width: part.width, depth: part.depth });
+        return v.ok ? ok({ kind: 'groove', length: num(v.value, 'length'), width: num(v.value, 'width'), depth: num(v.value, 'depth') }) : v;
+      }
+    }
   }
 
   /** The points an equation curve passes through, and the smooth curve through them. */
@@ -556,6 +639,20 @@ export class Regeneration {
         if (!path.ok) return path;
         return withKey({ ...base, type: 'path-pattern', tools: tools as ToolInput[], placements: placementsAlong(path.value.flat, path.value.frame, count.value, feature.align) });
       }
+      case 'part': {
+        const view = this.sketches.get(feature.sketch);
+        if (!view || view.error) return fail({ code: 'missing-input', message: 'Its sketch is missing, later in the timeline or does not solve.' });
+        const points = feature.points.map((id) => {
+          const p = view.sketch.entities.find((e) => e.id === id);
+          return p?.kind === 'point' ? { id, at: [p.x, p.y] as Vec2 } : undefined;
+        });
+        if (points.some((p) => !p)) return fail({ code: 'missing-input', message: 'Some of its points no longer exist. Edit the part and pick its sketch again.' });
+        const angle = this.value(feature.angle, 'angle', 'Angle');
+        if (!angle.ok) return angle;
+        const solid = this.partSolid(feature.part, feature.operation);
+        if (!solid.ok) return solid;
+        return withKey({ ...base, type: 'part', frame: view.frame, points: points as { id: string; at: Vec2 }[], angle: angle.value, flip: feature.flip, solid: solid.value, operation: feature.operation });
+      }
       case 'hole': {
         const view = this.sketches.get(feature.sketch);
         if (!view || view.error) return fail({ code: 'missing-input', message: 'Its sketch is missing, later in the timeline or does not solve.' });
@@ -587,7 +684,9 @@ export class Regeneration {
           if (!a.ok) return a;
           sink = { diameter: d.value, angle: a.value };
         }
-        const spec = { diameter: diameter.value, ...(depth === undefined ? {} : { depth }), ...(bore ? { bore } : {}), ...(sink ? { sink } : {}), teardrop: feature.teardrop, bridge: feature.bridge && bore ? this.layer : 0 };
+        // A fit widens the hole by its allowance and the printer's compensation.
+        const widen = feature.fit ? fitAllowance[feature.fit] + this.compensation : 0;
+        const spec = { diameter: diameter.value + widen, ...(depth === undefined ? {} : { depth }), ...(bore ? { bore } : {}), ...(sink ? { sink } : {}), teardrop: feature.teardrop, bridge: feature.bridge && bore ? this.layer : 0 };
         return withKey({ ...base, type: 'hole', frame: view.frame, points: points as { id: string; at: Vec2 }[], spec });
       }
       case 'thread': {

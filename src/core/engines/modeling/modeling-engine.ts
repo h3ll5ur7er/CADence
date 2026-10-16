@@ -13,6 +13,7 @@ import type {
 } from '@core/contracts';
 import type { HoleSpec } from './holes';
 
+import type { PartSolid } from './parts';
 export type { HoleSpec };
 
 export type { BodyState };
@@ -101,6 +102,17 @@ export type ModelingRequest = RequestBase &
         readonly angle: number;
       }
     | { readonly type: 'mirror'; readonly tools: readonly ToolInput[]; readonly plane: PlaneFrame }
+    | {
+        /** Parts (standard, gears, for printing) at points of a plane (parts.ts). */
+        readonly type: 'part';
+        readonly frame: PlaneFrame;
+        readonly points: readonly { readonly id: string; readonly at: Vec2 }[];
+        /** Radians, about the plane's normal. */
+        readonly angle: number;
+        readonly flip: boolean;
+        readonly solid: PartSolid;
+        readonly operation: BodyOperation;
+      }
     | {
         readonly type: 'hole';
         readonly frame: PlaneFrame;

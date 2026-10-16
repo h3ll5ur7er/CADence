@@ -396,9 +396,29 @@
             <option value="countersink">Countersunk</option>
           </select>
         </label>
+        <div class="row two">
+          <label class="field">
+            Diameter
+            <input id="feature-diameter" autocomplete="off" [value]="f.diameter" (change)="set({ diameter: length($event) })" />
+          </label>
+          <label class="field">
+            For a screw
+            <select id="feature-hole-preset" (change)="set({ diameter: value($event) + ' mm' })">
+              <option value="" selected disabled>Choose…</option>
+              @for (preset of holePresets; track preset.label) {
+                <option [value]="preset.diameter">{{ preset.label }}</option>
+              }
+            </select>
+          </label>
+        </div>
         <label class="field">
-          Diameter
-          <input id="feature-diameter" autocomplete="off" [value]="f.diameter" (change)="set({ diameter: length($event) })" />
+          Fit for printing
+          <select id="feature-fit" (change)="set({ fit: $any(value($event)) || undefined })">
+            <option value="" [selected]="!f.fit">As designed</option>
+            <option value="press" [selected]="f.fit === 'press'">Press (printer compensation only)</option>
+            <option value="snug" [selected]="f.fit === 'snug'">Snug (+0.15 mm)</option>
+            <option value="loose" [selected]="f.fit === 'loose'">Loose (+0.3 mm)</option>
+          </select>
         </label>
         <label class="field">
           Depth
@@ -439,6 +459,253 @@
           </div>
         }
         <label class="check"><input type="checkbox" id="feature-teardrop" [checked]="f.teardrop" (change)="set({ teardrop: $any($event.target).checked })" /> Teardrop when lying on its side (prints without support)</label>
+      }
+      @case ('part') {
+        <label class="field">
+          Sketch with the points
+          <select id="feature-sketch" (change)="setHoleSketch(value($event))">
+            @for (s of holeSketches(); track s.id) {
+              <option [value]="s.id" [selected]="s.id === f.sketch">{{ s.name }}</option>
+            } @empty {
+              <option value="" selected>Sketch points with the Point tool first</option>
+            }
+          </select>
+        </label>
+        <p class="count" data-testid="point-count">{{ f.points.length }} part{{ f.points.length === 1 ? '' : 's' }}</p>
+        <label class="field">
+          Part
+          <select id="feature-part-kind" (change)="setPartKind($any(value($event)))">
+            @for (k of partKinds; track k.value) {
+              <option [value]="k.value" [selected]="k.value === f.part.kind">{{ k.label }}</option>
+            }
+          </select>
+        </label>
+        @switch (f.part.kind) {
+          @case ('screw') {
+            <div class="row two">
+            <label class="field">
+              Size
+              <select id="feature-part-size" (change)="setPart({ size: value($event) })">
+                @for (size of metricSizes; track size) {
+                  <option [value]="size" [selected]="size === f.part.size">{{ size }}</option>
+                }
+              </select>
+            </label>
+            <label class="field">
+              Length
+              <input id="feature-part-length" autocomplete="off" [value]="f.part.length" (change)="setPart({ length: length($event) })" />
+            </label>
+            </div>
+          }
+          @case ('nut') {
+            <label class="field">
+              Size
+              <select id="feature-part-size" (change)="setPart({ size: value($event) })">
+                @for (size of metricSizes; track size) {
+                  <option [value]="size" [selected]="size === f.part.size">{{ size }}</option>
+                }
+              </select>
+            </label>
+          }
+          @case ('washer') {
+            <label class="field">
+              Size
+              <select id="feature-part-size" (change)="setPart({ size: value($event) })">
+                @for (size of metricSizes; track size) {
+                  <option [value]="size" [selected]="size === f.part.size">{{ size }}</option>
+                }
+              </select>
+            </label>
+          }
+          @case ('insert') {
+            <label class="field">
+              Size
+              <select id="feature-part-size" (change)="setPart({ size: value($event) })">
+                @for (size of metricSizes; track size) {
+                  <option [value]="size" [selected]="size === f.part.size">{{ size }}</option>
+                }
+              </select>
+            </label>
+          }
+          @case ('bearing') {
+            <label class="field">
+              Size
+              <select id="feature-part-size" (change)="setPart({ size: value($event) })">
+                @for (size of bearingSizes; track size) {
+                  <option [value]="size" [selected]="size === f.part.size">{{ size }}</option>
+                }
+              </select>
+            </label>
+          }
+          @case ('magnet') {
+            <div class="row two">
+            <label class="field">
+              Diameter
+              <input id="feature-part-diameter" autocomplete="off" [value]="f.part.diameter" (change)="setPart({ diameter: length($event) })" />
+            </label>
+            <label class="field">
+              Height
+              <input id="feature-part-height" autocomplete="off" [value]="f.part.height" (change)="setPart({ height: length($event) })" />
+            </label>
+            </div>
+          }
+          @case ('gear') {
+            <div class="row two">
+            <label class="field">
+              Module
+              <input id="feature-part-module" autocomplete="off" [value]="f.part.module" (change)="setPart({ module: length($event) })" />
+            </label>
+            <label class="field">
+              Teeth
+              <input id="feature-part-teeth" autocomplete="off" [value]="f.part.teeth" (change)="setPart({ teeth: value($event) })" />
+            </label>
+            <label class="field">
+              Width
+              <input id="feature-part-width" autocomplete="off" [value]="f.part.width" (change)="setPart({ width: length($event) })" />
+            </label>
+            <label class="field">
+              Bore (0: none)
+              <input id="feature-part-bore" autocomplete="off" [value]="f.part.bore" (change)="setPart({ bore: length($event) })" />
+            </label>
+            <label class="field">
+              Pressure angle
+              <input id="feature-part-pressureAngle" autocomplete="off" [value]="f.part.pressureAngle" (change)="setPart({ pressureAngle: value($event) })" />
+            </label>
+            <label class="field">
+              Helix angle (0: spur)
+              <input id="feature-part-helixAngle" autocomplete="off" [value]="f.part.helixAngle" (change)="setPart({ helixAngle: value($event) })" />
+            </label>
+            </div>
+            <label class="field">
+              Meshes with a gear of
+              <input id="feature-mate-teeth" type="number" min="6" [value]="mateTeeth()" (change)="mateTeeth.set(+value($event))" />
+            </label>
+            @if (mate(); as m) {
+              <p class="count" data-testid="centre-distance">Put its centre {{ m.distance }} mm along X{{ m.turn ? ', turned ' + m.turn + '°' : '' }}.</p>
+            }
+          }
+          @case ('rack') {
+            <div class="row two">
+            <label class="field">
+              Module
+              <input id="feature-part-module" autocomplete="off" [value]="f.part.module" (change)="setPart({ module: length($event) })" />
+            </label>
+            <label class="field">
+              Teeth
+              <input id="feature-part-teeth" autocomplete="off" [value]="f.part.teeth" (change)="setPart({ teeth: value($event) })" />
+            </label>
+            <label class="field">
+              Width
+              <input id="feature-part-width" autocomplete="off" [value]="f.part.width" (change)="setPart({ width: length($event) })" />
+            </label>
+            <label class="field">
+              Height to the pitch line
+              <input id="feature-part-height" autocomplete="off" [value]="f.part.height" (change)="setPart({ height: length($event) })" />
+            </label>
+            <label class="field">
+              Pressure angle
+              <input id="feature-part-pressureAngle" autocomplete="off" [value]="f.part.pressureAngle" (change)="setPart({ pressureAngle: value($event) })" />
+            </label>
+            </div>
+          }
+          @case ('snap-fit') {
+            <div class="row two">
+            <label class="field">
+              Arm length
+              <input id="feature-part-length" autocomplete="off" [value]="f.part.length" (change)="setPart({ length: length($event) })" />
+            </label>
+            <label class="field">
+              Width
+              <input id="feature-part-width" autocomplete="off" [value]="f.part.width" (change)="setPart({ width: length($event) })" />
+            </label>
+            <label class="field">
+              Thickness
+              <input id="feature-part-thickness" autocomplete="off" [value]="f.part.thickness" (change)="setPart({ thickness: length($event) })" />
+            </label>
+            <label class="field">
+              Hook
+              <input id="feature-part-hook" autocomplete="off" [value]="f.part.hook" (change)="setPart({ hook: length($event) })" />
+            </label>
+            </div>
+          }
+          @case ('peg') {
+            <div class="row two">
+            <label class="field">
+              Diameter
+              <input id="feature-part-diameter" autocomplete="off" [value]="f.part.diameter" (change)="setPart({ diameter: length($event) })" />
+            </label>
+            <label class="field">
+              Height
+              <input id="feature-part-height" autocomplete="off" [value]="f.part.height" (change)="setPart({ height: length($event) })" />
+            </label>
+            </div>
+            <label class="field">
+              Fit
+              <select id="feature-part-fit" [value]="f.part.fit" (change)="setPart({ fit: value($event) })">
+                <option value="press">Press (as designed)</option>
+                <option value="snug">Snug (0.15 mm)</option>
+                <option value="loose">Loose (0.3 mm)</option>
+              </select>
+            </label>
+          }
+          @case ('dovetail') {
+            <div class="row two">
+            <label class="field">
+              Width
+              <input id="feature-part-width" autocomplete="off" [value]="f.part.width" (change)="setPart({ width: length($event) })" />
+            </label>
+            <label class="field">
+              Depth
+              <input id="feature-part-depth" autocomplete="off" [value]="f.part.depth" (change)="setPart({ depth: length($event) })" />
+            </label>
+            <label class="field">
+              Length
+              <input id="feature-part-length" autocomplete="off" [value]="f.part.length" (change)="setPart({ length: length($event) })" />
+            </label>
+            <label class="field">
+              Angle
+              <input id="feature-part-angle" autocomplete="off" [value]="f.part.angle" (change)="setPart({ angle: value($event) })" />
+            </label>
+            </div>
+            <label class="field">
+              Fit
+              <select id="feature-part-fit" [value]="f.part.fit" (change)="setPart({ fit: value($event) })">
+                <option value="press">Press (as designed)</option>
+                <option value="snug">Snug (0.15 mm)</option>
+                <option value="loose">Loose (0.3 mm)</option>
+              </select>
+            </label>
+          }
+          @case ('living-hinge') {
+            <div class="row two">
+            <label class="field">
+              Length
+              <input id="feature-part-length" autocomplete="off" [value]="f.part.length" (change)="setPart({ length: length($event) })" />
+            </label>
+            <label class="field">
+              Width
+              <input id="feature-part-width" autocomplete="off" [value]="f.part.width" (change)="setPart({ width: length($event) })" />
+            </label>
+            <label class="field">
+              Depth
+              <input id="feature-part-depth" autocomplete="off" [value]="f.part.depth" (change)="setPart({ depth: length($event) })" />
+            </label>
+            </div>
+          }
+        }
+        <label class="field">
+          Turned by
+          <input id="feature-angle" autocomplete="off" [value]="f.angle" (change)="set({ angle: value($event) })" />
+        </label>
+        <label class="check"><input type="checkbox" id="feature-flip" [checked]="f.flip" (change)="set({ flip: $any($event.target).checked })" /> On the other side of the sketch plane</label>
+        <label class="field">
+          Operation
+          <select id="feature-operation" [value]="f.operation" (change)="set({ operation: $any(value($event)) })">
+            @for (op of operations; track op.value) {
+              <option [value]="op.value" [selected]="op.value === f.operation">{{ op.label }}</option>
+            }
+          </select>
+        </label>
       }
       @case ('thread') {
         <p class="count" data-testid="face-selection">{{ f.face.name ? '1 round face' : 'No face' }} selected</p>

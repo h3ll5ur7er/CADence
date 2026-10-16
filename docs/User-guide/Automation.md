@@ -27,7 +27,7 @@ That builds `dist/automation/cadence.mjs`. Run it with `npm run cadence -- <comm
 | `projects` | Lists the projects |
 | `documents <project>` | Lists a project's documents |
 | `export <project> <document> <format>` | Exports a component: `step`, `stl`, `obj`, `3mf`; `dxf` or `svg` of a sketch (`--sketch <id>`) or of the flat pattern (`--flat-pattern`) |
-| `picture <project> <document> <file>` | A PNG of a component or an assembly: `--view iso` (default), `front`, `back`, `top`, `bottom`, `left` or `right`; `--width`, `--height` (800 × 600); `--white` for a white background |
+| `picture <project> <document> <file>` | A PNG of a component or an assembly: `--view iso` (default), `front`, `back`, `top`, `bottom`, `left` or `right`, or `--direction x,y,z` (towards the camera) with `--up x,y,z`; `--width`, `--height` (800 × 600); `--white` for a white background; `--focus`, `--hide`, `--ghost` with body or instance ids (`a,b`) to zoom onto, leave out or show see-through; assemblies also `--explode <view>` (with `--steps n`) or `--study <id> --time <seconds>` |
 | `convert <input> <output>` | Converts a file, formats from the extensions: `bracket.step` to `bracket.stl`, `logo.svg` to `logo.dxf` |
 | `run <script> [arguments]` | Runs a script (below) |
 | `open-git <url>` | Opens a project from a git repository (`--cors-proxy <url>` if needed) |
@@ -64,19 +64,21 @@ The API ([[src/automation/api.ts]]):
 - `cadence.projects`: the whole Project Manager: create, rename and delete projects and documents, import files, project parameters, versions and sync. Methods return results (`{ ok, value }` or `{ ok: false, error }`).
 - `cadence.project(idOrName)`, `cadence.document(idOrName, project?)`: find them.
 - `cadence.component(documentId)`: a component open for scripting:
-  - `run(...commands)` runs design commands in order and throws a `CadenceError` at the first refused one;
-  - `summary()` is the component as plain data: parameters, timeline with errors, sketches with their profiles (id, area, extent), bodies with their face and edge names;
+  - `run(...commands)` runs design commands in order and throws a `CadenceError` at the first refused one (with the ids involved, such as the constraints of a conflict);
+  - `summary(filter?)` is the component as plain data: parameters, timeline with errors, sketches with their profiles (id, area, extent), bodies with their faces (and centres) and edges (and middles). A filter lists part of it: `only` some parts, one `sketch` or `body`, faces and edges whose names `match` a pattern (`f:pocket:*`) or lie `near` a point (`within` mm). `changes(before)` says what changed since an earlier summary;
   - `export(format, { to?, bodies?, quality? })`, `exportSketch(id, format)`, `exportFlatPattern(format)` return the written file's path;
   - `properties()`, `validate()`, `measure(refs)`, `simulate()` (the strength check of the setup stored with `set-simulation`), `undo()`, `redo()`, `state()`.
-- `cadence.assembly(documentId)`: `run(...commands)`, `interference()`, `export(format)`.
+- `cadence.assembly(documentId)`: an assembly open for scripting: `run(...commands)`, `summary()` (instances where they are, joints with their errors, links, patterns, studies, exploded views), `changes(before)`, `undo()`, `interference()`, `collisions(study)`, `properties()`, `billOfMaterials()`, `picture(options)` (also exploded or at a moment of a study), `animation(study)` (a GIF and a sheet of moments), `export(format)`, `close()`.
 
 **Commands** are the same ones the app records for every change ([[Architecture/Decisions#ADR-10]]): `create-sketch`, `add-sketch-geometry`, `add-constraint`, `set-dimension`, `add-feature`, `edit-feature`, `add-parameter`, `set-material`, `set-process` and the others in [[src/core/managers/design/design-manager.ts]]. Features are described in [[src/core/contracts/feature.ts]] and sketches in [[src/core/contracts/sketch.ts]]. Three shorthands add fully constrained outlines ([[src/automation/shapes.ts]]):
 
 | Shorthand | Adds |
 | --- | --- |
-| `{ type: 'add-rectangle', sketchId, id, x, y, width, height }` | A rectangle from its bottom left corner; `width` and `height` may be expressions (`'width'`, `'2 * wall'`) |
+| `{ type: 'add-rectangle', sketchId, id, x, y, width, height }` | A rectangle from its bottom left corner |
 | `{ type: 'add-circle', sketchId, id, x, y, diameter }` | A circle around (x, y) |
-| `{ type: 'add-polygon', sketchId, id, points: [[x, y], …] }` | A closed outline through fixed points |
+| `{ type: 'add-polygon', sketchId, id, points: [[x, y], …] }` | A closed outline through the points |
+
+Sizes and positions are numbers (mm) or expressions (`'width'`, `'2 * wall'`, `'rod + 15'`). A point given by numbers is fixed; one given by an expression is dimensioned from the sketch origin, so it follows the parameters.
 
 Ids are yours to choose; they make later commands readable (`profiles`, `sketch`, `itemId`). Faces and edges for fillets, chamfers, shells or sketches on faces are named in `summary().bodies`.
 
@@ -102,14 +104,17 @@ The server tells the agent how to model when it connects, and offers these tools
 
 | Tool | What it does |
 | --- | --- |
-| `list_projects`, `create_project`, `list_documents`, `create_document`, `import_file` | Projects and documents |
+| `list_projects`, `create_project`, `list_documents`, `create_document`, `rename_document`, `delete_document`, `import_file` | Projects and documents |
 | `set_project_parameters` | Parameters for every component of a project |
-| `get_component` | The component as data (as `summary()` above) |
-| `edit_component` | Runs commands in order and returns the component; a refused command is reported with its number and reason |
-| `undo_component` | Undoes the last change |
+| `get_component` | The component as data (as `summary()` above), with the same filters |
+| `edit_component` | Runs commands in order and answers with what changed: timeline items, sketches and their profiles, the bodies' face counts and new face names; a refused command is reported with its number, reason and the ids involved |
+| `undo_component` | Undoes the last change; answers with what changed |
 | `component_properties`, `check_component` | Mass properties; the print or laser checks |
 | `export_component`, `export_imported` | Files for printing, cutting or other CAD programs; returns the path |
-| `render_picture` | A picture of a component or an assembly from a view, returned as an image the agent can look at |
-| `command_reference` | Every command and feature as TypeScript types with their documentation |
+| `get_assembly`, `edit_assembly`, `undo_assembly` | An assembly as data; runs assembly commands (instances, joints, links, patterns, motion studies, exploded views) and answers with what changed and which joints fail |
+| `check_assembly`, `assembly_properties`, `export_assembly` | Overlaps now or collisions while a study plays; mass and the bill of materials; STEP, 3MF, STL or OBJ |
+| `render_picture` | A picture of a component or an assembly, returned as an image the agent can look at: from a view or a direction, zoomed onto bodies or instances, others hidden or see-through; assemblies also exploded or at a moment of a study |
+| `animate_study` | A motion study as an animated GIF (its path) and a sheet of moments to look at |
+| `command_reference` | Every design and assembly command, feature and contract as TypeScript types with their documentation |
 
 Ask the agent for a part ("a wall bracket for a 25 mm pipe, 4 mm thick, with two screw holes, as a 3MF"), and open the result in the desktop app, or sync it to the web app through git.

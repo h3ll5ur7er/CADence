@@ -51,7 +51,8 @@ function findVertex(named: NamedShape, ref: TopologyRef): Vertex | undefined {
 /**
  * Finds the face, edge or vertex a reference names (docs/Architecture/Document-model.md#persistent-references):
  * by exact name, then among the split pieces of that name, nearest to where it was picked.
- * A name that is gone resolves to nothing; it is never re-bound to another element.
+ * A name that is gone resolves to nothing; it is never re-bound to another element. Nor is a name
+ * whose pieces lie apart, when no hint chooses between them ({@link piecesOf}, CAD-105).
  */
 export function find(named: NamedShape, ref: TopologyRef): Face | Edge | Vertex | undefined {
   if (ref.kind === 'vertex') return findVertex(named, ref);
@@ -61,5 +62,39 @@ export function find(named: NamedShape, ref: TopologyRef): Face | Edge | Vertex 
   const pieces = elements.filter((e) => baseName(e.name) === baseName(ref.name));
   const hint = ref.hint;
   if (hint) pieces.sort((a, b) => distance(a.center, hint) - distance(b.center, hint));
+  else if (!touching(pieces.map((p) => p.element))) return undefined;
   return pieces[0]?.element;
+}
+
+/**
+ * The pieces a reference without a hint could mean, when they lie apart: a shank and a ring that a
+ * hex between them split from one face. Pieces that touch (the two halves of a hole's wall) are one
+ * face to the user, and the first stands for them.
+ */
+export function piecesOf(named: NamedShape, ref: TopologyRef): string[] {
+  if (ref.kind === 'vertex' || ref.hint) return [];
+  const elements = elementsOf(named, ref.kind);
+  if (elements.some((e) => e.name === ref.name)) return [];
+  const pieces = elements.filter((e) => baseName(e.name) === baseName(ref.name));
+  return touching(pieces.map((p) => p.element)) ? [] : pieces.map((p) => p.name).sort();
+}
+
+/** Whether the faces (by shared edges) or edges (by shared ends) hang together. */
+function touching(elements: readonly (Face | Edge)[]): boolean {
+  if (elements.length < 2) return true;
+  const links = elements.map((element) =>
+    'normalAt' in element ? edgesOf(element).map((e) => `${e.hashCode}`) : [element.startPoint, element.endPoint].map((p) => p.toTuple().map((v) => Math.round(v / sameVertex)).join(',')),
+  );
+  const reached = new Set([0]);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (let i = 0; i < elements.length; i++) {
+      if (reached.has(i)) continue;
+      if ([...reached].some((j) => (links[j] as string[]).some((link) => (links[i] as string[]).includes(link)))) {
+        reached.add(i);
+        grew = true;
+      }
+    }
+  }
+  return reached.size === elements.length;
 }

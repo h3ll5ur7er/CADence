@@ -15,6 +15,8 @@ const referenceFiles = [
   'src/core/contracts/document.ts',
   'src/core/contracts/analysis.ts',
   'src/core/contracts/appearance.ts',
+  'src/core/managers/assembly/assembly-manager.ts',
+  'src/core/contracts/assembly.ts',
 ];
 const reference = referenceFiles
   .map((path) => `// ${path}\n${read(path).replace(/^import[\s\S]*?;\n/gm, '').trim()}\n`)

@@ -45,6 +45,9 @@ Select a joint to drag its values with the sliders (or type them), to set **limi
 | Gears | the teeth of both gears | turns the other way, teeth over teeth (20 driving 10: −2) |
 | Rack and pinion | the pinion's pitch diameter | π × ⌀ / 360 mm of rack per degree |
 | Belt or chain | both pulley diameters | turns the same way, diameter over diameter |
+| Sun to planet carrier | the teeth of the sun and of the ring (fixed) | sun ÷ (sun + ring) of the sun's turn (24 and 60: 2/7) |
+| Sun to planet | the teeth of the sun and of the ring (fixed); the driven joint turns the planet on its pin on the carrier | the other way, sun ÷ planet × (1 − the carrier's ratio) (24, 60: −20/21) |
+| Cam and follower | the profile: the cam's angle (0 to 360°) and the follower's lift (mm, or degrees for a turning follower), one pair a line | the follower follows the profile, smooth between its points and round again every turn; the scale multiplies the lift |
 
 Choose the driving and the driven joint (and which of their freedoms), or type the ratio; **The other way round** reverses it. The driven joint keeps where it is when the link is made and follows from then on; links can chain (a gear train), but not in a circle, and a joint follows one link.
 

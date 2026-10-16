@@ -353,8 +353,10 @@ class Session implements DesignSession {
     if (status?.state === 'error') {
       // Contradicting relations point at the ones the sketch had before, so the client can offer to remove one.
       const before = target ? this.current.derived.sketches.get(target)?.sketch.constraints.map((c) => c.id) : undefined;
-      const related = target ? derived.sketches.get(target)?.conflicting?.filter((id) => before?.includes(id)) : undefined;
-      return fail({ code: errorCode(status.error), message: status.error ?? 'This change fails.', ...(related?.length ? { related } : {}) });
+      const view = target ? derived.sketches.get(target) : undefined;
+      const involved = view?.conflicting?.filter((id) => view.sketch.constraints.some((c) => c.id === id));
+      const related = involved?.filter((id) => before?.includes(id));
+      return fail({ code: errorCode(status.error), message: status.error ?? 'This change fails.', ...(related?.length ? { related } : {}), ...(involved?.length ? { involved } : {}) });
     }
     // Solved positions become the stored ones, so a drag stays where it was dropped.
     const timeline = document.timeline.map((item) => (isSketch(item) ? (derived.sketches.get(item.id)?.error ? item : (derived.sketches.get(item.id)?.sketch ?? item)) : item));
@@ -409,7 +411,7 @@ const processOf = (document: ComponentDocument): ManufacturingProfile => documen
 /** Stable error codes for the kinds of failure the messages describe. */
 function errorCode(message: string | undefined): string {
   if (!message) return 'failed';
-  if (message.includes('conflicts with existing constraints')) return 'over-constrained';
+  if (message.includes('conflicts with existing constraints') || message.includes('already set by existing constraints')) return 'over-constrained';
   if (message.includes('shrink a line')) return 'degenerate';
   if (message.includes('": ')) return 'invalid-expression';
   return 'feature-failed';

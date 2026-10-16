@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "cadence": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["dist/automation/cadence.mjs", "mcp"]
+    }
+  }
+}

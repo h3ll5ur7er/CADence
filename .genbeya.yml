@@ -1,0 +1,14 @@
+name: CADence
+wikiRoot: docs
+wikiHome: Home.md
+taskRoot: tasks
+taskPrefix: CAD
+statuses:
+  - backlog
+  - todo
+  - in-progress
+  - review
+  - done
+hiddenColumns:
+  - backlog
+  - done

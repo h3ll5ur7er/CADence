@@ -4,6 +4,7 @@ import type { BodyOperation } from '@core/contracts';
 import { measureVolume, type Shape3D } from 'replicad';
 import type { BodyState } from './modeling-engine';
 import { nameShape, namedSurfaces } from './naming';
+import { cut, fuse, intersect } from './booleans';
 
 /** A body with its shape loaded from Shape Access. */
 export interface LoadedBody {
@@ -24,6 +25,15 @@ function overlaps(a: Shape3D, b: Shape3D): boolean {
   return !a.boundingBox.isOut(b.boundingBox);
 }
 
+/** The feature's id for its first new body, then `<feature>:2`, `:3`, … without gaps (CAD-104). */
+function freeId(bodies: readonly LoadedBody[], feature: string): string {
+  const taken = new Set(bodies.map((b) => b.state.id));
+  if (!taken.has(feature)) return feature;
+  let n = 2;
+  while (taken.has(`${feature}:${n}`)) n++;
+  return `${feature}:${n}`;
+}
+
 /** Copies a named shape's names onto a transformed copy (transforms keep the topology order). */
 export function renameCopy(source: NamedShape, copy: Shape3D, suffix: string): NamedShape {
   const map = (from: readonly { hashCode: number }[], to: readonly { hashCode: number }[], names: ReadonlyMap<number, string>) =>
@@ -41,10 +51,10 @@ export function renameCopy(source: NamedShape, copy: Shape3D, suffix: string): N
 export function combine(bodies: readonly LoadedBody[], tool: NamedShape, operation: BodyOperation, feature: string, key: string): Combined {
   const touched = bodies.filter((b) => overlaps(b.named.shape, tool.shape));
   const keep = (b: LoadedBody) => b.state;
-  const toolSurfaces = namedSurfaces(tool);
+  const toolSurfaces = namedSurfaces(tool, 'tool');
 
   if (operation === 'new-body' || (operation === 'join' && touched.length === 0)) {
-    const id = bodies.some((b) => b.state.id === feature) ? `${feature}:${bodies.length}` : feature;
+    const id = freeId(bodies, feature);
     const named = renameCopy(tool, tool.shape.clone(), '');
     const state = { id, key: `${key}:${id}` };
     return { bodies: [...bodies.map(keep), state], stored: [[state.key, named]] };
@@ -52,8 +62,8 @@ export function combine(bodies: readonly LoadedBody[], tool: NamedShape, operati
 
   if (operation === 'join') {
     const [first, ...others] = touched as [LoadedBody, ...LoadedBody[]];
-    let shape = first.named.shape.fuse(tool.shape);
-    for (const other of others) shape = shape.fuse(other.named.shape);
+    let shape = fuse(first.named.shape, tool.shape);
+    for (const other of others) shape = fuse(shape, other.named.shape);
     const candidates = [...touched.flatMap((b) => namedSurfaces(b.named)), ...toolSurfaces];
     const state = { id: first.state.id, key: `${key}:${first.state.id}` };
     const order = bodies.filter((b) => !others.includes(b)).map((b) => (b === first ? state : b.state));
@@ -67,7 +77,7 @@ export function combine(bodies: readonly LoadedBody[], tool: NamedShape, operati
       result.push(body.state);
       continue;
     }
-    const shape = operation === 'cut' ? body.named.shape.cut(tool.shape) : body.named.shape.intersect(tool.shape);
+    const shape = operation === 'cut' ? cut(body.named.shape, tool.shape) : intersect(body.named.shape, tool.shape);
     if (isEmpty(shape)) continue; // the whole body was removed
     const state = { id: body.state.id, key: `${key}:${body.state.id}` };
     stored.push([state.key, nameShape(shape, [...namedSurfaces(body.named), ...toolSurfaces], () => undefined, feature)]);

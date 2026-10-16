@@ -1,29 +1,9 @@
 import { readFileSync, statSync } from 'node:fs';
-import { expect, type Page, test } from '@playwright/test';
-import { cutHole, evidence, plateProject, rimOf, setThickness } from './support';
+import { expect, test } from '@playwright/test';
+import { cutHole, evidence, hinge, plateProject, setThickness, standardView as view } from './support';
 
 /** Phase 21 (Motion and assembly documents) user journey: motion links, speeds and collisions, exploded views and instructions, bill of materials. */
 test.setTimeout(240_000);
-
-/** A standard view of the whole assembly. */
-const view = async (page: Page, name: string) => {
-  await page.getByRole('button', { name: `${name} view` }).dispatchEvent('click');
-  await page.waitForTimeout(800);
-  await page.getByRole('button', { name: 'Zoom to fit' }).click();
-  await page.waitForTimeout(600);
-};
-
-/** A revolute joint from the top rim of one plate's hole to the bottom rim of another plate's. */
-async function hinge(page: Page, stays: number, instance: number): Promise<void> {
-  await page.getByRole('button', { name: 'Joint', exact: true }).click();
-  await view(page, 'Home');
-  const top = await rimOf(page, stays, 'top');
-  await page.mouse.click(top.x, top.y);
-  await view(page, 'Bottom');
-  const bottom = await rimOf(page, instance, 'bottom');
-  await page.mouse.click(bottom.x, bottom.y);
-  await page.getByRole('button', { name: 'OK' }).click();
-}
 
 test('links joints by gears, drives them at a speed, explodes the assembly into build instructions and lists its parts', async ({ page }) => {
   await plateProject(page, 'Gearbox');

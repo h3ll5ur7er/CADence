@@ -1,8 +1,10 @@
 import type { Core } from '@core/composition';
 import type {
+  AssemblyDocument,
   BodyProperties,
   DocumentId,
   DocumentSummary,
+  Matrix4,
   Measurement,
   ProjectSummary,
   Result,
@@ -10,14 +12,15 @@ import type {
   TopologyRef,
   ValidationReport,
   Vec2,
+  Vec3,
 } from '@core/contracts';
 import { sourceKey } from '@core/contracts';
-import type { AssemblyCommand, AssemblyFormat, AssemblySession, AssemblyState } from '@core/managers/assembly';
+import type { AssemblyCommand, AssemblyFormat, AssemblySession, AssemblyState, BomLine, Collision } from '@core/managers/assembly';
 import type { DesignSession, DesignState, DrawingFormat, ExportOptions, SolidFormat } from '@core/managers/design';
 import type { ProjectManager } from '@core/managers/project';
-import { encodePng } from '@core/utilities/picture';
+import { encodeGif, encodePng, type Pixels } from '@core/utilities/picture';
 import { type RasterMesh, rasterize, type RasterView, rasterViews } from '@core/utilities/raster';
-import { expandShape, type ScriptCommand } from './shapes';
+import { expandShape, roughValue, type ScriptCommand } from './shapes';
 
 /** A refused command or a missing project, document or file; `code` is the core's error code. */
 export class CadenceError extends Error {
@@ -36,36 +39,86 @@ export interface ExportTarget {
   deliverNextTo(path: string): void;
 }
 
-/** A value, or the error of a result. */
+/** A value, or the error of a result (with the ids of what is at fault, for agents). */
 function unwrap<T>(result: Result<T>): T {
-  if (!result.ok) throw new CadenceError(result.error.code, result.error.message);
-  return result.value;
+  if (result.ok) return result.value;
+  const ids = result.error.involved ?? result.error.related;
+  const related = ids?.length ? ` The ones involved: ${ids.join(', ')}.` : '';
+  throw new CadenceError(result.error.code, `${result.error.message}${related}`);
 }
 
 /** How a picture of a component or an assembly is taken. */
 export interface PictureOptions {
   /** From where: `iso` (front, right, above; the default), `front`, `back`, `top`, `bottom`, `left` or `right`. */
   readonly view?: RasterView;
+  /** A free camera instead of a view: from the model towards the viewer, and which way is up. */
+  readonly direction?: Vec3;
+  readonly up?: Vec3;
   /** Pixels; 800 × 600 by default. */
   readonly width?: number;
   readonly height?: number;
   /** A white ground instead of a transparent one. */
   readonly white?: boolean;
+  /** Bodies (of a component) or instances (of an assembly) to zoom onto: the picture is framed to them. */
+  readonly focus?: readonly string[];
+  /** Bodies or instances left out. */
+  readonly hide?: readonly string[];
+  /** Bodies or instances shown see-through, to look at what is behind or inside them. */
+  readonly ghost?: readonly string[];
 }
 
-/** The meshes as a PNG, seen from the chosen view. */
-async function picture(meshes: readonly RasterMesh[], options: PictureOptions): Promise<Uint8Array> {
-  const view = rasterViews[options.view ?? 'iso'];
+/** An assembly's picture: also exploded, or at a moment of a motion study. */
+export interface AssemblyPictureOptions extends PictureOptions {
+  /** An exploded view, with its first `steps` steps applied (all by default). */
+  readonly explode?: string;
+  readonly steps?: number;
+  /** A motion study, at `time` seconds (0 by default). */
+  readonly study?: string;
+  readonly time?: number;
+}
+
+/** A mesh to draw, with the body or instance it shows (for focus, hide and ghost). */
+type Shown = RasterMesh & { readonly of: string };
+
+/** The meshes as pixels, seen from the chosen view or camera. */
+function pixels(meshes: readonly Shown[], options: PictureOptions): Pixels {
+  const view = options.direction ? { direction: options.direction, up: options.up ?? [0, 0, 1] } : rasterViews[options.view ?? 'iso'];
   if (!view) throw new CadenceError('usage', `No view "${options.view}".`);
   const [width, height] = [Math.round(options.width ?? 800), Math.round(options.height ?? 600)];
   if (!(width > 0 && height > 0 && width * height <= 16_000_000)) throw new CadenceError('usage', 'A picture is 1 to 16 million pixels.');
-  if (!meshes.length) throw new CadenceError('nothing-to-show', 'There are no bodies to show yet.');
-  const data = rasterize(meshes, { width, height, ...view, ...(options.white ? { background: [255, 255, 255, 255] as const } : {}) });
-  return encodePng({ width, height, data });
+  const [focus, hide, ghost] = [new Set(options.focus), new Set(options.hide), new Set(options.ghost)];
+  for (const id of [...focus, ...hide, ...ghost]) if (!meshes.some((m) => m.of === id)) throw new CadenceError('usage', `There is no body or instance "${id}" to show.`);
+  const shown = meshes.filter((m) => !hide.has(m.of)).map((m): RasterMesh => ({ ...m, ...(focus.has(m.of) ? { focus: true } : {}), ...(ghost.has(m.of) ? { opacity: 0.25 } : {}) }));
+  if (!shown.length) throw new CadenceError('nothing-to-show', 'There are no bodies to show yet.');
+  const data = rasterize(shown, { width, height, ...view, ...(options.white ? { background: [255, 255, 255, 255] as const } : {}) });
+  return { width, height, data };
+}
+
+/** Pictures side by side in rows, left to right and top to bottom. */
+function sheet(pictures: readonly Pixels[], columns: number): Pixels {
+  const first = pictures[0] as Pixels;
+  const rows = Math.ceil(pictures.length / columns);
+  const [width, height] = [first.width * columns, first.height * rows];
+  const data = new Uint8Array(width * height * 4).fill(255);
+  pictures.forEach((picture, i) => {
+    const [x0, y0] = [(i % columns) * first.width, Math.floor(i / columns) * first.height];
+    for (let y = 0; y < picture.height; y++) data.set(picture.data.subarray(y * picture.width * 4, (y + 1) * picture.width * 4), ((y0 + y) * width + x0) * 4);
+  });
+  return { width, height, data };
 }
 
 const round = (value: number) => Math.round(value * 1000) / 1000;
 const roundAll = (values: readonly number[]) => values.map(round);
+
+/** A wildcard pattern (`f:pocket:*`) as a test of names. */
+function matcher(pattern: string | undefined): (name: string) => boolean {
+  if (!pattern) return () => true;
+  const expression = new RegExp(`^${pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`);
+  return (name) => expression.test(name);
+}
+
+/** Lists in answers are cut here, with a note of how many more there are. */
+const listLimit = 200;
 
 /** A component as plain data, for printing and for agents. */
 export interface ComponentSummary {
@@ -73,21 +126,89 @@ export interface ComponentSummary {
   readonly name: string;
   readonly units: string;
   readonly parameters: readonly { readonly name: string; readonly expression: string; readonly value?: string; readonly project?: boolean }[];
-  readonly timeline: readonly { readonly id: string; readonly type: string; readonly name: string; readonly state: string; readonly error?: string }[];
-  readonly sketches: readonly {
-    readonly id: string;
-    readonly status: string;
-    readonly degreesOfFreedom: number;
-    readonly error?: string;
-    /** Closed regions: area (mm²), extent of the outline, and how many holes are cut out of it. */
-    readonly profiles: readonly { readonly id: string; readonly area: number; readonly holes: number; readonly min: Vec2; readonly max: Vec2 }[];
-  }[];
-  readonly bodies: readonly {
-    readonly id: string;
-    readonly faces: readonly { readonly name: string; readonly planar: boolean; readonly center: readonly number[] }[];
-    readonly edges: readonly string[];
-  }[];
+  readonly timeline: readonly TimelineEntry[];
+  readonly sketches: readonly SketchEntry[];
+  readonly bodies: readonly BodyEntry[];
   readonly sheetMetal: boolean;
+  /** Why some lists are shorter than they are. */
+  readonly notes?: readonly string[];
+}
+
+type Listed = 'parameters' | 'timeline' | 'sketches' | 'bodies';
+/** Part of a component, as a filter picked it. */
+export type FilteredSummary = Omit<ComponentSummary, Listed> & Partial<Pick<ComponentSummary, Listed>>;
+
+interface TimelineEntry {
+  readonly id: string;
+  readonly type: string;
+  readonly name: string;
+  readonly state: string;
+  readonly error?: string;
+}
+
+interface SketchEntry {
+  readonly id: string;
+  readonly status: string;
+  readonly degreesOfFreedom: number;
+  readonly error?: string;
+  /** Closed regions: area (mm²), extent of the outline, and how many holes are cut out of it. */
+  readonly profiles: readonly { readonly id: string; readonly area: number; readonly holes: number; readonly min: Vec2; readonly max: Vec2 }[];
+}
+
+interface BodyEntry {
+  readonly id: string;
+  readonly faceCount: number;
+  readonly edgeCount: number;
+  /** Each face's name, whether it is flat, and its centre (pass it as a reference's `hint`). */
+  readonly faces?: readonly { readonly name: string; readonly planar: boolean; readonly center: readonly number[] }[];
+  /** Each edge's name and its middle (pass it as a reference's `hint`). */
+  readonly edges?: readonly { readonly name: string; readonly middle: readonly number[] }[];
+}
+
+/** Which parts of a component to list (all by default). */
+export interface SummaryFilter {
+  /** Only these: `parameters`, `timeline`, `sketches`, `faces` or `edges` (faces and edges of the bodies). */
+  readonly only?: readonly ('parameters' | 'timeline' | 'sketches' | 'faces' | 'edges')[];
+  /** One sketch. */
+  readonly sketch?: string;
+  /** One body. */
+  readonly body?: string;
+  /** Faces and edges whose names match, with `*` for any text: `f:pocket:*`. */
+  readonly match?: string;
+  /** Faces and edges whose centre (or middle) lies within `within` mm (5 by default) of this point. */
+  readonly near?: Vec3;
+  readonly within?: number;
+}
+
+/** What one edit changed in a component, for agents: much shorter than the whole component. */
+export interface ComponentChanges {
+  readonly id: string;
+  /** Timeline items added or whose state, name or error changed. */
+  readonly timeline: readonly TimelineEntry[];
+  readonly removed?: readonly string[];
+  /** Every timeline item that fails now. */
+  readonly errors?: readonly TimelineEntry[];
+  /** Sketches added or changed, with their profiles. */
+  readonly sketches: readonly SketchEntry[];
+  /** Every body with its face and edge counts, and the names of faces it gained or lost. */
+  readonly bodies: readonly { readonly id: string; readonly faceCount: number; readonly edgeCount: number; readonly newFaces?: readonly string[]; readonly goneFaces?: readonly string[]; readonly more?: string }[];
+  readonly goneBodies?: readonly string[];
+  readonly parameters?: ComponentSummary['parameters'];
+  readonly hint: string;
+}
+
+/** Half-way along an edge: its segments (pairs of points) in the body mesh's edge positions. */
+function middleOf(positions: Float32Array, start: number, count: number): number[] {
+  const p = (i: number) => [positions[i * 3] as number, positions[i * 3 + 1] as number, positions[i * 3 + 2] as number];
+  const segments = Array.from({ length: Math.floor(count / 2) }, (_, k) => [p(start + 2 * k), p(start + 2 * k + 1)] as const);
+  const length = (a: number[], b: number[]) => Math.hypot(...a.map((v, i) => v - (b[i] as number)));
+  let rest = segments.reduce((sum, [a, b]) => sum + length(a, b), 0) / 2;
+  for (const [a, b] of segments) {
+    const l = length(a, b);
+    if (rest <= l) return roundAll(a.map((v, i) => v + ((b[i] as number) - v) * (l ? rest / l : 0)));
+    rest -= l;
+  }
+  return roundAll(p(start));
 }
 
 /** One component open for scripting: commands, exports and checks. */
@@ -103,7 +224,17 @@ export class ComponentScript {
 
   /** Runs the commands in order; stops at the first refusal with a CadenceError (the ones before stay). */
   async run(...commands: readonly ScriptCommand[]): Promise<void> {
-    for (const command of commands) unwrap(await this.session.execute(expandShape(command)));
+    for (const command of commands) unwrap(await this.session.execute(expandShape(command, this.guess())));
+  }
+
+  /** Rough values of expressions from the parameters' values, for where shorthands start their points. */
+  private guess() {
+    const values = new Map<string, number>();
+    for (const { parameter, display } of this.session.state().parameters) {
+      const match = /^(-?[\d.]+(?:e[+-]?\d+)?)\s*(mm|cm|m|in)?$/.exec(display ?? '');
+      if (match) values.set(parameter.name, Number(match[1]) * ({ mm: 1, cm: 10, m: 1000, in: 25.4 }[match[2] ?? 'mm'] ?? 1));
+    }
+    return roughValue(values);
   }
 
   undo(): Promise<void> {
@@ -114,45 +245,127 @@ export class ComponentScript {
     return this.session.redo();
   }
 
-  summary(): ComponentSummary {
+  /** The component as data; a filter lists only part of it (CAD-102). */
+  summary(): ComponentSummary;
+  summary(filter: SummaryFilter): FilteredSummary;
+  summary(filter: SummaryFilter = {}): FilteredSummary {
     const { document, items, sketches, bodies, parameters, sheetMetal } = this.session.state();
-    return {
+    const wanted = (part: NonNullable<SummaryFilter['only']>[number]) => !filter.only || filter.only.includes(part);
+    const notes: string[] = [];
+    const named = matcher(filter.match);
+    const near = filter.near;
+    const close = (point: readonly number[]) => !near || Math.hypot(...near.map((v, i) => v - (point[i] as number))) <= (filter.within ?? 5);
+    const cut = <T>(list: readonly T[], what: string): readonly T[] => {
+      if (list.length <= listLimit) return list;
+      notes.push(`${list.length - listLimit} more ${what}: filter by body, match or near to see them.`);
+      return list.slice(0, listLimit);
+    };
+    const focused = filter.sketch !== undefined || filter.body !== undefined;
+    const summary: FilteredSummary = {
       id: document.id,
       name: document.name,
       units: document.units,
-      parameters: parameters.map(({ parameter, display, project }) => ({
-        name: parameter.name,
-        expression: parameter.expression,
-        ...(display ? { value: display } : {}),
-        ...(project ? { project } : {}),
-      })),
-      timeline: document.timeline.map((item) => {
-        const status = items.get(item.id);
-        return { id: item.id, type: item.type, name: item.name, state: status?.state ?? 'ok', ...(status?.error ? { error: status.error } : {}) };
-      }),
-      sketches: [...sketches.values()].map((view) => ({
-        id: view.sketch.id,
-        status: view.status,
-        degreesOfFreedom: view.degreesOfFreedom,
-        ...(view.error ? { error: view.error } : {}),
-        profiles: view.profiles.map((profile) => {
-          const xs = profile.outer.polygon.map((p) => p[0]);
-          const ys = profile.outer.polygon.map((p) => p[1]);
-          return {
-            id: profile.id,
-            area: round(profile.area),
-            holes: profile.holes.length,
-            min: roundAll([Math.min(...xs), Math.min(...ys)]) as unknown as Vec2,
-            max: roundAll([Math.max(...xs), Math.max(...ys)]) as unknown as Vec2,
-          };
-        }),
-      })),
-      bodies: bodies.map((body) => ({
-        id: body.body,
-        faces: body.faces.map((face) => ({ name: face.name, planar: face.planar, center: roundAll(face.center) })),
-        edges: body.edges.map((edge) => edge.name),
-      })),
+      ...(wanted('parameters') && !focused
+        ? {
+            parameters: parameters.map(({ parameter, display, project }) => ({
+              name: parameter.name,
+              expression: parameter.expression,
+              ...(display ? { value: display } : {}),
+              ...(project ? { project } : {}),
+            })),
+          }
+        : {}),
+      ...(wanted('timeline') && !focused
+        ? {
+            timeline: document.timeline.map((item) => {
+              const status = items.get(item.id);
+              return { id: item.id, type: item.type, name: item.name, state: status?.state ?? 'ok', ...(status?.error ? { error: status.error } : {}) };
+            }),
+          }
+        : {}),
+      ...(wanted('sketches') && filter.body === undefined
+        ? {
+            sketches: [...sketches.values()]
+              .filter((view) => filter.sketch === undefined || view.sketch.id === filter.sketch)
+              .map((view) => ({
+                id: view.sketch.id,
+                status: view.status,
+                degreesOfFreedom: view.degreesOfFreedom,
+                ...(view.error ? { error: view.error } : {}),
+                profiles: view.profiles.map((profile) => {
+                  const xs = profile.outer.polygon.map((p) => p[0]);
+                  const ys = profile.outer.polygon.map((p) => p[1]);
+                  return {
+                    id: profile.id,
+                    area: round(profile.area),
+                    holes: profile.holes.length,
+                    min: roundAll([Math.min(...xs), Math.min(...ys)]) as unknown as Vec2,
+                    max: roundAll([Math.max(...xs), Math.max(...ys)]) as unknown as Vec2,
+                  };
+                }),
+              })),
+          }
+        : {}),
+      ...((wanted('faces') || wanted('edges')) && filter.sketch === undefined
+        ? {
+            bodies: bodies
+              .filter((body) => filter.body === undefined || body.body === filter.body)
+              .map((body) => ({
+                id: body.body,
+                faceCount: body.faces.length,
+                edgeCount: body.edges.length,
+                ...(wanted('faces')
+                  ? { faces: cut(body.faces.map((face) => ({ name: face.name, planar: face.planar, center: roundAll(face.center) })).filter((f) => named(f.name) && close(f.center)), `faces of ${body.body}`) }
+                  : {}),
+                ...(wanted('edges')
+                  ? { edges: cut(body.edges.map((edge) => ({ name: edge.name, middle: middleOf(body.edgePositions, edge.start, edge.count) })).filter((e) => named(e.name) && close(e.middle)), `edges of ${body.body}`) }
+                  : {}),
+              })),
+          }
+        : {}),
       sheetMetal,
+      ...(notes.length ? { notes } : {}),
+    };
+    return summary;
+  }
+
+  /** What changed since an earlier summary (`summary()` before the edit): the answer to an edit. */
+  changes(before: FilteredSummary): ComponentChanges {
+    const after = this.summary({ only: ['parameters', 'timeline', 'sketches', 'faces'] });
+    const earlier = <T extends { id: string }>(list: readonly T[] | undefined, id: string) => list?.find((x) => x.id === id);
+    const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+    const timeline = (after.timeline ?? []).filter((t) => !same(earlier(before.timeline, t.id), t));
+    const removed = (before.timeline ?? []).filter((t) => !after.timeline?.some((u) => u.id === t.id)).map((t) => t.id);
+    const errors = (after.timeline ?? []).filter((t) => t.error);
+    const sketches = (after.sketches ?? []).filter((s) => !same(earlier(before.sketches, s.id), s));
+    const cap = 40;
+    const bodies = (after.bodies ?? []).map((body) => {
+      const previous = earlier(before.bodies, body.id);
+      const [was, is] = [new Set(previous?.faces?.map((f) => f.name)), new Set(body.faces?.map((f) => f.name))];
+      const added = previous ? [...is].filter((n) => !was.has(n)) : [];
+      const gone = previous ? [...was].filter((n) => !is.has(n)) : [];
+      const more = added.length + gone.length > 2 * cap ? `${Math.max(0, added.length - cap)} more new and ${Math.max(0, gone.length - cap)} more gone faces: get_component lists them` : undefined;
+      return {
+        id: body.id,
+        faceCount: body.faceCount,
+        edgeCount: body.edgeCount,
+        ...(added.length ? { newFaces: added.slice(0, cap) } : {}),
+        ...(gone.length ? { goneFaces: gone.slice(0, cap) } : {}),
+        ...(more ? { more } : {}),
+      };
+    });
+    const goneBodies = (before.bodies ?? []).filter((b) => !after.bodies?.some((a) => a.id === b.id)).map((b) => b.id);
+    const parameters = same(before.parameters, after.parameters) ? undefined : after.parameters;
+    return {
+      id: after.id,
+      timeline,
+      ...(removed.length ? { removed } : {}),
+      ...(errors.length ? { errors } : {}),
+      sketches,
+      bodies,
+      ...(goneBodies.length ? { goneBodies } : {}),
+      ...(parameters ? { parameters } : {}),
+      hint: 'get_component lists faces and edges with their positions; filter it by body, match or near.',
     };
   }
 
@@ -192,10 +405,11 @@ export class ComponentScript {
   picture(options: PictureOptions = {}): Promise<Uint8Array> {
     const { bodies, document } = this.session.state();
     const shown = bodies.filter((b) => !document.appearances?.[b.body]?.hidden);
-    return picture(
-      shown.map((b) => ({ positions: b.positions, normals: b.normals, indices: b.indices, edges: b.edgePositions, ...(document.appearances?.[b.body]?.color ? { color: document.appearances[b.body]?.color as string } : {}) })),
-      options,
-    );
+    const meshes = shown.map((b): Shown => {
+      const color = document.appearances?.[b.body]?.color;
+      return { of: b.body, positions: b.positions, normals: b.normals, indices: b.indices, edges: b.edgePositions, ...(color ? { color } : {}) };
+    });
+    return encodePng(pixels(meshes, options));
   }
 
   private async delivered(to: string | undefined, write: () => Promise<Result<void>>): Promise<string> {
@@ -208,11 +422,43 @@ export class ComponentScript {
   }
 }
 
+/** An assembly as plain data, for agents (CAD-97). */
+export interface AssemblySummary {
+  readonly id: string;
+  readonly name: string;
+  readonly components: readonly { readonly key: string; readonly name: string; readonly status: string; readonly configurations?: readonly { readonly id: string; readonly name: string }[] }[];
+  /** Where each instance is: its transform (column-major, mm) and its origin; `placed` when a joint places it. */
+  readonly instances: readonly (AssemblyDocument['instances'][number] & { readonly placed: boolean; readonly origin: Vec3 })[];
+  readonly copies: readonly { readonly id: string; readonly of: string; readonly pattern: string; readonly origin: Vec3 }[];
+  readonly joints: readonly (AssemblyDocument['joints'][number] & { readonly error?: string })[];
+  readonly links: NonNullable<AssemblyDocument['links']>;
+  readonly patterns: NonNullable<AssemblyDocument['patterns']>;
+  readonly studies: AssemblyDocument['motionStudies'];
+  readonly explodedViews: NonNullable<AssemblyDocument['explodedViews']>;
+}
+
+/** What one edit changed in an assembly. */
+export interface AssemblyChanges {
+  readonly id: string;
+  /** Added or changed, by kind; `removed` lists the ids that are gone. */
+  readonly changed: Partial<Record<'instances' | 'joints' | 'links' | 'patterns' | 'studies' | 'explodedViews', readonly unknown[]>>;
+  readonly removed?: readonly string[];
+  /** Every joint that does not hold now, with the reason. */
+  readonly jointErrors?: Readonly<Record<string, string>>;
+  /** Instances that moved, with their new origins. */
+  readonly moved?: Readonly<Record<string, Vec3>>;
+  readonly counts: { readonly instances: number; readonly copies: number; readonly joints: number };
+}
+
+const originOf = (transform: Matrix4 | undefined): Vec3 => roundAll([transform?.[12] ?? 0, transform?.[13] ?? 0, transform?.[14] ?? 0]) as unknown as Vec3;
+
 /** One assembly open for scripting. */
 export class AssemblyScript {
   constructor(
     private readonly session: AssemblySession,
     private readonly exports: ExportTarget,
+    private readonly deliver: (file: { readonly name: string; readonly mediaType: string; readonly bytes: Uint8Array }) => Promise<void>,
+    private readonly closed: () => void = () => undefined,
   ) {}
 
   state(): AssemblyState {
@@ -223,39 +469,121 @@ export class AssemblyScript {
     for (const command of commands) unwrap(await this.session.execute(command));
   }
 
+  undo(): Promise<void> {
+    return this.session.undo();
+  }
+
+  redo(): Promise<void> {
+    return this.session.redo();
+  }
+
+  /** Waits until the components are loaded (their results regenerated), at most two minutes. */
+  async ready(): Promise<void> {
+    const loading = () => [...this.session.state().components.values()].some((c) => c.status === 'loading');
+    if (!loading()) return;
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(done, 120_000);
+      const stop = this.session.subscribe(() => (loading() ? undefined : done()));
+      function done() {
+        clearTimeout(timer);
+        stop();
+        resolve();
+      }
+    });
+  }
+
+  /** The assembly as data: instances and copies where they are, joints with their errors, links, patterns, studies and exploded views. */
+  async summary(): Promise<AssemblySummary> {
+    await this.ready();
+    const { document, components, poses, placed, jointErrors, copies } = this.session.state();
+    return {
+      id: document.id,
+      name: document.name,
+      components: [...components].map(([key, c]) => ({ key, name: c.name, status: c.status, ...(c.configurations?.length ? { configurations: c.configurations } : {}) })),
+      instances: document.instances.map((instance) => ({ ...instance, transform: roundAll(poses.get(instance.id) ?? instance.transform), placed: placed.has(instance.id), origin: originOf(poses.get(instance.id) ?? instance.transform) })),
+      copies: [...copies].map(([id, copy]) => ({ id, of: copy.instance, pattern: copy.pattern, origin: originOf(poses.get(id)) })),
+      joints: document.joints.map((joint) => ({ ...joint, ...(jointErrors.get(joint.id) ? { error: jointErrors.get(joint.id) as string } : {}) })),
+      links: document.links ?? [],
+      patterns: document.patterns ?? [],
+      studies: document.motionStudies,
+      explodedViews: document.explodedViews ?? [],
+    };
+  }
+
+  /** What changed since an earlier summary: the answer to an edit. */
+  async changes(before: AssemblySummary): Promise<AssemblyChanges> {
+    const after = await this.summary();
+    const kinds = ['instances', 'joints', 'links', 'patterns', 'studies', 'explodedViews'] as const;
+    const changed: Partial<Record<(typeof kinds)[number], readonly unknown[]>> = {};
+    const removed: string[] = [];
+    const moved: Record<string, Vec3> = {};
+    for (const kind of kinds) {
+      const [was, is] = [before[kind] as readonly { id: string }[], after[kind] as readonly { id: string }[]];
+      const different = is.filter((item) => JSON.stringify(was.find((w) => w.id === item.id)) !== JSON.stringify(item));
+      if (different.length) changed[kind] = kind === 'instances' ? different.map((i) => ({ ...i, transform: undefined })) : different;
+      removed.push(...was.filter((w) => !is.some((i) => i.id === w.id)).map((w) => w.id));
+    }
+    for (const instance of after.instances) {
+      const was = before.instances.find((i) => i.id === instance.id);
+      if (was && JSON.stringify(was.origin) !== JSON.stringify(instance.origin)) moved[instance.id] = instance.origin;
+    }
+    const jointErrors = Object.fromEntries(after.joints.flatMap((j) => (j.error ? [[j.id, j.error]] : [])));
+    return {
+      id: after.id,
+      changed,
+      ...(removed.length ? { removed } : {}),
+      ...(Object.keys(jointErrors).length ? { jointErrors } : {}),
+      ...(Object.keys(moved).length ? { moved } : {}),
+      counts: { instances: after.instances.length, copies: after.copies.length, joints: after.joints.length },
+    };
+  }
+
   interference() {
     return this.session.interference();
   }
 
-  /** A picture of the shown instances as a PNG, once their components are loaded. */
-  async picture(options: PictureOptions = {}): Promise<Uint8Array> {
-    const loading = () => [...this.session.state().components.values()].some((c) => c.status === 'loading');
-    if (loading()) {
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(done, 120_000);
-        const stop = this.session.subscribe(() => (loading() ? undefined : done()));
-        function done() {
-          clearTimeout(timer);
-          stop();
-          resolve();
-        }
-      });
-    }
-    const state = this.session.state();
-    const instances = [...state.document.instances, ...[...state.copies].flatMap(([id, copy]) => {
-      const original = state.document.instances.find((i) => i.id === copy.instance);
-      return original ? [{ ...original, id }] : [];
-    })];
-    const meshes = instances.flatMap((instance) => {
-      const component = state.components.get(sourceKey(instance.component, instance.configuration));
-      const transform = state.poses.get(instance.id);
-      if (!component || !transform || instance.appearance?.hidden) return [];
-      return component.bodies.flatMap((b) => {
-        const look = instance.appearance?.color ?? component.appearances?.[b.body]?.color;
-        return component.appearances?.[b.body]?.hidden ? [] : [{ positions: b.positions, normals: b.normals, indices: b.indices, edges: b.edgePositions, transform, ...(look ? { color: look } : {}) }];
-      });
-    });
-    return picture(meshes, options);
+  /** Where instances hit while a motion study plays: the first moment for each pair. */
+  async collisions(studyId: string, fps = 10): Promise<readonly Collision[]> {
+    await this.ready();
+    return unwrap(await this.session.collisions(studyId, fps));
+  }
+
+  async properties() {
+    await this.ready();
+    return this.session.properties();
+  }
+
+  async billOfMaterials(): Promise<readonly BomLine[]> {
+    await this.ready();
+    return this.session.billOfMaterials();
+  }
+
+  /** A picture of the shown instances as a PNG, once their components are loaded: as they stand, exploded, or at a moment of a study. */
+  async picture(options: AssemblyPictureOptions = {}): Promise<Uint8Array> {
+    await this.ready();
+    return encodePng(pixels(this.meshes(await this.poses(options)), options));
+  }
+
+  /**
+   * A motion study as an animated GIF (written to the exports, its path returned) and a sheet of
+   * `moments` pictures of it, in order, to look at (CAD-100).
+   */
+  async animation(studyId: string, options: PictureOptions & { readonly fps?: number; readonly moments?: number; readonly to?: string } = {}): Promise<{ readonly path: string; readonly sheet: Uint8Array; readonly times: readonly number[] }> {
+    await this.ready();
+    const fps = Math.max(1, Math.min(30, options.fps ?? 10));
+    const frames = unwrap(await this.session.motion(studyId, fps));
+    if (!frames.length) throw new CadenceError('nothing-to-show', 'The study has no frames.');
+    const [width, height] = [options.width ?? 480, options.height ?? 360];
+    const pictures = frames.map((frame) => pixels(this.meshes(this.withCopies(frame.poses)), { ...options, width, height, white: true }));
+    if (options.to) this.exports.deliverNextTo(options.to);
+    const before = this.exports.delivered.length;
+    const name = this.session.state().document.motionStudies.find((s) => s.id === studyId)?.name ?? studyId;
+    await this.deliver({ name: `${name}.gif`, mediaType: 'image/gif', bytes: encodeGif(pictures, 1000 / fps) });
+    const moments = Math.max(1, Math.min(16, options.moments ?? 9, frames.length));
+    const picked = Array.from({ length: moments }, (_, i) => Math.round((i * (frames.length - 1)) / Math.max(1, moments - 1)));
+    const columns = Math.ceil(Math.sqrt(moments));
+    const small = picked.map((i) => pixels(this.meshes(this.withCopies((frames[i] as (typeof frames)[number]).poses)), { ...options, width: Math.round(width / 1.5), height: Math.round(height / 1.5), white: true }));
+    return { path: this.exports.delivered[before] as string, sheet: await encodePng(sheet(small, columns)), times: picked.map((i) => round((frames[i] as (typeof frames)[number]).time)) };
   }
 
   async export(format: AssemblyFormat, options: { readonly to?: string } = {}): Promise<string> {
@@ -267,6 +595,51 @@ export class AssemblyScript {
 
   close(): void {
     this.session.close();
+    this.closed();
+  }
+
+  /** Where the instances are for a picture: as they stand, exploded, or at a moment of a study. */
+  private async poses(options: AssemblyPictureOptions): Promise<ReadonlyMap<string, Matrix4>> {
+    const state = this.session.state();
+    if (options.explode !== undefined) {
+      if (!state.document.explodedViews?.some((v) => v.id === options.explode)) throw new CadenceError('usage', `There is no exploded view "${options.explode}".`);
+      return this.session.explode(options.explode, options.steps);
+    }
+    if (options.study === undefined) return state.poses;
+    const study = state.document.motionStudies.find((s) => s.id === options.study);
+    if (!study) throw new CadenceError('usage', `There is no motion study "${options.study}".`);
+    const time = Math.max(0, Math.min(study.duration, options.time ?? 0));
+    const frames = unwrap(await this.session.motion(study.id, 30));
+    const frame = frames.reduce((best, f) => (Math.abs(f.time - time) < Math.abs(best.time - time) ? f : best), frames[0] as (typeof frames)[number]);
+    return this.withCopies(frame.poses);
+  }
+
+  /** A study frame's poses, with the instances it leaves out where they stand. */
+  private withCopies(poses: Readonly<Record<string, Matrix4>>): ReadonlyMap<string, Matrix4> {
+    const all = new Map(this.session.state().poses);
+    for (const [id, pose] of Object.entries(poses)) all.set(id, pose);
+    return all;
+  }
+
+  /** The shown instances' (and copies') bodies, where the poses put them. */
+  private meshes(poses: ReadonlyMap<string, Matrix4>): Shown[] {
+    const state = this.session.state();
+    const instances = [
+      ...state.document.instances,
+      ...[...state.copies].flatMap(([id, copy]) => {
+        const original = state.document.instances.find((i) => i.id === copy.instance);
+        return original ? [{ ...original, id }] : [];
+      }),
+    ];
+    return instances.flatMap((instance) => {
+      const component = state.components.get(sourceKey(instance.component, instance.configuration));
+      const transform = poses.get(instance.id);
+      if (!component || !transform || instance.appearance?.hidden) return [];
+      return component.bodies.flatMap((b): Shown[] => {
+        const look = instance.appearance?.color ?? component.appearances?.[b.body]?.color;
+        return component.appearances?.[b.body]?.hidden ? [] : [{ of: instance.id, positions: b.positions, normals: b.normals, indices: b.indices, edges: b.edgePositions, transform, ...(look ? { color: look } : {}) }];
+      });
+    });
   }
 }
 
@@ -277,6 +650,7 @@ export class AssemblyScript {
 export class Cadence {
   readonly projects: ProjectManager;
   private readonly components = new Map<string, Promise<ComponentScript>>();
+  private readonly assemblies = new Map<string, Promise<AssemblyScript>>();
 
   constructor(
     private readonly core: Core,
@@ -316,21 +690,27 @@ export class Cadence {
     return script;
   }
 
-  /** A picture of a component or an assembly as a PNG. */
-  async picture(documentId: string, options: PictureOptions = {}): Promise<Uint8Array> {
-    const document = await this.document(documentId);
-    if (document.kind === 'component') return (await this.component(document.id)).picture(options);
-    if (document.kind !== 'assembly') throw new CadenceError('not-a-model', `${document.name} is not a component or an assembly.`);
-    const assembly = await this.assembly(document.id);
-    try {
-      return await assembly.picture(options);
-    } finally {
-      assembly.close();
+  /** An assembly open for scripting; opened once and kept open until closed. */
+  assembly(documentId: string): Promise<AssemblyScript> {
+    let script = this.assemblies.get(documentId);
+    if (!script) {
+      const deliver = (file: { readonly name: string; readonly mediaType: string; readonly bytes: Uint8Array }) => this.projects.deliverFile(file);
+      script = this.core.assemblyManager.open(documentId as DocumentId).then((session) => new AssemblyScript(unwrap(session), this.exports, deliver, () => this.assemblies.delete(documentId)));
+      script.catch(() => this.assemblies.delete(documentId));
+      this.assemblies.set(documentId, script);
     }
+    return script;
   }
 
-  async assembly(documentId: string): Promise<AssemblyScript> {
-    return new AssemblyScript(unwrap(await this.core.assemblyManager.open(documentId as DocumentId)), this.exports);
+  /** A picture of a component or an assembly as a PNG. */
+  async picture(documentId: string, options: AssemblyPictureOptions = {}): Promise<Uint8Array> {
+    const document = await this.document(documentId);
+    if (document.kind === 'component') {
+      if (options.explode !== undefined || options.study !== undefined) throw new CadenceError('usage', 'Exploded views and motion studies belong to assemblies.');
+      return (await this.component(document.id)).picture(options);
+    }
+    if (document.kind !== 'assembly') throw new CadenceError('not-a-model', `${document.name} is not a component or an assembly.`);
+    return (await this.assembly(document.id)).picture(options);
   }
 
   /** Hands a file of an imported document over in another format; returns its path. */
@@ -341,10 +721,15 @@ export class Cadence {
     return this.exports.delivered[before] as string;
   }
 
-  /** Forgets the open components (after documents changed elsewhere). */
+  /** Forgets the open components and assemblies (after documents changed elsewhere). */
   forget(documentId?: string): void {
-    if (documentId) this.components.delete(documentId);
-    else this.components.clear();
+    if (documentId) {
+      this.components.delete(documentId);
+      void this.assemblies.get(documentId)?.then((a) => a.close(), () => undefined);
+      return;
+    }
+    this.components.clear();
+    for (const assembly of this.assemblies.values()) void assembly.then((a) => a.close(), () => undefined);
   }
 }
 

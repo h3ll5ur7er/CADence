@@ -65,6 +65,11 @@ export type PartSpec =
   | { readonly kind: 'bearing'; readonly size: BearingSize }
   /** A spur gear (helical with a helix angle), involute teeth, centred on the point with a tooth along the plane's u axis. */
   | { readonly kind: 'gear'; readonly module: string; readonly teeth: string; readonly width: string; readonly bore: string; readonly pressureAngle: string; readonly helixAngle: string }
+  /**
+   * A ring gear: internal involute teeth in a ring of `outside` diameter, centred on the point, a tooth
+   * space along the plane's u axis. Planets mesh inside it ({@link ringGearMesh}).
+   */
+  | { readonly kind: 'ring-gear'; readonly module: string; readonly teeth: string; readonly width: string; readonly outside: string; readonly pressureAngle: string; readonly helixAngle: string }
   /** A gear rack along the plane's u axis, teeth towards its v axis. */
   | { readonly kind: 'rack'; readonly module: string; readonly teeth: string; readonly width: string; readonly height: string; readonly pressureAngle: string }
   /** A cantilever snap-fit hook standing on the plane, its hook towards the plane's v axis. */
@@ -86,6 +91,7 @@ export const partLabels: Readonly<Record<PartKind, string>> = {
   magnet: 'Magnet',
   bearing: 'Ball bearing',
   gear: 'Gear',
+  'ring-gear': 'Ring gear (internal)',
   rack: 'Gear rack',
   'snap-fit': 'Snap-fit hook',
   peg: 'Press-fit peg',
@@ -108,6 +114,8 @@ export function defaultPart(kind: PartKind): PartSpec {
       return { kind, size: '608' };
     case 'gear':
       return { kind, module: '1 mm', teeth: '20', width: '6 mm', bore: '5 mm', pressureAngle: '20 deg', helixAngle: '0 deg' };
+    case 'ring-gear':
+      return { kind, module: '1 mm', teeth: '60', width: '6 mm', outside: '70 mm', pressureAngle: '20 deg', helixAngle: '0 deg' };
     case 'rack':
       return { kind, module: '1 mm', teeth: '15', width: '6 mm', height: '8 mm', pressureAngle: '20 deg' };
     case 'snap-fit':
@@ -123,3 +131,22 @@ export function defaultPart(kind: PartKind): PartSpec {
 
 /** The centre distance of two meshing gears of the same module (mm). */
 export const centreDistance = (module: number, teethA: number, teethB: number): number => (module * (teethA + teethB)) / 2;
+
+/** Teeth a ring gear needs more than a planet in it: fewer, and the planet's tips foul the ring's (20° teeth). */
+export const ringGearMinimumDifference = 10;
+
+/** A planet inside a ring gear: where its centre goes (mm from the ring's centre) and whether it fits. */
+export function ringGearMesh(module: number, ring: number, planet: number): { readonly distance: number; readonly fits: boolean } {
+  return { distance: (module * (ring - planet)) / 2, fits: ring - planet >= ringGearMinimumDifference };
+}
+
+/**
+ * A planetary gear set with the ring fixed and the sun driving: the carrier turns `carrier` turns per
+ * turn of the sun, and each planet `planet` turns about its own pin on the carrier (the other way).
+ * The planets have (ring − sun) / 2 teeth.
+ */
+export function planetaryRatios(sun: number, ring: number): { readonly carrier: number; readonly planet: number } {
+  const carrier = sun / (sun + ring);
+  const planet = (ring - sun) / 2;
+  return { carrier, planet: planet > 0 ? (-sun / planet) * (1 - carrier) : 0 };
+}

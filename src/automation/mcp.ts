@@ -1,9 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { createInterface } from 'node:readline';
-import type { CreatableDocumentKind, ImportFormat, Parameter, ProjectId } from '@core/contracts';
+import type { CreatableDocumentKind, DocumentId, ImportFormat, Parameter, ProjectId, Vec3 } from '@core/contracts';
+import type { AssemblyCommand, AssemblyFormat } from '@core/managers/assembly';
 import type { DrawingFormat, SolidFormat } from '@core/managers/design';
-import { type Cadence, CadenceError, unwrap } from './api';
+import { type AssemblyPictureOptions, type Cadence, CadenceError, type SummaryFilter, unwrap } from './api';
 import type { ScriptCommand } from './shapes';
 
 /** A JSON-RPC 2.0 message as MCP clients send it (newline-delimited JSON over stdio). */
@@ -21,9 +22,18 @@ interface Tool {
   run(args: Record<string, unknown>): Promise<unknown>;
 }
 
+/** A picture to look at with a line about it. */
+interface Captioned {
+  readonly picture: Uint8Array;
+  readonly caption: string;
+}
+
 const protocolVersions = ['2025-06-18', '2025-03-26', '2024-11-05'];
 
 const string = (description: string) => ({ type: 'string', description });
+const number = (description: string) => ({ type: 'number', description });
+const strings = (description: string) => ({ type: 'array', items: { type: 'string' }, description });
+const point = (description: string) => ({ type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3, description });
 const object = (properties: Record<string, unknown>, required: readonly string[] = []) => ({ type: 'object', properties, required, additionalProperties: false });
 const projectArg = string('Project id or name (list_projects).');
 const documentArg = string('Document id (list_documents).');
@@ -31,17 +41,23 @@ const documentArg = string('Document id (list_documents).');
 /** How an agent models with CADence; sent to the client when it connects. */
 export const instructions = `CADence is a parametric CAD application. Projects hold components (parts), assemblies and imported files.
 Model a part:
-1. create_project, or list_projects and list_documents; a new project has an empty component ("Component 1").
+1. create_project, or list_projects and list_documents; a new project has an empty component ("Component 1"; rename_document renames it).
 2. edit_component with commands, applied in order. Ids are yours to choose. Example, a 60 x 30 x 6 mm plate with a hole:
    [{"type":"create-sketch","id":"s1","plane":"XY"},
     {"type":"add-rectangle","sketchId":"s1","id":"r","x":0,"y":0,"width":60,"height":30},
     {"type":"add-circle","sketchId":"s1","id":"c","x":15,"y":15,"diameter":8}]
-   then get_component to read the sketch's profiles, and extrude one:
+   It answers with what changed: new sketches with their profiles, timeline items with errors, and the bodies' face counts with new face names. Extrude a profile:
    [{"type":"add-feature","feature":{"type":"extrude","id":"e1","name":"","suppressed":false,"sketch":"s1","profiles":["<profile id>"],"distance":"6 mm","direction":"normal","operation":"new-body"}}]
-3. get_component lists the timeline (with errors), sketches with their profiles, and bodies with their face and edge names, which features such as fillet take as {"kind":"edge","body":"<body id>","name":"<edge name>"}.
+3. get_component lists the component: parameters, timeline, sketches, and bodies with their faces (centre) and edges (middle). Filter it to keep answers small: only ["faces"], body, match "f:pocket:*", near [x,y,z]. Features such as fillet take {"kind":"edge","body":"<body id>","name":"<edge name>","hint":[x,y,z]}; the hint (its centre or middle) picks the right piece when a name is split (~1, ~2).
 4. component_properties, check_component (print or laser rules) and export_component (STEP, STL, OBJ, 3MF; DXF or SVG of a sketch or a flat pattern).
-5. render_picture shows a component or an assembly as a picture, to check what was made.
-Lengths are expressions ("6 mm", "2 * wall", "1 in"); plain numbers are millimetres. command_reference has every command and feature as TypeScript types.`;
+5. render_picture shows a component or an assembly, to check what was made: from a view or a direction, zoomed onto chosen bodies or instances (focus), with others hidden or see-through (ghost).
+Assemble:
+1. create_document with kind "assembly", then edit_assembly with commands, e.g. [{"type":"insert-instance","instance":{"id":"base","component":"<component id>","name":"","transform":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"grounded":true}}]. Transforms are 4 x 4, column-major, mm (translation at 12, 13, 14).
+2. A joint lays instance b's frame on instance a's: {"type":"add-joint","joint":{"id":"j1","name":"","type":"revolute","a":{"instance":"base","ref":{"kind":"face","body":"<body>","name":"<face>"}},"b":{"instance":"arm"},"flip":false,"values":[0],"limits":[null]}}.
+   A side's frame: without ref, the component's origin (its XY plane, z up); on a flat face, its centre and outward normal; on a round face or a circular edge, its axis. "offset":{"translate":[x,y,z],"angle":degrees} moves a frame along its own axes, then turns it about its z. flip turns b over (its z against a's). values move b along or about the frame's z, in mm or degrees, in the order of jointDofs (revolute: angle; slider: distance; cylindrical: angle, distance).
+3. get_assembly lists instances (where they are), joints (with why they fail), links, patterns, motion studies and exploded views. set-link makes one joint drive another (gears, planetary sets; a cam with a profile of [angle, lift] pairs moves its follower), set-pattern copies instances, add-study keys or drives joints over time, set-exploded-view takes the assembly apart.
+4. render_picture with explode (and steps) or study and time shows it apart or moving; animate_study writes a GIF and shows a sheet of moments; check_assembly finds overlaps and collisions; assembly_properties gives the mass and the bill of materials.
+Lengths are expressions ("6 mm", "2 * wall", "1 in"); plain numbers are millimetres. command_reference has every command, feature and assembly type as TypeScript.`;
 
 /** The MCP server: CADence's scripting API as tools (docs/User-guide/Automation.md). */
 export class McpServer {
@@ -85,10 +101,15 @@ export class McpServer {
   private async call(name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
     const tool = this.tools.find((t) => t.name === name);
     if (!tool) return { content: [{ type: 'text', text: `Unknown tool ${name}.` }], isError: true };
+    const image = (bytes: Uint8Array) => ({ type: 'image', data: Buffer.from(bytes).toString('base64'), mimeType: 'image/png' });
     try {
       const result = await tool.run(args);
       // Pictures go back as images the agent can look at.
-      if (result instanceof Uint8Array) return { content: [{ type: 'image', data: Buffer.from(result).toString('base64'), mimeType: 'image/png' }] };
+      if (result instanceof Uint8Array) return { content: [image(result)] };
+      if (result && typeof result === 'object' && 'picture' in result) {
+        const { picture, caption } = result as Captioned;
+        return { content: [image(picture), { type: 'text', text: caption }] };
+      }
       return { content: [{ type: 'text', text: typeof result === 'string' ? result : JSON.stringify(result, null, 2) }] };
     } catch (error) {
       const message = error instanceof CadenceError ? `${error.message} (${error.code})` : String((error as Error).message ?? error);
@@ -100,6 +121,51 @@ export class McpServer {
     const cadence = this.cadence;
     const projectId = async (args: Record<string, unknown>) => (await cadence.project(String(args['project']))).id;
     const component = (args: Record<string, unknown>) => cadence.component(String(args['document']));
+    const assembly = async (args: Record<string, unknown>) => {
+      const document = await cadence.document(String(args['document']));
+      if (document.kind !== 'assembly') throw new CadenceError('not-an-assembly', `${document.name} is not an assembly.`);
+      return cadence.assembly(document.id);
+    };
+    /** Runs commands one by one; a refusal says which command and why (the ones before stay). */
+    const runAll = async <T extends { type: string }>(commands: readonly T[], run: (command: T) => Promise<void>) => {
+      for (const [index, command] of commands.entries()) {
+        try {
+          await run(command);
+        } catch (error) {
+          if (!(error instanceof CadenceError)) throw error;
+          throw new CadenceError(error.code, `Command ${index + 1} (${command.type}) was refused: ${error.message}${index > 0 ? ` Commands 1 to ${index} were applied.` : ''}`);
+        }
+      }
+    };
+    const pictureArgs = {
+      view: { type: 'string', enum: ['iso', 'front', 'back', 'top', 'bottom', 'left', 'right'] },
+      direction: point('A free camera instead of a view: from the model towards the camera, e.g. [1, -2, 1].'),
+      up: point('With direction: which way is up in the picture (default [0, 0, 1]).'),
+      width: number('Pixels, 800 by default.'),
+      height: number('Pixels, 600 by default.'),
+      focus: strings('Body ids (of a component) or instance ids (of an assembly) to zoom onto.'),
+      hide: strings('Body or instance ids to leave out.'),
+      ghost: strings('Body or instance ids to show see-through.'),
+    };
+    const pictureOptions = (args: Record<string, unknown>): AssemblyPictureOptions => {
+      const list = (key: string) => (Array.isArray(args[key]) ? { [key]: (args[key] as unknown[]).map(String) } : {});
+      const vector = (key: string) => (Array.isArray(args[key]) ? { [key]: (args[key] as unknown[]).map(Number) as unknown as Vec3 } : {});
+      return {
+        ...(args['view'] ? { view: args['view'] as 'iso' } : {}),
+        ...vector('direction'),
+        ...vector('up'),
+        ...(args['width'] ? { width: Number(args['width']) } : {}),
+        ...(args['height'] ? { height: Number(args['height']) } : {}),
+        ...list('focus'),
+        ...list('hide'),
+        ...list('ghost'),
+        ...(args['explode'] !== undefined ? { explode: String(args['explode']) } : {}),
+        ...(args['steps'] !== undefined ? { steps: Number(args['steps']) } : {}),
+        ...(args['study'] !== undefined ? { study: String(args['study']) } : {}),
+        ...(args['time'] !== undefined ? { time: Number(args['time']) } : {}),
+        white: true,
+      };
+    };
     return [
       {
         name: 'list_projects',
@@ -133,6 +199,28 @@ export class McpServer {
         },
       },
       {
+        name: 'rename_document',
+        description: 'Renames a component, an assembly or an imported file.',
+        inputSchema: object({ document: documentArg, name: string('The new name.') }, ['document', 'name']),
+        run: async (args) => {
+          const document = await cadence.document(String(args['document']));
+          unwrap(await cadence.projects.renameDocument(document.id, String(args['name'])));
+          cadence.forget(document.id);
+          return `Renamed to ${String(args['name'])}.`;
+        },
+      },
+      {
+        name: 'delete_document',
+        description: 'Deletes a component, an assembly or an imported file from its project, for good (the project history keeps earlier versions).',
+        inputSchema: object({ document: documentArg }, ['document']),
+        run: async (args) => {
+          const document = await cadence.document(String(args['document']));
+          cadence.forget(document.id);
+          await cadence.projects.deleteDocument(document.id as DocumentId);
+          return `Deleted ${document.name}.`;
+        },
+      },
+      {
         name: 'import_file',
         description: 'Imports a file (STEP, STL, OBJ, 3MF, DXF, SVG) from disk into a project.',
         inputSchema: object({ project: projectArg, path: string('Path of the file on this computer.') }, ['project', 'path']),
@@ -157,37 +245,46 @@ export class McpServer {
       },
       {
         name: 'get_component',
-        description: 'A component as data: parameters, timeline with errors, sketches with their profiles, bodies with face and edge names.',
-        inputSchema: object({ document: documentArg }, ['document']),
-        run: async (args) => (await component(args)).summary(),
+        description:
+          'A component as data: parameters, timeline with errors, sketches with their profiles, bodies with their faces (and centres) and edges (and middles). Filters keep it short: only some parts, one sketch or body, names matching a pattern, or near a point.',
+        inputSchema: object(
+          {
+            document: documentArg,
+            only: { type: 'array', items: { type: 'string', enum: ['parameters', 'timeline', 'sketches', 'faces', 'edges'] }, description: 'List only these parts.' },
+            sketch: string('Only this sketch.'),
+            body: string('Only this body.'),
+            match: string('Only faces and edges whose names match, * for any text: "f:pocket:*".'),
+            near: point('Only faces and edges within `within` mm of this point.'),
+            within: number('Distance for near, mm (5 by default).'),
+          },
+          ['document'],
+        ),
+        run: async (args) => {
+          const { document: _, ...filter } = args;
+          return (await component(args)).summary(filter as SummaryFilter);
+        },
       },
       {
         name: 'edit_component',
         description:
-          'Runs commands on a component in order (see the server instructions and command_reference), then returns the component. Stops at the first refused command; the ones before it stay applied.',
+          'Runs commands on a component in order (see the server instructions and command_reference), then answers with what changed: timeline items, sketches and their profiles, bodies with face counts and new face names. Stops at the first refused command; the ones before it stay applied.',
         inputSchema: object({ document: documentArg, commands: { type: 'array', items: { type: 'object' }, description: 'Design commands, e.g. {"type":"create-sketch","id":"s1","plane":"XY"}.' } }, ['document', 'commands']),
         run: async (args) => {
           const script = await component(args);
-          const commands = args['commands'] as ScriptCommand[];
-          for (const [index, command] of commands.entries()) {
-            try {
-              await script.run(command);
-            } catch (error) {
-              if (!(error instanceof CadenceError)) throw error;
-              throw new CadenceError(error.code, `Command ${index + 1} (${command.type}) was refused: ${error.message}`);
-            }
-          }
-          return script.summary();
+          const before = script.summary({ only: ['parameters', 'timeline', 'sketches', 'faces'] });
+          await runAll(args['commands'] as ScriptCommand[], (command) => script.run(command));
+          return script.changes(before);
         },
       },
       {
         name: 'undo_component',
-        description: 'Undoes the last change of a component.',
+        description: 'Undoes the last change of a component; answers with what changed.',
         inputSchema: object({ document: documentArg }, ['document']),
         run: async (args) => {
           const script = await component(args);
+          const before = script.summary({ only: ['parameters', 'timeline', 'sketches', 'faces'] });
           await script.undo();
-          return script.summary();
+          return script.changes(before);
         },
       },
       {
@@ -198,7 +295,7 @@ export class McpServer {
       },
       {
         name: 'check_component',
-        description: "Checks a component against its manufacturing profile (3D printing or laser cutting; set with the set-process command).",
+        description: 'Checks a component against its manufacturing profile (3D printing or laser cutting; set with the set-process command).',
         inputSchema: object({ document: documentArg }, ['document']),
         run: async (args) => (await component(args)).validate(),
       },
@@ -232,28 +329,101 @@ export class McpServer {
         run: async (args) => cadence.exportImported(String(args['document']), args['format'] as ImportFormat, args['path'] === undefined ? {} : { to: String(args['path']) }),
       },
       {
+        name: 'get_assembly',
+        description: 'An assembly as data: its components, instances (with their transforms and origins), pattern copies, joints (with why they fail), motion links, patterns, motion studies and exploded views.',
+        inputSchema: object({ document: documentArg }, ['document']),
+        run: async (args) => (await assembly(args)).summary(),
+      },
+      {
+        name: 'edit_assembly',
+        description:
+          'Runs assembly commands in order (insert-instance, add-joint, set-joint-values, set-link, set-pattern, add-study, set-exploded-view and the others in command_reference), then answers with what changed and which joints fail. Stops at the first refused command; the ones before it stay applied.',
+        inputSchema: object({ document: documentArg, commands: { type: 'array', items: { type: 'object' }, description: 'Assembly commands, e.g. {"type":"ground-instance","instanceId":"base","grounded":true}.' } }, ['document', 'commands']),
+        run: async (args) => {
+          const script = await assembly(args);
+          const before = await script.summary();
+          await runAll(args['commands'] as AssemblyCommand[], (command) => script.run(command));
+          return script.changes(before);
+        },
+      },
+      {
+        name: 'undo_assembly',
+        description: 'Undoes the last change of an assembly; answers with what changed.',
+        inputSchema: object({ document: documentArg }, ['document']),
+        run: async (args) => {
+          const script = await assembly(args);
+          const before = await script.summary();
+          await script.undo();
+          return script.changes(before);
+        },
+      },
+      {
+        name: 'check_assembly',
+        description: 'Instances whose solids overlap where they are now (with the volume, mm³); with a motion study, where instances hit while it plays (the first moment of each pair).',
+        inputSchema: object({ document: documentArg, study: string('A motion study id, to check it for collisions.'), fps: number('Moments checked per second of the study (10 by default).') }, ['document']),
+        run: async (args) => {
+          const script = await assembly(args);
+          if (args['study'] === undefined) {
+            await script.ready();
+            return script.interference();
+          }
+          return script.collisions(String(args['study']), args['fps'] === undefined ? undefined : Number(args['fps']));
+        },
+      },
+      {
+        name: 'assembly_properties',
+        description: 'The mass (g), volume (mm³) and centre of mass of an assembly, the mass of each part, and the bill of materials (components, counts, materials).',
+        inputSchema: object({ document: documentArg }, ['document']),
+        run: async (args) => {
+          const script = await assembly(args);
+          return { ...(await script.properties()), billOfMaterials: await script.billOfMaterials() };
+        },
+      },
+      {
+        name: 'export_assembly',
+        description: 'Writes an assembly to a file: STEP (one named solid per instance), 3MF, STL or OBJ. Returns the path.',
+        inputSchema: object({ document: documentArg, format: { type: 'string', enum: ['step', '3mf', 'stl', 'obj'] }, path: string('Where to write the file (default: the exports folder).') }, ['document', 'format']),
+        run: async (args) => (await assembly(args)).export(args['format'] as AssemblyFormat, args['path'] === undefined ? {} : { to: String(args['path']) }),
+      },
+      {
         name: 'render_picture',
-        description: 'A picture (PNG) of a component or an assembly, to look at what was made: from the front, back, top, bottom, left, right or isometric (the default).',
+        description:
+          'A picture (PNG) of a component or an assembly, to look at what was made: from a view (isometric by default) or a free direction, zoomed onto bodies or instances, with others hidden or see-through. Assemblies also exploded (an exploded view, all or the first steps) or at a moment of a motion study.',
         inputSchema: object(
           {
             document: string('Component or assembly id (from list_documents).'),
-            view: { type: 'string', enum: ['iso', 'front', 'back', 'top', 'bottom', 'left', 'right'] },
-            width: { type: 'number', description: 'Pixels, 800 by default.' },
-            height: { type: 'number', description: 'Pixels, 600 by default.' },
+            ...pictureArgs,
+            explode: string('Assemblies: an exploded view id, shown apart.'),
+            steps: number('With explode: how many of its steps (all by default).'),
+            study: string('Assemblies: a motion study id.'),
+            time: number('With study: the moment, in seconds (0 by default).'),
           },
           ['document'],
         ),
-        run: (args) =>
-          cadence.picture(String(args['document']), {
-            ...(args['view'] ? { view: args['view'] as 'iso' } : {}),
-            ...(args['width'] ? { width: Number(args['width']) } : {}),
-            ...(args['height'] ? { height: Number(args['height']) } : {}),
-            white: true,
-          }),
+        run: (args) => cadence.picture(String(args['document']), pictureOptions(args)),
+      },
+      {
+        name: 'animate_study',
+        description: 'Plays a motion study of an assembly into an animated GIF (written to the exports folder; returns its path) and shows a sheet of moments of it, left to right and top to bottom.',
+        inputSchema: object({ document: string('Assembly id.'), study: string('Motion study id.'), ...pictureArgs, fps: number('Frames per second of the GIF (10 by default).'), moments: number('Pictures on the sheet (9 by default, at most 16).'), path: string('Where to write the GIF.') }, [
+          'document',
+          'study',
+        ]),
+        run: async (args) => {
+          const script = await assembly(args);
+          const { white: _, ...options } = pictureOptions(args);
+          const result = await script.animation(String(args['study']), {
+            ...options,
+            ...(args['fps'] !== undefined ? { fps: Number(args['fps']) } : {}),
+            ...(args['moments'] !== undefined ? { moments: Number(args['moments']) } : {}),
+            ...(args['path'] !== undefined ? { to: String(args['path']) } : {}),
+          });
+          return { picture: result.sheet, caption: `The animation is at ${result.path}. The sheet shows the moments ${result.times.join(', ')} s.` } satisfies Captioned;
+        },
       },
       {
         name: 'command_reference',
-        description: 'The TypeScript types of every design command, feature, sketch entity and constraint, with their documentation.',
+        description: 'The TypeScript types of every design and assembly command, feature, sketch entity, constraint, joint, link, study and exploded view, with their documentation.',
         inputSchema: object({}),
         run: async () => this.reference,
       },

@@ -584,6 +584,45 @@
               <p class="count" data-testid="centre-distance">Put its centre {{ m.distance }} mm along X{{ m.turn ? ', turned ' + m.turn + '°' : '' }}.</p>
             }
           }
+          @case ('ring-gear') {
+            <div class="row two">
+            <label class="field">
+              Module
+              <input id="feature-part-module" autocomplete="off" [value]="f.part.module" (change)="setPart({ module: length($event) })" />
+            </label>
+            <label class="field">
+              Teeth
+              <input id="feature-part-teeth" autocomplete="off" [value]="f.part.teeth" (change)="setPart({ teeth: value($event) })" />
+            </label>
+            <label class="field">
+              Width
+              <input id="feature-part-width" autocomplete="off" [value]="f.part.width" (change)="setPart({ width: length($event) })" />
+            </label>
+            <label class="field">
+              Outside diameter
+              <input id="feature-part-outside" autocomplete="off" [value]="f.part.outside" (change)="setPart({ outside: length($event) })" />
+            </label>
+            <label class="field">
+              Pressure angle
+              <input id="feature-part-pressureAngle" autocomplete="off" [value]="f.part.pressureAngle" (change)="setPart({ pressureAngle: value($event) })" />
+            </label>
+            <label class="field">
+              Helix angle (0: spur)
+              <input id="feature-part-helixAngle" autocomplete="off" [value]="f.part.helixAngle" (change)="setPart({ helixAngle: value($event) })" />
+            </label>
+            </div>
+            <label class="field">
+              Meshes with a planet of
+              <input id="feature-mate-teeth" type="number" min="6" [value]="mateTeeth()" (change)="mateTeeth.set(+value($event))" />
+            </label>
+            @if (mate(); as m) {
+              @if (m.fits) {
+                <p class="count" data-testid="centre-distance">Put the planet's centre {{ m.distance }} mm along X; with a sun of {{ m.sun }} teeth, the carrier turns {{ m.carrier }} of the sun.</p>
+              } @else {
+                <p class="error" role="alert" data-testid="centre-distance">A planet needs at least {{ m.difference }} teeth fewer than the ring, or their tips collide.</p>
+              }
+            }
+          }
           @case ('rack') {
             <div class="row two">
             <label class="field">

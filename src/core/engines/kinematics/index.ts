@@ -1,4 +1,4 @@
-import type { JointLimit, JointType, Matrix4, MotionFrame, MotionLink, MotionStudy, PlaneFrame } from '@core/contracts';
+import { type JointLimit, type JointType, linkedValue, type Matrix4, type MotionFrame, type MotionLink, type MotionStudy, type PlaneFrame } from '@core/contracts';
 import { KinematicSolver } from './kinematic-solver';
 import { simulate } from './simulation';
 
@@ -73,7 +73,7 @@ export function applyLinks(model: KinematicModel, driven: ReadonlySet<string>): 
       const driver = values.get(link.driver.joint)?.[link.driver.dof];
       const target = values.get(link.driven.joint);
       if (driver === undefined || !target || link.driven.dof >= target.length) continue;
-      target[link.driven.dof] = link.offset + link.ratio * driver;
+      target[link.driven.dof] = linkedValue(link, driver);
     }
   };
   // As many rounds as links: enough for the longest chain.

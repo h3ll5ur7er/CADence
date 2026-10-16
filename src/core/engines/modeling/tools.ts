@@ -7,11 +7,15 @@ import { nameShape, namedSurfaces } from './naming';
 import { type Line, sameLine, samePlaneIgnoringSide, type Surface } from './surfaces';
 import { loopDrawing, profilesDrawing } from './geometry';
 import type { PathPiece } from './modeling-engine';
+import { cut, fuse } from './booleans';
+import { alignSections } from './sections';
 
 /** The surface a profile edge sweeps out, to recognise which tool face it made. */
 interface Expected {
   readonly source: string;
   readonly matches: (surface: Surface, face: Face) => boolean;
+  /** A point the face passes through: where the edge's middle went, halfway along the sweep. */
+  readonly point: Vec3;
 }
 
 /** A point halfway along a free-form profile edge (a spline piece or an ellipse piece). */
@@ -54,7 +58,11 @@ function edgesOf(profiles: readonly Profile[]): ProfileEdge[] {
   return profiles.flatMap((p) => [p.outer, ...p.holes].flatMap((loop) => loop.edges));
 }
 
-/** Names tool faces: caps by position, sides by the sketch curve that swept them. */
+/**
+ * Names tool faces: caps by position, sides by the sketch curve that swept them. Pieces of different
+ * sketch curves can sweep one surface (the lines of two outlines at one radius): then a face is named
+ * after the curve whose middle it passes through (CAD-104).
+ */
 function nameTool(
   shape: Shape3D,
   feature: string,
@@ -67,7 +75,8 @@ function nameTool(
     (face, surface) => {
       const capName = cap(surface, face);
       if (capName) return `f:${feature}:${capName}`;
-      const side = expected.find((e) => e.matches(surface, face));
+      const sides = expected.filter((e) => e.matches(surface, face));
+      const side = new Set(sides.map((s) => s.source)).size > 1 ? (sides.find((s) => passesThrough(face, s.point)) ?? sides[0]) : sides[0];
       return side ? `f:${feature}:side:${side.source}` : undefined;
     },
     feature,
@@ -97,18 +106,18 @@ export function extrudeTool(
     return Math.abs(t - low) < Math.abs(t - high) ? 'start' : 'end';
   };
   const expected = edgesOf(profiles).map((edge): Expected => {
+    const point = add3(toWorld(frame, midOf(edge)), scale3(n, (low + high) / 2));
     if (edge.kind === 'bezier' || edge.kind === 'ellipse') {
-      const point = add3(toWorld(frame, middleOf(edge)), scale3(n, (low + high) / 2));
-      return { source: edge.source, matches: (s, face) => s.type === 'other' && passesThrough(face, point) };
+      return { source: edge.source, point, matches: (s, face) => s.type === 'other' && passesThrough(face, point) };
     }
     if (edge.kind === 'line') {
       const p = toWorld(frame, edge.start);
       const normal = normalize3(cross3(sub3(toWorld(frame, edge.end), p), n));
       const plane: Surface = { type: 'plane', normal, offset: dot3(normal, p) };
-      return { source: edge.source, matches: (s) => samePlaneIgnoringSide(s, plane) };
+      return { source: edge.source, point, matches: (s) => samePlaneIgnoringSide(s, plane) };
     }
     const axis: Line = { point: toWorld(frame, edge.center), direction: n };
-    return { source: edge.source, matches: (s) => s.type === 'cylinder' && near(s.radius, edge.radius) && sameLine(s.axis, axis) };
+    return { source: edge.source, point, matches: (s) => s.type === 'cylinder' && near(s.radius, edge.radius) && sameLine(s.axis, axis) };
   });
   return nameTool(shape3d, feature, expected, cap);
 }
@@ -137,9 +146,9 @@ export function revolveTool(
     return dot3(radial(face.center.toTuple() as Vec3), profileSide) > 1 - 1e-6 ? 'start' : 'end';
   };
   const expected = edgesOf(profiles).map((edge): Expected => {
+    const point = rotateAbout(toWorld(frame, midOf(edge)), axis, angle / 2);
     if (edge.kind === 'bezier' || edge.kind === 'ellipse') {
-      const point = rotateAbout(toWorld(frame, middleOf(edge)), axis, angle / 2);
-      return { source: edge.source, matches: (s, face) => s.type === 'other' && passesThrough(face, point) };
+      return { source: edge.source, point, matches: (s, face) => s.type === 'other' && passesThrough(face, point) };
     }
     if (edge.kind === 'line') {
       const [p, q] = [toWorld(frame, edge.start), toWorld(frame, edge.end)];
@@ -147,22 +156,20 @@ export function revolveTool(
       const along = dot3(d, direction);
       if (near(Math.abs(along), 1)) {
         const radius = distanceToLine(p, line);
-        return { source: edge.source, matches: (s) => s.type === 'cylinder' && near(s.radius, radius) && sameLine(s.axis, line) };
+        return { source: edge.source, point, matches: (s) => s.type === 'cylinder' && near(s.radius, radius) && sameLine(s.axis, line) };
       }
       if (near(along, 0)) {
         const plane: Surface = { type: 'plane', normal: direction, offset: dot3(direction, p) };
-        return { source: edge.source, matches: (s) => samePlaneIgnoringSide(s, plane) };
+        return { source: edge.source, point, matches: (s) => samePlaneIgnoringSide(s, plane) };
       }
       // A slanted line sweeps a cone, which the kernel build cannot read: recognised by a point it passes through.
-      const point = rotateAbout(toWorld(frame, midOf(edge)), axis, angle / 2);
-      return { source: edge.source, matches: (s, face) => s.type === 'other' && passesThrough(face, point) };
+      return { source: edge.source, point, matches: (s, face) => s.type === 'other' && passesThrough(face, point) };
     }
     const center = toWorld(frame, edge.center);
     const offAxis = distanceToLine(center, line);
-    if (offAxis < 1e-6) return { source: edge.source, matches: (s) => s.type === 'sphere' && near(s.radius, edge.radius) };
+    if (offAxis < 1e-6) return { source: edge.source, point, matches: (s) => s.type === 'sphere' && near(s.radius, edge.radius) };
     // A torus: the kernel build cannot read its radii (gp_Torus is not bound), so it is recognised by a point it passes through.
-    const point = rotateAbout(toWorld(frame, midOf(edge)), axis, angle / 2);
-    return { source: edge.source, matches: (s, face) => s.type === 'other' && passesThrough(face, point) };
+    return { source: edge.source, point, matches: (s, face) => s.type === 'other' && passesThrough(face, point) };
   });
   return nameTool(shape, feature, expected, cap);
 }
@@ -223,16 +230,19 @@ function nameFromHistory(shape: Shape3D, feature: string, sides: ReadonlyMap<num
 }
 
 /**
- * A loft through the outer outlines of the sections, in order. Caps are `start` (first section) and
- * `end` (last); sides are named after the edge of the first section they start from.
+ * A loft through the outer outlines of the sections, in order, lined up so they do not twist
+ * ({@link alignSections}). Caps are `start` (first section) and `end` (last); sides are named after
+ * the edge of the first section they start from.
  */
 export function loftTool(feature: string, sections: readonly { readonly frame: PlaneFrame; readonly profile: Profile }[], ruled: boolean): NamedShape {
   const [first, last] = [sections[0], sections[sections.length - 1]];
   if (!first || !last || sections.length < 2) throw new Error('A loft needs at least two sections.');
   const oc = getOC();
-  const wires = sections.map((s) => wireOf(s.profile.outer, s.frame));
+  const loops = alignSections(sections.map((s) => ({ frame: s.frame, loop: s.profile.outer })));
+  const wires = sections.map((s, i) => wireOf(loops[i] as Profile['outer'], s.frame));
   const builder = new oc.BRepOffsetAPI_ThruSections(true, ruled, 1e-6);
   try {
+    builder.CheckCompatibility(false); // the sections are lined up already
     for (const wire of wires) builder.AddWire(wire.wrapped);
     builder.Build();
     const shape = cast(builder.Shape()) as Shape3D;
@@ -295,9 +305,9 @@ export function sweepTool(feature: string, frame: PlaneFrame, profiles: readonly
     let solid = sweptLoop(feature, profile.outer, frame, spine, cap);
     for (const hole of profile.holes) {
       const cutter = sweptLoop(feature, hole, frame, spine, cap);
-      solid = nameShape(solid.shape.cut(cutter.shape), [...namedSurfaces(solid), ...namedSurfaces(cutter)], () => undefined, feature);
+      solid = nameShape(cut(solid.shape, cutter.shape), [...namedSurfaces(solid, 'tool'), ...namedSurfaces(cutter, 'tool')], () => undefined, feature);
     }
-    result = result ? nameShape(result.shape.fuse(solid.shape), [...namedSurfaces(result), ...namedSurfaces(solid)], () => undefined, feature) : solid;
+    result = result ? nameShape(fuse(result.shape, solid.shape), [...namedSurfaces(result, 'tool'), ...namedSurfaces(solid, 'tool')], () => undefined, feature) : solid;
   }
   if (!result) throw new Error('Select at least one profile.');
   return result;

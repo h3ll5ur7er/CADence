@@ -169,16 +169,48 @@ export interface JointFreedom {
 /**
  * One joint's freedom follows another's: `driven = offset + ratio × driver`. Gears turn the other
  * way (a negative ratio, teeth over teeth), a rack moves π·d/360 mm per degree of its pinion, and a
- * belt turns its pulleys the same way (diameter over diameter).
+ * belt turns its pulleys the same way (diameter over diameter). In a planetary set with its ring
+ * fixed, the sun drives the carrier and each planet on it ({@link planetaryRatios}). A cam moves its
+ * follower by its profile: `driven = offset + ratio × lift(driver)` ({@link linkedValue}).
  */
 export interface MotionLink {
   readonly id: string;
   readonly name: string;
-  readonly kind: 'gear' | 'rack' | 'belt';
+  readonly kind: 'gear' | 'rack' | 'belt' | 'carrier' | 'planet' | 'cam';
   readonly driver: JointFreedom;
   readonly driven: JointFreedom;
   readonly ratio: number;
   readonly offset: number;
+  /**
+   * A cam's profile: the follower's lift (mm, or degrees for a turning follower) at angles of the
+   * cam (degrees, 0 to 360, increasing), over one turn and round again; smooth between the points.
+   */
+  readonly profile?: readonly (readonly [number, number])[];
+}
+
+/** A cam profile's lift at an angle: a smooth periodic curve (Catmull-Rom) through its points. */
+export function camLift(profile: readonly (readonly [number, number])[], angle: number): number {
+  const n = profile.length;
+  if (n < 2) return profile[0]?.[1] ?? 0;
+  const a = ((angle % 360) + 360) % 360;
+  // The points continued round: point k + n is point k a turn later.
+  const at = (k: number): readonly [number, number] => {
+    const [x, y] = profile[((k % n) + n) % n] as readonly [number, number];
+    return [x + 360 * Math.floor(k / n), y];
+  };
+  let k = -1;
+  while (k + 1 < n && at(k + 1)[0] <= a) k++;
+  const [p0, p1, p2, p3] = [at(k - 1), at(k), at(k + 1), at(k + 2)];
+  const span = p2[0] - p1[0];
+  const t = (a - p1[0]) / span;
+  const [m1, m2] = [((p2[1] - p0[1]) / (p2[0] - p0[0])) * span, ((p3[1] - p1[1]) / (p3[0] - p1[0])) * span];
+  const [t2, t3] = [t * t, t * t * t];
+  return (2 * t3 - 3 * t2 + 1) * p1[1] + (t3 - 2 * t2 + t) * m1 + (-2 * t3 + 3 * t2) * p2[1] + (t3 - t2) * m2;
+}
+
+/** Where a link puts its driven freedom, for a value of its driver. */
+export function linkedValue(link: MotionLink, driver: number): number {
+  return link.offset + link.ratio * (link.kind === 'cam' && link.profile?.length ? camLift(link.profile, driver) : driver);
 }
 
 /** A step of an exploded view: instances moved apart along a direction (mm). */

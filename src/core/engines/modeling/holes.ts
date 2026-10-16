@@ -103,7 +103,7 @@ export function holeTool(feature: string, frame: PlaneFrame, points: readonly { 
   const [first, ...rest] = tools as [NamedShape, ...NamedShape[]];
   if (!rest.length) return first;
   const shape = rest.reduce((all, t) => all.fuse(t.shape), first.shape);
-  return nameShape(shape, tools.flatMap((t) => namedSurfaces(t)), () => undefined, feature);
+  return nameShape(shape, tools.flatMap((t) => namedSurfaces(t, 'tool')), () => undefined, feature);
 }
 
 /** Where a thread goes on a round face: its axis from the opening end, radius and length, and whether it is inside a hole. */
@@ -137,19 +137,26 @@ export function threadPlacement(face: Face, axis: { origin: Vec3; direction: Vec
   };
 }
 
-/** The groove of a modelled ISO metric thread (60° flanks), swept along a helix and ready to cut. */
-export function threadGroove(marker: ThreadMarker): Shape3D {
+/**
+ * The groove of a modelled ISO metric thread (60° flanks), swept along a helix and ready to cut. It
+ * starts centred on the open end and stops half a groove short of the face's far end (`faceLength`
+ * from the start): a groove that reaches into a shoulder there, or out of the far end, cuts nothing
+ * in the kernel (CAD-105).
+ */
+export function threadGroove(marker: ThreadMarker, faceLength: number): Shape3D {
   const oc = getOC();
-  const { origin, direction, radius, length, pitch, diameter, internal } = marker;
+  const { origin, direction, radius, pitch, diameter, internal } = marker;
   // Internal threads cut outwards from the hole to the major diameter; external ones inwards to the minor diameter.
   const depth = internal ? diameter / 2 - radius : 0.6134 * pitch;
   if (!(depth > 0)) throw new HoleError('This hole is already as wide as the thread.');
   const overlap = 0.05 * pitch;
+  const half = (depth + overlap) * Math.tan(Math.PI / 6);
+  const length = Math.min(marker.length, faceLength - half - overlap);
+  if (!(length > pitch)) throw new HoleError('The face is too short for this thread.');
   const helix = makeHelix(pitch, length, radius, [...origin], [...direction]);
   const start = helix.edges[0]?.startPoint.toTuple() as Vec3;
   const out = normalize3(sub3(start, add3(origin, scale3(direction, dot3(sub3(start, origin), direction)))));
   const inward = internal ? out : scale3(out, -1);
-  const half = (depth + overlap) * Math.tan(Math.PI / 6);
   const base = add3(start, scale3(inward, -overlap));
   const [a, b, c] = [add3(base, scale3(direction, half)), add3(base, scale3(direction, -half)), add3(start, scale3(inward, depth))];
   const profile = assembleWire([makeLine([...a], [...b]), makeLine([...b], [...c]), makeLine([...c], [...a])]);

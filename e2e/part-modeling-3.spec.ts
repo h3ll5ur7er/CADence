@@ -1,26 +1,10 @@
 import { expect, type Page, test } from '@playwright/test';
-import { center, evidence, fromModelMenu, plateProject, screenPositionOf } from './support';
+import { evidence, fromModelMenu, plateProject, topPoints } from './support';
 
 /** Phase 18 (Part modeling III) user journey: standard parts, gears, parts for printing and fits. */
 test.setTimeout(180_000);
 
 const number = async (page: Page, testId: string) => Number(((await page.getByTestId(testId).first().textContent()) ?? '').replace(/[^\d.]/g, ''));
-
-/** A sketch on the plate's top face with points `dx` pixels left and right of its origin. */
-async function topPoints(page: Page, offsets: readonly number[]): Promise<void> {
-  const top = await screenPositionOf(page, 'face', ':end$');
-  await page.mouse.click(top.x, top.y);
-  await page.getByRole('button', { name: 'New sketch' }).click();
-  await page.getByRole('menuitem', { name: 'Selected face' }).click();
-  await page.waitForTimeout(600);
-  const origin = await center(page, 'circle.point.origin');
-  await page.getByRole('button', { name: 'Point', exact: true }).click();
-  for (const dx of offsets) {
-    await page.mouse.move(origin.x + dx, origin.y);
-    await page.mouse.click(origin.x + dx, origin.y);
-  }
-  await page.getByRole('button', { name: 'Finish sketch' }).click();
-}
 
 test('puts screws on a plate, and their clearance holes with a fit for the printer', async ({ page }) => {
   await plateProject(page, 'Standard parts');

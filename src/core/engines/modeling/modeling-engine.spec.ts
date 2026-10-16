@@ -1,7 +1,7 @@
 import { createShapeAccess, type NamedShape } from '@core/access/shape';
 import { measureVolume } from 'replicad';
 import { originFrames, type PlaneFrame, type TopologyRef } from '@core/contracts';
-import { curveArea, curveAt } from '@core/utilities/math';
+import { curveArea, curveAt, splineBeziers } from '@core/utilities/math';
 import { circleLoop, profile, rectangleLoop } from '@core/contracts/testing/profiles';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { type BodyState, createModelingEngine, type ModelingEngine, type ModelingOutcome } from './index';
@@ -132,6 +132,27 @@ describe('ModelingEngine', () => {
     expect((await names(half)).faces).toEqual(expect.arrayContaining(['f:half:start', 'f:half:end']));
   });
 
+  it('joins pads whose end touches a revolved body, alone and patterned (CAD-103)', { timeout: 60_000 }, async () => {
+    const outline: [number, number][] = [[24, 60], [45, 60], [45, 36], [105, 36], [105, -36], [45, -36], [45, -60], [24, -60], [24, -30], [78, -30], [78, 30], [24, 30]];
+    const drum = profile(polygonLoop(outline, 'drum'));
+    const zAxis = { origin: [0, 0, 0] as const, direction: [0, 0, 1] as const };
+    const base = ok(await engine.apply({ type: 'revolve', feature: 'drum', key: 'drum', bodies: [], frame: originFrames.XZ, profiles: [drum], axis: zAxis, angle: 2 * Math.PI, operation: 'new-body' }));
+    const seat = { ...originFrames.YZ, origin: [105, 0, 0] as const };
+    for (const d of [58, 61, 65]) {
+      const pad = await engine.apply({ type: 'extrude', feature: 'pad', key: `pad-${d}`, bodies: base, frame: seat, profiles: [profile(circleLoop(0, 0, d / 2, 'pad'))], distance: 15, direction: 'reverse', operation: 'join' });
+      const padded = ok(pad);
+      const tools = [{ feature: 'pad', toolKey: pad.toolKey as string, operation: 'join' as const }];
+      const patterned = ok(await engine.apply({ type: 'circular-pattern', feature: 'pads', key: `pads-${d}`, bodies: padded, tools, axis: zAxis, count: 9, angle: (320 * Math.PI) / 180 }));
+      expect((await volume(patterned)) - (await volume(base))).toBeGreaterThan(9 * ((Math.PI * d * d) / 4) * 1);
+    }
+    // Holes through the drum's wall, patterned: the copies are cut in one boolean, or one by one when that fails.
+    const hole = await engine.apply({ type: 'extrude', feature: 'hole', key: 'drum-hole', bodies: base, frame: seat, profiles: [profile(circleLoop(0, 0, 10, 'hole'))], distance: 40, direction: 'reverse', operation: 'cut' });
+    const tools = [{ feature: 'hole', toolKey: hole.toolKey as string, operation: 'cut' as const }];
+    const holed = ok(await engine.apply({ type: 'circular-pattern', feature: 'holes', key: 'drum-holes', bodies: ok(hole), tools, axis: zAxis, count: 9, angle: (320 * Math.PI) / 180 }));
+    const one = (await volume(base)) - (await volume(ok(hole)));
+    expect(Math.abs((await volume(base)) - (await volume(holed)) - 9 * one) / (9 * one)).toBeLessThan(1e-3);
+  });
+
   it('keeps edge references valid when an earlier dimension changes', async () => {
     const edge: TopologyRef = { kind: 'edge', body: 'plate', name: 'e:f:plate:end|f:plate:side:plate-top' };
     for (const distance of [5, 12]) {
@@ -152,6 +173,47 @@ describe('ModelingEngine', () => {
     expect(tooBig.error).toMatch(/geometry kernel could not build/);
     const lost = await engine.apply({ type: 'fillet', feature: 'x', key: 'lost', bodies: base, edges: [{ ...edge, name: 'e:nothing' }], size: 1 });
     expect(lost.error).toMatch(/no longer exists/);
+  });
+
+  it('names each bevel and round after its own edge, without hints (CAD-101)', async () => {
+    const base = ok(await plate());
+    const edges = ['left', 'right', 'top'].map((side): TopologyRef => ({ kind: 'edge', body: 'plate', name: `e:f:plate:end|f:plate:side:plate-${side}` }));
+    for (const type of ['chamfer', 'fillet'] as const) {
+      const treated = ok(await engine.apply({ type, feature: 'x', key: `${type}-no-hints`, bodies: base, edges, size: 1 }));
+      const made = (await names(treated)).faces.filter((f) => f.startsWith('f:x:'));
+      const role = type === 'chamfer' ? 'bevel' : 'round';
+      expect(made).toEqual(edges.map((e) => `f:x:${role}:${e.name}`).sort());
+    }
+  });
+
+  describe('names on shared surfaces (CAD-104)', () => {
+    it('names faces of one revolve after their own outline, though they share a surface', async () => {
+      const outlines = [profile(rectangleLoop(0, 25, 15, 35, 'front'), [], 'p1'), profile(rectangleLoop(0, -60, 15, 35, 'rear'), [], 'p2')];
+      const shaft = ok(await engine.apply({ type: 'revolve', feature: 'shaft', key: 'two-outlines', bodies: [], frame: originFrames.XZ, profiles: outlines, axis: { origin: [0, 0, 0], direction: [0, 0, 1] }, angle: 2 * Math.PI, operation: 'new-body' }));
+      const [mesh] = await engine.tessellate(shaft);
+      const journal = (name: string) => mesh?.faces.find((f) => f.name === name)?.center[2] as number;
+      expect(journal('f:shaft:side:front-right')).toBeGreaterThan(0);
+      expect(journal('f:shaft:side:rear-right')).toBeLessThan(0);
+    });
+
+    it('keeps the number of a split face that a later feature leaves alone', async () => {
+      const slot = (bodies: readonly BodyState[], x: number) =>
+        engine.apply({ type: 'extrude', feature: `slot${x}`, key: `keep-slot-${x}-${bodies[0]?.key}`, bodies, frame: { ...XY, origin: [0, 0, 5] }, profiles: [profile(rectangleLoop(x, -1, 4, 42, `slot${x}`))], distance: 2, direction: 'reverse', operation: 'cut' });
+      const once = ok(await slot(ok(await plate()), 38));
+      const right = async (bodies: readonly BodyState[]) => (await engine.tessellate(bodies))[0]?.faces.find((f) => f.name.startsWith('f:plate:end') && f.center[0] > 42)?.name;
+      expect(await right(once)).toBe('f:plate:end~2');
+      // A second slot splits the left piece in two; the right piece keeps its name.
+      const twice = ok(await slot(once, 18));
+      expect(await right(twice)).toBe('f:plate:end~2');
+      expect((await names(twice)).faces.filter((f) => f.startsWith('f:plate:end'))).toEqual(['f:plate:end~1', 'f:plate:end~2', 'f:plate:end~3']);
+    });
+
+    it('numbers patterned bodies without gaps', async () => {
+      const pin = await engine.apply({ type: 'extrude', feature: 'pin', key: 'pin', bodies: [], frame: XY, profiles: [profile(circleLoop(20, 0, 2, 'pin'))], distance: 5, direction: 'normal', operation: 'new-body' });
+      const tools = [{ feature: 'pin', toolKey: pin.toolKey as string, operation: 'new-body' as const }];
+      const pins = ok(await engine.apply({ type: 'circular-pattern', feature: 'pins', key: 'pins', bodies: ok(pin), tools, axis: { origin: [0, 0, 0], direction: [0, 0, 1] }, count: 4, angle: 2 * Math.PI }));
+      expect(pins.map((b) => b.id)).toEqual(['pin', 'pins', 'pins:2', 'pins:3']);
+    });
   });
 
   it('shells a body, opening the picked faces', async () => {
@@ -310,12 +372,39 @@ describe('component results and joint frames', () => {
       const v = await volume(bodies);
       expect(v).toBeGreaterThan(Math.PI * 64 * 30);
       expect(v).toBeLessThan(400 * 30);
-      // The circle's two edges meet the square's four: the kernel splits the left and right sides in two.
+      // The circle is split where the square has its corners (CAD-106): one side face per square side.
       const faces = (await names(bodies)).faces;
       expect(faces.filter((f) => !f.startsWith('f:loft:side:'))).toEqual(['f:loft:end', 'f:loft:start']);
-      expect(new Set(faces.filter((f) => f.startsWith('f:loft:side:')).map((f) => f.split('~')[0]))).toEqual(
-        new Set(['f:loft:side:sq-bottom', 'f:loft:side:sq-left', 'f:loft:side:sq-right', 'f:loft:side:sq-top']),
-      );
+      expect(faces.filter((f) => f.startsWith('f:loft:side:'))).toEqual(['f:loft:side:sq-bottom', 'f:loft:side:sq-left', 'f:loft:side:sq-right', 'f:loft:side:sq-top']);
+    });
+
+    it('lofts from a round shank into twisted blade sections without twisting (CAD-106)', { timeout: 60_000 }, async () => {
+      const half = (x: number) => 0.6 * (0.2969 * Math.sqrt(x) - 0.126 * x - 0.3516 * x ** 2 + 0.2843 * x ** 3 - 0.1036 * x ** 4);
+      /** A closed spline through 14 points of a blade section, counter-clockwise from its leading edge, turned by `angle` degrees. */
+      const blade = (chord: number, angle: number, source: string) => {
+        const xs = [0.05, 0.15, 0.3, 0.5, 0.7, 0.9];
+        const outline = [[0, 0], ...xs.map((x) => [x, -half(x)]), [1, 0], ...[...xs].reverse().map((x) => [x, half(x)])] as [number, number][];
+        const a = (angle * Math.PI) / 180;
+        const points = outline.map(([x, y]): [number, number] => [(x - 0.3) * chord * Math.cos(a) - y * chord * Math.sin(a), (x - 0.3) * chord * Math.sin(a) + y * chord * Math.cos(a)]);
+        const edges = splineBeziers(points, true).map(([start, c1, c2, end]) => ({ kind: 'bezier' as const, source, start, c1, c2, end }));
+        return profile({ edges, polygon: points });
+      };
+      const at = (x: number) => ({ ...originFrames.YZ, origin: [x, 0, 0] as const });
+      const sections = [
+        { frame: at(35), profile: profile(circleLoop(0, 0, 15, 'shank')) },
+        ...([[80, 70, 50], [160, 58, 35], [250, 46, 25], [330, 36, 18], [380, 30, 14]] as const).map(([x, chord, angle]) => ({ frame: at(x), profile: blade(chord, angle, `s${x}`) })),
+      ];
+      const lofted = ok(await engine.apply({ type: 'loft', feature: 'blade', key: 'blade', bodies: [], sections, ruled: false, operation: 'new-body' }));
+      // Twisted, the blade pinched between the shank (707 mm²) and the first section (about 400 mm²).
+      const areas: number[] = [];
+      for (const x of [45, 57, 70]) {
+        const slab = ok(await engine.apply({ type: 'extrude', feature: 'slab', key: `slab-${x}`, bodies: lofted, frame: at(x), profiles: [profile(rectangleLoop(-60, -60, 120, 120, 'slab'))], distance: 1, direction: 'normal', operation: 'intersect' }));
+        areas.push(await volume(slab));
+      }
+      expect(areas[0]).toBeLessThan(1.1 * 707);
+      expect(areas[1]).toBeLessThan(areas[0] as number);
+      expect(areas[2]).toBeLessThan(areas[1] as number);
+      expect(areas[2]).toBeGreaterThan(360);
     });
 
     it('keeps the names of freeform faces cut by later features', async () => {
@@ -325,7 +414,7 @@ describe('component results and joint frames', () => {
       const cut = ok(await engine.apply({ type: 'extrude', feature: 'hole', key: 'loft-hole', bodies, frame: side, profiles: [profile(circleLoop(0, 12, 2, 'h'))], distance: 20, direction: 'normal', operation: 'cut' }));
       const faces = (await names(cut)).faces;
       expect(faces).toContain('f:loft:side:sq-bottom');
-      expect(faces.filter((f) => f.startsWith('f:loft:side:'))).toHaveLength(6);
+      expect(faces.filter((f) => f.startsWith('f:loft:side:'))).toHaveLength(4);
       expect(faces.some((f) => f.includes(':new:'))).toBe(false);
     });
 
@@ -416,6 +505,38 @@ describe('component results and joint frames', () => {
     });
   });
 
+  describe('threads that end at a shoulder (CAD-105)', () => {
+    async function bolt(): Promise<readonly BodyState[]> {
+      const below = { ...XY, origin: [0, 0, -10] as const };
+      const shank = ok(await engine.apply({ type: 'extrude', feature: 'shank', key: 'bolt-shank', bodies: [], frame: below, profiles: [profile(circleLoop(0, 0, 5, 'shank'))], distance: 10, direction: 'normal', operation: 'new-body' }));
+      return ok(await engine.apply({ type: 'extrude', feature: 'head', key: 'bolt-head', bodies: shank, frame: XY, profiles: [profile(circleLoop(0, 0, 8, 'head'))], distance: 6, direction: 'normal', operation: 'join' }));
+    }
+
+    it('cuts the thread from either end', async () => {
+      const bodies = await bolt();
+      const walls = (await names(bodies)).faces.filter((f) => f.startsWith('f:shank:side:'));
+      const face = { kind: 'face' as const, body: 'shank', name: walls[0] as string, hint: [5, 0, -5] as const };
+      for (const flip of [false, true]) {
+        const threaded = ok(await engine.apply({ type: 'thread', feature: 't', key: `bolt-thread-${flip}`, bodies, face, size: 'M10', diameter: 10, pitch: 1.5, modelled: true, flip }));
+        const removed = (await volume(bodies)) - (await volume(threaded));
+        expect(removed).toBeGreaterThan(50);
+        expect((await names(threaded)).faces.some((f) => f.startsWith('f:t:flank'))).toBe(true);
+      }
+    });
+
+    it('refuses a name split into pieces unless a hint picks one', async () => {
+      const bodies = ok(await plate());
+      const split = ok(await engine.apply({ type: 'extrude', feature: 'slot', key: 'slot', bodies, frame: { ...XY, origin: [0, 0, 5] }, profiles: [profile(rectangleLoop(38, -1, 4, 42, 'slot'))], distance: 2, direction: 'reverse', operation: 'cut' }));
+      const top = (await names(split)).faces.filter((f) => f.startsWith('f:plate:end'));
+      expect(top).toEqual(['f:plate:end~1', 'f:plate:end~2']);
+      const base = { kind: 'face' as const, body: 'plate', name: 'f:plate:end' };
+      const refused = await engine.apply({ type: 'shell', feature: 's', key: 'shell-ambiguous', bodies: split, faces: [base], thickness: 1 });
+      expect(refused.error).toContain('is split into 2 pieces (f:plate:end~1, f:plate:end~2)');
+      const hinted = await engine.apply({ type: 'shell', feature: 's', key: 'shell-hinted', bodies: split, faces: [{ ...base, hint: [10, 20, 5] }], thickness: 1 });
+      expect(hinted.error).toBeUndefined();
+    });
+  });
+
   describe('drafts, ribs and variable fillets', () => {
     it('rounds an edge with a radius that changes along it', async () => {
       const bodies = ok(await plate());
@@ -465,6 +586,12 @@ describe('component results and joint frames', () => {
     });
   });
 });
+
+/** A closed outline of straight lines through the points; sides are `${prefix}-l1`, `-l2`, … */
+function polygonLoop(points: readonly [number, number][], prefix: string) {
+  const edges = points.map((start, i) => ({ kind: 'line' as const, start, end: points[(i + 1) % points.length] as [number, number], source: `${prefix}-l${i + 1}` }));
+  return { edges, polygon: [...points] };
+}
 
 const normal = (f: { u: readonly number[]; v: readonly number[] }) => [
   (f.u[1] as number) * (f.v[2] as number) - (f.u[2] as number) * (f.v[1] as number),

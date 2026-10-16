@@ -1,4 +1,4 @@
-import type { JointType, Matrix4, PlaneFrame, Vec3 } from '@core/contracts';
+import { camLift, type JointType, type Matrix4, type PlaneFrame, type Vec3 } from '@core/contracts';
 import { identity, transformPoint, translation } from '@core/utilities/math';
 import { describe, expect, it } from 'vitest';
 import { createKinematicsEngine, type KinematicJoint, type KinematicModel } from './index';
@@ -156,6 +156,27 @@ describe('KinematicsEngine motion studies', () => {
     const { values } = engine.solve(model);
     expect(values.get('g2')?.[0]).toBeCloseTo(-180);
     expect(values.get('r')?.[0]).toBeCloseTo(5 - Math.PI * 5);
+  });
+
+  it('moves a follower by a cam profile as the cam turns, in studies too (CAD-99)', () => {
+    // A cam with one lobe: 6 mm of lift at 90°, none from 180° round to 360°; a tappet slides on the base.
+    const profile = [[0, 0], [90, 6], [180, 0], [270, 0]] as const;
+    expect(camLift(profile, 90)).toBeCloseTo(6);
+    expect(camLift(profile, 450)).toBeCloseTo(6); // a turn later
+    expect(camLift(profile, 270)).toBeCloseTo(0);
+    expect(camLift(profile, 45)).toBeGreaterThan(0);
+    expect(camLift(profile, 45)).toBeLessThan(6);
+    const model: KinematicModel = {
+      instances: [instance('base', true), instance('cam'), instance('tappet')],
+      joints: [joint('shaft', 'revolute', ['base', [0, 0, 0]], ['cam', [0, 0, 0]], [0]), joint('guide', 'slider', ['base', [0, 20, 0]], ['tappet', [0, 0, 0]], [0])],
+      links: [{ id: 'c', name: '', kind: 'cam', driver: { joint: 'shaft', dof: 0 }, driven: { joint: 'guide', dof: 0 }, ratio: 1, offset: 2, profile }],
+    };
+    expect(engine.solve(model).values.get('guide')?.[0]).toBeCloseTo(2);
+    // Driven at 90° a second, the tappet is at the top after a second.
+    const { frames } = engine.simulate(model, { id: 's', name: '', duration: 2, keys: [], drives: [{ joint: 'shaft', dof: 0, speed: 90 }] }, 2);
+    const lift = (time: number) => (frames.find((f) => Math.abs(f.time - time) < 1e-9)?.poses['tappet'] as number[])[14] as number;
+    expect(lift(1)).toBeCloseTo(8);
+    expect(lift(2)).toBeCloseTo(2);
   });
 
   it('eases between keys and turns drives at their speed', () => {

@@ -8,6 +8,8 @@ export interface DomainError {
   readonly message: string;
   /** Ids of what is at fault (e.g. the constraints a new one conflicts with), when the client can point at them. */
   readonly related?: readonly string[];
+  /** All ids that take part, the refused change's own included (for scripts and agents). */
+  readonly involved?: readonly string[];
 }
 
 export const ok = <T>(value: T): Result<T, never> => ({ ok: true, value });

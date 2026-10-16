@@ -40,7 +40,7 @@ function checkPattern(document: AssemblyDocument, pattern: InstancePattern): str
   return undefined;
 }
 
-const linkLabels: Readonly<Record<MotionLink['kind'], string>> = { gear: 'Gear', rack: 'Rack and pinion', belt: 'Belt' };
+const linkLabels: Readonly<Record<MotionLink['kind'], string>> = { gear: 'Gear', rack: 'Rack and pinion', belt: 'Belt', carrier: 'Planet carrier', planet: 'Planet', cam: 'Cam' };
 
 function checkLink(document: AssemblyDocument, link: MotionLink): string | undefined {
   const freedom = (f: MotionLink['driver']) => {
@@ -50,6 +50,11 @@ function checkLink(document: AssemblyDocument, link: MotionLink): string | undef
   if (!freedom(link.driver) || !freedom(link.driven)) return 'A link connects freedoms of two joints of this assembly.';
   if (link.driver.joint === link.driven.joint) return 'A link needs two different joints.';
   if (!Number.isFinite(link.ratio) || link.ratio === 0 || !Number.isFinite(link.offset)) return 'A link needs a ratio other than zero.';
+  if (link.kind === 'cam') {
+    const profile = link.profile ?? [];
+    if (profile.length < 2 || profile.some(([a, lift]) => !Number.isFinite(a) || !Number.isFinite(lift) || a < 0 || a >= 360)) return 'A cam needs a profile of at least two points: angles from 0 to 360° and their lifts.';
+    if (profile.some(([a], i) => i > 0 && !(a > (profile[i - 1] as readonly [number, number])[0]))) return 'A cam profile’s angles must increase.';
+  }
   // A joint follows one driver, and chains may not close into a circle.
   const others = (document.links ?? []).filter((l) => l.id !== link.id);
   if (others.some((l) => l.driven.joint === link.driven.joint)) return 'That joint already follows another link.';

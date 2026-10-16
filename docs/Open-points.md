@@ -69,6 +69,9 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 - [X] **Timeline folders and notes:** group features, comment why they are there. *(new)* → [[CAD-75]] ✅
 - [X] **Repair broken references** in a dialog: show what a feature lost (a face or an edge) and let the user pick the replacement. *(new)* → [[CAD-76]] ✅
 - [X] **Configurations as a table:** import and export them as CSV. *(new)* → [[CAD-77]] ✅
+- [X] **Findings of the radial engine stress test:** booleans on touching faces, threads up to a shoulder, lofts that twisted, names of rounds and of split faces, smooth gear teeth and ring gears. *([[CAD-96]])* → [[CAD-98]] [[CAD-101]] [[CAD-103]] [[CAD-104]] [[CAD-105]] [[CAD-106]] [[CAD-107]] ✅
+- [ ] **A start point per loft section**, picked in its sketch, where lining the sections up automatically is not what is meant. *(ADR-43 trade-off)*
+- [ ] **Root fillets on ring gears**, and profile shifted gears for few teeth. *([[CAD-98]], [[CAD-107]])*
 
 ## Technical drawings
 
@@ -122,6 +125,8 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 - [X] **Assembly instructions:** step-by-step exploded steps, exported as a PDF, for flat-pack and kit builds. *(new)* → [[CAD-85]]
 - [X] **Patterns and mirrors of instances.** *(new)* → [[CAD-81]] ✅
 - [X] **Live updates:** an open assembly updates when a component changes in another tab or window (today on reopening). *(phase 5)* → [[CAD-82]] ✅
+- [X] **Cams and planetary sets:** a follower moved by a cam profile; carrier and planet ratios from the teeth. *([[CAD-96]])* → [[CAD-98]] [[CAD-99]] ✅
+- [ ] **Cam profiles from the cam's face:** the follower riding on the modelled cam instead of a table. *(ADR-45, [[CAD-99]])*
 
 ## Import
 
@@ -136,6 +141,7 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 - [ ] **Publish the command line as a package** (`npx cadence`), so it runs without a copy of the repository. *(ADR-31 trade-off)*
 - [X] **Pictures for agents:** an MCP tool that renders a component to PNG, so an agent can look at what it made. *(ADR-31 trade-off)* → [[CAD-92]] ✅
 - [ ] **MCP over HTTP** from the running app, so an agent can drive the web app's projects directly. *(ADR-31 trade-off)*
+- [X] **Assemblies, lean answers and pictures of motion for agents.** *([[CAD-96]])* → [[CAD-97]] [[CAD-100]] [[CAD-102]] [[CAD-108]] ✅
 - [ ] **An assistant in the app:** describe a part or a change in words, and an AI model builds it with the same tools the MCP server offers, step by step in the timeline. *(new)*
 - [ ] **Script console in the app:** run scripts against the open project, and keep them with the project as reusable generators. *(new)*
 

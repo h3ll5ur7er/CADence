@@ -112,6 +112,31 @@ export function importedFonts(documents: Pick<DocumentAccess, 'load'>, assets: P
   };
 }
 
+/** Where parts and holes go: the sketch's points by id, the sketch origin included (CAD-108). */
+function placementPoints(sketch: Sketch, ids: readonly string[]): ({ id: string; at: Vec2 } | undefined)[] {
+  return ids.map((id) => {
+    if (id === sketchOriginId) return { id, at: [0, 0] };
+    const p = sketch.entities.find((e) => e.id === id);
+    return p?.kind === 'point' ? { id, at: [p.x, p.y] } : undefined;
+  });
+}
+
+const missingPoints = (sketch: Sketch, ids: readonly string[]) => ids.filter((id, i) => !placementPoints(sketch, ids)[i]).join(', ');
+
+/**
+ * Why a sketch is over-constrained, naming what is involved (CAD-108): the kinds of constraints, or
+ * the curves whose own rules take part (an arc's ends on its circle). Redundant constraints say the
+ * same as others; contradicting ones cannot all hold.
+ */
+function conflictMessage(sketch: Sketch, ids: readonly string[], redundant: boolean): string {
+  const constraints = sketch.constraints.filter((c) => ids.includes(c.id));
+  const curves = sketch.entities.filter((e) => ids.includes(e.id) && !constraints.some((c) => c.id === e.id)).map((e) => `the ${e.kind} ${e.id}`);
+  const involved = [...new Set([...constraints.map((c) => constraintLabels[c.kind] ?? c.kind), ...curves])].join(', ') || 'the sketch’s own rules';
+  return redundant
+    ? `This is already set by existing constraints (${involved}): it is redundant, not contradictory. Remove one of them first.`
+    : `This conflicts with existing constraints (${involved}). Remove one of them first.`;
+}
+
 const constraintLabels: Readonly<Record<string, string>> = {
   coincident: 'coincident',
   horizontal: 'horizontal',
@@ -243,9 +268,8 @@ export class Regeneration {
       solution = await this.engines.sketches.solve(sketch, values, drag, fonts);
     }
     if (solution.status === 'over-constrained') {
-      const kinds = sketch.constraints.filter((c) => solution.conflicting.includes(c.id)).map((c) => constraintLabels[c.kind]);
       const removable = await this.removable(sketch, values, solution.conflicting, fonts);
-      return unsolved(`This conflicts with existing constraints (${[...new Set(kinds)].join(', ')}). Remove one of them first.`, frame.value, removable);
+      return unsolved(conflictMessage(sketch, solution.conflicting, (solution.redundant?.length ?? 0) > 0), frame.value, removable);
     }
     if (solution.status === 'failed') return unsolved('The sketch cannot satisfy these constraints. Check the dimension values.', frame.value);
     if (collapses(solution.sketch)) return unsolved('This would shrink a line, circle or arc to nothing.', frame.value);
@@ -368,6 +392,12 @@ export class Regeneration {
         if (!v.ok) return v;
         const g = v.value;
         return ok({ kind: 'gear', module: num(g, 'module'), teeth: num(g, 'teeth'), width: num(g, 'width'), bore: num(g, 'bore'), pressureAngle: num(g, 'pressureAngle'), helixAngle: num(g, 'helixAngle') });
+      }
+      case 'ring-gear': {
+        const v = lengths({ module: part.module, teeth: part.teeth, width: part.width, outside: part.outside, pressureAngle: part.pressureAngle, helixAngle: part.helixAngle });
+        if (!v.ok) return v;
+        const g = v.value;
+        return ok({ kind: 'ring-gear', module: num(g, 'module'), teeth: num(g, 'teeth'), width: num(g, 'width'), outside: num(g, 'outside'), pressureAngle: num(g, 'pressureAngle'), helixAngle: num(g, 'helixAngle') });
       }
       case 'rack': {
         const v = lengths({ module: part.module, teeth: part.teeth, width: part.width, height: part.height, pressureAngle: part.pressureAngle });
@@ -642,11 +672,8 @@ export class Regeneration {
       case 'part': {
         const view = this.sketches.get(feature.sketch);
         if (!view || view.error) return fail({ code: 'missing-input', message: 'Its sketch is missing, later in the timeline or does not solve.' });
-        const points = feature.points.map((id) => {
-          const p = view.sketch.entities.find((e) => e.id === id);
-          return p?.kind === 'point' ? { id, at: [p.x, p.y] as Vec2 } : undefined;
-        });
-        if (points.some((p) => !p)) return fail({ code: 'missing-input', message: 'Some of its points no longer exist. Edit the part and pick its sketch again.' });
+        const points = placementPoints(view.sketch, feature.points);
+        if (points.some((p) => !p)) return fail({ code: 'missing-input', message: `Some of its points no longer exist (${missingPoints(view.sketch, feature.points)}). Edit the part and pick its sketch again.` });
         const angle = this.value(feature.angle, 'angle', 'Angle');
         if (!angle.ok) return angle;
         const solid = this.partSolid(feature.part, feature.operation);
@@ -656,11 +683,8 @@ export class Regeneration {
       case 'hole': {
         const view = this.sketches.get(feature.sketch);
         if (!view || view.error) return fail({ code: 'missing-input', message: 'Its sketch is missing, later in the timeline or does not solve.' });
-        const points = feature.points.map((id) => {
-          const p = view.sketch.entities.find((e) => e.id === id);
-          return p?.kind === 'point' ? { id, at: [p.x, p.y] as Vec2 } : undefined;
-        });
-        if (points.some((p) => !p)) return fail({ code: 'missing-input', message: 'Some of its points no longer exist. Edit the hole and pick its sketch again.' });
+        const points = placementPoints(view.sketch, feature.points);
+        if (points.some((p) => !p)) return fail({ code: 'missing-input', message: `Some of its points no longer exist (${missingPoints(view.sketch, feature.points)}). Edit the hole and pick its sketch again.` });
         const size = (expression: string, what: string) => this.value(expression, 'length', what);
         const diameter = size(feature.diameter, 'Diameter');
         if (!diameter.ok) return diameter;

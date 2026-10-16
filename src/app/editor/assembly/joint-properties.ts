@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
-import { type Joint, jointDofs, type JointLimit } from '@core/contracts';
+import { type Joint, jointDofs, type JointLimit, type JointOffset, type JointOrigin } from '@core/contracts';
 import { Icon } from '../../shared/icon';
 import { AssemblyStore } from './assembly-store';
 import { jointLabel } from './joint-types';
@@ -59,6 +59,25 @@ import { jointLabel } from './joint-types';
         <input type="checkbox" [checked]="joint.flip" (change)="store.run({ type: 'edit-joint', joint: { ...joint, flip: !joint.flip } })" />
         Turn the moving side over
       </label>
+      @for (side of sides; track side.key) {
+        <fieldset class="offset">
+          <legend>Offset on {{ instanceName(joint[side.key].instance) }} ({{ side.label }})</legend>
+          <div class="grid four">
+            @for (axis of offsetAxes; track axis.label) {
+              <label class="field">
+                {{ axis.label }}
+                <input
+                  type="number"
+                  step="any"
+                  [attr.aria-label]="axis.label + ' offset of ' + side.label"
+                  [value]="offsetValue(joint[side.key], axis.index)"
+                  (change)="setOffset(joint, side.key, axis.index, $event)"
+                />
+              </label>
+            }
+          </div>
+        </fieldset>
+      }
     }
   `,
   styleUrl: './assembly-panels.scss',
@@ -107,6 +126,33 @@ export class JointProperties {
       text === '' ? null : { min: current?.min ?? -span, max: current?.max ?? span, [side]: Number(text) };
     const limits = jointDofs[joint.type].map((_, i) => (i === index ? next : (joint.limits[i] ?? null)));
     void this.store.run({ type: 'edit-joint', joint: { ...joint, limits } });
+  }
+
+  protected readonly sides = [
+    { key: 'a', label: 'stays' },
+    { key: 'b', label: 'moves' },
+  ] as const;
+  /** Along the picked frame's X, Y and normal (mm), and the turn about the normal (°). */
+  protected readonly offsetAxes = [
+    { label: 'X', index: 0 },
+    { label: 'Y', index: 1 },
+    { label: 'Z', index: 2 },
+    { label: 'Turn', index: 3 },
+  ] as const;
+
+  protected offsetValue(origin: JointOrigin, index: 0 | 1 | 2 | 3): number {
+    const offset = origin.offset;
+    return this.round(index === 3 ? offset?.angle : offset?.translate[index]);
+  }
+
+  /** Moves one side's joint origin; all zero removes the offset. */
+  protected setOffset(joint: Joint, side: 'a' | 'b', index: 0 | 1 | 2 | 3, event: Event): void {
+    const value = Number((event.target as HTMLInputElement).value) || 0;
+    const current = joint[side].offset ?? { translate: [0, 0, 0], angle: 0 };
+    const offset: JointOffset = index === 3 ? { ...current, angle: value } : { ...current, translate: current.translate.map((v, i) => (i === index ? value : v)) as [number, number, number] };
+    const { offset: _old, ...rest } = joint[side];
+    const zero = offset.angle === 0 && offset.translate.every((v) => v === 0);
+    void this.store.run({ type: 'edit-joint', joint: { ...joint, [side]: zero ? rest : { ...rest, offset } } });
   }
 
   protected remove(joint: Joint): void {

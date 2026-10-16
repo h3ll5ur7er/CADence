@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { EventBus } from './index';
+import { EventBus, type MessageChannelLike, relayEvents } from './index';
 
 interface TestEvents {
   ping: { n: number };
@@ -50,5 +50,35 @@ describe('EventBus', () => {
     await bus.drained();
     expect(ping).toHaveBeenCalledWith({ n: 2 });
     expect(errors).toHaveLength(1);
+  });
+
+  it('relays events between the buses of tabs, renamed where asked, never echoing them back', async () => {
+    // Two tabs joined by a channel that delivers to the other side, as a BroadcastChannel does.
+    type Listener = (event: { readonly data: unknown }) => void;
+    const ends: Set<Listener>[] = [new Set(), new Set()];
+    const end = (i: 0 | 1): MessageChannelLike => ({
+      postMessage: (message) => ends[1 - i]?.forEach((listen) => listen({ data: structuredClone(message) })),
+      addEventListener: (_type, listener) => ends[i]?.add(listener),
+      removeEventListener: (_type, listener) => ends[i]?.delete(listener),
+    });
+    interface Events {
+      saved: { id: string };
+      changed: { id: string };
+      local: { id: string };
+    }
+    const [a, b] = [new EventBus<Events>(), new EventBus<Events>()];
+    const outgoing = { saved: 'changed', changed: 'changed' } as const;
+    relayEvents(a, end(0), outgoing);
+    relayEvents(b, end(1), outgoing);
+    const heard: string[] = [];
+    a.subscribe('changed', ({ id }) => void heard.push(`a:${id}`));
+    b.subscribe('changed', ({ id }) => void heard.push(`b:${id}`));
+    b.subscribe('saved', ({ id }) => void heard.push(`b saved:${id}`));
+    a.publish('saved', { id: '1' });
+    a.publish('local', { id: '2' });
+    await a.drained();
+    await b.drained();
+    await a.drained();
+    expect(heard).toEqual(['b:1']);
   });
 });

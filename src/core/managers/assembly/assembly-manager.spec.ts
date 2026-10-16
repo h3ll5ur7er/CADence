@@ -267,6 +267,72 @@ describe('AssemblyManager', () => {
     expect(session.state().components.get(asDocumentId('cube'))?.bodies[0]?.faces).toHaveLength(6);
   });
 
+  it('moves joint origins by offsets and tells where each joint is', async () => {
+    await arm([0]);
+    // 10 mm up the hole's axis, and turned a quarter: like the angle at 90°, lifted.
+    unwrap(await session.execute({ type: 'edit-joint', joint: hinge([0], { a: { instance: 'b1', ref: holeOf('base'), offset: { translate: [0, 0, 10], angle: 90 } } }) }));
+    expect(where('l1', [5, 5, 2.5])).toEqual([10, 10, 12.5]);
+    expect(where('l1', [35, 5, 2.5])).toEqual([10, 40, 12.5]);
+    const frame = session.state().jointFrames.get('hinge');
+    expect(frame?.origin.slice(0, 2).map((v) => Math.round(v * 1e6) / 1e6)).toEqual([10, 10]);
+  });
+
+  it('measures between instances and weighs the whole assembly', async () => {
+    await arm([90]);
+    unwrap(await session.execute({ type: 'edit-joint', joint: hinge([90], { a: { instance: 'b1', ref: holeOf('base'), offset: { translate: [0, 0, 10], angle: 0 } } }) }));
+    // The base's top (z = 5) and the lifted link's bottom (z = 10).
+    const gap = unwrap(await session.measure([
+      { instance: 'b1', kind: 'face', body: 'base', name: 'f:base:end' },
+      { instance: 'l1', kind: 'face', body: 'link', name: 'f:link:start' },
+    ]));
+    expect(gap.distance).toBeCloseTo(5);
+    expect(gap.angle).toBeCloseTo(0);
+    const weight = await session.properties();
+    const volume = 60 * 20 * 5 + 40 * 10 * 5 - 2 * Math.PI * 9 * 5;
+    expect(weight.volume).toBeCloseTo(volume, 0);
+    expect(weight.mass).toBeCloseTo((volume * 1.24) / 1000, 1);
+    expect(weight.parts.map((p) => p.name)).toEqual(['Base 1', 'Link 1']);
+    expect(weight.centerOfMass[2]).toBeGreaterThan(2.5);
+  });
+
+  it('repeats instances in rows, around axes and mirrored, following their originals', async () => {
+    unwrap(await insert('b1', base, identity(), true));
+    const row = { id: 'p1', name: '', kind: 'linear' as const, instances: ['b1'], direction: [0, 1, 0] as const, origin: [0, 0, 0] as const, count: 3, spacing: 30 };
+    unwrap(await session.execute({ type: 'set-pattern', pattern: row }));
+    expect(session.state().document.patterns?.[0]?.name).toBe('Linear pattern 1');
+    expect([...session.state().copies.keys()]).toEqual(['p1/b1/1', 'p1/b1/2']);
+    expect(where('p1/b1/2', [0, 0, 0])).toEqual([0, 60, 0]);
+    // Around the Z axis through (100, 0): a quarter turn takes the origin to (100, -100).
+    unwrap(await session.execute({ type: 'set-pattern', pattern: { ...row, id: 'p2', kind: 'circular', direction: [0, 0, 1], origin: [100, 0, 0], count: 2, spacing: 90 } }));
+    expect(where('p2/b1/1', [0, 0, 0])).toEqual([100, -100, 0]);
+    // Mirrored across the plane x = 100.
+    unwrap(await session.execute({ type: 'set-pattern', pattern: { ...row, id: 'p3', kind: 'mirror', direction: [1, 0, 0], origin: [100, 0, 0] } }));
+    expect(where('p3/b1/1', [10, 5, 0])).toEqual([190, 5, 0]);
+    // Copies follow their original, and are exported with it.
+    unwrap(await session.execute({ type: 'ground-instance', instanceId: 'b1', grounded: false }));
+    unwrap(await session.execute({ type: 'move-instance', instanceId: 'b1', transform: translation([0, 0, 7]) }));
+    expect(where('p1/b1/1', [0, 0, 0])).toEqual([0, 30, 7]);
+    expect((await session.properties()).parts).toHaveLength(5);
+    unwrap(await session.exportAssembly('step'));
+    expect(new TextDecoder().decode(files.delivered.at(-1)?.bytes)).toContain("'Base 1 (copy 2)'");
+    expect(await session.execute({ type: 'set-pattern', pattern: { ...row, count: 1 } })).toMatchObject({ ok: false });
+    unwrap(await session.execute({ type: 'remove-instance', instanceId: 'b1' }));
+    expect(session.state().document.patterns).toEqual([]);
+  });
+
+  it('reads a component again when another tab or window changed it', async () => {
+    unwrap(await insert('b1', base, identity(), true));
+    const later = '2026-10-14T12:00:00.000Z';
+    await documents.store({ ...component('base', 'Base'), modifiedAt: later });
+    await assets.publishResult({ documentId: base, projectId: project, stamp: later, bytes: await snapshotOfPlate('base', 90, 20, [10, 10]) });
+    events.publish('documentChanged', { documentId: base });
+    const width = () => {
+      const xs = Array.from(session.state().components.get(base)?.bodies[0]?.positions ?? []).filter((_, i) => i % 3 === 0);
+      return Math.max(...xs) - Math.min(...xs);
+    };
+    await until(() => Math.abs(width() - 90) < 1e-6);
+  });
+
   it('refuses joints that cannot hold, with the reason', async () => {
     unwrap(await insert('b1', base, identity(), true));
     unwrap(await insert('l1', link));

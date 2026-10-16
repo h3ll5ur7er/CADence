@@ -38,3 +38,36 @@ export class EventBus<Events extends object> {
   }
 }
 export { expose, type Port, remote, type Remote, transferables } from './rpc';
+
+/** What relays messages between the app's tabs and windows: a `BroadcastChannel`. */
+export interface MessageChannelLike {
+  postMessage(message: unknown): void;
+  addEventListener(type: 'message', listener: (event: { readonly data: unknown }) => void): void;
+  removeEventListener(type: 'message', listener: (event: { readonly data: unknown }) => void): void;
+}
+
+/**
+ * Relays events between the buses of the app's tabs and windows: what is published here goes out
+ * (by the name `outgoing` gives it, or not at all), and what comes in is published here; events that
+ * came in are never sent back out.
+ */
+export function relayEvents<Events extends object>(bus: EventBus<Events>, channel: MessageChannelLike, outgoing: Partial<Record<keyof Events, keyof Events>>): () => void {
+  const received = new WeakSet<object>();
+  const names = new Set(Object.values(outgoing) as (keyof Events)[]);
+  const stops = (Object.entries(outgoing) as [keyof Events, keyof Events][]).map(([type, as]) =>
+    bus.subscribe(type, (payload) => {
+      if (!received.has(payload as object)) channel.postMessage({ type: as, payload });
+    }),
+  );
+  const listen = ({ data }: { readonly data: unknown }) => {
+    const { type, payload } = (data ?? {}) as { type?: keyof Events; payload?: object };
+    if (type === undefined || !names.has(type) || !payload || typeof payload !== 'object') return;
+    received.add(payload);
+    bus.publish(type, payload as Events[keyof Events]);
+  };
+  channel.addEventListener('message', listen);
+  return () => {
+    stops.forEach((stop) => stop());
+    channel.removeEventListener('message', listen);
+  };
+}

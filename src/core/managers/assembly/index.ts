@@ -5,6 +5,8 @@ export type { AssemblyManagerDependencies } from './default-assembly-manager';
 export type {
   AssemblyCommand,
   AssemblyFormat,
+  AssemblyProperties,
+  PlacedRef,
   AssemblyManager,
   AssemblySession,
   AssemblyState,

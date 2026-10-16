@@ -40,6 +40,26 @@ export class OcctAnalysisEngine implements AnalysisEngine {
     return ok(measureElements(elements));
   }
 
+  async measurePlaced(parts: readonly PlacedPart[], refs: readonly (TopologyRef & { readonly instance: string })[]): Promise<Result<Measurement>> {
+    await this.shapes.ready();
+    if (refs.length === 0) return fail({ code: 'nothing-picked', message: 'Pick faces, edges or vertices to measure.' });
+    const elements: (Face | Edge | Vertex)[] = [];
+    try {
+      for (const ref of refs) {
+        const part = parts.find((p) => p.instance === ref.instance);
+        const body = part?.bodies.find((b) => b.id === ref.body);
+        const named = body && this.shapes.get(body.key);
+        const element = named && find(named, ref);
+        if (!part || !element) return fail({ code: 'missing-reference', message: `The ${ref.kind} ${ref.name} no longer exists.` });
+        // Where the assembly puts it (the element itself belongs to the stored shape).
+        elements.push(place(element as unknown as Shape3D, part.transform) as unknown as Face | Edge | Vertex);
+      }
+      return ok(measureElements(elements));
+    } finally {
+      for (const element of elements) element.delete();
+    }
+  }
+
   async properties(bodies: readonly BodyState[], density: number): Promise<BodyProperties[]> {
     await this.shapes.ready();
     return bodies.flatMap((body) => {

@@ -284,3 +284,15 @@ Imported SVG `<text>` and DXF `TEXT`/`MTEXT` become editable sketch texts in thi
 
 *Why:* the user asked for structure and repair tools of a mature CAD timeline, spreadsheet editing of variants and a Ctrl+K palette; each reuses an existing mechanism (rollback, regeneration, commands, shortcut scopes).
 *Trade-off:* folders do not nest; a moved first or last item can shrink a folder; candidates are by distance only (not by shape or size); the palette searches names, not descriptions.
+
+## ADR-37
+
+**Assemblies II: patterns are copies after the kinematic solution, the move handle edits the document's own values, and tabs share events over a BroadcastChannel.**
+- *Patterns* are expanded after the joints are solved: each copy is its original's pose times the pattern's transform (a translation, a turn about an axis, or a reflection). So copies follow everything that moves their originals, and the kinematic model stays as small as the user built it. Copies have ids of their own (`<pattern>/<instance>/<k>`) for display, picking, measuring, mass, interference and export, but joints may not use them. Mirrored copies are reflections (determinant −1); OCCT and three.js handle them.
+- *Joint offsets* are part of the joint origin and applied to the picked frame (along its axes, then a turn about its normal), so they move with the geometry they were picked on.
+- *The move handle* (three.js `TransformControls`) never moves anything itself: a free instance's drag becomes `move-instance`, a jointed one's becomes the joint's values (the handle sits on the joint frame on A and shows only its free axes; the drag is read in that frame), previewed like a slider and saved once on release.
+- *Mass* comes from the Analysis Engine per component body (`properties` with the component's material density), with centres moved to where the instances are.
+- *Live updates:* the composition root relays domain events between tabs and windows over a `BroadcastChannel` (`cadence-events`). A saved document arrives as `documentChanged`, not `documentSaved`, so only the tab that saved it records a version; results are read from the shared storage, and a stale one is regenerated where it is needed.
+
+*Why:* the user asked for direct manipulation, offsets, measuring and patterns as in other CAD assemblies, and for assemblies that follow edits made elsewhere.
+*Trade-off:* the handle moves a jointed part only along the free directions of the joint that places it as the moving side, one kind of freedom at a time (slides before turns); copies cannot carry joints; another tab's edit shows once its result is published or regenerated (a second or two).

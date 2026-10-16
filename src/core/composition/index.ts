@@ -31,7 +31,7 @@ import { createProjectManager, type ProjectManager } from '@core/managers/projec
 import { systemClock } from '@core/utilities/clock';
 import { type FileSystem, IndexedDbFileSystem, MemoryFileSystem } from '@core/utilities/file-system';
 import { newId } from '@core/utilities/identity';
-import { EventBus, type Port, remote } from '@core/utilities/messaging';
+import { EventBus, type MessageChannelLike, type Port, relayEvents, remote } from '@core/utilities/messaging';
 
 /** Everything a client may use: the managers, plus where projects are kept. */
 export interface Core {
@@ -58,12 +58,28 @@ export interface Host {
   readonly fontUrls?: Readonly<Record<TextWeight, string>>;
   /** Port to the geometry worker; without it the geometry kernel runs in this thread (Node, tests). */
   readonly geometry?: Port;
+  /** Where events are shared with the app's other tabs and windows (a `BroadcastChannel`). */
+  readonly channel?: MessageChannelLike;
 }
+
+/**
+ * Events other tabs and windows hear about (CAD-82), by the name they hear them by: a saved document
+ * is `documentChanged` there, so only the tab that saved it records a version.
+ */
+const relayed: Partial<Record<keyof DomainEvents, keyof DomainEvents>> = {
+  documentSaved: 'documentChanged',
+  documentRenamed: 'documentRenamed',
+  documentRestored: 'documentRestored',
+  documentDeleted: 'documentDeleted',
+  projectParametersChanged: 'projectParametersChanged',
+  componentRegenerated: 'componentRegenerated',
+};
 
 export interface HostOptions {
   readonly solverWasmUrl?: string;
   readonly fontUrls?: Readonly<Record<TextWeight, string>>;
   readonly geometry?: Port;
+  readonly channel?: MessageChannelLike;
 }
 
 interface Geometry {
@@ -102,6 +118,7 @@ function deferred<K extends keyof Geometry>(engines: Promise<Geometry>, key: K):
 
 export function createCore(host: Host): Core {
   const events = new EventBus<DomainEvents>();
+  if (host.channel) relayEvents(events, host.channel, relayed);
   const { projects, documents, assets, externalFiles } = host;
   const geometry: Geometry = host.geometry
     ? {

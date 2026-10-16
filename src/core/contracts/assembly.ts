@@ -63,10 +63,52 @@ export const jointDofs: Readonly<Record<JointType, readonly JointDof[]>> = {
   ],
 };
 
-/** Where a joint attaches: a face or edge of the instance's component, or the component's origin. */
+/** Moves a joint origin away from what was picked: along the frame's axes (mm), then turned about its normal (degrees). */
+export interface JointOffset {
+  readonly translate: Vec3;
+  readonly angle: number;
+}
+
+/** Where a joint attaches: a face or edge of the instance's component, or the component's origin, maybe moved by an offset. */
 export interface JointOrigin {
   readonly instance: string;
   readonly ref?: TopologyRef;
+  readonly offset?: JointOffset;
+}
+
+/** The frame moved by the offset: along its own axes, then turned about its normal. */
+export function offsetFrame(frame: PlaneFrame, offset: JointOffset | undefined): PlaneFrame {
+  if (!offset) return frame;
+  const { origin, u, v } = frame;
+  const n: Vec3 = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+  const [x, y, z] = offset.translate;
+  const at = (i: 0 | 1 | 2) => origin[i] + u[i] * x + v[i] * y + n[i] * z;
+  const a = (offset.angle * Math.PI) / 180;
+  const [c, s] = [Math.cos(a), Math.sin(a)];
+  return {
+    origin: [at(0), at(1), at(2)],
+    u: [u[0] * c + v[0] * s, u[1] * c + v[1] * s, u[2] * c + v[2] * s],
+    v: [v[0] * c - u[0] * s, v[1] * c - u[1] * s, v[2] * c - u[2] * s],
+  };
+}
+
+/**
+ * Copies of instances that follow them: in a row, around an axis, or mirrored across a plane. Copies
+ * show the same component and move with their originals; they cannot carry joints.
+ */
+export interface InstancePattern {
+  readonly id: string;
+  readonly name: string;
+  readonly kind: 'linear' | 'circular' | 'mirror';
+  readonly instances: readonly string[];
+  /** Linear: the direction of the row; circular: the axis; mirror: the plane's normal. */
+  readonly direction: Vec3;
+  /** Circular: a point on the axis; mirror: a point on the plane. */
+  readonly origin: Vec3;
+  /** Linear and circular: how many, the originals included. */
+  readonly count: number;
+  /** Linear: millimetres between copies; circular: degrees between copies. */
+  readonly spacing: number;
 }
 
 export interface JointLimit {

@@ -1,5 +1,6 @@
 import type { Appearance, BodyMesh, Matrix4 as Placement, PlaneFrame, ThreadMarker, Vec3 } from '@core/contracts';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import {
   Box3,
   ClippingGroup,
@@ -14,7 +15,7 @@ import {
   Mesh,
   MeshBasicMaterial,
   MOUSE,
-  type Object3D,
+  Object3D,
   OrthographicCamera,
   PerspectiveCamera,
   Plane,
@@ -48,6 +49,13 @@ export interface PartDisplay {
   /** The instance's own appearance, over its bodies'. */
   readonly appearance?: Appearance;
 }
+/** Arrows (or rings) to drag a part by: where they sit and point, and which of their axes move. */
+export interface MoveHandle {
+  readonly at: Placement;
+  readonly mode: 'translate' | 'rotate';
+  readonly axes: readonly ('X' | 'Y' | 'Z')[];
+}
+
 export type StandardView = 'front' | 'back' | 'top' | 'bottom' | 'left' | 'right' | 'home';
 export type RendererBackend = 'WebGPU' | 'WebGL 2';
 export type Projection = 'perspective' | 'orthographic';
@@ -88,6 +96,8 @@ export class ViewportScene {
   onPlaneMatrix: ((matrix: Affine | undefined) => void) | undefined;
   /** Called when something pickable is clicked. */
   onPick: ((pick: Pick) => void) | undefined;
+  /** Called while the move handle is dragged (where it is now), and once more when it is let go. */
+  onHandleMove: ((at: Placement, done: boolean) => void) | undefined;
 
   private readonly scene = new Scene();
   private readonly perspective = new PerspectiveCamera(fov, 1, 0.5, 20_000);
@@ -121,6 +131,8 @@ export class ViewportScene {
   private transition: { from: Quaternion; to: Quaternion; start: number; distance: number } | undefined;
   private initialized = false;
   private pressed: { x: number; y: number } | undefined;
+  private handle: { readonly controls: TransformControls; readonly proxy: Object3D } | undefined;
+  private handleDragging = false;
 
   /** `eventTarget` wraps the canvas and its overlays, so overlay events not handled there reach the navigation. */
   constructor(
@@ -342,6 +354,7 @@ export class ViewportScene {
     this.placeCamera(direction, orthographic ? from.position.distanceTo(this.controls.target) : height / (2 * Math.tan((fov * Math.PI) / 360)));
     this.controls.object = to;
     this.controls.update();
+    if (this.handle) this.handle.controls.camera = to;
     this.requestRender();
   }
 
@@ -389,9 +402,56 @@ export class ViewportScene {
     this.eventTarget.removeEventListener('pointermove', this.hover);
     this.eventTarget.removeEventListener('pointerdown', this.press);
     this.eventTarget.removeEventListener('pointerup', this.release);
+    this.setHandle(undefined);
     this.controls.dispose();
     disposeTree(this.scene);
     this.renderer.dispose();
+  }
+
+  // ---- move handle --------------------------------------------------------------------------
+
+  /** Shows the move handle (or removes it). It keeps where it is while being dragged. */
+  setHandle(handle: MoveHandle | undefined): void {
+    if (!handle) {
+      if (this.handle) {
+        this.handle.controls.detach();
+        this.scene.remove(this.handle.controls.getHelper(), this.handle.proxy);
+        this.handle.controls.dispose();
+        this.handle = undefined;
+        this.handleDragging = false;
+        this.controls.enabled = true;
+      }
+      this.requestRender();
+      return;
+    }
+    if (!this.handle) {
+      const proxy = new Object3D();
+      const controls = new TransformControls(this.camera, this.eventTarget);
+      controls.space = 'local';
+      controls.size = 0.8;
+      controls.attach(proxy);
+      const placement = (): Placement => (proxy.updateMatrixWorld(), proxy.matrixWorld.toArray());
+      controls.addEventListener('dragging-changed', (event) => {
+        const dragging = (event as unknown as { value: boolean }).value;
+        this.handleDragging = dragging;
+        this.controls.enabled = !dragging;
+        if (!dragging) this.onHandleMove?.(placement(), true);
+      });
+      controls.addEventListener('objectChange', () => this.onHandleMove?.(placement(), false));
+      controls.addEventListener('change', () => this.requestRender());
+      this.scene.add(proxy, controls.getHelper());
+      this.handle = { controls, proxy };
+    }
+    if (this.handleDragging) return;
+    const { controls, proxy } = this.handle;
+    proxy.matrix.fromArray([...handle.at]);
+    proxy.matrix.decompose(proxy.position, proxy.quaternion, proxy.scale);
+    proxy.updateMatrixWorld(true);
+    controls.setMode(handle.mode);
+    controls.showX = handle.axes.includes('X');
+    controls.showY = handle.axes.includes('Y');
+    controls.showZ = handle.axes.includes('Z');
+    this.requestRender();
   }
 
   // ---- section ------------------------------------------------------------------------------
@@ -432,6 +492,8 @@ export class ViewportScene {
   private readonly release = (event: PointerEvent): void => {
     const pressed = this.pressed;
     this.pressed = undefined;
+    // A press on the move handle drags it; it picks nothing.
+    if (this.handleDragging) return;
     if (!pressed || Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) > clickTolerance) return;
     const pick = this.pickUnder(event);
     if (pick) this.onPick?.(pick);

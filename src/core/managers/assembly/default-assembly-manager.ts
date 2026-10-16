@@ -13,22 +13,29 @@ import {
   type Interference,
   isModelFormat,
   type JointOrigin,
+  type Material,
+  materials,
   type Matrix4,
+  type Measurement,
   type MotionFrame,
+  offsetFrame,
   ok,
   type PlaneFrame,
   type Result,
   resultStamp,
   sourceKey,
+  type Vec3,
 } from '@core/contracts';
 import type { AnalysisEngine } from '@core/engines/analysis';
 import type { InterchangeEngine } from '@core/engines/interchange';
 import type { KinematicJoint, KinematicModel, KinematicsEngine } from '@core/engines/kinematics';
 import type { ModelingEngine } from '@core/engines/modeling';
 import type { Clock } from '@core/utilities/clock';
+import { compose, fromFrame, transformPoint } from '@core/utilities/math';
 import type { EventBus } from '@core/utilities/messaging';
-import type { AssemblyCommand, AssemblyFormat, AssemblyManager, AssemblySession, AssemblyState, ComponentView } from './assembly-manager';
+import type { AssemblyCommand, AssemblyFormat, AssemblyManager, AssemblyProperties, AssemblySession, AssemblyState, ComponentView, PlacedRef } from './assembly-manager';
 import { applyCommand } from './commands';
+import { copyId, patternTransforms } from './patterns';
 import { viewerHtml } from '@core/utilities/viewer';
 
 export interface AssemblyManagerDependencies {
@@ -50,6 +57,8 @@ interface LoadedComponent {
   readonly bodies: readonly BodyState[];
   /** The component's `modifiedAt` the bodies were made from. */
   readonly stamp: string;
+  /** What its parts weigh by. */
+  readonly material: Material;
 }
 
 interface Derived {
@@ -57,7 +66,15 @@ interface Derived {
   readonly placed: ReadonlySet<string>;
   readonly values: ReadonlyMap<string, readonly number[]>;
   readonly errors: ReadonlyMap<string, string>;
+  readonly copies: ReadonlyMap<string, { readonly instance: string; readonly pattern: string }>;
+  readonly jointFrames: ReadonlyMap<string, PlaneFrame>;
 }
+
+const defaultMaterial = materials[0] as Material;
+const frameMatrix = (f: PlaneFrame): Matrix4 => {
+  const [u, v] = [f.u, f.v];
+  return fromFrame(f.origin, u, v, [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]);
+};
 
 const historyLimit = 200;
 const maxRequests = 3;
@@ -65,7 +82,7 @@ const componentOrigin: PlaneFrame = { origin: [0, 0, 0], u: [1, 0, 0], v: [0, 1,
 const solidTypes: Readonly<Record<AssemblyFormat, string>> = { step: 'model/step', stl: 'model/stl', obj: 'model/obj', '3mf': 'model/3mf' };
 
 class Session implements AssemblySession {
-  private derived: Derived = { poses: new Map(), placed: new Set(), values: new Map(), errors: new Map() };
+  private derived: Derived = { poses: new Map(), placed: new Set(), values: new Map(), errors: new Map(), copies: new Map(), jointFrames: new Map() };
   /** By source: a component, or a configuration of it (`sourceKey`). */
   private readonly components = new Map<string, LoadedComponent>();
   private readonly frames = new Map<string, Result<PlaneFrame>>();
@@ -96,6 +113,8 @@ class Session implements AssemblySession {
         return this.components.has(source) ? this.serialized(() => this.refresh(source, done ? 'regenerated' : 'failed')) : undefined;
       }),
       events.subscribe('documentRenamed', ({ documentId }) => refreshAll(sourcesOf(documentId))),
+      // A component edited elsewhere (another tab or window: CAD-82): its result is read again, or asked for.
+      events.subscribe('documentChanged', ({ documentId }) => refreshAll(sourcesOf(documentId))),
       events.subscribe('documentRestored', ({ documentId }) => refreshAll(sourcesOf(documentId))),
       events.subscribe('documentDeleted', ({ documentId }) => refreshAll(sourcesOf(documentId))),
       // New project parameters make the project's component results stale.
@@ -115,6 +134,8 @@ class Session implements AssemblySession {
       poses: this.derived.poses,
       placed: this.derived.placed,
       jointErrors: this.derived.errors,
+      copies: this.derived.copies,
+      jointFrames: this.derived.jointFrames,
       canUndo: this.undoStack.length > 0,
       canRedo: this.redoStack.length > 0,
     };
@@ -158,10 +179,36 @@ class Session implements AssemblySession {
     return ok(frames);
   }
 
+  async measure(refs: readonly PlacedRef[]): Promise<Result<Measurement>> {
+    return this.deps.analysis.measurePlaced(this.placedParts(), refs);
+  }
+
+  async properties(): Promise<AssemblyProperties> {
+    let [mass, volume] = [0, 0];
+    const moment = [0, 0, 0];
+    const parts: AssemblyProperties['parts'][number][] = [];
+    for (const { instance, component, transform } of this.readyInstances()) {
+      if (instance.appearance?.hidden) continue;
+      const bodies = await this.deps.analysis.properties(component.bodies, component.material.density);
+      const partMass = bodies.reduce((sum, b) => sum + b.mass, 0);
+      for (const body of bodies) {
+        const center = transformPoint(transform, body.centerOfMass);
+        center.forEach((c, i) => (moment[i] = (moment[i] as number) + c * body.mass));
+        volume += body.volume;
+      }
+      mass += partMass;
+      parts.push({ instance: instance.id, name: instance.name, material: component.material.name, mass: partMass });
+    }
+    const centerOfMass: Vec3 = mass > 0 ? [(moment[0] as number) / mass, (moment[1] as number) / mass, (moment[2] as number) / mass] : [0, 0, 0];
+    return { mass, volume, centerOfMass, parts };
+  }
+
   interference(): Promise<Interference[]> {
-    return this.deps.analysis.interference(
-      this.readyInstances().map(({ instance, component, transform }) => ({ instance: instance.id, bodies: component.bodies, transform })),
-    );
+    return this.deps.analysis.interference(this.placedParts());
+  }
+
+  private placedParts() {
+    return this.readyInstances().map(({ instance, component, transform }) => ({ instance: instance.id, bodies: component.bodies, transform }));
   }
 
   async exportAssembly(format: AssemblyFormat): Promise<Result<void>> {
@@ -303,31 +350,32 @@ class Session implements AssemblySession {
       return;
     }
     if (document?.kind !== 'component' || reason === 'failed') {
-      this.components.set(source, { view: view('missing', []), bodies: [], stamp: '' });
+      this.components.set(source, { view: view('missing', []), bodies: [], stamp: '', material: defaultMaterial });
       return;
     }
+    const material = document.material ?? defaultMaterial;
     const result = await this.deps.assets.latestResult(id, configuration);
     const stamp = resultStamp(document.modifiedAt, (await this.deps.projects.find(document.projectId))?.parameters);
     if (result?.stamp !== stamp) {
       const requests = this.requests.get(source) ?? 0;
       if (reason === 'regenerated' && requests >= maxRequests) {
-        this.components.set(source, { view: view('missing', []), bodies: [], stamp: '' });
+        this.components.set(source, { view: view('missing', []), bodies: [], stamp: '', material });
         return;
       }
       this.requests.set(source, requests + 1);
-      this.components.set(source, { view: view('loading', previous?.view.bodies ?? []), bodies: previous?.bodies ?? [], stamp: previous?.stamp ?? '' });
+      this.components.set(source, { view: view('loading', previous?.view.bodies ?? []), bodies: previous?.bodies ?? [], stamp: previous?.stamp ?? '', material });
       this.deps.events.publish('regenerateComponent', { documentId: id, ...(configuration ? { configuration } : {}) });
       return;
     }
     this.requests.delete(source);
     const appearances = document.appearances ?? {};
     if (previous?.stamp === result.stamp && previous.view.status === 'ready') {
-      this.components.set(source, { ...previous, view: { ...view('ready', previous.view.bodies), appearances } });
+      this.components.set(source, { ...previous, view: { ...view('ready', previous.view.bodies), appearances }, material });
       return;
     }
     const bodies = await this.deps.modeling.restore(result.bytes, `result:${source}:${result.stamp}`);
     const meshes = bodies.length ? await this.deps.modeling.tessellate(bodies) : [];
-    this.components.set(source, { view: { ...view('ready', meshes), appearances }, bodies, stamp: result.stamp });
+    this.components.set(source, { view: { ...view('ready', meshes), appearances }, bodies, stamp: result.stamp, material });
   }
 
   /**
@@ -337,7 +385,7 @@ class Session implements AssemblySession {
   private async loadImported(document: Extract<CadDocument, { kind: 'imported' }>): Promise<void> {
     const { id, name, assetId, format } = document;
     const missing = () => {
-      this.components.set(id, { view: { id, name, status: 'missing', bodies: [] }, bodies: [], stamp: '' });
+      this.components.set(id, { view: { id, name, status: 'missing', bodies: [] }, bodies: [], stamp: '', material: defaultMaterial });
     };
     if (this.components.get(id)?.stamp === assetId) return;
     const original = isModelFormat(format) ? await this.deps.assets.fetch(assetId) : undefined;
@@ -347,7 +395,7 @@ class Session implements AssemblySession {
     const outcome = await this.deps.modeling.apply({ type: 'insert', feature: 'import', key: `imported:${assetId}`, bodies: [], sources: sources.value });
     if (outcome.error) return missing();
     const meshes = await this.deps.modeling.tessellate(outcome.bodies);
-    this.components.set(id, { view: { id, name, status: 'ready', bodies: meshes }, bodies: outcome.bodies, stamp: assetId });
+    this.components.set(id, { view: { id, name, status: 'ready', bodies: meshes }, bodies: outcome.bodies, stamp: assetId, material: defaultMaterial });
   }
 
   /** The kinematic model: joints whose frames resolve, and the reasons of those that do not. */
@@ -370,27 +418,53 @@ class Session implements AssemblySession {
     const { model, errors } = await this.model(document);
     const solution = this.deps.kinematics.solve(model, driven);
     if (solution.error) errors.set(solution.error.joint, solution.error.message);
-    return { poses: solution.poses, placed: solution.placed, values: solution.values, errors };
+    // Each joint's frame on A, where A is.
+    const jointFrames = new Map<string, PlaneFrame>();
+    for (const joint of model.joints) {
+      const pose = solution.poses.get(joint.a.instance);
+      if (!pose) continue;
+      const m = compose(pose, frameMatrix(joint.a.frame));
+      jointFrames.set(joint.id, { origin: [m[12] as number, m[13] as number, m[14] as number], u: [m[0] as number, m[1] as number, m[2] as number], v: [m[4] as number, m[5] as number, m[6] as number] });
+    }
+    // Copies follow their originals.
+    const poses = new Map(solution.poses);
+    const copies = new Map<string, { instance: string; pattern: string }>();
+    for (const pattern of document.patterns ?? []) {
+      const transforms = patternTransforms(pattern);
+      for (const instance of pattern.instances) {
+        const pose = solution.poses.get(instance);
+        if (!pose) continue;
+        transforms.forEach((t, k) => {
+          const id = copyId(pattern.id, instance, k + 1);
+          poses.set(id, compose(t, pose));
+          copies.set(id, { instance, pattern: pattern.id });
+        });
+      }
+    }
+    return { poses, placed: solution.placed, values: solution.values, errors, copies, jointFrames };
   }
 
   /** A joint origin's frame in its component's coordinates, cached per component version. */
   private async frame(document: AssemblyDocument, origin: JointOrigin): Promise<Result<PlaneFrame>> {
-    if (!origin.ref) return ok(componentOrigin);
+    if (!origin.ref) return ok(offsetFrame(componentOrigin, origin.offset));
     const instance = document.instances.find((i) => i.id === origin.instance);
     const component = instance && this.components.get(sourceKey(instance.component, instance.configuration));
     if (!component || component.view.status !== 'ready') {
       return fail({ code: 'not-ready', message: `${component?.view.name ?? 'The component'} is ${component?.view.status === 'missing' ? 'missing' : 'still loading'}.` });
     }
     const key = `${component.stamp}|${JSON.stringify(origin.ref)}`;
-    const cached = this.frames.get(key);
-    if (cached) return cached;
-    const frame = await this.deps.modeling.frameOf(component.bodies, origin.ref);
-    this.frames.set(key, frame);
-    return frame;
+    const picked = this.frames.get(key) ?? (await this.deps.modeling.frameOf(component.bodies, origin.ref));
+    this.frames.set(key, picked);
+    return picked.ok ? ok(offsetFrame(picked.value, origin.offset)) : picked;
   }
 
+  /** Instances and the copies of patterns whose components are ready, where they are. */
   private readyInstances() {
-    return this.document.instances.flatMap((instance) => {
+    const copies = [...this.derived.copies].flatMap(([id, copy]) => {
+      const original = this.document.instances.find((i) => i.id === copy.instance);
+      return original ? [{ ...original, id, name: `${original.name} (copy ${id.split('/').at(-1)})` }] : [];
+    });
+    return [...this.document.instances, ...copies].flatMap((instance) => {
       const component = this.components.get(sourceKey(instance.component, instance.configuration));
       const transform = this.derived.poses.get(instance.id);
       return component?.view.status === 'ready' && transform ? [{ instance, component, transform }] : [];

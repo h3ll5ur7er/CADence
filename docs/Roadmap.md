@@ -24,7 +24,7 @@ The work is planned in phases. Each phase ends with a running demo and visible e
 | 17. Sketcher III ✅ | Tracing pictures and turning them into outlines; sketch diagnostics (open degrees of freedom, conflicts, suggestions); equation curves; more fonts and text along curves | [[CAD-66]] [[CAD-67]] [[CAD-68]] [[CAD-69]] [[CAD-70]] |
 | 18. Part modeling III ✅ | Standard parts library, gear generator, print-friendly generators, clearances for prints | [[CAD-71]] [[CAD-72]] [[CAD-73]] [[CAD-74]] |
 | 19. Workflow ✅ | Timeline folders and notes, repairing broken references, configurations as CSV, command palette | [[CAD-75]] [[CAD-76]] [[CAD-77]] [[CAD-78]] |
-| 20. Assemblies II | Dragging parts and joint offsets, measuring and mass of assemblies, instance patterns, live updates | [[CAD-79]] [[CAD-80]] [[CAD-81]] [[CAD-82]] |
+| 20. Assemblies II ✅ | Dragging parts and joint offsets, measuring and mass of assemblies, instance patterns, live updates | [[CAD-79]] [[CAD-80]] [[CAD-81]] [[CAD-82]] |
 | 21. Motion and assembly documents | Motion links, smoother motion with collisions, exploded views and instructions, bill of materials | [[CAD-83]] [[CAD-84]] [[CAD-85]] [[CAD-86]] |
 | 22. Technical drawings | Drawing documents with views, dimensions and notes, callouts and parts lists; PDF and DXF | [[CAD-87]] [[CAD-88]] [[CAD-89]] |
 | 23. Visuals | Materials and lighting, picture and video export, surface analysis, pictures for agents | [[CAD-90]] [[CAD-91]] [[CAD-92]] |

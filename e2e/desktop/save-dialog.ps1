@@ -24,8 +24,10 @@ while (-not $name -and (Get-Date) -lt $deadline) {
     $candidates = @($window.FindAll($scope::Descendants, $isDialog))
     if ($window.Current.ClassName -eq '#32770') { $candidates = @($window) + $candidates }
     foreach ($candidate in $candidates) {
+      # Only a dialog on screen: the process keeps hidden ones too.
+      if ($candidate.Current.IsOffscreen) { continue }
       $field = $candidate.FindFirst($scope::Descendants, (Control '1001' 'Edit'))
-      if ($field) { $dialog = $candidate; $name = $field; break }
+      if ($field -and -not $field.Current.IsOffscreen) { $dialog = $candidate; $name = $field; break }
     }
     if ($name) { break }
   }
@@ -52,5 +54,6 @@ while ((Get-Date) -lt $closed) {
   if ($dialog.Current.IsOffscreen) { exit 0 }
   Start-Sleep -Milliseconds 250
 }
-$texts = @($A::RootElement.FindAll($scope::Children, $ofProcess) | ForEach-Object { $_.FindAll($scope::Descendants, [System.Windows.Automation.Condition]::TrueCondition) } | ForEach-Object { $_.Current.Name } | Where-Object { $_ } | Select-Object -First 30)
-throw "The save dialog stayed open; it shows: $($texts -join ' | '); the file name field says: $($name.Current.Name)" 
+$texts = @($dialog.FindAll($scope::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name } | Where-Object { $_ } | Select-Object -First 40)
+$value = try { $name.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value } catch { '?' }
+throw "The save dialog stayed open; it shows: $($texts -join ' | '); the file name field holds: $value" 

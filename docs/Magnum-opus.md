@@ -1,0 +1,141 @@
+# Magnum opus
+
+A nine-cylinder radial aircraft engine, modelled entirely by an AI agent through the MCP server ([[User guide/Automation#AI agents (MCP)]]) to find the limits of CADence: [[CAD-96]]. It lives in the project **Magnum Opus R-9 radial engine** in the desktop app's projects folder. The rule of the exercise: where CADence lacks a feature, the gap is filed as a task and the work stops there; no workarounds.
+
+[TOC]
+
+## Status
+
+All parts are modelled except the internal ring gear of the propeller reduction, which needs [[CAD-98]]. The assembly (joints, links, patterns, motion study, exploded view) is not started: the MCP server cannot edit assemblies yet ([[CAD-97]]). The plan for it is below, so it can be built as soon as the tools exist.
+
+## Why a radial engine
+
+It is mechanically rich and hard to simulate:
+
+- **Master and link rods.** One master rod rides on the single crankpin; eight link rods hang on knuckle pins around its big end. With every piston sliding in its own cylinder, the mechanism has **nine closed slider-crank loops** sharing one master rod: a hard case for the assembly solver ([[User guide/Assemblies#Joints]]).
+- **Two gear trains.** The cam ring turns at 1/10 of crank speed through a lay gear, and the propeller at 2/7 through a planetary reduction: motion links with exact ratios.
+- **Repetition.** Nine of everything: instance patterns, circular feature patterns, and a part count (about 130 placed parts with the copies) that stresses regeneration, meshes and pictures.
+- **Impressive both ways.** Animated, the pistons pump in a star; exploded, cylinders, heads and pistons fly out radially and the nose gear train comes apart along the axis.
+
+## Main dimensions
+
+Project parameters (used by the components):
+
+| Parameter | Value | Meaning |
+| --- | --- | --- |
+| `bore`, `stroke`, `throw` | 50, 50, 25 mm | Cylinder bore, piston stroke, crank radius |
+| `rod` | 110 mm | Master rod, crankpin to wrist pin |
+| `knuckle` | 35 mm | Radius of the knuckle pin circle on the master rod |
+| `link` | 76 mm | Link rod, knuckle pin to wrist pin |
+| `crankpin`, `wristpin`, `knucklepin` | 36, 12, 10 mm | Pin diameters |
+| `deck` | 105 mm | Distance of the cylinder seats from the crank axis |
+| `head` | 160 mm | Distance of the barrel top from the crank axis |
+
+> [!NOTE]
+> The master rod's small end (110 mm) and the link rod's length (76 mm) are drawn with numbers, not with `rod` and `link`: the sketch shorthands do not take expressions for positions ([[CAD-108]]).
+
+## Coordinates
+
+Every component is drawn in **engine coordinates**, so that most joints can use component origins with offsets:
+
+- The crank axis is the components' **Z axis**, the propeller towards +Z. The cylinders' mid-plane is z = 0.
+- **Cylinder 1 points along +X**; cylinder *i* (1…9) at 40° × (*i* − 1) about Z.
+- The **barrel, head, plug, pipes and pushrod** are drawn for one cylinder with the cylinder axis as their own Z (z = distance from the crank axis), and their +Y towards the propeller. A barrel is placed with the transform *T*·R*z*(40°(*i* − 1))·R*y*(90°).
+- The **piston** has its axis along +X with the wrist pin at the origin and the pin along Z; the **master and link rods** have the big end at the origin and the shank along +X.
+- In the assembly, the crankcase (grounded) is turned so that engine +Z points to world −Y (the front view looks at the propeller) and engine +X (cylinder 1) points up: columns of *T* are X → (0, 0, 1), Y → (−1, 0, 0), Z → (0, −1, 0).
+
+Positions along the crank axis (engine z, mm), needed for joint offsets:
+
+| Part | z | Notes |
+| --- | --- | --- |
+| Rear case | −118 … −40 | Intake bosses at z −78, r 106 |
+| Crankcase rear half / front half | −65 … 0 / 0 … 65 | Configurations *Rear half* and *Front half* of one component |
+| Crank webs, crankpin, rods, pistons | −25 … 25 | Cylinder mid-plane z = 0 |
+| Cam ring (tracks, gear) | 66 … 88 | Drawn from z = 0: offset 66 |
+| Lay gear (pinion, big gear) | 82 … 96 | Drawn from z = 0: offset 82; axis at r 54 |
+| Crank gear | 90 … 96 | Drawn from z = 0: offset 90 |
+| Planet carrier | 99 … 254 | Planets' plane at its z = 0: offset 104 |
+| Sun, planets | 104 … 122 | Planets at r 42, every 120° |
+| Nose case | 40 … 146 | Tappet guides at z 73, r 88 … 104 |
+| Propeller hub, spinner | 254 … 324, 324 … 424 | Hub bolted to the carrier's flange (carrier z 150) |
+
+## Parts
+
+| Component | Made with | Count in the engine |
+| --- | --- | --- |
+| Crankcase | Nine-sided prism, revolved bearing bosses, cavity and bore cut by revolves, nine spigot holes (circular pattern), one half kept by an intersect; a configuration table picks the half | 2 (front, rear) |
+| Crankshaft | Two webs with counterweights (one web mirrored), crankpin, both main journals in one revolve of two outlines | 1 |
+| Master rod | Hub, two flanges (one mirrored), I-beam shank with pockets (mirrored), eight knuckle pins as new bodies by a circular pattern | 1 |
+| Link rod | Two eyes and a shank, I-beam pockets, fillets | 8 |
+| Piston, wrist pin | Revolve with three ring grooves, pin bosses, rod slot, pin bore, skirt trimmed by a cut | 9 + 9 |
+| Cylinder barrel | One revolve of a 52-point outline: spigot, flange, eleven fins | 9 |
+| Cylinder head | Finned revolve, rocker boxes and shafts, exhaust and intake ports (mirrored), two plug bosses (mirrored) | 9 |
+| Spark plug | Revolve, hex, modelled M10 thread | 18 |
+| Pushrod | Revolve with ball ends | 18 |
+| Exhaust stub, intake pipe | Sweeps of a tube along a line, arc and line | 9 + 9 |
+| Cam ring | Disc with two tracks of five lobes (circular patterns) and a 96-tooth gear | 1 |
+| Crank gear, lay gear | 48 teeth; 60 and 12 teeth on one hub (module 1) | 1 + 1 |
+| Sun, planet gear | 24 and 18 teeth, module 2, 18 mm wide | 1 + 3 |
+| Ring gear | 60 teeth, internal — needs [[CAD-98]] | 1 |
+| Planet carrier | Plates and hollow propeller shaft in one revolve, three planet pins, six hub bolt holes | 1 |
+| Nose case | Revolved shell, nine tappet guide bosses (circular pattern) | 1 |
+| Propeller blade, hub, spinner | Loft through five twisted NACA sections (closed splines) with an extruded shank; hub with three sockets; spinner revolved from a spline | 3 + 1 + 1 |
+| Rear case, magneto, display stand | Revolve with nine intake bosses; extrudes | 1 + 2 + 1 |
+
+## Gear trains
+
+**Cam drive.** A nine-cylinder four-stroke engine fires every cylinder once in two crank turns. A cam with *n* lobes per track serves it when it turns at 1/(2(*n* − 1)) of crank speed against the crank, or 1/(2(*n* + 1)) with it. With external gears only, the cam turns with the crank: five lobes at **1/10**. Crank gear 48 → lay gear 60, lay pinion 12 → cam gear 96 (module 1, centre distance 54 mm): 48/60 × 12/96 = 1/10, two meshes, same direction.
+
+**Propeller reduction.** Sun 24 on the crankshaft, three planets 18 on the carrier, ring 60 fixed in the nose case (24 + 2 × 18). Carrier (propeller) = crank × 24/84 = **2/7** (3.5 : 1). Planet on the carrier = −(24/18) × (1 − 2/7) = **−20/21** of the crank angle.
+
+## Assembly plan
+
+To build once [[CAD-97]] exists:
+
+```mermaid
+flowchart LR
+  CC[Crankcase grounded] -- revolute --> CS[Crankshaft]
+  CS -- "revolute, offset x 25" --> MR[Master rod]
+  MR -- "revolute, offset x 110" --> P1[Piston 1]
+  MR -- "revolute at knuckle pin i (35 mm, 40°·i)" --> LR[Link rod i]
+  LR -- "revolute, offset x 76" --> Pi[Piston i]
+  B1[Barrel 1 grounded] -- cylindrical --> P1
+  Bi[Barrel i grounded] -- cylindrical --> Pi
+  CS -. "gear 48/60" .-> LG[Lay gear]
+  LG -. "gear 12/96" .-> CR[Cam ring]
+  CS -. "2/7" .-> PC[Carrier + propeller]
+  CS -. "−20/21" .-> PL[Planets]
+```
+
+- **Grounded:** both crankcase halves, nine barrels (with their transforms), nose case, rear case, stand, ring gear.
+- **Joints:** crankshaft revolute on the crankcase (origins); master rod revolute on the crankpin (origin offset 25 mm along X); piston 1 revolute at the master rod's small end (offset 110); link rod *i* revolute on knuckle pin *i* (offset 35 mm at 40° × *i*); piston *i* revolute at the link rod's small end (offset 76); every piston **cylindrical** in its barrel (barrel origin, piston crown face). Wrist pins rigid in their pistons; sun, crank gear rigid on the crankshaft; hub and spinner rigid on the carrier; lay gear revolute on the nose case at r 54; cam ring and carrier revolute on the crank axis; planets revolute on the carrier's pins. That is nine closed loops through the master rod.
+- **Links:** lay gear from the crankshaft (−48/60), cam ring from the lay gear (−12/96), carrier from the crankshaft (2/7), each planet from the crankshaft (−20/21). The valve train cannot follow the cam: [[CAD-99]].
+- **Patterns:** heads, plugs, pushrods, pipes and magnetos: one instance each, rigid on barrel 1, then a circular pattern of 9 about the crank axis. Blades: a circular pattern of 3 on the hub (copies of a turning instance about the same axis turn with it).
+- **Motion study:** a constant crank speed (60 rpm for 2 s shows two turns: the propeller turns 4/7, the cam ring 1/5); collision check on.
+- **Exploded view:** propeller and spinner forward; nose case, carrier, planets, sun, gears along the axis; then for each cylinder heads, barrels and pistons outwards along its own direction (one step per cylinder and part: 27 steps, since a step moves along one direction).
+
+## Findings
+
+| Task | What | Kind |
+| --- | --- | --- |
+| [[CAD-97]] | The MCP server cannot edit assemblies | missing, blocking |
+| [[CAD-98]] | No internal (ring) gears | missing, blocking |
+| [[CAD-99]] | No cam joints; motion links are linear | missing |
+| [[CAD-100]] | Agents cannot see exploded views or motion | missing |
+| [[CAD-101]] | Round and bevel faces named after the first edge | bug |
+| [[CAD-102]] | `edit_component` answers with everything; a gear overflows the client | improvement, high |
+| [[CAD-103]] | Pad on a revolved body: "not a valid solid" for some sizes | bug, high |
+| [[CAD-104]] | Face names on shared surfaces; `~n` renumbering re-binds references | bug |
+| [[CAD-105]] | Modelled thread ending at a shoulder cuts nothing, reports success | bug |
+| [[CAD-106]] | Loft from a circle into splines twists | bug |
+| [[CAD-107]] | Gear teeth are polygons: 23 faces per tooth | improvement |
+| [[CAD-108]] | MCP and sketcher papercuts | improvement |
+
+What worked well: revolves of long outlines, sweeps along line-arc-line paths, lofts through spline sections, circular patterns of cuts and of new bodies, mirrors, configurations (two crankcase halves from one component), the gear generator's geometry, modelled threads (from the shoulder), fillets and chamfers, and `render_picture` for checking every part.
+
+## Tips for agents
+
+- Sketch outlines with `add-polygon` and many points (fins, grooves) and revolve them: one feature instead of dozens.
+- A part feature (gear, screw) needs a sketch point; add one coincident with the origin.
+- After a face is split by a later feature its name gets `~1`, `~2`; refer to the exact piece, and expect the numbers to move ([[CAD-104]]).
+- Large answers: until [[CAD-102]] is done, keep gears out of components that are edited often, and read oversized answers from the saved file.

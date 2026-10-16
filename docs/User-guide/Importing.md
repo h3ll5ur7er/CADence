@@ -6,7 +6,9 @@ Bring in files from other programs and from the internet: 3D models to look at, 
 
 ## Import a file
 
-Click **Import** in the documents panel (or drop the file there). The original file is kept with the project, unchanged, and appears under **Imported**.
+Click **Import** in the documents panel, or drop files onto it. The original file is kept with the project, unchanged, and appears under **Imported**. Files dropped on the home page (or picked with **Open file…**) start a new project named after the first of them; on the desktop, files opened with CADence do the same.
+
+**Replace the file** (the arrows on an imported document) takes a newer version of it, of the same kind (a 3D file for a 3D file, a drawing for a drawing). Components that insert it regenerate, and assemblies that use it reload; a feature that loses a face or an edge it used shows an error in the timeline.
 
 | Format | What you get |
 | --- | --- |

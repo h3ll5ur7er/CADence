@@ -31,6 +31,15 @@
               <button type="button" class="icon-btn" title="History" [attr.aria-label]="'History of ' + doc.name" (click)="history.emit(doc)">
                 <cad-icon name="history" [size]="14" />
               </button>
+              <button type="button" class="icon-btn" title="Duplicate" [attr.aria-label]="'Duplicate ' + doc.name" (click)="duplicate.emit(doc)">
+                <cad-icon name="copy" [size]="14" />
+              </button>
+              @if (doc.kind === 'imported') {
+                <label class="icon-btn" title="Replace the file" [attr.aria-label]="'Replace the file of ' + doc.name">
+                  <cad-icon name="replace" [size]="14" />
+                  <input #replacement type="file" class="visually-hidden" [accept]="accept" (change)="replaced(doc, replacement)" />
+                </label>
+              }
               <button type="button" class="icon-btn" title="Rename" [attr.aria-label]="'Rename ' + doc.name" (click)="rename.emit(doc)">
                 <cad-icon name="pencil" [size]="14" />
               </button>
@@ -46,4 +55,5 @@
   @if (documents().length === 0) {
     <p class="hint">This project is empty. Create a component to start modeling.</p>
   }
+  <p class="hint drop-hint">Drop files here to import them.</p>
 </nav>

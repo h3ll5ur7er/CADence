@@ -98,6 +98,20 @@ export class EditorPage {
     await this.open(result.value);
   }
 
+  protected async duplicate(document: DocumentSummary): Promise<void> {
+    const result = await this.projectManager.duplicateDocument(document.id);
+    if (!result.ok) return this.message.set(result.error.message);
+    this.message.set(undefined);
+    this.refresh();
+    await this.open(result.value);
+  }
+
+  protected async replace(document: DocumentSummary, file: File): Promise<void> {
+    const result = await this.projectManager.replaceImported(document.id, { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) });
+    this.message.set(result.ok ? undefined : result.error.message);
+    this.refresh();
+  }
+
   protected async rename(document: DocumentSummary): Promise<void> {
     const name = await this.nameDialog().ask({
       heading: `Rename ${kindLabels[document.kind].toLowerCase()}`,

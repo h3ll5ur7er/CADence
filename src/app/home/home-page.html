@@ -6,6 +6,11 @@
   <button type="button" class="icon-btn about" aria-label="About CADence" title="About CADence" (click)="about.open()">
     <cad-icon name="info" />
   </button>
+  <label class="btn" title="Open a project archive (.cadence), or start a project from STEP, STL, OBJ, 3MF, DXF or SVG files">
+    <cad-icon name="upload" />
+    Open file…
+    <input #file type="file" multiple class="visually-hidden" [accept]="accept" (change)="picked(file)" />
+  </label>
   <button type="button" class="btn" (click)="openRemote.open()">
     <cad-icon name="sync" />
     Open from git…
@@ -16,7 +21,10 @@
   </button>
 </header>
 
-<main class="content">
+<main class="content" [class.dropping]="dropping()" (dragover)="dragOver($event)" (dragleave)="dropping.set(false)" (drop)="dropped($event)">
+  @if (message(); as text) {
+    <p class="error" role="alert">{{ text }}</p>
+  }
   @if (projects.value(); as list) {
     @if (list.length > 0) {
       <div class="heading">
@@ -38,6 +46,12 @@
               </span>
             </a>
             <div class="card-actions">
+              <button type="button" class="icon-btn" [attr.aria-label]="'Duplicate ' + project.name" title="Duplicate" (click)="duplicate(project)">
+                <cad-icon name="copy" />
+              </button>
+              <button type="button" class="icon-btn" [attr.aria-label]="'Export ' + project.name" title="Export as one file" (click)="exportProject(project)">
+                <cad-icon name="download" />
+              </button>
               <button
                 type="button"
                 class="icon-btn"
@@ -66,7 +80,7 @@
         <h1 id="empty-heading">No projects yet</h1>
         <p>
           A project holds the parts you model, the assemblies you build from them and the files you
-          import. Everything stays on this device.
+          import. Everything stays on this device. Drop files here to start a project with them.
         </p>
         <button type="button" class="btn btn-primary" (click)="createProject()">
           <cad-icon name="plus" />
@@ -82,4 +96,6 @@
 <cad-name-dialog />
 <cad-confirm-dialog />
 <cad-about-dialog #about />
+<cad-export-project-dialog />
+<cad-new-project-dialog />
 <cad-open-remote-dialog #openRemote (opened)="openProject($event)" />

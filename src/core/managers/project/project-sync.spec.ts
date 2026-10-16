@@ -41,7 +41,8 @@ function device(name: string) {
   return { manager, documents, assets, names };
 }
 
-describe('ProjectManager sync (git over HTTP)', () => {
+// Each exchange runs a git process per request: slower than the other tests.
+describe('ProjectManager sync (git over HTTP)', { timeout: 30_000 }, () => {
   let server: GitHttpServer;
   beforeAll(async () => {
     server = await GitHttpServer.start();
@@ -105,6 +106,30 @@ describe('ProjectManager sync (git over HTTP)', () => {
     unwrap(await b.manager.syncProject(projectB));
     unwrap(await a.manager.syncProject(projectA));
     expect(await a.names(projectA)).toEqual(['Component 1']);
+  });
+
+  it('syncs version names, and tells which versions the remote has', async () => {
+    const { a, b, projectA, projectB } = await shared('names');
+    unwrap(await a.manager.nameVersion(projectA, 'v1.0'));
+    expect(unwrap(await a.manager.syncProject(projectA))).toEqual({ kind: 'up-to-date' });
+    expect(unwrap(await b.manager.syncProject(projectB))).toEqual({ kind: 'up-to-date' });
+    expect((await b.manager.projectHistory(projectB)).flatMap((v) => v.names)).toEqual(['v1.0']);
+
+    // A version made here is not on the remote until the next sync.
+    unwrap(await b.manager.createDocument(projectB, 'component', 'Lid'));
+    await b.manager.recordVersion(projectB);
+    expect((await b.manager.projectHistory(projectB)).map((v) => v.shared)).toEqual([false, true]);
+    unwrap(await b.manager.syncProject(projectB));
+    expect((await b.manager.projectHistory(projectB)).map((v) => v.shared)).toEqual([true, true]);
+
+    // The same name for different versions stays as it is on each side.
+    unwrap(await a.manager.syncProject(projectA));
+    const [newest, older] = await a.manager.projectHistory(projectA);
+    unwrap(await a.manager.nameVersion(projectA, 'final', older?.id));
+    unwrap(await b.manager.nameVersion(projectB, 'final', newest?.id));
+    unwrap(await b.manager.syncProject(projectB));
+    expect(unwrap(await a.manager.syncProject(projectA))).toEqual({ kind: 'up-to-date', nameConflicts: ['final'] });
+    expect((await a.manager.projectHistory(projectA)).find((v) => v.names.includes('final'))?.id).toBe(older?.id);
   });
 
   it('explains what keeps a sync from working', async () => {

@@ -24,6 +24,7 @@ import {
   type ProjectId,
   type ProjectRemote,
   type ProjectSummary,
+  type ProjectTemplate,
   type RemoteCredentials,
   type Result,
   summarize,
@@ -32,9 +33,11 @@ import {
 } from '@core/contracts';
 import { InvalidVersionNameError, RemoteError, type Version, type VersionAccess, type VersionFile } from '@core/access/version';
 import type { InterchangeEngine } from '@core/engines/interchange';
+import { readZip, zip } from '@core/utilities/archive';
 import type { ParameterEngine } from '@core/engines/parameter';
 import type { Clock } from '@core/utilities/clock';
 import type { EventBus } from '@core/utilities/messaging';
+import { archiveFiles, type ProjectBundle, readArchive, templateBundle, withNewIds } from './project-bundles';
 import type { CreatedProject, ExternalFile, ImportedContent, ImportedView, ProjectManager } from './project-manager';
 
 export interface ProjectManagerDependencies {
@@ -100,6 +103,15 @@ const formatsByExtension: Readonly<Record<string, ImportFormat>> = {
   dxf: 'dxf',
   svg: 'svg',
 };
+
+const formatOf = (fileName: string): ImportFormat | undefined => {
+  const dot = fileName.lastIndexOf('.');
+  return dot > 0 ? formatsByExtension[fileName.slice(dot + 1).toLowerCase()] : undefined;
+};
+const isDrawing = (format: ImportFormat) => format === 'dxf' || format === 'svg';
+
+/** "<name> (copy)", short enough to be a name. */
+const copyName = (name: string) => `${name.slice(0, maxNameLength - 7)} (copy)`;
 
 function validName(name: string): Result<string> {
   const trimmed = name.trim();
@@ -273,23 +285,28 @@ export class DefaultProjectManager implements ProjectManager {
     try {
       const theirs = await versions.fetch(id, remote, credentials);
       const mine = await versions.latest(id);
-      if (theirs === mine) return ok({ kind: 'up-to-date' });
       const common = mine && theirs ? await versions.commonVersion(id, mine, theirs) : undefined;
-      if (!theirs || common === theirs) {
+      let kind: 'up-to-date' | 'pushed' | 'pulled' | 'merged';
+      if (theirs === mine) kind = 'up-to-date';
+      else if (!theirs || common === theirs) {
         await versions.push(id, remote, credentials);
-        return ok({ kind: 'pushed' });
-      }
-      if (!mine || common === mine) {
+        kind = 'pushed';
+      } else if (!mine || common === mine) {
         await versions.advance(id, theirs);
         await this.apply(id, theirs);
-        return ok({ kind: 'pulled' });
+        kind = 'pulled';
+      } else {
+        const merged = await this.merge(id, common, mine, theirs, resolutions);
+        if ('conflicts' in merged) return ok({ kind: 'conflicts', conflicts: merged.conflicts });
+        const version = (await versions.record(id, merged.files, `Merged the changes from ${remote.url}`, this.now(), theirs)) as string;
+        await this.apply(id, version);
+        await versions.push(id, remote, credentials);
+        kind = 'merged';
       }
-      const merged = await this.merge(id, common, mine, theirs, resolutions);
-      if ('conflicts' in merged) return ok({ kind: 'conflicts', conflicts: merged.conflicts });
-      const version = (await versions.record(id, merged.files, `Merged the changes from ${remote.url}`, this.now(), theirs)) as string;
-      await this.apply(id, version);
-      await versions.push(id, remote, credentials);
-      return ok({ kind: 'merged' });
+      // Version names travel with the versions; the remote now has ours.
+      const nameConflicts = mine || theirs ? await versions.syncNames(id, remote, credentials) : [];
+      if (kind !== 'pulled' && kind !== 'up-to-date') await versions.fetch(id, remote, credentials);
+      return ok(nameConflicts.length ? { kind, nameConflicts } : { kind });
     } catch (error) {
       if (error instanceof RemoteError) return fail({ code: `remote-${error.problem}`, message: error.message });
       throw error;
@@ -467,7 +484,7 @@ export class DefaultProjectManager implements ProjectManager {
   async importFile(projectId: ProjectId, file: ExternalFile): Promise<Result<DocumentSummary>> {
     if (!(await this.deps.projects.find(projectId))) return unknownProject(projectId);
     const dot = file.name.lastIndexOf('.');
-    const format = dot > 0 ? formatsByExtension[file.name.slice(dot + 1).toLowerCase()] : undefined;
+    const format = formatOf(file.name);
     if (!format) {
       return fail({
         code: 'unsupported-format',
@@ -500,6 +517,125 @@ export class DefaultProjectManager implements ProjectManager {
     await this.deps.documents.store(document);
     await this.touchProject(projectId);
     return ok(summarize(document));
+  }
+
+  async replaceImported(id: DocumentId, file: ExternalFile): Promise<Result<void>> {
+    const document = await this.deps.documents.load(id);
+    if (document?.kind !== 'imported') return fail({ code: 'unknown-document', message: `Imported file ${id} does not exist.` });
+    const format = formatOf(file.name);
+    if (!format || isDrawing(format) !== isDrawing(document.format)) {
+      return fail({ code: 'unsupported-format', message: isDrawing(document.format) ? 'Replace a drawing by a DXF or SVG file.' : 'Replace a 3D file by a STEP, STL, OBJ or 3MF file.' });
+    }
+    const assetId = asAssetId(this.deps.newId());
+    await this.deps.assets.keep({ id: assetId, projectId: document.projectId, name: file.name, byteLength: file.bytes.byteLength, bytes: file.bytes });
+    await this.deps.documents.store({ ...document, assetId, format, fileName: file.name, byteLength: file.bytes.byteLength, modifiedAt: this.now() });
+    await this.deps.assets.release(document.assetId);
+    await this.touchProject(document.projectId);
+    // What uses the file regenerates: components lose their results, and open assemblies reload.
+    for (const summary of await this.deps.documents.enumerate(document.projectId)) {
+      if (summary.id === id) continue;
+      const user = await this.deps.documents.load(summary.id);
+      if (!user || !JSON.stringify(user).includes(`"${id}"`)) continue;
+      if (user.kind === 'component') await this.deps.assets.discardResult(user.id);
+      this.deps.events.publish('documentRestored', { documentId: user.id });
+    }
+    this.deps.events.publish('documentRestored', { documentId: id });
+    return ok(undefined);
+  }
+
+  async duplicateProject(id: ProjectId): Promise<Result<ProjectSummary>> {
+    const project = await this.deps.projects.find(id);
+    if (!project) return unknownProject(id);
+    const bundle = withNewIds(await this.bundleOf(project), this.deps.newId);
+    const copy = await this.createFromBundle({ ...bundle, name: copyName(project.name) });
+    await this.recordVersion(copy.id, `Duplicated from ${project.name}`);
+    return ok(await this.summarizeProject(copy));
+  }
+
+  async duplicateDocument(id: DocumentId): Promise<Result<DocumentSummary>> {
+    const document = await this.deps.documents.load(id);
+    if (!document) return unknownDocument(id);
+    const original = document.kind === 'imported' ? (await this.deps.assets.fetch(document.assetId))?.bytes : undefined;
+    const bundle = withNewIds(
+      { name: '', parameters: [], documents: [document], originals: new Map(document.kind === 'imported' && original ? [[document.assetId, original]] : []) },
+      this.deps.newId,
+    );
+    const now = this.now();
+    const copy = { ...(bundle.documents[0] as CadDocument), name: copyName(document.name), createdAt: now, modifiedAt: now };
+    await this.keepOriginals(document.projectId, [copy], bundle.originals);
+    await this.deps.documents.store(copy);
+    await this.touchProject(document.projectId);
+    return ok(summarize(copy));
+  }
+
+  async exportProject(id: ProjectId, options: { readonly history?: boolean } = {}): Promise<Result<void>> {
+    const project = await this.deps.projects.find(id);
+    if (!project) return unknownProject(id);
+    if (options.history) await this.recordVersion(id);
+    const history = options.history ? await this.deps.versions.exportHistory(id) : [];
+    const bytes = zip(archiveFiles(await this.bundleOf(project), history));
+    await this.deps.externalFiles.deliver({ name: `${project.name}.cadence`, mediaType: 'application/zip', bytes });
+    return ok(undefined);
+  }
+
+  async importProject(file: ExternalFile): Promise<Result<ProjectSummary>> {
+    const notArchive = fail({ code: 'not-an-archive', message: `${file.name} is not a CADence project archive.` });
+    let archive: ReturnType<typeof readArchive>;
+    try {
+      archive = readArchive(await readZip(file.bytes));
+    } catch {
+      return notArchive;
+    }
+    if (!archive) return notArchive;
+    // Documents keep their ids (and so their history) unless this device has them already.
+    const taken = (await Promise.all(archive.bundle.documents.map((d) => this.deps.documents.load(d.id)))).some(Boolean);
+    const bundle = taken ? withNewIds(archive.bundle, this.deps.newId) : archive.bundle;
+    const project = await this.createFromBundle(bundle);
+    if (!taken && archive.history.length) await this.deps.versions.importHistory(project.id, archive.history);
+    else await this.recordVersion(project.id, `Imported from ${file.name}`);
+    return ok(await this.summarizeProject(project));
+  }
+
+  async createFromTemplate(template: ProjectTemplate): Promise<Result<CreatedProject>> {
+    const project = await this.createFromBundle(withNewIds(templateBundle(template), this.deps.newId));
+    await this.recordVersion(project.id, `Created from the template ${template.name}`);
+    const documents = await this.listDocuments(project.id);
+    const firstDocument = documents.find((d) => d.kind === 'component') ?? documents[0];
+    if (!firstDocument) return fail({ code: 'empty-template', message: `The template ${template.name} has no documents.` });
+    return ok({ project: await this.summarizeProject(project), firstDocument });
+  }
+
+  /** The project's content, with the originals of its imported documents. */
+  private async bundleOf(project: Project): Promise<ProjectBundle> {
+    const documents = (await Promise.all((await this.deps.documents.enumerate(project.id)).map((d) => this.deps.documents.load(d.id)))).filter(
+      (d): d is CadDocument => d !== undefined,
+    );
+    const originals = new Map<string, Uint8Array>();
+    for (const document of documents) {
+      if (document.kind !== 'imported') continue;
+      const asset = await this.deps.assets.fetch(document.assetId);
+      if (asset) originals.set(document.assetId, asset.bytes);
+    }
+    return { name: project.name, parameters: project.parameters ?? [], documents, originals };
+  }
+
+  /** A new project holding the bundle's documents and originals as they are (ids included). */
+  private async createFromBundle(bundle: ProjectBundle): Promise<Project> {
+    const now = this.now();
+    const project: Project = { id: asProjectId(this.deps.newId()), name: validName(bundle.name).ok ? bundle.name.trim() : 'Untitled project', createdAt: now, modifiedAt: now, parameters: bundle.parameters };
+    await this.deps.projects.establish(project);
+    const documents = bundle.documents.map((d) => ({ ...d, projectId: project.id }) as CadDocument);
+    await this.keepOriginals(project.id, documents, bundle.originals);
+    for (const document of documents) await this.deps.documents.store(document);
+    return project;
+  }
+
+  private async keepOriginals(projectId: ProjectId, documents: readonly CadDocument[], originals: ReadonlyMap<string, Uint8Array>): Promise<void> {
+    for (const document of documents) {
+      const bytes = document.kind === 'imported' ? originals.get(document.assetId) : undefined;
+      if (document.kind !== 'imported' || !bytes) continue;
+      await this.deps.assets.keep({ id: document.assetId, projectId, name: document.fileName, byteLength: bytes.byteLength, bytes });
+    }
   }
 
   async openImported(id: DocumentId): Promise<ImportedView | undefined> {

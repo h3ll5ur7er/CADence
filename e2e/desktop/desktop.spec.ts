@@ -22,9 +22,9 @@ let app: ChildProcess | undefined;
 let browser: Browser | undefined;
 let page: Page;
 
-async function launch(): Promise<void> {
+async function launch(files: readonly string[] = []): Promise<void> {
   port++;
-  const started = spawn(executable, [], { env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` } });
+  const started = spawn(executable, files, { env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` } });
   app = started;
   await expect
     .poll(() => fetch(`http://127.0.0.1:${port}/json/version`).then((r) => r.ok, () => false), { timeout: 60_000, message: 'WebView2 remote debugging' })
@@ -55,7 +55,8 @@ function answerSaveDialog(path: string): Promise<void> {
   return new Promise((resolve, reject) => answer.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(errors || `exit ${code}`)))));
 }
 
-test.afterAll(quit);
+// Each test starts the app itself; WebView2 shares its browser process with an app still running.
+test.afterEach(quit);
 
 test('models in project folders, exports through the save dialog, and starts again', async () => {
   const work = mkdtempSync(join(tmpdir(), 'cadence-desktop-'));
@@ -99,6 +100,22 @@ test('models in project folders, exports through the save dialog, and starts aga
   } finally {
     rmSync(work, { recursive: true, force: true });
     // A failed run must not leave its project behind either.
+    if (folder) rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test('opens files it is started with as a project (Open with CADence)', async () => {
+  let folder: string | undefined;
+  try {
+    await launch([join(repository, 'e2e', 'fixtures', 'wedge.stl')]);
+    await expect(page).toHaveURL(/\/projects\/[^/]+\/documents\//);
+    const projectId = /\/projects\/([^/]+)/.exec(page.url())?.[1] as string;
+    folder = join(dataFolder, 'projects', projectId);
+    await expect(page.getByRole('link', { name: 'wedge' })).toBeVisible();
+    await expect(page.getByTestId('imported-size')).toBeVisible();
+    expect(JSON.parse(readFileSync(join(folder, 'project.json'), 'utf8')).name).toBe('wedge');
+  } finally {
+    await quit();
     if (folder) rmSync(folder, { recursive: true, force: true });
   }
 });

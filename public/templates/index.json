@@ -1,0 +1,17 @@
+[
+  {
+    "id": "box-with-lid",
+    "name": "Box with lid",
+    "description": "A box and a lid with a rim that fits into it; size, wall and fit are parameters."
+  },
+  {
+    "id": "wall-bracket",
+    "name": "Wall bracket",
+    "description": "An angle bracket with a screw hole in each leg; legs, width, thickness and screw size are parameters."
+  },
+  {
+    "id": "enclosure",
+    "name": "Enclosure",
+    "description": "A case for a 70 × 50 mm circuit board, with screw posts at its corners; clearance, wall and height are parameters."
+  }
+]

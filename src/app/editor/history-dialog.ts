@@ -25,6 +25,9 @@ import { relativeTime } from '../shared/format';
                 @for (name of version.names; track name) {
                   <span class="name" data-testid="version-name">{{ name }}</span>
                 }
+                @if (version.shared === false) {
+                  <span class="local" title="The project's repository does not have this version yet; the next sync sends it.">not synced yet</span>
+                }
               </div>
               @if (naming() === version.id) {
                 <form class="naming" (submit)="$event.preventDefault(); saveName(version, nameInput.value)">
@@ -61,6 +64,7 @@ import { relativeTime } from '../shared/format';
     .message { font-weight: 500; }
     .when { color: var(--text-muted); font-size: 12px; }
     .name { padding: 1px 6px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-strong); font-size: 11px; }
+    .local { color: var(--text-muted); font-size: 11px; font-style: italic; }
     .actions { display: flex; gap: var(--space-1); flex: none; }
     .actions.end { justify-content: flex-end; }
     .naming { display: flex; gap: var(--space-1); }

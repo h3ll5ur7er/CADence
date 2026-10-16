@@ -28,6 +28,7 @@ import type { Clock } from '@core/utilities/clock';
 import type { EventBus } from '@core/utilities/messaging';
 import type { AssemblyCommand, AssemblyFormat, AssemblyManager, AssemblySession, AssemblyState, ComponentView } from './assembly-manager';
 import { applyCommand } from './commands';
+import { viewerHtml } from '@core/utilities/viewer';
 
 export interface AssemblyManagerDependencies {
   /** Project parameters are part of what a component result was made from. */
@@ -174,6 +175,30 @@ class Session implements AssemblySession {
     } catch (error) {
       return fail({ code: 'export-failed', message: error instanceof Error ? error.message : String(error) });
     }
+  }
+
+  async exportViewer(): Promise<Result<void>> {
+    const parts = this.readyInstances()
+      .filter(({ instance }) => !instance.appearance?.hidden)
+      .flatMap(({ instance, component, transform }) =>
+        component.view.bodies.map((body, k) => {
+          const look = instance.appearance ?? component.view.appearances?.[body.body];
+          return {
+            name: component.view.bodies.length > 1 ? `${instance.name} (${k + 1})` : instance.name,
+            ...(look?.color ? { color: look.color } : {}),
+            opacity: look?.opacity ?? 1,
+            positions: body.positions,
+            normals: body.normals,
+            indices: body.indices,
+            edges: body.edgePositions,
+            transform,
+          };
+        }),
+      );
+    if (parts.length === 0) return fail({ code: 'nothing-to-export', message: 'Insert components with bodies first.' });
+    const bytes = new TextEncoder().encode(viewerHtml({ title: this.document.name, parts }));
+    await this.deps.externalFiles.deliver({ name: `${this.document.name}.html`, mediaType: 'text/html', bytes });
+    return ok(undefined);
   }
 
   async saveRecording(bytes: Uint8Array, studyName: string): Promise<void> {

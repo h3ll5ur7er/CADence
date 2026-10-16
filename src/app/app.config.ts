@@ -9,8 +9,10 @@ import { provideCore } from './core.providers';
 import { TauriFileDelivery } from './platform/tauri-file-delivery';
 import { TauriFileSystem } from './platform/tauri-file-system';
 import { openWebLinksInBrowser } from './platform/tauri-links';
+import { tauriOpenedFiles } from './platform/tauri-opened-files';
 import { TauriUpdater } from './platform/tauri-updater';
 import { AppUpdates, DesktopUpdates, ServiceWorkerUpdates } from './shared/app-updates';
+import { OPENED_FILES } from './shared/file-opener';
 
 /**
  * The sketch solver's WebAssembly is copied to /wasm by the build (angular.json assets); the geometry
@@ -38,5 +40,6 @@ export const appConfig: ApplicationConfig = {
     provideServiceWorker('ngsw-worker.js', { enabled: !isDevMode() && !desktop, registrationStrategy: 'registerWhenStable:5000' }),
     // Newer versions: the service worker's on the web, signed GitHub releases on the desktop.
     desktop ? { provide: AppUpdates, useValue: new DesktopUpdates(new TauriUpdater()) } : { provide: AppUpdates, useClass: ServiceWorkerUpdates },
+    ...(desktop ? [{ provide: OPENED_FILES, useValue: tauriOpenedFiles }] : []),
   ],
 };

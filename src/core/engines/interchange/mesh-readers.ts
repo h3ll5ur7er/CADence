@@ -1,6 +1,6 @@
 import type { TriangleMesh } from './solids';
 import { descendants, parseXml, type XmlElement } from './xml';
-import { readZip } from './zip';
+import { readZip } from '@core/utilities/archive';
 
 /** A mesh read from a file; positions in millimetres. */
 export interface ReadMesh extends TriangleMesh {

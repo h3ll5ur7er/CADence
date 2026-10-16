@@ -1,4 +1,4 @@
-import type { Parameter } from './document';
+import type { CadDocument, Parameter } from './document';
 import type { ProjectId } from './ids';
 
 /** ISO 8601 timestamp, e.g. `2026-10-14T18:00:00.000Z`. */
@@ -13,6 +13,15 @@ export interface Project {
   readonly parameters?: readonly Parameter[];
   /** Where the project's versions are shared, when they are. */
   readonly remote?: ProjectRemote;
+}
+
+/** A starting point for new projects: settings and documents, made with CADence (public/templates). */
+export interface ProjectTemplate {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string;
+  readonly parameters: readonly Parameter[];
+  readonly documents: readonly CadDocument[];
 }
 
 /** A git repository over HTTPS that a project's versions are synced with. */
@@ -39,8 +48,11 @@ export interface SyncConflict {
 export type ConflictChoice = 'mine' | 'theirs';
 
 export type SyncOutcome =
-  /** Nothing to do / sent our versions / took theirs / combined both and sent the result. */
-  | { readonly kind: 'up-to-date' | 'pushed' | 'pulled' | 'merged' }
+  /**
+   * Nothing to do / sent our versions / took theirs / combined both and sent the result. Version names
+   * travel too; a name given to different versions here and on the remote stays as it is on each side.
+   */
+  | { readonly kind: 'up-to-date' | 'pushed' | 'pulled' | 'merged'; readonly nameConflicts?: readonly string[] }
   /** Both sides changed these; sync again with a choice for each. */
   | { readonly kind: 'conflicts'; readonly conflicts: readonly SyncConflict[] };
 
@@ -66,6 +78,8 @@ export interface Version {
   readonly message: string;
   /** Names the user gave this version. */
   readonly names: readonly string[];
+  /** The project's remote has this version (as of the last sync); absent for projects that are not synced. */
+  readonly shared?: boolean;
 }
 
 export interface ProjectSummary extends Project {

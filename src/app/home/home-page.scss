@@ -173,3 +173,10 @@
 .about {
   margin-left: auto;
 }
+
+/* Files dragged over the projects open when dropped. */
+.content.dropping {
+  outline: 2px dashed var(--accent);
+  outline-offset: -8px;
+  background: var(--accent-soft);
+}

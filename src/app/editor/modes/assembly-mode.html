@@ -113,6 +113,7 @@
             @for (f of exportFormats; track f.format) {
               <button type="button" role="menuitem" (click)="exportAs(f.format)">{{ f.label }}</button>
             }
+            <button type="button" role="menuitem" (click)="menu.set(undefined); store.exportViewer()">Viewer (HTML, to share)</button>
           </div>
         }
       </div>

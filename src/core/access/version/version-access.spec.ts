@@ -50,6 +50,19 @@ function describeVersionAccess(name: string, create: () => VersionAccess) {
       expect(await versions.versions(project)).toEqual([]);
     });
 
+    it('hands its history over as files, and takes one over', async () => {
+      const versions = create();
+      const first = (await versions.record(project, [{ path: 'a', text: '1' }], 'First', at(1))) as string;
+      await versions.name(project, first, 'v1');
+      const files = await versions.exportHistory(project);
+      expect(files.map((f) => f.path)).toContain('HEAD');
+      const other = asProjectId('p2');
+      await versions.importHistory(other, files);
+      expect((await versions.versions(other)).map((v) => [v.message, v.names])).toEqual([['First', ['v1']]]);
+      expect(await versions.read(other, first, 'a')).toBe('1');
+      expect(await versions.exportHistory(asProjectId('none'))).toEqual([]);
+    });
+
     it('keeps files that never change once, and lists and reads a version', async () => {
       const versions = create();
       const bytes = vi.fn(async () => new Uint8Array([0, 1, 2, 255]));
@@ -74,7 +87,7 @@ describeVersionAccess('GitVersionAccess on disk', () => {
   return new GitVersionAccess(new NodeFileSystem(root));
 });
 
-describe('GitVersionAccess with a remote (git over HTTP)', () => {
+describe('GitVersionAccess with a remote (git over HTTP)', { timeout: 30_000 }, () => {
   let server: GitHttpServer;
   beforeAll(async () => {
     server = await GitHttpServer.start();

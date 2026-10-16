@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { read3mf, readObj, readStl } from './mesh-readers';
 import { meshVolume, write3mf, writeObj, writeStl } from './solids';
 import { parseXml } from './xml';
-import { crc32 } from './zip';
+import { crc32 } from '@core/utilities/archive';
 
 /** A 10 mm cube centred on the origin, outward triangles. */
 const cube = () => {

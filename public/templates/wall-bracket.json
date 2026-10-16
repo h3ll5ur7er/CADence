@@ -1,0 +1,390 @@
+{
+  "id": "wall-bracket",
+  "name": "Wall bracket",
+  "description": "An angle bracket with a screw hole in each leg; legs, width, thickness and screw size are parameters.",
+  "parameters": [
+    {
+      "id": "p1",
+      "name": "width",
+      "expression": "30 mm"
+    },
+    {
+      "id": "p2",
+      "name": "base",
+      "expression": "40 mm"
+    },
+    {
+      "id": "p3",
+      "name": "rise",
+      "expression": "50 mm"
+    },
+    {
+      "id": "p4",
+      "name": "thickness",
+      "expression": "4 mm"
+    },
+    {
+      "id": "p5",
+      "name": "screw",
+      "expression": "4.5 mm"
+    }
+  ],
+  "documents": [
+    {
+      "id": "wall-bracket-1",
+      "projectId": "template",
+      "name": "Bracket",
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "modifiedAt": "2026-01-01T00:00:00.000Z",
+      "schemaVersion": 2,
+      "kind": "component",
+      "units": "mm",
+      "parameters": [],
+      "timeline": [
+        {
+          "id": "base-leg",
+          "type": "sketch",
+          "name": "Sketch 1",
+          "suppressed": false,
+          "plane": "XZ",
+          "entities": [
+            {
+              "id": "leg:p1",
+              "kind": "point",
+              "x": 0,
+              "y": 0
+            },
+            {
+              "id": "leg:p2",
+              "kind": "point",
+              "x": 40,
+              "y": 0
+            },
+            {
+              "id": "leg:p3",
+              "kind": "point",
+              "x": 40,
+              "y": 3.9999999999999996
+            },
+            {
+              "id": "leg:p4",
+              "kind": "point",
+              "x": 0,
+              "y": 3.9999999999999996
+            },
+            {
+              "id": "leg:bottom",
+              "kind": "line",
+              "start": "leg:p1",
+              "end": "leg:p2",
+              "construction": false
+            },
+            {
+              "id": "leg:right",
+              "kind": "line",
+              "start": "leg:p2",
+              "end": "leg:p3",
+              "construction": false
+            },
+            {
+              "id": "leg:top",
+              "kind": "line",
+              "start": "leg:p3",
+              "end": "leg:p4",
+              "construction": false
+            },
+            {
+              "id": "leg:left",
+              "kind": "line",
+              "start": "leg:p4",
+              "end": "leg:p1",
+              "construction": false
+            }
+          ],
+          "constraints": [
+            {
+              "id": "leg:fix",
+              "kind": "fix",
+              "point": "leg:p1",
+              "x": 0,
+              "y": 0
+            },
+            {
+              "id": "leg:h1",
+              "kind": "horizontal",
+              "line": "leg:bottom"
+            },
+            {
+              "id": "leg:h2",
+              "kind": "horizontal",
+              "line": "leg:top"
+            },
+            {
+              "id": "leg:v1",
+              "kind": "vertical",
+              "line": "leg:right"
+            },
+            {
+              "id": "leg:v2",
+              "kind": "vertical",
+              "line": "leg:left"
+            },
+            {
+              "id": "leg:width",
+              "kind": "horizontal-distance",
+              "points": [
+                "leg:p1",
+                "leg:p2"
+              ],
+              "expression": "base"
+            },
+            {
+              "id": "leg:height",
+              "kind": "vertical-distance",
+              "points": [
+                "leg:p2",
+                "leg:p3"
+              ],
+              "expression": "thickness"
+            }
+          ]
+        },
+        {
+          "type": "extrude",
+          "id": "bracket",
+          "name": "Base leg",
+          "suppressed": false,
+          "sketch": "base-leg",
+          "profiles": [
+            "0b74a4fb335ad9"
+          ],
+          "distance": "width",
+          "direction": "symmetric",
+          "operation": "new-body"
+        },
+        {
+          "id": "wall-leg-sketch",
+          "type": "sketch",
+          "name": "Sketch 2",
+          "suppressed": false,
+          "plane": "XZ",
+          "entities": [
+            {
+              "id": "leg:p1",
+              "kind": "point",
+              "x": 0,
+              "y": 0
+            },
+            {
+              "id": "leg:p2",
+              "kind": "point",
+              "x": 3.9999999999999996,
+              "y": 0
+            },
+            {
+              "id": "leg:p3",
+              "kind": "point",
+              "x": 3.9999999999999996,
+              "y": 50
+            },
+            {
+              "id": "leg:p4",
+              "kind": "point",
+              "x": 0,
+              "y": 50
+            },
+            {
+              "id": "leg:bottom",
+              "kind": "line",
+              "start": "leg:p1",
+              "end": "leg:p2",
+              "construction": false
+            },
+            {
+              "id": "leg:right",
+              "kind": "line",
+              "start": "leg:p2",
+              "end": "leg:p3",
+              "construction": false
+            },
+            {
+              "id": "leg:top",
+              "kind": "line",
+              "start": "leg:p3",
+              "end": "leg:p4",
+              "construction": false
+            },
+            {
+              "id": "leg:left",
+              "kind": "line",
+              "start": "leg:p4",
+              "end": "leg:p1",
+              "construction": false
+            }
+          ],
+          "constraints": [
+            {
+              "id": "leg:fix",
+              "kind": "fix",
+              "point": "leg:p1",
+              "x": 0,
+              "y": 0
+            },
+            {
+              "id": "leg:h1",
+              "kind": "horizontal",
+              "line": "leg:bottom"
+            },
+            {
+              "id": "leg:h2",
+              "kind": "horizontal",
+              "line": "leg:top"
+            },
+            {
+              "id": "leg:v1",
+              "kind": "vertical",
+              "line": "leg:right"
+            },
+            {
+              "id": "leg:v2",
+              "kind": "vertical",
+              "line": "leg:left"
+            },
+            {
+              "id": "leg:width",
+              "kind": "horizontal-distance",
+              "points": [
+                "leg:p1",
+                "leg:p2"
+              ],
+              "expression": "thickness"
+            },
+            {
+              "id": "leg:height",
+              "kind": "vertical-distance",
+              "points": [
+                "leg:p2",
+                "leg:p3"
+              ],
+              "expression": "rise"
+            }
+          ]
+        },
+        {
+          "type": "extrude",
+          "id": "wall-leg",
+          "name": "Wall leg",
+          "suppressed": false,
+          "sketch": "wall-leg-sketch",
+          "profiles": [
+            "0b74a4fb335ad9"
+          ],
+          "distance": "width",
+          "direction": "symmetric",
+          "operation": "join"
+        },
+        {
+          "id": "base-hole-sketch",
+          "type": "sketch",
+          "name": "Sketch 3",
+          "suppressed": false,
+          "plane": "XY",
+          "entities": [
+            {
+              "id": "hole:center",
+              "kind": "point",
+              "x": 26,
+              "y": 0
+            },
+            {
+              "id": "hole",
+              "kind": "circle",
+              "center": "hole:center",
+              "radius": 2.25,
+              "construction": false
+            }
+          ],
+          "constraints": [
+            {
+              "id": "hole:fix",
+              "kind": "fix",
+              "point": "hole:center",
+              "x": 26,
+              "y": 0
+            },
+            {
+              "id": "hole:diameter",
+              "kind": "diameter",
+              "curve": "hole",
+              "expression": "screw"
+            }
+          ]
+        },
+        {
+          "type": "extrude",
+          "id": "base-hole",
+          "name": "Base hole",
+          "suppressed": false,
+          "sketch": "base-hole-sketch",
+          "profiles": [
+            "1e4b8e36349fe0"
+          ],
+          "distance": "20 mm",
+          "direction": "symmetric",
+          "operation": "cut"
+        },
+        {
+          "id": "wall-hole-sketch",
+          "type": "sketch",
+          "name": "Sketch 4",
+          "suppressed": false,
+          "plane": "YZ",
+          "entities": [
+            {
+              "id": "hole:center",
+              "kind": "point",
+              "x": 0,
+              "y": 34
+            },
+            {
+              "id": "hole",
+              "kind": "circle",
+              "center": "hole:center",
+              "radius": 2.25,
+              "construction": false
+            }
+          ],
+          "constraints": [
+            {
+              "id": "hole:fix",
+              "kind": "fix",
+              "point": "hole:center",
+              "x": 0,
+              "y": 34
+            },
+            {
+              "id": "hole:diameter",
+              "kind": "diameter",
+              "curve": "hole",
+              "expression": "screw"
+            }
+          ]
+        },
+        {
+          "type": "extrude",
+          "id": "wall-hole",
+          "name": "Wall hole",
+          "suppressed": false,
+          "sketch": "wall-hole-sketch",
+          "profiles": [
+            "1e4b8e36349fe0"
+          ],
+          "distance": "20 mm",
+          "direction": "symmetric",
+          "operation": "cut"
+        }
+      ],
+      "rollbackIndex": 0
+    }
+  ]
+}

@@ -7,7 +7,17 @@
       "installMode": "prefetch",
       "updateMode": "prefetch",
       "resources": {
-        "files": ["/favicon.ico", "/index.html", "/manifest.webmanifest", "/*.css", "/*.js", "/icon*", "/fonts/*"]
+        "files": [
+          "/favicon.ico",
+          "/index.html",
+          "/manifest.webmanifest",
+          "/*.css",
+          "/*.js",
+          "/icon*",
+          "/fonts/*",
+          "/templates/*.json",
+          "/third-party-licences.txt"
+        ]
       }
     },
     {
@@ -15,7 +25,9 @@
       "installMode": "lazy",
       "updateMode": "lazy",
       "resources": {
-        "files": ["/wasm/*.wasm"]
+        "files": [
+          "/wasm/*.wasm"
+        ]
       }
     }
   ]

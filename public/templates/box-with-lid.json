@@ -1,0 +1,500 @@
+{
+  "id": "box-with-lid",
+  "name": "Box with lid",
+  "description": "A box and a lid with a rim that fits into it; size, wall and fit are parameters.",
+  "parameters": [
+    {
+      "id": "p1",
+      "name": "width",
+      "expression": "80 mm"
+    },
+    {
+      "id": "p2",
+      "name": "depth",
+      "expression": "60 mm"
+    },
+    {
+      "id": "p3",
+      "name": "height",
+      "expression": "40 mm"
+    },
+    {
+      "id": "p4",
+      "name": "wall",
+      "expression": "2 mm"
+    },
+    {
+      "id": "p5",
+      "name": "fit",
+      "expression": "0.3 mm"
+    }
+  ],
+  "documents": [
+    {
+      "id": "box-with-lid-1",
+      "projectId": "template",
+      "name": "Box",
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "modifiedAt": "2026-01-01T00:00:00.000Z",
+      "schemaVersion": 2,
+      "kind": "component",
+      "units": "mm",
+      "parameters": [],
+      "timeline": [
+        {
+          "id": "base",
+          "type": "sketch",
+          "name": "Sketch 1",
+          "suppressed": false,
+          "plane": "XY",
+          "entities": [
+            {
+              "id": "outline:p1",
+              "kind": "point",
+              "x": 0,
+              "y": 0
+            },
+            {
+              "id": "outline:p2",
+              "kind": "point",
+              "x": 80,
+              "y": 0
+            },
+            {
+              "id": "outline:p3",
+              "kind": "point",
+              "x": 80,
+              "y": 60
+            },
+            {
+              "id": "outline:p4",
+              "kind": "point",
+              "x": 0,
+              "y": 60
+            },
+            {
+              "id": "outline:bottom",
+              "kind": "line",
+              "start": "outline:p1",
+              "end": "outline:p2",
+              "construction": false
+            },
+            {
+              "id": "outline:right",
+              "kind": "line",
+              "start": "outline:p2",
+              "end": "outline:p3",
+              "construction": false
+            },
+            {
+              "id": "outline:top",
+              "kind": "line",
+              "start": "outline:p3",
+              "end": "outline:p4",
+              "construction": false
+            },
+            {
+              "id": "outline:left",
+              "kind": "line",
+              "start": "outline:p4",
+              "end": "outline:p1",
+              "construction": false
+            }
+          ],
+          "constraints": [
+            {
+              "id": "outline:fix",
+              "kind": "fix",
+              "point": "outline:p1",
+              "x": 0,
+              "y": 0
+            },
+            {
+              "id": "outline:h1",
+              "kind": "horizontal",
+              "line": "outline:bottom"
+            },
+            {
+              "id": "outline:h2",
+              "kind": "horizontal",
+              "line": "outline:top"
+            },
+            {
+              "id": "outline:v1",
+              "kind": "vertical",
+              "line": "outline:right"
+            },
+            {
+              "id": "outline:v2",
+              "kind": "vertical",
+              "line": "outline:left"
+            },
+            {
+              "id": "outline:width",
+              "kind": "horizontal-distance",
+              "points": [
+                "outline:p1",
+                "outline:p2"
+              ],
+              "expression": "width"
+            },
+            {
+              "id": "outline:height",
+              "kind": "vertical-distance",
+              "points": [
+                "outline:p2",
+                "outline:p3"
+              ],
+              "expression": "depth"
+            }
+          ]
+        },
+        {
+          "type": "extrude",
+          "id": "box",
+          "name": "Box",
+          "suppressed": false,
+          "sketch": "base",
+          "profiles": [
+            "1ee9639533841e"
+          ],
+          "distance": "height",
+          "direction": "normal",
+          "operation": "new-body"
+        },
+        {
+          "type": "shell",
+          "id": "hollow",
+          "name": "Hollow",
+          "suppressed": false,
+          "faces": [
+            {
+              "kind": "face",
+              "body": "box",
+              "name": "f:box:end"
+            }
+          ],
+          "thickness": "wall"
+        }
+      ],
+      "rollbackIndex": 0
+    },
+    {
+      "id": "box-with-lid-2",
+      "projectId": "template",
+      "name": "Lid",
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "modifiedAt": "2026-01-01T00:00:00.000Z",
+      "schemaVersion": 2,
+      "kind": "component",
+      "units": "mm",
+      "parameters": [],
+      "timeline": [
+        {
+          "id": "top",
+          "type": "sketch",
+          "name": "Sketch 1",
+          "suppressed": false,
+          "plane": "XY",
+          "entities": [
+            {
+              "id": "outline:p1",
+              "kind": "point",
+              "x": 0,
+              "y": 0
+            },
+            {
+              "id": "outline:p2",
+              "kind": "point",
+              "x": 80,
+              "y": 0
+            },
+            {
+              "id": "outline:p3",
+              "kind": "point",
+              "x": 80,
+              "y": 60
+            },
+            {
+              "id": "outline:p4",
+              "kind": "point",
+              "x": 0,
+              "y": 60
+            },
+            {
+              "id": "outline:bottom",
+              "kind": "line",
+              "start": "outline:p1",
+              "end": "outline:p2",
+              "construction": false
+            },
+            {
+              "id": "outline:right",
+              "kind": "line",
+              "start": "outline:p2",
+              "end": "outline:p3",
+              "construction": false
+            },
+            {
+              "id": "outline:top",
+              "kind": "line",
+              "start": "outline:p3",
+              "end": "outline:p4",
+              "construction": false
+            },
+            {
+              "id": "outline:left",
+              "kind": "line",
+              "start": "outline:p4",
+              "end": "outline:p1",
+              "construction": false
+            }
+          ],
+          "constraints": [
+            {
+              "id": "outline:fix",
+              "kind": "fix",
+              "point": "outline:p1",
+              "x": 0,
+              "y": 0
+            },
+            {
+              "id": "outline:h1",
+              "kind": "horizontal",
+              "line": "outline:bottom"
+            },
+            {
+              "id": "outline:h2",
+              "kind": "horizontal",
+              "line": "outline:top"
+            },
+            {
+              "id": "outline:v1",
+              "kind": "vertical",
+              "line": "outline:right"
+            },
+            {
+              "id": "outline:v2",
+              "kind": "vertical",
+              "line": "outline:left"
+            },
+            {
+              "id": "outline:width",
+              "kind": "horizontal-distance",
+              "points": [
+                "outline:p1",
+                "outline:p2"
+              ],
+              "expression": "width"
+            },
+            {
+              "id": "outline:height",
+              "kind": "vertical-distance",
+              "points": [
+                "outline:p2",
+                "outline:p3"
+              ],
+              "expression": "depth"
+            }
+          ]
+        },
+        {
+          "type": "extrude",
+          "id": "plate",
+          "name": "Plate",
+          "suppressed": false,
+          "sketch": "top",
+          "profiles": [
+            "1ee9639533841e"
+          ],
+          "distance": "wall",
+          "direction": "normal",
+          "operation": "new-body"
+        },
+        {
+          "id": "rim-sketch",
+          "type": "sketch",
+          "name": "Sketch 2",
+          "suppressed": false,
+          "plane": "XY",
+          "entities": [
+            {
+              "id": "inner:p1",
+              "kind": "point",
+              "x": 2.3000000000000007,
+              "y": 2.3
+            },
+            {
+              "id": "inner:p2",
+              "kind": "point",
+              "x": 77.7,
+              "y": 2.3
+            },
+            {
+              "id": "inner:p3",
+              "kind": "point",
+              "x": 77.7,
+              "y": 57.699999999999996
+            },
+            {
+              "id": "inner:p4",
+              "kind": "point",
+              "x": 2.3000000000000007,
+              "y": 57.699999999999996
+            },
+            {
+              "id": "inner:bottom",
+              "kind": "line",
+              "start": "inner:p1",
+              "end": "inner:p2",
+              "construction": false
+            },
+            {
+              "id": "inner:right",
+              "kind": "line",
+              "start": "inner:p2",
+              "end": "inner:p3",
+              "construction": false
+            },
+            {
+              "id": "inner:top",
+              "kind": "line",
+              "start": "inner:p3",
+              "end": "inner:p4",
+              "construction": false
+            },
+            {
+              "id": "inner:left",
+              "kind": "line",
+              "start": "inner:p4",
+              "end": "inner:p1",
+              "construction": false
+            }
+          ],
+          "constraints": [
+            {
+              "id": "inner:fix",
+              "kind": "fix",
+              "point": "inner:p1",
+              "x": 2.3,
+              "y": 2.3
+            },
+            {
+              "id": "inner:h1",
+              "kind": "horizontal",
+              "line": "inner:bottom"
+            },
+            {
+              "id": "inner:h2",
+              "kind": "horizontal",
+              "line": "inner:top"
+            },
+            {
+              "id": "inner:v1",
+              "kind": "vertical",
+              "line": "inner:right"
+            },
+            {
+              "id": "inner:v2",
+              "kind": "vertical",
+              "line": "inner:left"
+            },
+            {
+              "id": "inner:width",
+              "kind": "horizontal-distance",
+              "points": [
+                "inner:p1",
+                "inner:p2"
+              ],
+              "expression": "width - 2 * (wall + fit)"
+            },
+            {
+              "id": "inner:height",
+              "kind": "vertical-distance",
+              "points": [
+                "inner:p2",
+                "inner:p3"
+              ],
+              "expression": "depth - 2 * (wall + fit)"
+            }
+          ]
+        },
+        {
+          "type": "extrude",
+          "id": "rim",
+          "name": "Rim",
+          "suppressed": false,
+          "sketch": "rim-sketch",
+          "profiles": [
+            "071b09199ce0b1"
+          ],
+          "distance": "4 mm",
+          "direction": "reverse",
+          "operation": "join"
+        }
+      ],
+      "rollbackIndex": 0
+    },
+    {
+      "id": "box-with-lid-3",
+      "projectId": "template",
+      "name": "Box with lid",
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "modifiedAt": "2026-01-01T00:00:00.000Z",
+      "schemaVersion": 2,
+      "kind": "assembly",
+      "instances": [
+        {
+          "id": "box",
+          "component": "box-with-lid-1",
+          "name": "Box",
+          "transform": [
+            1,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            1
+          ],
+          "grounded": true
+        },
+        {
+          "id": "lid",
+          "component": "box-with-lid-2",
+          "name": "Lid",
+          "transform": [
+            1,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            40,
+            1
+          ],
+          "grounded": true
+        }
+      ],
+      "joints": [],
+      "motionStudies": []
+    }
+  ]
+}

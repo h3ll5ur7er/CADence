@@ -8,7 +8,7 @@ import { draw, drawCircle, drawRectangle, importSTEP, measureVolume, type Shape3
 import { createInterchangeEngine } from './index';
 import { readStl } from './mesh-readers';
 import { meshVolume, writeStl } from './solids';
-import { readZip } from './zip';
+import { readZip } from '@core/utilities/archive';
 
 const engine = createInterchangeEngine();
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);

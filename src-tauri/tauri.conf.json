@@ -46,7 +46,18 @@
       "nsis": {
         "installMode": "currentUser"
       }
-    }
+    },
+    "fileAssociations": [
+      {
+        "ext": [
+          "cadence"
+        ],
+        "name": "CADence project",
+        "description": "CADence project archive",
+        "role": "Editor",
+        "mimeType": "application/vnd.cadence+zip"
+      }
+    ]
   },
   "plugins": {
     "updater": {

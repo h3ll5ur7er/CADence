@@ -11,6 +11,12 @@ export type VersionFile =
   | { readonly path: string; readonly text: string }
   | { readonly path: string; readonly bytes: () => Promise<Uint8Array> };
 
+/** A file of a version history as it is stored (a git repository's own files). */
+export interface HistoryFile {
+  readonly path: string;
+  readonly bytes: Uint8Array;
+}
+
 /**
  * Atomic business verbs over a project's version history (a git repository per project): record the
  * project's files, list and read versions, name them, and exchange them with a remote.
@@ -21,7 +27,7 @@ export interface VersionAccess {
    * With `mergeOf`, the version combines the latest one with that version (recorded even when unchanged).
    */
   record(projectId: ProjectId, files: readonly VersionFile[], message: string, time: Timestamp, mergeOf?: string): Promise<string | undefined>;
-  /** Newest first; with `path`, only the versions that changed that file. */
+  /** Newest first; with `path`, only the versions that changed that file. Versions say whether the remote has them once a remote was fetched. */
   versions(projectId: ProjectId, path?: string): Promise<Version[]>;
   /** The latest version's id; undefined before the first version. */
   latest(projectId: ProjectId): Promise<string | undefined>;
@@ -39,11 +45,20 @@ export interface VersionAccess {
   unname(projectId: ProjectId, name: string): Promise<void>;
   /** Forgets the project's history; unknown projects are ignored. */
   discard(projectId: ProjectId): Promise<void>;
+  /** The project's history as files (for archives); empty when it has none. */
+  exportHistory(projectId: ProjectId): Promise<HistoryFile[]>;
+  /** Takes over a history exported before, in place of the project's own. */
+  importHistory(projectId: ProjectId, files: readonly HistoryFile[]): Promise<void>;
 
   /** Fetches the remote's versions; returns its latest version, undefined when the remote is empty. */
   fetch(projectId: ProjectId, remote: ProjectRemote, credentials?: RemoteCredentials): Promise<string | undefined>;
   /** Sends the versions to the remote; its latest must be in our history. */
   push(projectId: ProjectId, remote: ProjectRemote, credentials?: RemoteCredentials): Promise<void>;
+  /**
+   * Exchanges version names with the remote (after its versions were exchanged): names only the remote
+   * has are taken, names only we have are sent. Returns the names given to different versions on each side.
+   */
+  syncNames(projectId: ProjectId, remote: ProjectRemote, credentials?: RemoteCredentials): Promise<string[]>;
 }
 
 export class InvalidVersionNameError extends Error {

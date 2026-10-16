@@ -39,6 +39,8 @@
     (rename)="rename($event)"
     (remove)="remove($event)"
     (history)="historyDialog.open($event)"
+    (duplicate)="duplicate($event)"
+    (replace)="replace($event.document, $event.file)"
   />
   @if (message(); as text) {
     <p class="message" role="alert">{{ text }}</p>

@@ -73,6 +73,8 @@ To publish the desktop app:
 
 The installers are not code signed yet: Windows SmartScreen warns about them until they are. With a code signing certificate, set `bundle.windows.certificateThumbprint` (or a `signCommand` for cloud signing) in the release configuration [[src-tauri/tauri.release.conf.json]].
 
+Templates: the projects in `public/templates` are made by [[src/automation/templates.ts]]. After changing a template (or what it is made with), write them again with `UPDATE_TEMPLATES=1 npx vitest run -c vitest.core.config.ts src/automation/templates.spec.ts`; the test fails while they differ.
+
 Credits: `node tools/licences/licences.mjs` writes the About dialog's list of libraries ([[src/app/about/credits.ts]]) and the full licence texts (`public/third-party-licences.txt`) from the production dependencies. A test fails when they are out of date, e.g. after a dependency changed.
 
 ## Where things go

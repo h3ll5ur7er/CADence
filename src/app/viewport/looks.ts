@@ -1,9 +1,10 @@
-import type { Appearance, Vec3 } from '@core/contracts';
+import type { Appearance, Finish, Vec3 } from '@core/contracts';
 
 /** How a shown body is drawn. */
 export interface Look {
   readonly color: string;
   readonly opacity: number;
+  readonly finish?: Finish;
 }
 
 /**
@@ -15,7 +16,8 @@ export function lookOf(fallback: string, ...layers: readonly (Appearance | undef
   for (const layer of layers) {
     if (!layer) continue;
     if (layer.hidden) return undefined;
-    look = { color: layer.color ?? look.color, opacity: layer.opacity ?? look.opacity };
+    const finish = layer.finish ?? look.finish;
+    look = { color: layer.color ?? look.color, opacity: layer.opacity ?? look.opacity, ...(finish ? { finish } : {}) };
   }
   return look;
 }

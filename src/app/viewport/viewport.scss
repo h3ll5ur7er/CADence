@@ -83,3 +83,56 @@ canvas {
     color: var(--text-muted);
   }
 }
+
+/* CAD-91: the surface analysis panel sits left of the section panel. */
+.analysis-panel {
+  right: calc(var(--space-3) + 256px);
+
+  input[type='number'] {
+    width: 100%;
+    height: 30px;
+    padding: 0 var(--space-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--surface-raised);
+    color: var(--text);
+    font: 13px var(--font);
+  }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1);
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+
+  .swatch {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+
+    &.flat {
+      background: #0000ff;
+    }
+
+    &.curved {
+      background: #ff0000;
+    }
+
+    &.up {
+      background: rgb(51 191 77);
+    }
+
+    &.down {
+      background: rgb(64 115 242);
+    }
+
+    &.none {
+      background: rgb(250 204 26);
+    }
+  }
+}

@@ -32,6 +32,17 @@ In an assembly, the eye next to an instance hides it, and the selected instance 
 
 Looks are saved with the document and can be undone like any change.
 
+- **Finish:** matte (the default), plastic, metal, glass (see-through) or wood (wood-coloured unless the body has a colour). Finishes show best with **realistic lighting** (the sun button beside the view cube): the light of a room reflected on the surfaces, and shadows on the ground under the model. The setting is kept for all projects.
+- **Picture or turntable…** (in **Export**) saves the view as you see it, without grid and origin: a PNG of any size (up to 8000 × 8000 pixels), on white or a transparent background, or a video of the model turning once around (WebM, 2 to 60 seconds).
+
+## Surface analysis
+
+The wavy button beside the view cube colours the faces to show their shape instead of their looks:
+
+- **Zebra stripes:** stripes that run on smoothly across an edge mean the faces meet smoothly (tangent or better); a kink in the stripes is a crease.
+- **Curvature:** flat faces blue, the most tightly curved red (scaled to the model).
+- **Draft angle:** against a pull direction (Z up, Y or X) and a least draft. Faces green draw out along the pull, blue the other way; yellow ones are too close to parallel to the pull and need more draft to come out of a mould.
+
 ## Keyboard shortcuts
 
 Press **?** for the full list of the chosen control style. Shortcuts never fire while you type in a field.

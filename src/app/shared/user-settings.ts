@@ -18,6 +18,7 @@ const key = 'cadence.settings';
 interface Stored {
   readonly controls?: ControlScheme;
   readonly projection?: Projection;
+  readonly realistic?: boolean;
 }
 
 /**
@@ -30,10 +31,12 @@ export class UserSettings {
   private readonly stored = this.read();
   readonly controls = signal<ControlScheme>(controlSchemes.some((s) => s.id === this.stored.controls) ? (this.stored.controls as ControlScheme) : 'cadence');
   readonly projection = signal<Projection>(this.stored.projection === 'orthographic' ? 'orthographic' : 'perspective');
+  /** The realistic look: reflections of the finishes and shadows (CAD-90). */
+  readonly realistic = signal(this.stored.realistic === true);
 
   constructor() {
     effect(() => {
-      const value: Stored = { controls: this.controls(), projection: this.projection() };
+      const value: Stored = { controls: this.controls(), projection: this.projection(), ...(this.realistic() ? { realistic: true } : {}) };
       try {
         this.storage?.setItem(key, JSON.stringify(value));
       } catch {

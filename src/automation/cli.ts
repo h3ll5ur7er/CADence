@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, extname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -16,6 +16,7 @@ Commands:
   projects                              List the projects
   documents <project>                   List a project's documents
   export <project> <document> <format>  Export a component (step, stl, obj, 3mf; dxf or svg with --sketch <id> or --flat-pattern)
+  picture <project> <document> <file>  A PNG of a component or an assembly (--view iso|front|back|top|bottom|left|right, --width, --height, --white)
   convert <input> <output>              Convert a file; formats from the extensions (step, stl, obj, 3mf, dxf, svg)
   run <script> [arguments]              Run a script: its default export is called with the API and the arguments
   open-git <url>                        Open a project from a git repository (--cors-proxy <url>)
@@ -115,6 +116,23 @@ export async function runCli(args: readonly string[], io: Io, reference = '', ve
           else throw new CadenceError('usage', 'DXF and SVG need --sketch <id> or --flat-pattern.');
         } else path = await script.export(format as SolidFormat, to);
         io.out(path);
+        return 0;
+      }
+      case 'picture': {
+        need(3);
+        const cadence = open(folder);
+        const document = await cadence.document(rest[1] as string, rest[0] as string);
+        const number = (key: string) => (typeof options[key] === 'string' ? Number(options[key]) : undefined);
+        const width = number('width');
+        const height = number('height');
+        const png = await cadence.picture(document.id, {
+          ...(typeof options['view'] === 'string' ? { view: options['view'] as 'iso' } : {}),
+          ...(width ? { width } : {}),
+          ...(height ? { height } : {}),
+          ...(options['white'] ? { white: true } : {}),
+        });
+        await writeFile(rest[2] as string, png);
+        io.out(rest[2] as string);
         return 0;
       }
       case 'convert': {

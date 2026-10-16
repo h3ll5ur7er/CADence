@@ -19,6 +19,7 @@ import { mouseBindings } from '../shared/keymap';
 import { Shortcuts } from '../shared/shortcuts';
 import { UserSettings } from '../shared/user-settings';
 import { sectionAxis, sectionPlane, type SectionSetting } from './looks';
+import type { SurfaceAnalysis } from './surface-analysis';
 import type { Pick, PickKind } from './picking';
 import type { SketchDisplay } from './sketch-display';
 import type { Affine } from './sketch-planes';
@@ -99,6 +100,12 @@ const thumbnailDelay = 1500;
       <button type="button" class="icon-btn tool" aria-label="Section view" title="Section view" [attr.aria-pressed]="!!section()" [class.on]="!!section()" (click)="toggleSection()">
         <cad-icon name="section" />
       </button>
+      <button type="button" class="icon-btn tool" aria-label="Surface analysis" title="Surface analysis: zebra, curvature, draft" [attr.aria-pressed]="!!analysis()" [class.on]="!!analysis()" (click)="toggleAnalysis()">
+        <cad-icon name="analysis" />
+      </button>
+      <button type="button" class="icon-btn tool" aria-label="Realistic lighting" title="Realistic lighting: reflections and shadows" [attr.aria-pressed]="settings.realistic()" [class.on]="settings.realistic()" (click)="settings.realistic.set(!settings.realistic())">
+        <cad-icon name="light" />
+      </button>
     </cad-view-cube>
     @if (section(); as s) {
       <form class="section-panel" aria-label="Section view" (pointerdown)="$event.stopPropagation()" (submit)="$event.preventDefault()">
@@ -125,6 +132,38 @@ const thumbnailDelay = 1500;
           />
         </label>
         <label class="check"><input type="checkbox" [checked]="s.flipped" (change)="flipSection()" /> Flip the side that is cut away</label>
+      </form>
+    }
+    @if (analysis(); as a) {
+      <form class="section-panel analysis-panel" aria-label="Surface analysis" (pointerdown)="$event.stopPropagation()" (submit)="$event.preventDefault()">
+        <p class="eyebrow">Surface analysis</p>
+        <label class="field">
+          Show
+          <select id="analysis-kind" (change)="setAnalysisKind($any($event.target).value)">
+            <option value="zebra" [selected]="a.kind === 'zebra'">Zebra stripes</option>
+            <option value="curvature" [selected]="a.kind === 'curvature'">Curvature</option>
+            <option value="draft" [selected]="a.kind === 'draft'">Draft angle</option>
+          </select>
+        </label>
+        @if (a.kind === 'zebra') {
+          <p class="legend">Stripes that run on smoothly across an edge: the faces meet smoothly; kinks: a crease.</p>
+        } @else if (a.kind === 'curvature') {
+          <p class="legend"><span class="swatch flat"></span> flat <span class="swatch curved"></span> tightly curved</p>
+        } @else {
+          <label class="field">
+            Pulled along
+            <select id="analysis-pull" (change)="setDraft({ pull: pullAt(+$any($event.target).value) })">
+              @for (p of pulls; track p.label; let i = $index) {
+                <option [value]="i" [selected]="p.direction.join() === a.pull.join()">{{ p.label }}</option>
+              }
+            </select>
+          </label>
+          <label class="field">
+            Least draft (°)
+            <input id="analysis-draft" type="number" min="0" max="45" step="0.5" [value]="a.minimum" (change)="setDraft({ minimum: +$any($event.target).value })" />
+          </label>
+          <p class="legend"><span class="swatch up"></span> draws out <span class="swatch down"></span> the other half <span class="swatch none"></span> too little draft</p>
+        }
       </form>
     }
     @if (failed()) {
@@ -172,6 +211,13 @@ export class Viewport {
   protected readonly failed = signal(false);
   protected readonly orthographic = computed(() => this.settings.projection() === 'orthographic');
   protected readonly section = signal<SectionSetting | undefined>(undefined);
+  /** Faces coloured to show their shape, or `undefined` for their looks. */
+  protected readonly analysis = signal<SurfaceAnalysis | undefined>(undefined);
+  protected readonly pulls = [
+    { label: 'Z (up)', direction: [0, 0, 1] as const },
+    { label: 'Y', direction: [0, 1, 0] as const },
+    { label: 'X', direction: [1, 0, 0] as const },
+  ];
   protected readonly sectionRange = signal<readonly [number, number]>([-50, 50]);
   protected readonly sectionStep = computed(() => Math.max(0.01, Number(((this.sectionRange()[1] - this.sectionRange()[0]) / 200).toPrecision(1))));
   private readonly canvas = viewChild.required<ElementRef<HTMLCanvasElement>>('canvas');
@@ -236,6 +282,8 @@ export class Viewport {
     effect(() => this.scene()?.setMeasureLine(this.measureLine()));
     effect(() => this.scene()?.setThreads(this.threads()));
     effect(() => this.scene()?.setHandle(this.handle()));
+    effect(() => this.scene()?.setAnalysis(this.analysis()));
+    effect(() => void this.scene()?.setRealistic(this.settings.realistic()));
     effect(() => this.scene()?.setTrails(this.trails()));
     // A picture once the model has settled: after its bodies, parts or sketches stop changing.
     let pending: ReturnType<typeof setTimeout> | undefined;
@@ -295,6 +343,58 @@ export class Viewport {
   }
 
   /** Turns the section view on, through the middle of the model, or off. */
+  protected toggleAnalysis(): void {
+    this.analysis.set(this.analysis() ? undefined : { kind: 'zebra', stripes: 12 });
+  }
+
+  protected setAnalysisKind(kind: SurfaceAnalysis['kind']): void {
+    this.analysis.set(kind === 'zebra' ? { kind, stripes: 12 } : kind === 'curvature' ? { kind } : { kind, pull: [0, 0, 1], minimum: 1 });
+  }
+
+  protected pullAt(index: number): readonly [number, number, number] {
+    return this.pulls[index]?.direction ?? [0, 0, 1];
+  }
+
+  protected setDraft(change: { pull?: readonly [number, number, number]; minimum?: number }): void {
+    const current = this.analysis();
+    if (current?.kind === 'draft') this.analysis.set({ ...current, ...change });
+  }
+
+  /** A PNG of the view as it is seen now, at any size, on white or transparent (CAD-90). */
+  exportPicture(width: number, height: number, transparent: boolean): Promise<Uint8Array | undefined> {
+    return this.scene()?.picture(width, height, transparent) ?? Promise.resolve(undefined);
+  }
+
+  /** A video (WebM) of the model turning once around, `seconds` long; undefined where recording is not available. */
+  async recordTurntable(seconds: number): Promise<Uint8Array | undefined> {
+    const scene = this.scene();
+    if (!scene || typeof MediaRecorder === 'undefined') return undefined;
+    const stream = this.captureStream(30);
+    const type = ['video/webm;codecs=vp9', 'video/webm'].find((t) => MediaRecorder.isTypeSupported(t)) ?? '';
+    const recorder = new MediaRecorder(stream, type ? { mimeType: type } : {});
+    const chunks: Blob[] = [];
+    recorder.ondataavailable = (event) => chunks.push(event.data);
+    const stopped = new Promise<void>((resolve) => (recorder.onstop = () => resolve()));
+    recorder.start();
+    // A full turn in `seconds`, following the clock rather than the frame rate.
+    await new Promise<void>((resolve) => {
+      const start = performance.now();
+      let turned = 0;
+      const step = () => {
+        const target = Math.min(1, (performance.now() - start) / (seconds * 1000)) * 2 * Math.PI;
+        scene.orbit(target - turned);
+        turned = target;
+        if (turned < 2 * Math.PI) requestAnimationFrame(step);
+        else resolve();
+      };
+      requestAnimationFrame(step);
+    });
+    recorder.stop();
+    await stopped;
+    for (const track of stream.getTracks()) track.stop();
+    return new Uint8Array(await new Blob(chunks, { type: 'video/webm' }).arrayBuffer());
+  }
+
   toggleSection(): void {
     if (this.section()) return this.section.set(undefined);
     this.startSection({ plane: 'XZ', offset: 0, flipped: false });

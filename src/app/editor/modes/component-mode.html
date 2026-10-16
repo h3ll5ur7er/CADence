@@ -273,6 +273,7 @@
                 <button type="button" role="menuitem" (click)="exportAs(f.format)">{{ f.label }}</button>
               }
               <button type="button" role="menuitem" (click)="menu.set(undefined); store.exportViewer()">Viewer (HTML, to share)</button>
+              <button type="button" role="menuitem" (click)="menu.set(undefined); pictureDialog().ask(viewport, document().name)">Picture or turntable…</button>
               <button type="button" role="menuitem" (click)="openExport()">With options…</button>
               @if (store.state()?.sheetMetal) {
                 <button type="button" role="menuitem" (click)="exportFlat('dxf')">Flat pattern (DXF)</button>
@@ -499,7 +500,12 @@
                   [value]="body.appearance.opacity ?? 1"
                   (change)="setAppearance(body.id, { opacity: +$any($event.target).value })"
                 />
-                @if (body.appearance.color || body.appearance.opacity) {
+                <select class="finish" [attr.aria-label]="'Finish of ' + body.name" (change)="setAppearance(body.id, { finish: $any($event.target).value })">
+                  @for (f of finishes; track f) {
+                    <option [value]="f" [selected]="(body.appearance.finish ?? 'matte') === f">{{ finishLabels[f] }}</option>
+                  }
+                </select>
+                @if (body.appearance.color || body.appearance.opacity || body.appearance.finish) {
                   <button type="button" class="btn btn-ghost" [attr.aria-label]="'Default look of ' + body.name" (click)="resetLook(body.id)">Reset</button>
                 }
               </div>
@@ -520,3 +526,4 @@
 <cad-name-dialog />
 <cad-folder-dialog />
 <cad-note-dialog />
+<cad-picture-dialog />

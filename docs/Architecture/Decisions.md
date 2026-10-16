@@ -320,3 +320,14 @@ Imported SVG `<text>` and DXF `TEXT`/`MTEXT` become editable sketch texts in thi
 
 *Why:* the user asked for drawings with views, sections, details, dimensions, callouts and parts lists, exported as PDF and DXF; results and persistent names already existed to build on.
 *Trade-off:* sections are full sections across the view (no offset or half sections); dimensions on isometric views are not true lengths; text is Helvetica (Latin-1 in the PDF); assemblies must have been opened once to be drawn.
+
+## ADR-40
+
+**Visuals: finishes are part of the appearance, the realistic look is a viewer setting, surface analysis colours vertices, and scripts render pictures in software.**
+- *Finishes* (matte, plastic, metal, glass, wood) are stored with a body's or an instance's appearance, like its colour, as roughness and metalness for three.js's standard material. *Realistic lighting* is how one person looks at models, so it is a user setting (like the projection): a room environment (`RoomEnvironment` through the WebGPU renderer's `PMREMGenerator`) for reflections, and a shadow-catching ground under the model.
+- *Pictures and turntables* are taken by the viewport from what it shows: the renderer resized for a moment to the picture's size (helpers hidden), or the camera turned once about the vertical axis while the canvas stream is recorded. Files reach the user through the Project Manager (`deliverFile`), like every export.
+- *Surface analysis* colours each vertex (zebra by the normal's angle to a fixed axis, curvature by how fast normals turn between neighbouring vertices, draft by the normal against the pull direction) and draws the faces unlit. No shader code: it works the same on WebGPU and WebGL.
+- *Pictures for agents* need no GPU: a small software renderer in the core utilities (depth buffer, two-sided soft shading, edges) draws the tessellated bodies orthographically, and a PNG encoder (deflate by the platform's `CompressionStream`) writes them. The API (`picture()`), the command line and the MCP tool `render_picture` (an image result) all use it.
+
+*Why:* the user asked for nicer pictures to share, for surface checks known from other CAD programs, and for agents that can look at what they made.
+*Trade-off:* zebra stripes are fixed to the model, not the camera; curvature is a mesh estimate; software pictures have no reflections or shadows; turntables are recorded in real time.

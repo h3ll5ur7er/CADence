@@ -10,9 +10,12 @@ import type {
   ValidationReport,
   Vec2,
 } from '@core/contracts';
+import { sourceKey } from '@core/contracts';
 import type { AssemblyCommand, AssemblyFormat, AssemblySession, AssemblyState } from '@core/managers/assembly';
 import type { DesignSession, DesignState, DrawingFormat, ExportOptions, SolidFormat } from '@core/managers/design';
 import type { ProjectManager } from '@core/managers/project';
+import { encodePng } from '@core/utilities/picture';
+import { type RasterMesh, rasterize, type RasterView, rasterViews } from '@core/utilities/raster';
 import { expandShape, type ScriptCommand } from './shapes';
 
 /** A refused command or a missing project, document or file; `code` is the core's error code. */
@@ -36,6 +39,28 @@ export interface ExportTarget {
 function unwrap<T>(result: Result<T>): T {
   if (!result.ok) throw new CadenceError(result.error.code, result.error.message);
   return result.value;
+}
+
+/** How a picture of a component or an assembly is taken. */
+export interface PictureOptions {
+  /** From where: `iso` (front, right, above; the default), `front`, `back`, `top`, `bottom`, `left` or `right`. */
+  readonly view?: RasterView;
+  /** Pixels; 800 × 600 by default. */
+  readonly width?: number;
+  readonly height?: number;
+  /** A white ground instead of a transparent one. */
+  readonly white?: boolean;
+}
+
+/** The meshes as a PNG, seen from the chosen view. */
+async function picture(meshes: readonly RasterMesh[], options: PictureOptions): Promise<Uint8Array> {
+  const view = rasterViews[options.view ?? 'iso'];
+  if (!view) throw new CadenceError('usage', `No view "${options.view}".`);
+  const [width, height] = [Math.round(options.width ?? 800), Math.round(options.height ?? 600)];
+  if (!(width > 0 && height > 0 && width * height <= 16_000_000)) throw new CadenceError('usage', 'A picture is 1 to 16 million pixels.');
+  if (!meshes.length) throw new CadenceError('nothing-to-show', 'There are no bodies to show yet.');
+  const data = rasterize(meshes, { width, height, ...view, ...(options.white ? { background: [255, 255, 255, 255] as const } : {}) });
+  return encodePng({ width, height, data });
 }
 
 const round = (value: number) => Math.round(value * 1000) / 1000;
@@ -157,6 +182,16 @@ export class ComponentScript {
     return unwrap(await this.session.measure(refs));
   }
 
+  /** A picture of the shown bodies as a PNG (software rendering, no GPU needed). */
+  picture(options: PictureOptions = {}): Promise<Uint8Array> {
+    const { bodies, document } = this.session.state();
+    const shown = bodies.filter((b) => !document.appearances?.[b.body]?.hidden);
+    return picture(
+      shown.map((b) => ({ positions: b.positions, normals: b.normals, indices: b.indices, edges: b.edgePositions, ...(document.appearances?.[b.body]?.color ? { color: document.appearances[b.body]?.color as string } : {}) })),
+      options,
+    );
+  }
+
   private async delivered(to: string | undefined, write: () => Promise<Result<void>>): Promise<string> {
     if (to) this.exports.deliverNextTo(to);
     const before = this.exports.delivered.length;
@@ -184,6 +219,37 @@ export class AssemblyScript {
 
   interference() {
     return this.session.interference();
+  }
+
+  /** A picture of the shown instances as a PNG, once their components are loaded. */
+  async picture(options: PictureOptions = {}): Promise<Uint8Array> {
+    const loading = () => [...this.session.state().components.values()].some((c) => c.status === 'loading');
+    if (loading()) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(done, 120_000);
+        const stop = this.session.subscribe(() => (loading() ? undefined : done()));
+        function done() {
+          clearTimeout(timer);
+          stop();
+          resolve();
+        }
+      });
+    }
+    const state = this.session.state();
+    const instances = [...state.document.instances, ...[...state.copies].flatMap(([id, copy]) => {
+      const original = state.document.instances.find((i) => i.id === copy.instance);
+      return original ? [{ ...original, id }] : [];
+    })];
+    const meshes = instances.flatMap((instance) => {
+      const component = state.components.get(sourceKey(instance.component, instance.configuration));
+      const transform = state.poses.get(instance.id);
+      if (!component || !transform || instance.appearance?.hidden) return [];
+      return component.bodies.flatMap((b) => {
+        const look = instance.appearance?.color ?? component.appearances?.[b.body]?.color;
+        return component.appearances?.[b.body]?.hidden ? [] : [{ positions: b.positions, normals: b.normals, indices: b.indices, edges: b.edgePositions, transform, ...(look ? { color: look } : {}) }];
+      });
+    });
+    return picture(meshes, options);
   }
 
   async export(format: AssemblyFormat, options: { readonly to?: string } = {}): Promise<string> {
@@ -242,6 +308,19 @@ export class Cadence {
       this.components.set(documentId, script);
     }
     return script;
+  }
+
+  /** A picture of a component or an assembly as a PNG. */
+  async picture(documentId: string, options: PictureOptions = {}): Promise<Uint8Array> {
+    const document = await this.document(documentId);
+    if (document.kind === 'component') return (await this.component(document.id)).picture(options);
+    if (document.kind !== 'assembly') throw new CadenceError('not-a-model', `${document.name} is not a component or an assembly.`);
+    const assembly = await this.assembly(document.id);
+    try {
+      return await assembly.picture(options);
+    } finally {
+      assembly.close();
+    }
   }
 
   async assembly(documentId: string): Promise<AssemblyScript> {

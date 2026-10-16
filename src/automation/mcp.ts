@@ -40,6 +40,7 @@ Model a part:
    [{"type":"add-feature","feature":{"type":"extrude","id":"e1","name":"","suppressed":false,"sketch":"s1","profiles":["<profile id>"],"distance":"6 mm","direction":"normal","operation":"new-body"}}]
 3. get_component lists the timeline (with errors), sketches with their profiles, and bodies with their face and edge names, which features such as fillet take as {"kind":"edge","body":"<body id>","name":"<edge name>"}.
 4. component_properties, check_component (print or laser rules) and export_component (STEP, STL, OBJ, 3MF; DXF or SVG of a sketch or a flat pattern).
+5. render_picture shows a component or an assembly as a picture, to check what was made.
 Lengths are expressions ("6 mm", "2 * wall", "1 in"); plain numbers are millimetres. command_reference has every command and feature as TypeScript types.`;
 
 /** The MCP server: CADence's scripting API as tools (docs/User-guide/Automation.md). */
@@ -86,6 +87,8 @@ export class McpServer {
     if (!tool) return { content: [{ type: 'text', text: `Unknown tool ${name}.` }], isError: true };
     try {
       const result = await tool.run(args);
+      // Pictures go back as images the agent can look at.
+      if (result instanceof Uint8Array) return { content: [{ type: 'image', data: Buffer.from(result).toString('base64'), mimeType: 'image/png' }] };
       return { content: [{ type: 'text', text: typeof result === 'string' ? result : JSON.stringify(result, null, 2) }] };
     } catch (error) {
       const message = error instanceof CadenceError ? `${error.message} (${error.code})` : String((error as Error).message ?? error);
@@ -227,6 +230,26 @@ export class McpServer {
         description: 'Writes an imported file in another format (3D files to STEP, STL, OBJ or 3MF; drawings to DXF or SVG). Returns the path.',
         inputSchema: object({ document: documentArg, format: { type: 'string', enum: ['step', 'stl', 'obj', '3mf', 'dxf', 'svg'] }, path: string('Where to write the file.') }, ['document', 'format']),
         run: async (args) => cadence.exportImported(String(args['document']), args['format'] as ImportFormat, args['path'] === undefined ? {} : { to: String(args['path']) }),
+      },
+      {
+        name: 'render_picture',
+        description: 'A picture (PNG) of a component or an assembly, to look at what was made: from the front, back, top, bottom, left, right or isometric (the default).',
+        inputSchema: object(
+          {
+            document: string('Component or assembly id (from list_documents).'),
+            view: { type: 'string', enum: ['iso', 'front', 'back', 'top', 'bottom', 'left', 'right'] },
+            width: { type: 'number', description: 'Pixels, 800 by default.' },
+            height: { type: 'number', description: 'Pixels, 600 by default.' },
+          },
+          ['document'],
+        ),
+        run: (args) =>
+          cadence.picture(String(args['document']), {
+            ...(args['view'] ? { view: args['view'] as 'iso' } : {}),
+            ...(args['width'] ? { width: Number(args['width']) } : {}),
+            ...(args['height'] ? { height: Number(args['height']) } : {}),
+            white: true,
+          }),
       },
       {
         name: 'command_reference',

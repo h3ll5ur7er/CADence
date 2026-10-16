@@ -13,6 +13,8 @@ import {
 } from '@angular/core';
 import {
   type Appearance,
+  type Finish,
+  finishes,
   type DocumentSummary,
   type FeatureType,
   type LengthUnit,
@@ -48,6 +50,7 @@ import { featureLabels } from '../modeling/feature-drafts';
 import { FeatureDialog } from '../modeling/feature-dialog';
 import { ParametersPanel } from '../modeling/parameters-panel';
 import { FolderDialog, NoteDialog } from '../modeling/timeline-dialogs';
+import { PictureDialog } from '../picture-dialog';
 import { RepairPanel } from '../modeling/repair-panel';
 import { DesignStore } from '../sketch/design-store';
 import { describeConstraint } from '../sketch/sketch-overlay';
@@ -152,7 +155,7 @@ const exportFormats: readonly { format: SolidFormat; label: string }[] = [
 /** Part modeling mode: sketches, features, parameters and bodies. */
 @Component({
   selector: 'cad-component-mode',
-  imports: [Viewport, Icon, SketchEditor, SketchToolbar, NameDialog, FolderDialog, NoteDialog, FeatureDialog, ParametersPanel, MeasurePanel, CheckPanel, RepairPanel],
+  imports: [Viewport, PictureDialog, Icon, SketchEditor, SketchToolbar, NameDialog, FolderDialog, NoteDialog, FeatureDialog, ParametersPanel, MeasurePanel, CheckPanel, RepairPanel],
   providers: [DesignStore],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './component-mode.html',
@@ -193,8 +196,11 @@ export class ComponentMode {
   protected readonly unitNames = lengthUnitNames;
   protected readonly unitList = Object.keys(lengthUnitNames) as LengthUnit[];
   protected readonly grams = grams;
+  protected readonly finishes = finishes;
+  protected readonly finishLabels: Readonly<Record<Finish, string>> = { matte: 'Matte', plastic: 'Plastic', metal: 'Metal', glass: 'Glass', wood: 'Wood' };
   protected readonly point = point;
   private readonly nameDialog = viewChild.required(NameDialog);
+  protected readonly pictureDialog = viewChild.required(PictureDialog);
   protected readonly isSketch = isSketch;
   private readonly folderDialog = viewChild.required(FolderDialog);
   private readonly noteDialog = viewChild.required(NoteDialog);

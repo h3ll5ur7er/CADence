@@ -81,8 +81,8 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 - [ ] **Touch and tablet use.** *(new)*
 - [X] **Command palette** (Ctrl+K): find and run any tool or command by name. *(new)* → [[CAD-78]] ✅
 - [ ] **Named views:** save camera positions and section planes, and return to them. *(new)*
-- [X] **Better looks and pictures:** materials with environment lighting, and image and turntable video export with a transparent background. *(new)* → [[CAD-90]]
-- [X] **Surface analysis:** zebra stripes, curvature and draft angle shown on the faces. *(new)* → [[CAD-91]]
+- [X] **Better looks and pictures:** materials with environment lighting, and image and turntable video export with a transparent background. *(new)* → [[CAD-90]] ✅
+- [X] **Surface analysis:** zebra stripes, curvature and draft angle shown on the faces. *(new)* → [[CAD-91]] ✅
 - [ ] **Augmented reality:** look at a part at real size on a phone (WebXR, or a USDZ/glTF export). *(new)*
 - [ ] **Undo history panel:** see the commands that were applied and step back to any of them. *(new)*
 - [ ] **Onboarding:** a short interactive tour and sample projects, with links from tools to the User guide. *(new)*
@@ -134,7 +134,7 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 ## Automation and AI
 
 - [ ] **Publish the command line as a package** (`npx cadence`), so it runs without a copy of the repository. *(ADR-31 trade-off)*
-- [X] **Pictures for agents:** an MCP tool that renders a component to PNG, so an agent can look at what it made. *(ADR-31 trade-off)* → [[CAD-92]]
+- [X] **Pictures for agents:** an MCP tool that renders a component to PNG, so an agent can look at what it made. *(ADR-31 trade-off)* → [[CAD-92]] ✅
 - [ ] **MCP over HTTP** from the running app, so an agent can drive the web app's projects directly. *(ADR-31 trade-off)*
 - [ ] **An assistant in the app:** describe a part or a change in words, and an AI model builds it with the same tools the MCP server offers, step by step in the timeline. *(new)*
 - [ ] **Script console in the app:** run scripts against the open project, and keep them with the project as reusable generators. *(new)*

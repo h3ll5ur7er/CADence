@@ -191,6 +191,7 @@
               <button type="button" role="menuitem" (click)="exportAs(f.format)">{{ f.label }}</button>
             }
             <button type="button" role="menuitem" (click)="menu.set(undefined); store.exportViewer()">Viewer (HTML, to share)</button>
+            <button type="button" role="menuitem" (click)="menu.set(undefined); pictureDialog().ask(viewport, document().name)">Picture or turntable…</button>
           </div>
         }
       </div>
@@ -347,6 +348,11 @@
         [value]="row.instance.appearance?.opacity ?? 1"
         (change)="setAppearance(row.instance.id, row.instance.appearance, { opacity: +$any($event.target).value })"
       />
+      <select class="finish" [attr.aria-label]="'Finish of ' + row.instance.name" (change)="setAppearance(row.instance.id, row.instance.appearance, { finish: $any($event.target).value })">
+        @for (f of finishes; track f) {
+          <option [value]="f" [selected]="(row.instance.appearance?.finish ?? 'matte') === f">{{ finishLabels[f] }}</option>
+        }
+      </select>
       @if (row.instance.appearance?.color || row.instance.appearance?.opacity) {
         <button type="button" class="btn btn-ghost" (click)="resetLook(row.instance.id, row.instance.appearance)">Reset</button>
       }
@@ -391,3 +397,4 @@
     <p class="hint">Insert components, connect them with joints, then drag a joint's values or play a motion study.</p>
   }
 </aside>
+<cad-picture-dialog />

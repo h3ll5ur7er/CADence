@@ -14,6 +14,7 @@ Click **Parameters** in the browser panel to name values: `thickness = 6 mm`, `h
 
 - **Project parameters**, in the same panel, are shared by every component of the project: a sheet thickness or a screw size. Changing one updates every component that uses it (assemblies too). A component's own parameter of the same name wins.
 - **Configurations** are variants of the component: named rows of other values for some parameters (*Short*, *Long*; empty cells keep the parameter's own value). **Shown** picks the variant you see and edit. Exports can use any configuration (**Export → With options…**), and every assembly instance can show its own.
+- **Export CSV** and **Import CSV…** move the configuration table to and from a spreadsheet: a row per configuration, a column per parameter, empty cells for the parameter's own value (commas or semicolons). An imported table is checked first: it lists which configurations are new, changed and removed, and every value that does not evaluate, and only **Apply** replaces the table (one undoable step).
 
 ## Sheet metal
 
@@ -89,6 +90,9 @@ Click a sketch or feature to edit it. The eye button suppresses it (the model is
 
 - **Roll back:** drag the **rollback marker** (the bar below the last item) up the timeline, or focus it and use the arrow keys. Items below it are greyed out and not built, and new sketches and features are inserted at the marker. Editing a rolled-back item rolls forward to it.
 - **Reorder:** drag an item to another place, or focus it and press Alt+↑ or Alt+↓. An item cannot move above something it uses (its sketch, plane or the feature that made the faces it refers to); the reason is shown.
+- **Folders:** the folder button next to *Timeline* groups consecutive items (from one item to another) under a name, with a note. A folder opens and closes with its arrow, suppresses all its items at once, rolls the model back to its end, and can be removed (its items stay). An item dragged between a folder's items joins it; one dragged out leaves it.
+- **Notes:** the note button of an item says why it is there; the note shows when you hover the item.
+- **Repair:** a feature that failed because a face, edge or corner it used is gone (after an earlier change) gets a repair button. It rolls the model back to just before the feature and lists what was lost, where it was, and the nearest faces or edges of the same kind, highlighted in the view. Click a replacement in the view or choose one from the list; **Done** rolls forward again.
 
 Undo and redo with Ctrl+Z and Ctrl+Y.
 

@@ -143,8 +143,11 @@ export class SketchToolbar {
   protected readonly canToggleConstruction = computed(() => this.selected().some(isCurve));
 
   constructor() {
-    const stop = inject(Shortcuts).register('sketch', { 'sketch-offset': () => this.canOffset() && this.offsetDistance.set(2) });
-    inject(DestroyRef).onDestroy(stop);
+    const shortcuts = inject(Shortcuts);
+    // Tools without a key of their own, for the command palette.
+    const palette = [...tools, ...shapeTools, ...modifyTools].filter((t) => !t.key).map((t) => ({ label: t.label, group: 'Sketch', run: () => this.choose(t.tool) }));
+    const stops = [shortcuts.register('sketch', { 'sketch-offset': () => this.canOffset() && this.offsetDistance.set(2) }), shortcuts.registerActions(palette)];
+    inject(DestroyRef).onDestroy(() => stops.forEach((stop) => stop()));
   }
 
   protected choose(tool: Tool): void {

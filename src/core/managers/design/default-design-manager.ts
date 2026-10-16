@@ -35,6 +35,8 @@ import { flatPattern } from '@core/engines/sheet-metal';
 import { inferRelations, type SketchEngine } from '@core/engines/sketch';
 import type { Clock } from '@core/utilities/clock';
 import type { EventBus } from '@core/utilities/messaging';
+import { type ConfigurationImport, configurationsCsv, readConfigurationsCsv } from './configurations';
+import { type BrokenReference, brokenReferences } from './references';
 import { applyCommand } from './commands';
 import type {
   DesignCommand,
@@ -231,6 +233,34 @@ class Session implements DesignSession {
     const bytes = await this.deps.interchange.exportOutlines(pattern.value.cuts, pattern.value.bends, format);
     await this.deps.externalFiles.deliver({ name: `${document.name} - flat pattern.${format}`, mediaType: drawingTypes[format], bytes });
     return ok(undefined);
+  }
+
+  /** The parameters in effect: the project's, and the component's own (which win by name). */
+  private parametersInEffect(): Parameter[] {
+    const own = this.current.document.parameters;
+    const names = new Set(own.map((p) => p.name));
+    return [...(this.context.projectParameters ?? []).filter((p) => !names.has(p.name)), ...own];
+  }
+
+  async brokenReferences(itemId: string): Promise<Result<readonly BrokenReference[]>> {
+    const { document } = this.current;
+    const index = document.timeline.findIndex((i) => i.id === itemId);
+    const item = document.timeline[index];
+    if (!item) return fail({ code: 'invalid-command', message: `Item ${itemId} does not exist.` });
+    // The bodies as they are just before the item.
+    const before = await new Regeneration(this.deps).run({ ...document, rollbackIndex: Math.max(document.rollbackIndex, document.timeline.length - index) }, this.context);
+    return ok(brokenReferences(item, await this.meshes(before)));
+  }
+
+  async exportConfigurations(): Promise<Result<void>> {
+    const { document } = this.current;
+    const csv = configurationsCsv(document.configurations ?? [], this.parametersInEffect().map((p) => p.name));
+    await this.deps.externalFiles.deliver({ name: `${document.name} configurations.csv`, mediaType: 'text/csv', bytes: new TextEncoder().encode(csv) });
+    return ok(undefined);
+  }
+
+  readConfigurations(csv: string): Result<ConfigurationImport> {
+    return readConfigurationsCsv(csv, this.parametersInEffect(), this.current.document.configurations ?? [], this.deps.parameters);
   }
 
   async exportViewer(): Promise<Result<void>> {

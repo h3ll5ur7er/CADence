@@ -16,6 +16,7 @@ export const precedence: readonly ShortcutScope[] = ['sketch', 'modeling', 'docu
 
 export const shortcutCommands = {
   help: { scope: 'app', label: 'Keyboard shortcuts' },
+  palette: { scope: 'app', label: 'Command palette' },
   undo: { scope: 'document', label: 'Undo' },
   redo: { scope: 'document', label: 'Redo' },
   cancel: { scope: 'document', label: 'Cancel, clear the selection' },
@@ -62,6 +63,7 @@ type Keymap = Readonly<Partial<Record<ShortcutCommand, readonly string[]>>>;
 
 const common: Keymap = {
   help: ['?'],
+  palette: ['Ctrl+K'],
   undo: ['Ctrl+Z'],
   redo: ['Ctrl+Y', 'Ctrl+Shift+Z'],
   cancel: ['Escape'],

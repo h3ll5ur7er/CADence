@@ -2,6 +2,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   computed,
+  DestroyRef,
   effect,
   inject,
   input,
@@ -10,6 +11,7 @@ import {
   viewChild,
 } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
+import { Shortcuts } from '../shared/shortcuts';
 import {
   asDocumentId,
   asProjectId,
@@ -59,6 +61,8 @@ export class EditorPage {
   private readonly nameDialog = viewChild.required(NameDialog);
   private readonly confirmDialog = viewChild.required(ConfirmDialog);
   private readonly syncDialog = viewChild.required(SyncDialog);
+  private readonly aboutDialog = viewChild.required(AboutDialog);
+  private readonly history = viewChild.required(HistoryDialog);
 
   protected readonly project = resource({
     params: () => asProjectId(this.projectId()),
@@ -79,6 +83,22 @@ export class EditorPage {
       const latest = [...documents].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt))[0];
       if (latest) void this.open(latest, true);
     });
+    // The project's documents and actions in the command palette.
+    const shortcuts = inject(Shortcuts);
+    let withdraw = (): void => undefined;
+    effect(() => {
+      const documents = this.documents.value() ?? [];
+      withdraw();
+      withdraw = shortcuts.registerActions([
+        ...documents.map((d) => ({ label: d.name, group: kindLabels[d.kind], run: () => void this.open(d) })),
+        { label: 'New component', group: 'Project', run: () => void this.create('component') },
+        { label: 'New assembly', group: 'Project', run: () => void this.create('assembly') },
+        { label: 'Sync with git', group: 'Project', run: () => this.openSync() },
+        ...documents.filter((d) => d.id === this.documentId()).map((d) => ({ label: `Versions of ${d.name}`, group: 'Project', run: () => void this.history().open(d) })),
+        { label: 'About CADence', group: 'CADence', run: () => this.aboutDialog().open() },
+      ]);
+    });
+    inject(DestroyRef).onDestroy(() => withdraw());
   }
 
   protected async create(kind: CreatableDocumentKind): Promise<void> {

@@ -38,7 +38,14 @@
         </button>
       </li>
       <li>
-        <div class="node"><cad-icon name="timeline" /> Timeline <span class="count">{{ timeline().length }}</span></div>
+        <div class="node">
+          <cad-icon name="timeline" /> Timeline <span class="count">{{ timeline().length }}</span>
+          @if (timeline().length) {
+            <button type="button" class="icon-btn node-action" aria-label="New folder" title="Group items in a folder" (click)="newFolder()">
+              <cad-icon name="folder" [size]="14" />
+            </button>
+          }
+        </div>
         @if (timeline().length === 0) {
           <p class="node-empty">Sketches and features will appear here.</p>
         }
@@ -61,9 +68,49 @@
               <span class="marker-line"></span>
             </li>
             }
+            @if (folderStartingAt(item); as folder) {
+              <li class="node folder" [class.suppressed]="folderSuppressed(folder)" [attr.title]="folder.note ?? null">
+                <button
+                  type="button"
+                  class="item-main"
+                  [attr.aria-expanded]="!collapsed().has(folder.id)"
+                  [attr.aria-label]="(collapsed().has(folder.id) ? 'Open ' : 'Close ') + folder.name"
+                  (click)="toggleFolder(folder)"
+                >
+                  <cad-icon name="chevronRight" [size]="14" class="chevron" [class.open]="!collapsed().has(folder.id)" />
+                  <cad-icon name="folder" />
+                  <span class="item-name">{{ folder.name }}</span>
+                  @if (folder.note) {
+                    <cad-icon name="note" [size]="12" class="has-note" />
+                  }
+                </button>
+                <span class="item-actions">
+                  <button type="button" class="icon-btn" [attr.aria-label]="'Roll back to the end of ' + folder.name" title="Roll back to the end of the folder" (click)="rollToFolder(folder)">
+                    <cad-icon name="history" [size]="14" />
+                  </button>
+                  <button
+                    type="button"
+                    class="icon-btn"
+                    [attr.aria-label]="(folderSuppressed(folder) ? 'Unsuppress ' : 'Suppress ') + folder.name"
+                    [title]="folderSuppressed(folder) ? 'Unsuppress all' : 'Suppress all'"
+                    (click)="suppressFolder(folder)"
+                  >
+                    <cad-icon [name]="folderSuppressed(folder) ? 'eyeOff' : 'eye'" [size]="14" />
+                  </button>
+                  <button type="button" class="icon-btn" [attr.aria-label]="'Edit ' + folder.name" title="Edit the folder" (click)="editFolder(folder)">
+                    <cad-icon name="pencil" [size]="14" />
+                  </button>
+                  <button type="button" class="icon-btn" [attr.aria-label]="'Remove ' + folder.name" title="Remove the folder (keeps its items)" (click)="removeFolder(folder)">
+                    <cad-icon name="trash" [size]="14" />
+                  </button>
+                </span>
+              </li>
+            }
             <li
               class="node item"
               draggable="true"
+              [hidden]="inClosedFolder(item)"
+              [class.in-folder]="folderOf().has(item.id)"
               [class.active]="store.editing() === item.id || store.draft()?.feature?.id === item.id"
               [class.suppressed]="item.suppressed"
               [class.failed]="itemStatus?.state === 'error'"
@@ -77,13 +124,16 @@
               <button
                 type="button"
                 class="item-main"
-                [title]="itemStatus?.error ?? (itemStatus?.state === 'rolled-back' ? 'Rolled back: roll forward to edit ' : 'Edit ') + item.name"
+                [title]="itemStatus?.error ?? item.note ?? (itemStatus?.state === 'rolled-back' ? 'Rolled back: roll forward to edit ' : 'Edit ') + item.name"
                 [attr.aria-label]="'Edit ' + item.name"
                 (click)="open(item, i)"
                 (keydown)="itemKey($event, item, i)"
               >
                 <cad-icon [name]="itemIcons[item.type]" />
                 <span class="item-name">{{ item.name }}</span>
+                @if (item.note) {
+                  <cad-icon name="note" [size]="12" class="has-note" />
+                }
                 @if (itemStatus?.state === 'error') {
                   <span class="dot" data-status="failed"></span>
                 } @else if (sketchStatus(item); as sketchState) {
@@ -99,6 +149,14 @@
                   (click)="suppress(item)"
                 >
                   <cad-icon [name]="item.suppressed ? 'eyeOff' : 'eye'" [size]="14" />
+                </button>
+                @if (itemStatus?.state === 'error' && !isSketch(item)) {
+                  <button type="button" class="icon-btn" [attr.aria-label]="'Repair ' + item.name" title="Repair lost references" (click)="store.startRepair(item.id)">
+                    <cad-icon name="replace" [size]="14" />
+                  </button>
+                }
+                <button type="button" class="icon-btn" [attr.aria-label]="'Note on ' + item.name" title="Note" (click)="editNote(item)">
+                  <cad-icon name="note" [size]="14" />
                 </button>
                 <button type="button" class="icon-btn" [attr.aria-label]="'Rename ' + item.name" title="Rename" (click)="rename(item)">
                   <cad-icon name="pencil" [size]="14" />
@@ -303,6 +361,8 @@
     <cad-measure-panel />
   } @else if (store.panel() === 'check') {
     <cad-check-panel />
+  } @else if (store.panel() === 'repair') {
+    <cad-repair-panel />
   } @else if (editedSketch(); as view) {
     <p class="eyebrow">Sketch</p>
     <h2>{{ view.sketch.name }}</h2>
@@ -458,3 +518,5 @@
 </aside>
 
 <cad-name-dialog />
+<cad-folder-dialog />
+<cad-note-dialog />

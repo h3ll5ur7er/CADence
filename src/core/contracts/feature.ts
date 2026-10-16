@@ -42,6 +42,8 @@ interface FeatureBase {
   readonly id: string;
   readonly name: string;
   readonly suppressed: boolean;
+  /** Why the feature is there, for whoever edits the model next. */
+  readonly note?: string;
 }
 
 /** Extrudes sketch profiles along the sketch normal. */

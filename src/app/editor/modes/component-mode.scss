@@ -98,3 +98,49 @@
     font-size: 12px;
   }
 }
+
+/* CAD-75: timeline folders and notes. */
+.folder {
+  padding: 0 0 0 2px;
+
+  &:hover .item-actions,
+  &:focus-within .item-actions {
+    opacity: 1;
+  }
+
+  &.suppressed .item-name {
+    color: var(--text-muted);
+    text-decoration: line-through;
+  }
+
+  .item-name {
+    font-weight: 600;
+  }
+}
+
+.chevron {
+  transition: transform 0.15s;
+
+  &.open {
+    transform: rotate(90deg);
+  }
+}
+
+.item.in-folder {
+  margin-left: var(--space-3);
+}
+
+.has-note {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.node-action {
+  width: 24px;
+  height: 24px;
+}
+
+.item[hidden] {
+  display: none;
+}
+

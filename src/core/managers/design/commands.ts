@@ -15,10 +15,13 @@ import {
   isCurve,
   type SketchEntity,
   sketchOriginId,
+  folderItems,
+  type TimelineFolder,
   type TimelineItem,
 } from '@core/contracts';
 import { chamfer, type EditResult, extend as extendCurve, fillet, offset, type SketchEdit, split, trim } from '@core/engines/sketch';
 import type { DesignCommand, SketchOperation } from './design-manager';
+import { replaceReference } from './references';
 
 /** The document a command produces, plus what must come out of regeneration intact for it to be accepted. */
 export interface Applied {
@@ -156,6 +159,24 @@ export function itemDependencies(item: TimelineItem, timeline: readonly Timeline
   return new Set([...found].filter((id) => id !== item.id && ids.has(id)));
 }
 
+/**
+ * Folders after the timeline changed: each keeps the items it had that are still there (`moved`
+ * leaves it), from the first to the last of them, so items dropped between them join it; a folder
+ * left empty goes.
+ */
+function refolded(folders: readonly TimelineFolder[] | undefined, before: readonly TimelineItem[], after: readonly TimelineItem[], moved?: string): TimelineFolder[] | undefined {
+  if (!folders) return undefined;
+  return folders.flatMap((folder) => {
+    const kept = new Set(folderItems(folder, before).filter((id) => id !== moved));
+    const members = after.filter((i) => kept.has(i.id));
+    const [first, last] = [members[0], members.at(-1)];
+    return first && last ? [{ ...folder, first: first.id, last: last.id }] : [];
+  });
+}
+
+const withFolders = (document: ComponentDocument, folders: readonly TimelineFolder[] | undefined): ComponentDocument =>
+  folders?.length ? { ...document, folders } : (Object.fromEntries(Object.entries(document).filter(([key]) => key !== 'folders')) as unknown as ComponentDocument);
+
 /** Why a timeline order does not work: an item before something it uses. */
 function orderProblem(timeline: readonly TimelineItem[]): string | undefined {
   const seen = new Set<string>();
@@ -174,6 +195,11 @@ function orderProblem(timeline: readonly TimelineItem[]): string | undefined {
 function withConfiguration(document: ComponentDocument, configuration: string | undefined): ComponentDocument {
   if (configuration) return { ...document, configuration };
   return Object.fromEntries(Object.entries(document).filter(([key]) => key !== 'configuration')) as unknown as ComponentDocument;
+}
+
+function nextFolderName(document: ComponentDocument): string {
+  const used = (document.folders ?? []).map((f) => /^Folder (\d+)$/.exec(f.name)?.[1]).map(Number).filter(Number.isFinite);
+  return `Folder ${Math.max(0, ...used) + 1}`;
 }
 
 function nextName(document: ComponentDocument, label: string): string {
@@ -393,12 +419,12 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
       const index = document.timeline.findIndex((item) => item.id === command.itemId);
       if (index < 0) return invalid(`Item ${command.itemId} does not exist.`);
       const rolledBack = index >= document.timeline.length - document.rollbackIndex;
+      const timeline = document.timeline.filter((item) => item.id !== command.itemId);
       return ok({
-        document: {
-          ...document,
-          timeline: document.timeline.filter((item) => item.id !== command.itemId),
-          rollbackIndex: document.rollbackIndex - (rolledBack ? 1 : 0),
-        },
+        document: withFolders(
+          { ...document, timeline, rollbackIndex: document.rollbackIndex - (rolledBack ? 1 : 0) },
+          refolded(document.folders, document.timeline, timeline, command.itemId),
+        ),
       });
     }
     case 'reorder-item': {
@@ -409,7 +435,50 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
       const timeline = [...rest.slice(0, command.index), item, ...rest.slice(command.index)];
       const problem = orderProblem(timeline);
       if (problem) return invalid(problem);
-      return ok({ document: { ...document, timeline }, target: item.id });
+      return ok({ document: withFolders({ ...document, timeline }, refolded(document.folders, document.timeline, timeline, item.id)), target: item.id });
+    }
+    case 'replace-reference': {
+      if (!document.timeline.some((item) => item.id === command.itemId)) return invalid(`Item ${command.itemId} does not exist.`);
+      if (command.from.kind !== command.to.kind) return invalid(`Replace a ${command.from.kind} with a ${command.from.kind}.`);
+      const timeline = document.timeline.map((item) => (item.id === command.itemId ? replaceReference(item, command.from, command.to) : item));
+      return ok({ document: { ...document, timeline } });
+    }
+    case 'set-note': {
+      if (!document.timeline.some((item) => item.id === command.itemId)) return invalid(`Item ${command.itemId} does not exist.`);
+      const note = command.note.trim();
+      const timeline = document.timeline.map((item) => {
+        if (item.id !== command.itemId) return item;
+        const { note: _old, ...rest } = item;
+        return (note ? { ...rest, note } : rest) as TimelineItem;
+      });
+      return ok({ document: { ...document, timeline } });
+    }
+    case 'set-folder': {
+      const { folder } = command;
+      const items = folderItems(folder, document.timeline);
+      if (!items.length) return invalid('A folder runs from an item to the same or a later one.');
+      const others = (document.folders ?? []).filter((f) => f.id !== folder.id);
+      const taken = new Set(others.flatMap((f) => folderItems(f, document.timeline)));
+      if (items.some((id) => taken.has(id))) return invalid('Folders cannot overlap: an item can only be in one folder.');
+      const existing = document.folders?.find((f) => f.id === folder.id);
+      const name = folder.name.trim() || existing?.name || nextFolderName(document);
+      if (name.length > 80) return fail({ code: 'invalid-name', message: 'Names need 1 to 80 characters.' });
+      const note = folder.note?.trim();
+      const { note: _old, ...rest } = folder;
+      const changed: TimelineFolder = { ...rest, name, ...(note ? { note } : {}) };
+      const folders = existing ? (document.folders ?? []).map((f) => (f.id === folder.id ? changed : f)) : [...(document.folders ?? []), changed];
+      return ok({ document: withFolders(document, folders) });
+    }
+    case 'delete-folder':
+      if (!document.folders?.some((f) => f.id === command.folderId)) return invalid('That folder does not exist.');
+      return ok({ document: withFolders(document, document.folders.filter((f) => f.id !== command.folderId)) });
+    case 'suppress-folder': {
+      const folder = document.folders?.find((f) => f.id === command.folderId);
+      if (!folder) return invalid('That folder does not exist.');
+      const items = new Set(folderItems(folder, document.timeline));
+      return ok({
+        document: { ...document, timeline: document.timeline.map((item) => (items.has(item.id) ? { ...item, suppressed: command.suppressed } : item)) },
+      });
     }
     case 'roll-to': {
       const { position } = command;

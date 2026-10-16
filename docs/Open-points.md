@@ -60,13 +60,14 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 - [X] **Print-friendly generators:** snap fits, living hinges, dovetails and press-fit pegs. *(new)* → [[CAD-73]] ✅
 - [X] **Clearances for prints:** fit classes (press, snug, loose) and a printer-specific offset applied to holes and pegs. *(new)* → [[CAD-74]] ✅
 - [ ] **Standard parts as assembly instances** from a shared library, and modelled screw threads. *(ADR-35 trade-off)*
+- [ ] **Nested timeline folders**, and repair candidates matched by shape as well as distance. *(ADR-36 trade-offs)*
 - [ ] **Lithophanes and image embossing:** a picture turned into relief on a face. *(new)*
 - [ ] **Textures:** knurling and patterned surfaces on faces. *(new)*
 - [ ] **Direct editing of imported solids:** push and pull faces, delete holes and fillets of a STEP part without its history. *(new)*
 - [ ] **Surface modeling:** boundary surfaces, thicken, patch and knit into solids. *(new)*
-- [X] **Timeline folders and notes:** group features, comment why they are there. *(new)* → [[CAD-75]]
-- [X] **Repair broken references** in a dialog: show what a feature lost (a face or an edge) and let the user pick the replacement. *(new)* → [[CAD-76]]
-- [X] **Configurations as a table:** import and export them as CSV. *(new)* → [[CAD-77]]
+- [X] **Timeline folders and notes:** group features, comment why they are there. *(new)* → [[CAD-75]] ✅
+- [X] **Repair broken references** in a dialog: show what a feature lost (a face or an edge) and let the user pick the replacement. *(new)* → [[CAD-76]] ✅
+- [X] **Configurations as a table:** import and export them as CSV. *(new)* → [[CAD-77]] ✅
 
 ## Technical drawings
 
@@ -77,7 +78,7 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 
 - [ ] **Light and dark theme switch** in the app (today it follows the system). *(new)*
 - [ ] **Touch and tablet use.** *(new)*
-- [X] **Command palette** (Ctrl+K): find and run any tool or command by name. *(new)* → [[CAD-78]]
+- [X] **Command palette** (Ctrl+K): find and run any tool or command by name. *(new)* → [[CAD-78]] ✅
 - [ ] **Named views:** save camera positions and section planes, and return to them. *(new)*
 - [X] **Better looks and pictures:** materials with environment lighting, and image and turntable video export with a transparent background. *(new)* → [[CAD-90]]
 - [X] **Surface analysis:** zebra stripes, curvature and draft angle shown on the faces. *(new)* → [[CAD-91]]

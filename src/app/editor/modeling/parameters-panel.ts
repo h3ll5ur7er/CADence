@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import type { Configuration, Parameter } from '@core/contracts';
+import type { ConfigurationImport } from '@core/managers/design';
 import { newId } from '@core/utilities/identity';
 import { Icon } from '../../shared/icon';
 import { DesignStore } from '../sketch/design-store';
@@ -107,6 +108,25 @@ import { DesignStore } from '../sketch/design-store';
         </table>
       </div>
     }
+    <div class="csv">
+      <button type="button" class="btn" (click)="store.exportConfigurations()"><cad-icon name="download" /> Export CSV</button>
+      <label class="btn">
+        <cad-icon name="upload" /> Import CSV…
+        <input type="file" accept=".csv,text/csv" class="visually-hidden" aria-label="Import configurations from CSV" (change)="importCsv($event)" />
+      </label>
+    </div>
+    @if (pending(); as p) {
+      <div class="pending" role="region" aria-label="Configurations to import">
+        <p data-testid="csv-summary">{{ summary(p) }}</p>
+        @for (problem of p.problems; track problem) {
+          <p class="error">{{ problem }}</p>
+        }
+        <div class="actions">
+          <button type="button" class="btn" (click)="pending.set(undefined)">Cancel</button>
+          <button type="button" class="btn btn-primary" [disabled]="p.problems.length > 0" (click)="applyCsv(p)">Apply</button>
+        </div>
+      </div>
+    }
     <div class="add-configuration">
       <input aria-label="New configuration name" placeholder="name" [value]="configurationName()" (input)="configurationName.set(value($event))" (keydown.enter)="addConfiguration()" />
       <button type="button" class="btn" aria-label="Add configuration" (click)="addConfiguration()"><cad-icon name="plus" /> Add</button>
@@ -124,6 +144,10 @@ import { DesignStore } from '../sketch/design-store';
     .shown select { height: 28px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-raised); color: var(--text); font: 13px var(--font); }
     .scroll { overflow-x: auto; }
     .scroll input { min-width: 64px; }
+    .csv { display: flex; gap: var(--space-1); }
+    .pending { display: grid; gap: var(--space-1); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius); font-size: 12px; }
+    .pending p { margin: 0; }
+    .pending .actions { display: flex; justify-content: flex-end; gap: var(--space-1); }
     .add-configuration { display: grid; grid-template-columns: 1fr auto; gap: var(--space-1); }
     .add-configuration input { height: 28px; }
     .hint { margin: 0; color: var(--text-muted); font-size: 12px; }
@@ -218,6 +242,30 @@ export class ParametersPanel {
 
   private saveConfiguration(configuration: Configuration): void {
     void this.store.run({ type: 'set-configurations', configurations: this.configurations().map((c) => (c.id === configuration.id ? configuration : c)) });
+  }
+
+  /** A configuration table read from a file, waiting to be applied. */
+  protected readonly pending = signal<ConfigurationImport | undefined>(undefined);
+
+  protected async importCsv(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (file) this.pending.set(this.store.readConfigurations(await file.text()));
+  }
+
+  protected summary(read: ConfigurationImport): string {
+    const parts = [
+      read.added.length ? `new: ${read.added.join(', ')}` : '',
+      read.changed.length ? `changed: ${read.changed.join(', ')}` : '',
+      read.removed.length ? `removed: ${read.removed.join(', ')}` : '',
+    ].filter(Boolean);
+    const count = `${read.configurations.length} configuration${read.configurations.length === 1 ? '' : 's'}`;
+    return `${count}${parts.length ? ` (${parts.join('; ')})` : ', as they are now'}.`;
+  }
+
+  protected async applyCsv(read: ConfigurationImport): Promise<void> {
+    if (await this.store.run({ type: 'set-configurations', configurations: read.configurations })) this.pending.set(undefined);
   }
 
   protected value(event: Event): string {

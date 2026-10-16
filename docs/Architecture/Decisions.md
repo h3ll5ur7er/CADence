@@ -273,3 +273,14 @@ Imported SVG `<text>` and DXF `TEXT`/`MTEXT` become editable sketch texts in thi
 
 *Why:* the user asked for parts for printed mechanisms; one feature keeps the timeline, dialog, patterns and scripting simple, and placing at sketch points reuses what holes already do.
 *Trade-off:* standard parts go into components as bodies, not into assemblies as library instances (a component holding the part does that); screws have no modelled thread; gear teeth are polygonal, and meshing gears have no backlash beyond the printer's.
+
+## ADR-36
+
+**Workflow: folders are ranges of the timeline, repairs work against the bodies just before the feature, and the command palette lists what the shortcut system can run.**
+- *Folders* store their first and last item, not a list: a folder is always a consecutive run of items, so the timeline stays one ordered list (regeneration, rollback and dependencies are untouched). Reorders and deletes recompute the ends from the items the folder had. Whether a folder is open is how the timeline is looked at, so it is not stored.
+- *Repair* regenerates the component up to the broken item and compares the persistent names it refers to with the faces and edges of those bodies (a vertex lives while its edges do). Candidates are ranked by distance from where the lost one was picked (the reference's hint) to the meshes' triangles and edge segments, so no geometry kernel call is needed. `replace-reference` rewrites every use of the name in the item and is accepted while the item still fails, so references can be repaired one by one. The editor rolls the model back to the item while repairing, so the view shows (and picks from) exactly those bodies.
+- *Configurations as CSV* go through the Design Manager: it knows the parameters in effect (the project's and the component's) and evaluates every row with the Parameter Engine before anything is applied. Reading accepts commas and semicolons (spreadsheets in many languages write semicolons); configurations keep their ids by name, so assembly instances keep theirs.
+- *The command palette* asks the shortcut service for the commands handled in the scopes in effect, plus actions that parts of the editor register while they are shown (features, documents, exports, settings). Nothing is listed that cannot run where the user is.
+
+*Why:* the user asked for structure and repair tools of a mature CAD timeline, spreadsheet editing of variants and a Ctrl+K palette; each reuses an existing mechanism (rollback, regeneration, commands, shortcut scopes).
+*Trade-off:* folders do not nest; a moved first or last item can shrink a folder; candidates are by distance only (not by shape or size); the palette searches names, not descriptions.

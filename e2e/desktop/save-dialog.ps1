@@ -68,10 +68,22 @@ function FieldText {
   [void][Win32.Messages]::SendMessage($field, $WM_GETTEXT, [IntPtr]1024, $text)
   $text.ToString()
 }
+# Typed as characters: some versions of Windows' dialog ignore text set directly (WM_SETTEXT) when
+# saving, and use what was typed. The field is emptied first.
+$WM_CHAR = 0x0102
+function TypePath {
+  [void][Win32.Messages]::SendMessage($field, $WM_SETTEXT, [IntPtr]::Zero, '')
+  foreach ($character in $Path.ToCharArray()) { [void][Win32.Messages]::SendMessage($field, $WM_CHAR, [IntPtr][int]$character, [IntPtr]::Zero) }
+  # Autocompletion may have added to what was typed: if so, the text is set as a whole.
+  if ((FieldText) -ne $Path) {
+    Write-Output "typed, the field holds: $(FieldText)"
+    [void][Win32.Messages]::SendMessage($field, $WM_SETTEXT, [IntPtr]::Zero, $Path)
+  }
+}
 $settled = (Get-Date).AddSeconds(15)
 $held = 0
 while ($held -lt 4 -and (Get-Date) -lt $settled) {
-  if ((FieldText) -eq $Path) { $held++ } else { $held = 0; [void][Win32.Messages]::SendMessage($field, $WM_SETTEXT, [IntPtr]::Zero, $Path) }
+  if ((FieldText) -eq $Path) { $held++ } else { $held = 0; TypePath }
   Start-Sleep -Milliseconds 250
 }
 Write-Output "chose $([IntPtr]$dialog.Current.NativeWindowHandle); the field holds: $(FieldText)"

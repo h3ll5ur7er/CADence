@@ -130,13 +130,14 @@ interface AssemblySession {
   interference(): Promise<Interference[]>;
   exportAssembly(format: 'step' | 'stl' | 'obj' | '3mf'): Promise<Result<void>>;
   saveRecording(bytes, studyName): Promise<void>;                  // recorded video, through External File Access
+  catchUp(): Promise<void>;                                        // components changed by another process, read again
   close(): void;
 }
 ```
 
 Instances can be components or imported 3D files (read once per original). Commands: `insert-instance`, `remove-instance` (with its joints and their keys), `rename-instance`, `move-instance` (refused for instances a joint places), `ground-instance`, `add-joint`, `edit-joint`, `remove-joint`, `set-joint-values`, `add-study`, `edit-study`, `remove-study`, `set-pattern`, `remove-pattern`, `set-link`, `remove-link`, `set-exploded-view`, `remove-exploded-view`. A joint command is refused when its joint cannot hold. The state also has each joint's frame in assembly coordinates (`jointFrames`, for the move handle) and the copies patterns make (`copies`, placed in `poses` after the kinematic solution).
 
-The Assembly Manager never regenerates a component. It restores each instance from the component's **published result** (Asset Access → Modeling Engine `restore` + `tessellate`). When a result is missing or stale, it queues `regenerateComponent` to the Design Manager and reloads the component on `componentRegenerated` ([[Architecture/Decisions#ADR-11]]). It also follows `documentRenamed`, `documentDeleted` (a deleted component shows as missing) and `documentChanged`: a component saved in another tab or window, relayed by the composition root over a `BroadcastChannel` ([[Architecture/Decisions#ADR-37]]). Joint frames come from the Modeling Engine (`frameOf`, cached per component version); positions from the Kinematics Engine.
+The Assembly Manager never regenerates a component. It restores each instance from the component's **published result** (Asset Access → Modeling Engine `restore` + `tessellate`). When a result is missing or stale, it queues `regenerateComponent` to the Design Manager and reloads the component on `componentRegenerated` ([[Architecture/Decisions#ADR-11]]). It also follows `documentRenamed`, `documentDeleted` (a deleted component shows as missing), `resultPublished` (a component's new result from this process: the design editor, a script) and `documentChanged`: a component saved in another tab or window, relayed by the composition root over a `BroadcastChannel` ([[Architecture/Decisions#ADR-37]]). Other processes send no events; `catchUp()` reads again the components whose documents changed since they were loaded ([[Architecture/Decisions#ADR-47]]). Joint frames come from the Modeling Engine (`frameOf`, cached per component version); positions from the Kinematics Engine.
 
 Whenever all its parts are there, the session also **publishes the assembly's result**: its shown parts placed where they are (Modeling Engine `place`, then `snapshot`; body ids are instance ids, `#k` for more bodies), with `resultPublished`, for drawings.
 

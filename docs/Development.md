@@ -29,7 +29,10 @@ The desktop app keeps each project as a folder below the app data folder, `%APPD
 project.json
 documents/<document id>.json   design intent, human-readable
 assets/<asset id>.bin|.json    imported originals and their metadata
+results/<document id>.bin|.json  component results (a cache, built again from the document when missing or unreadable)
 ```
+
+Files are written to a temporary name next to them, then renamed into place, so a process that ends mid-write never leaves a file cut short ([[Architecture/Decisions#ADR-47]]).
 
 ## Check
 

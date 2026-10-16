@@ -6,10 +6,12 @@ A nine-cylinder radial aircraft engine, modelled entirely by an AI agent through
 
 ## Status
 
-All parts are modelled, including the internal ring gear. The assembly **Radial engine** is built through `edit_assembly`: 71 instances and 50 pattern copies, 57 joints with nine closed slider-crank loops that solve, gear, carrier and planet links, nine cam-driven tappets, and a motion study. Round 2 stopped at two findings: no picture or animation of the whole engine can be taken ([[CAD-109]]), and the exploded view cannot move pattern copies ([[CAD-110]]). In the motion study only one of the three blades turns: pattern copies stand still ([[CAD-115]]). Pictures focused on a few instances work. The pushrods stay put, since nothing can join them to the tappets at their angle ([[CAD-113]]).
+All parts are modelled, including the internal ring gear. The assembly **Radial engine** is built through `edit_assembly`: 79 instances and 42 pattern copies, 66 joints with nine closed slider-crank loops that solve, gear, carrier and planet links, nine roller tappets driven by cam links, nine pushrods riding on the tappets at their tilt ([[CAD-113]]), a motion study and an exploded view *Taken apart* with radial steps ([[CAD-110]]).
+
+**Round 3 (2026-10-17): all its findings ([[CAD-116]] to [[CAD-119]]) are fixed in phase 28.** It had stopped at [[CAD-116]]: the MCP server's open assembly keeps the parts as they were before `edit_component` changed them, so its interference check, pictures and joint frames describe the old geometry. Checked before that: every round-2 fix works on the engine (pictures of the whole engine, the exploded view across all pattern copies, the three blades turning together, the tilted pushrod joints, lean answers). My design mistakes are fixed in the parts; a new process finds only the gears' overlaps and one pushrod touching its head. The tappets' cam link offsets depend on joint frames that differ between pattern copies and between sessions ([[CAD-117]]); they have to be measured again once both are fixed.
 
 > [!WARNING]
-> The interference check found mistakes in my own design, to fix in the next round: the rear case has no bore for the crankcase's rear boss (101,712 mm³ overlap); the rear case's intake ports (13 mm) are smaller than the pipes (16 mm); the hub's blade sockets (20.2 mm) are smaller than the blades' round roots (26 mm); the master rod's small eye (22 mm) reaches into piston 1's crown; neighbouring spark plugs touch; the tappet guide cut leaves 0.4 mm of nose case wall; the flat tappet feet dip into the round cam; and the gears are not phased, so meshing teeth overlap (sun and planets 307 mm³ each). Phasing the gears needs link offsets of half a tooth.
+> Still to fix in my own design: the gears are not phased, so meshing teeth overlap (sun and planets 308 mm³ each, crank gear and lay gear 41 mm³); phasing needs link offsets of half a tooth. One pushrod still touches its head's rocker box (5.5 mm³). Fixed in round 3: a recess in the rear case for the crankcase's rear boss; intake ports as sockets for the 16 mm pipes; a cylindrical blade shank in larger hub sockets; a deeper piston crown for the master rod's eye; plugs tilted 45° outwards so neighbours clear; longer, narrower tappet guides; roller tappets (a flat foot offset from the cam's centre is hit side-on by the small lobes: the lift jumps 4 mm in a quarter of a degree); a pocket in each rocker box for the pushrod's travel.
 
 > [!NOTE]
 > With phase 26 the existing parts regenerate without errors, but some names changed: gear teeth have fewer faces ([[CAD-107]]), faces split into pieces keep their numbers ([[CAD-104]]), and patterned bodies are numbered without gaps (the master rod's knuckle pins are `kp`, then `kpat`, `kpat:2`, … `kpat:7`).
@@ -75,19 +77,19 @@ Positions along the crank axis (engine z, mm), needed for joint offsets:
 | Link rod | Two eyes and a shank, I-beam pockets, fillets | 8 |
 | Piston, wrist pin | Revolve with three ring grooves, pin bosses, rod slot, pin bore, skirt trimmed by a cut | 9 + 9 |
 | Cylinder barrel | One revolve of a 52-point outline: spigot, flange, eleven fins | 9 |
-| Cylinder head | Finned revolve, rocker boxes and shafts, exhaust and intake ports (mirrored), two plug bosses (mirrored) | 9 |
+| Cylinder head | Finned revolve, rocker boxes and shafts, exhaust and intake ports (mirrored), two plug bosses tilted 45° (revolves about a sketch line, mirrored), a pocket for the pushrod | 9 |
 | Spark plug | Revolve, hex, modelled M10 thread | 18 |
-| Pushrod | Revolve with ball ends, 83 mm, from the tappet to the front rocker box | 9 |
+| Pushrod | Revolve with ball ends, 79 mm, from the tappet to the front rocker box | 9 |
 | Exhaust stub, intake pipe | Sweeps of a tube along a line, arc and line | 9 + 9 |
 | Cam ring | Disc with two tracks of five lobes (circular patterns) and a 96-tooth gear | 1 |
 | Crank gear, lay gear | 48 teeth; 60 and 12 teeth on one hub (module 1) | 1 + 1 |
 | Sun, planet gear | 24 and 18 teeth, module 2, 18 mm wide | 1 + 3 |
 | Ring gear | 60 teeth, internal (ring gear part) | 1 |
-| Tappet | Revolve: a 10 mm stem in the nose case's guide, riding on the cam ring | 9 |
+| Tappet | Revolve: an 8 mm stem in the nose case's 8.4 mm guide, and a 10 mm roller (extrude) riding on the cam ring | 9 |
 | Planet carrier | Plates and hollow propeller shaft in one revolve, three planet pins, six hub bolt holes | 1 |
 | Nose case | Revolved shell, nine tappet guide bosses (circular pattern) | 1 |
-| Propeller blade, hub, spinner | Loft through five twisted NACA sections (closed splines) with an extruded shank; hub with three sockets; spinner revolved from a spline | 3 + 1 + 1 |
-| Rear case, magneto, display stand | Revolve with nine intake bosses; extrudes | 1 + 2 + 1 |
+| Propeller blade, hub, spinner | Loft through five twisted NACA sections (closed splines) from a 26 mm circle, with a cylindrical shank extruded in front; hub with three 26.4 mm sockets; spinner revolved from a spline | 3 + 1 + 1 |
+| Rear case, magneto, display stand | Revolve with nine intake bosses (16.4 mm sockets) and a recess for the crankcase's rear boss; extrudes | 1 + 2 + 1 |
 
 ## Gear trains
 
@@ -117,9 +119,11 @@ flowchart LR
 - **Grounded:** both crankcase halves, nine barrels (with their transforms), nose case, rear case, stand, ring gear.
 - **Joints:** crankshaft revolute on the crankcase (origins); master rod revolute on the crankpin (origin offset 25 mm along X); piston 1 revolute at the master rod's small end (offset 110); link rod *i* revolute on knuckle pin *i* (offset 35 mm at 40° × *i*); piston *i* revolute at the link rod's small end (offset 76); every piston **cylindrical** in its barrel (barrel origin, piston crown face). Wrist pins rigid in their pistons; sun, crank gear rigid on the crankshaft; hub and spinner rigid on the carrier; lay gear revolute on the nose case at r 54; cam ring and carrier revolute on the crank axis; planets revolute on the carrier's pins. That is nine closed loops through the master rod.
 - **Links:** lay gear from the crankshaft (−48/60), cam ring from the lay gear (−12/96), carrier from the crankshaft (2/7, a *Sun to planet carrier* link), each planet from the crankshaft (−20/21, *Sun to planet*). The tappets follow the cam ring by cam links ([[CAD-99]]): a profile of five lobes over the ring's turn.
-- **Patterns:** heads, plugs, pushrods, pipes and magnetos: one instance each, rigid on barrel 1, then a circular pattern of 9 about the crank axis. Blades: a circular pattern of 3 on the hub (copies of a turning instance about the same axis turn with it).
-- **Motion study:** a constant crank speed (60 rpm for 2 s shows two turns: the propeller turns 4/7, the cam ring 1/5); collision check on.
-- **Exploded view:** propeller and spinner forward; nose case, carrier, planets, sun, gears along the axis; then for each cylinder heads, barrels and pistons outwards along its own direction (one step per cylinder and part: 27 steps, since a step moves along one direction).
+- **Patterns:** heads, plugs and pipes: one instance each on cylinder 1, then a circular pattern of 9 about the crank axis. Blades: a circular pattern of 3 on the hub (copies of a turning instance turn with it, [[CAD-115]]).
+- **Valve train:** each tappet slides in its guide (slider joint on the guide face) and follows the cam ring by a cam link. The pushrods are nine instances, not a pattern, since each follows its own tappet: rigid on the tappet's origin, moved 54 mm up its axis and tilted 20.5° about its x axis (`offset.tilt`, [[CAD-113]]), which is the tangential direction for every tappet.
+- **Cam profiles:** computed, not drawn. The cam ring is a 56 mm base circle with five 7 mm lobes per track, and each tappet's roller (5 mm, its axis 28 mm off the cam's centre line) rides on the outline offset by the roller radius: lift(θ) = max(√(61² − 28²), cᵤ + √(12² − (28 − cᵥ)²)) over the lobes (cᵤ, cᵥ: the lobe centre in the tappet's frame), sampled where it bends (Douglas–Peucker to 0.02 mm, about 186 points per tappet). The lift is 7.8 mm, and its start is steep (about 10 mm per degree): small round lobes are hard on any follower.
+- **Motion study** *Running at 60 rpm*: a constant crank speed of 360°/s for 16 s (each turn: the propeller turns 2/7, the cam ring 1/10).
+- **Exploded view** *Taken apart*: 21 steps. Spinner, propeller, nose case (with the tappets), carrier and planets, ring, sun and gears forward along the axis; crankcase rear half, rear case and magnetos backward; stand down. Then radial steps ([[CAD-110]]) take every cylinder apart at once: blades, tappets, pushrods, heads with pipes and plugs, plugs further, barrels and pistons with their wrist pins move away from the crank axis.
 
 ## Findings
 
@@ -151,10 +155,20 @@ Round 2 (checking phase 26 and building the assembly):
 | [[CAD-114]] | Collision check of the study: no answer within 30 minutes | improvement | changed pairs only, mesh screening, no leaks, progress ✅ |
 | [[CAD-115]] | Pattern copies stand still in motion studies (and the collision check skips them) | bug | copies in every frame ✅ |
 
-> [!NOTE]
-> After phase 27, the joints on tappet guides 5–8 that needed `flip: true` (and the cam links' ratio −1) point the other way: the copies' frames now follow the original's ([[CAD-112]]). Take those flips out.
+After phase 27 the flips on tappet joints 5–8 (and the cam links' ratio −1) pushed those tappets out to 146 mm from the axis: the copies' frames now follow the original's ([[CAD-112]]). Taken out in round 3.
 
-What worked well: revolves of long outlines, sweeps along line-arc-line paths, lofts through spline sections (from a round root since phase 26), circular patterns of cuts and of new bodies, mirrors, configurations (two crankcase halves from one component), the gear generator (spur and ring gears), modelled threads, fillets and chamfers, and `render_picture` for every part. In the assembly: nine closed loops solved from good starting values, links chained crank → lay gear → cam ring → nine cam followers, planetary links, patterns of turning instances (at rest; see [[CAD-115]]), mass and bill of materials with configurations and copies.
+Round 3 (checking phase 27, fixing my design, building the valve train):
+
+| Task | What | Kind | Fixed by (phase 28) |
+| --- | --- | --- | --- |
+| [[CAD-116]] | The MCP server's open assembly keeps parts as they were before `edit_component` changed them | bug, blocking | new results followed, other processes caught up with, `not-ready` instead of old shapes ✅ |
+| [[CAD-117]] | Joint frames on round faces come from the face's axis-aligned box: pattern copies and sessions disagree by up to 0.8 mm | bug | the middle of the face along its axis, from its parameters ✅ |
+| [[CAD-118]] | `edit-feature` type change "does not exist"; `move-point` on a fixed point does nothing silently; revolve near its axis fails with "[object WebAssembly.Exception]"; offsets tilt in one plane only | improvement | kinds may change; the fix named; "crosses the axis (by … mm)"; `offset.lean` ✅ |
+| [[CAD-119]] | An empty result file (a write cut short) makes the assembly impossible to open | bug | unreadable results rebuilt; files written whole; `cadence run` waits ✅ |
+
+After phase 28 the joint frames on the nose case's guides (and on any round face that ends on a curved one) moved to the middle of the face: the tappets' cam link offsets have to be measured again ([[CAD-117]]).
+
+What worked well: revolves of long outlines, sweeps along line-arc-line paths, lofts through spline sections (from a round root since phase 26), circular patterns of cuts and of new bodies, mirrors, configurations (two crankcase halves from one component), the gear generator (spur and ring gears), modelled threads, fillets and chamfers, and `render_picture` for every part. In the assembly: nine closed loops solved from good starting values, links chained crank → lay gear → cam ring → nine cam followers, planetary links, patterns of turning instances, mass and bill of materials with configurations and copies. Since phase 27: pictures of the whole engine (79 instances, 42 copies) in seconds, the exploded view with radial steps across pattern copies, cam links with 186-point profiles, tilted joint offsets, and brief `edit_assembly` answers (a link change answers with the joints it moved, not the profiles).
 
 ## Tips for agents
 
@@ -162,3 +176,6 @@ What worked well: revolves of long outlines, sweeps along line-arc-line paths, l
 - A part feature (gear, screw) or a hole may sit at the sketch origin: `points: ["origin"]`.
 - After a face is split by a later feature its name gets `~1`, `~2`; refer to the exact piece, or pass a hint (the face's centre from `get_component`). Faces a later feature does not touch keep their numbers.
 - Keep answers small: `edit_component` answers with what changed; ask `get_component` for `only: ["faces"]`, one `body`, a `match` pattern or `near` a point.
+- Revolve about a sketch line that is an edge of the outline itself; an outline that crosses a separate construction line, even by a hair, is refused with how far it crosses ([[CAD-118]]).
+- Points placed by `add-polygon` or `add-rectangle` with numbers are held by `fix` relations: to move them, replace the fix (delete it, add one at the new place); `move-point` refuses and names the fix ([[CAD-118]]).
+- A pushrod or strut along a direction no face has: a rigid joint on the moving part's origin with `offset.lean` (which way to tip) and `offset.tilt` (how far), from any frame ([[CAD-113]], [[CAD-118]]).

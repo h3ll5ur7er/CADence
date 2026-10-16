@@ -16,7 +16,7 @@ To change a sketch later, click it in the **Timeline** in the browser panel. **F
 
 | Tool | Key | How |
 | --- | --- | --- |
-| Select and drag | S | Click to select, Shift+click to add. Drag a point to move it; everything constrained to it follows. |
+| Select and drag | S | Click to select, Shift+click to add. Drag a point to move it; everything constrained to it follows. A fixed point stays: the panel says so and offers to remove the fix. |
 | Line | L | Click a start point, then each next point. The line continues from its end; double-click or Esc ends it. Lines drawn within 3° of horizontal or vertical get that relation automatically. |
 | Rectangle | R | Click two opposite corners. The sides stay horizontal and vertical. |
 | Circle | C | Click the centre, then a point on the circle. |

@@ -512,7 +512,26 @@ export interface AssemblyChanges {
   readonly jointErrors?: Readonly<Record<string, string>>;
   /** Instances that moved, with their new origins. */
   readonly moved?: Readonly<Record<string, Vec3>>;
+  /** Components that are not there to use, by name: still being rebuilt (`loading`) or `missing`. */
+  readonly notReady?: Readonly<Record<string, 'loading' | 'missing'>>;
   readonly counts: { readonly instances: number; readonly copies: number; readonly joints: number };
+}
+
+/** The work's end or the deadline (a time in ms), whichever comes first. */
+function before(deadline: number, work: Promise<unknown>): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, Math.max(0, deadline - Date.now()));
+    work.then(
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 /** An item as an answer shows it: long lists (a cam's profile, a study's keys) as their count. */
@@ -529,6 +548,8 @@ export class AssemblyScript {
     private readonly exports: ExportTarget,
     private readonly deliver: (file: { readonly name: string; readonly mediaType: string; readonly bytes: Uint8Array }) => Promise<void>,
     private readonly closed: () => void = () => undefined,
+    /** Resolves once this process's events are handled (Core.settled). */
+    private readonly settled: () => Promise<void> = async () => undefined,
   ) {}
 
   state(): AssemblyState {
@@ -547,12 +568,17 @@ export class AssemblyScript {
     return this.session.redo();
   }
 
-  /** Waits until the components are loaded (their results regenerated), at most two minutes. */
+  /**
+   * Waits, at most two minutes, until the components are current: new results of this process's edits
+   * read (edit_component), other processes' edits caught up with, stale results regenerated (CAD-116).
+   */
   async ready(): Promise<void> {
+    const deadline = Date.now() + 120_000;
+    await before(deadline, this.settled().then(() => this.session.catchUp()));
     const loading = () => [...this.session.state().components.values()].some((c) => c.status === 'loading');
     if (!loading()) return;
     await new Promise<void>((resolve) => {
-      const timer = setTimeout(done, 120_000);
+      const timer = setTimeout(done, Math.max(0, deadline - Date.now()));
       const stop = this.session.subscribe(() => (loading() ? undefined : done()));
       function done() {
         clearTimeout(timer);
@@ -619,33 +645,35 @@ export class AssemblyScript {
       ...(removed.length ? { removed } : {}),
       ...(Object.keys(jointErrors).length ? { jointErrors } : {}),
       ...(Object.keys(moved).length ? { moved } : {}),
+      ...(Object.keys(this.notReady()).length ? { notReady: this.notReady() } : {}),
       counts: { instances: after.instances.length, copies: after.copies.length, joints: after.joints.length },
     };
   }
 
-  interference() {
+  async interference() {
+    await this.loaded();
     return this.session.interference();
   }
 
   /** Where instances hit while a motion study plays: the first moment for each pair, and how many moments were checked. */
   async collisions(studyId: string, fps = 10, options: CollisionOptions = {}): Promise<CollisionReport> {
-    await this.ready();
+    await this.loaded();
     return unwrap(await this.session.collisions(studyId, fps, options));
   }
 
   async properties() {
-    await this.ready();
+    await this.loaded();
     return this.session.properties();
   }
 
   async billOfMaterials(): Promise<readonly BomLine[]> {
-    await this.ready();
+    await this.loaded();
     return this.session.billOfMaterials();
   }
 
   /** A picture of the shown instances as a PNG, once their components are loaded: as they stand, exploded, or at a moment of a study. */
   async picture(options: AssemblyPictureOptions = {}): Promise<Uint8Array> {
-    await this.ready();
+    await this.loaded();
     return encodePng(pixels(this.meshes(await this.poses(options)), options));
   }
 
@@ -654,7 +682,7 @@ export class AssemblyScript {
    * `moments` pictures of it, in order, to look at (CAD-100).
    */
   async animation(studyId: string, options: PictureOptions & { readonly fps?: number; readonly moments?: number; readonly to?: string } = {}): Promise<{ readonly path: string; readonly sheet: Uint8Array; readonly times: readonly number[] }> {
-    await this.ready();
+    await this.loaded();
     const fps = Math.max(1, Math.min(30, options.fps ?? 10));
     const frames = unwrap(await this.session.motion(studyId, fps));
     if (!frames.length) throw new CadenceError('nothing-to-show', 'The study has no frames.');
@@ -672,6 +700,7 @@ export class AssemblyScript {
   }
 
   async export(format: AssemblyFormat, options: { readonly to?: string } = {}): Promise<string> {
+    await this.loaded();
     if (options.to) this.exports.deliverNextTo(options.to);
     const before = this.exports.delivered.length;
     unwrap(await this.session.exportAssembly(format));
@@ -681,6 +710,18 @@ export class AssemblyScript {
   close(): void {
     this.session.close();
     this.closed();
+  }
+
+  /** Components that are not there to use, by name. */
+  private notReady(): Record<string, 'loading' | 'missing'> {
+    return Object.fromEntries([...this.session.state().components.values()].flatMap((c) => (c.status === 'ready' ? [] : [[c.name, c.status]])));
+  }
+
+  /** Waits for the components; refuses, naming them, when some are still being rebuilt, rather than answer from their old shapes. */
+  private async loaded(): Promise<void> {
+    await this.ready();
+    const loading = Object.entries(this.notReady()).flatMap(([name, status]) => (status === 'loading' ? [name] : []));
+    if (loading.length) throw new CadenceError('not-ready', `${loading.join(', ')} ${loading.length > 1 ? 'are' : 'is'} still being rebuilt after two minutes. Ask again shortly.`);
   }
 
   /** Where the instances are for a picture: as they stand, exploded, or at a moment of a study. */
@@ -764,27 +805,20 @@ export class Cadence {
     return found;
   }
 
-  /** A component open for scripting; opened once and kept open. */
+  /** A component open for scripting; kept open, and opened again when another process changed it. */
   component(documentId: string): Promise<ComponentScript> {
-    let script = this.components.get(documentId);
-    if (!script) {
-      script = this.core.designManager.open(documentId as DocumentId).then((session) => new ComponentScript(unwrap(session), this.exports));
-      script.catch(() => this.components.delete(documentId));
-      this.components.set(documentId, script);
-    }
-    return script;
+    return this.opened(this.components, documentId, async () => new ComponentScript(unwrap(await this.core.designManager.open(documentId as DocumentId)), this.exports));
   }
 
-  /** An assembly open for scripting; opened once and kept open until closed. */
+  /** An assembly open for scripting; kept open until closed, and opened again when another process changed it. */
   assembly(documentId: string): Promise<AssemblyScript> {
-    let script = this.assemblies.get(documentId);
-    if (!script) {
-      const deliver = (file: { readonly name: string; readonly mediaType: string; readonly bytes: Uint8Array }) => this.projects.deliverFile(file);
-      script = this.core.assemblyManager.open(documentId as DocumentId).then((session) => new AssemblyScript(unwrap(session), this.exports, deliver, () => this.assemblies.delete(documentId)));
-      script.catch(() => this.assemblies.delete(documentId));
-      this.assemblies.set(documentId, script);
-    }
-    return script;
+    const deliver = (file: { readonly name: string; readonly mediaType: string; readonly bytes: Uint8Array }) => this.projects.deliverFile(file);
+    return this.opened(this.assemblies, documentId, async () => new AssemblyScript(unwrap(await this.core.assemblyManager.open(documentId as DocumentId)), this.exports, deliver, () => this.assemblies.delete(documentId), () => this.core.settled()));
+  }
+
+  /** Resolves once the work this process started is done: components rebuilt, results written (CAD-119). */
+  settled(): Promise<void> {
+    return this.core.settled();
   }
 
   /** A picture of a component or an assembly as a PNG. */
@@ -804,6 +838,24 @@ export class Cadence {
     const before = this.exports.delivered.length;
     unwrap(await this.projects.exportImported(documentId as DocumentId, format));
     return this.exports.delivered[before] as string;
+  }
+
+  /**
+   * A document open for scripting: the one already open, unless its document changed since (the app or
+   * another process saved it), which an edit here would overwrite (CAD-116).
+   */
+  private async opened<T extends ComponentScript | AssemblyScript>(open: Map<string, Promise<T>>, documentId: string, start: () => Promise<T>): Promise<T> {
+    const script = open.get(documentId);
+    if (script) {
+      const [current, saved] = await Promise.all([script.catch(() => undefined), this.projects.findDocument(documentId as DocumentId)]);
+      if (current && current.state().document.modifiedAt === saved?.modifiedAt) return current;
+      if (current instanceof AssemblyScript) current.close();
+      open.delete(documentId);
+    }
+    const started = start();
+    started.catch(() => open.delete(documentId));
+    open.set(documentId, started);
+    return started;
   }
 
   /** Forgets the open components and assemblies (after documents changed elsewhere). */

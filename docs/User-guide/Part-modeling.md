@@ -31,7 +31,7 @@ The toolbar above the view has buttons for the everyday features (extrude, revol
 | Feature | Pick in the view | Values |
 | --- | --- | --- |
 | Extrude | sketch profiles (the latest sketch's are preselected) | distance; along the normal, reversed or symmetric; new body, join, cut or intersect |
-| Revolve | profiles; axis: X/Y/Z, a construction line of the sketch, or an edge | angle (`360 deg` for a full turn) |
+| Revolve | profiles on one side of the axis; axis: X/Y/Z, a construction line of the sketch, or an edge | angle (`360 deg` for a full turn) |
 | Fillet / Chamfer | edges | radius / distance; a fillet can change its radius along the edge (radius at the other end) |
 | Shell | faces to open | wall thickness (inward) |
 | Draft | faces to taper; the neutral plane (a plane or a flat face) | angle: the faces lean away from the plane's normal, hinged where they cross it |

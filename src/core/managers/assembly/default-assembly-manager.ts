@@ -129,6 +129,8 @@ class Session implements AssemblySession {
         return this.components.has(source) ? this.serialized(() => this.refresh(source, done ? 'regenerated' : 'failed')) : undefined;
       }),
       events.subscribe('documentRenamed', ({ documentId }) => refreshAll(sourcesOf(documentId))),
+      // A component edited in this process (the app's editor, a script, the MCP server): its new result (CAD-116).
+      events.subscribe('resultPublished', ({ documentId }) => refreshAll(sourcesOf(documentId))),
       // A component edited elsewhere (another tab or window: CAD-82): its result is read again, or asked for.
       events.subscribe('documentChanged', ({ documentId }) => refreshAll(sourcesOf(documentId))),
       events.subscribe('documentRestored', ({ documentId }) => refreshAll(sourcesOf(documentId))),
@@ -161,6 +163,25 @@ class Session implements AssemblySession {
   subscribe(listener: (state: AssemblyState) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  catchUp(): Promise<void> {
+    return this.serialized(async () => {
+      let changed = false;
+      for (const [source, loaded] of [...this.components]) {
+        // Components still loading are being built; missing ones would only be asked for again in vain.
+        if (loaded.view.status !== 'ready') continue;
+        const document = await this.deps.documents.load(source.split('@')[0] as DocumentId);
+        if (document?.kind === 'imported') continue;
+        if (document?.kind === 'component' && resultStamp(document.modifiedAt, (await this.deps.projects.find(document.projectId))?.parameters) === loaded.stamp) continue;
+        await this.load(source, 'changed');
+        changed = true;
+      }
+      if (!changed) return;
+      this.derived = await this.derive(this.document);
+      this.notify();
+      await this.publish();
+    });
   }
 
   close(): void {

@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { cutHole, evidence, fromModelMenu, hinge, plateProject, setThickness, standardView, topPoints } from './support';
 
-/** Phases 26 and 27 (stress-test findings, CAD-96) user journeys: ring gears with planets, cams, and radial exploded views of pattern copies. */
+/** Phases 26 to 28 (stress-test findings, CAD-96) user journeys: ring gears with planets, cams, radial exploded views of pattern copies, and leaned joint offsets. */
 test.setTimeout(240_000);
 
 test('makes a ring gear with smooth teeth and says where a planet goes (CAD-98, CAD-107)', async ({ page }) => {
@@ -64,6 +64,32 @@ test('moves a follower by a cam profile (CAD-99)', async ({ page }) => {
   await page.getByRole('button', { name: 'Select Gear 1' }).click();
   await standardView(page, 'Home');
   await evidence(page, '95-cam-link');
+});
+
+test('leans a joint offset before tilting it, to point the joint any way (CAD-118)', async ({ page }) => {
+  await plateProject(page, 'Strut');
+  await setThickness(page, '4 mm');
+  await cutHole(page);
+  await page.getByRole('button', { name: 'Assembly', exact: true }).click();
+  for (const expected of ['1', '2']) {
+    await page.getByRole('button', { name: 'Insert', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Component 1' }).click();
+    await expect(page.getByTestId('instance-count')).toHaveText(expected);
+  }
+  await expect(page.getByRole('list', { name: 'Instances' })).not.toContainText('loading');
+  await hinge(page, 0, 1);
+  await expect(page.getByRole('list', { name: 'Joints' })).toContainText('Revolute 1');
+
+  // Leaned a quarter turn, then tilted: the second plate's hinge axis tips over towards the frame's x.
+  for (const [field, value] of [['Lean', '90'], ['Tilt', '30']] as const) {
+    await page.getByRole('spinbutton', { name: `${field} offset of stays` }).fill(value);
+    await page.getByRole('spinbutton', { name: `${field} offset of stays` }).press('Tab');
+  }
+  await expect(page.getByRole('spinbutton', { name: 'Lean offset of stays' })).toHaveValue('90');
+  await expect(page.getByRole('spinbutton', { name: 'Tilt offset of stays' })).toHaveValue('30');
+  await expect(page.locator('.item.failed')).toHaveCount(0);
+  await standardView(page, 'Front');
+  await evidence(page, '97-joint-lean');
 });
 
 test('takes a circular pattern apart in one radial step (CAD-110)', async ({ page }) => {

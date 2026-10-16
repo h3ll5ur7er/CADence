@@ -359,9 +359,12 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
         });
       });
     case 'move-point': {
-      const applied = withSketch(document, command.sketchId, (s) =>
-        s.entities.some((e) => e.id === command.pointId && e.kind === 'point') ? ok(s) : invalid(`Point ${command.pointId} does not exist.`),
-      );
+      const applied = withSketch(document, command.sketchId, (s) => {
+        if (!s.entities.some((e) => e.id === command.pointId && e.kind === 'point')) return invalid(`Point ${command.pointId} does not exist.`);
+        // A fix holds the point against any drag: say so, rather than leave it where it is (CAD-118).
+        const fix = s.constraints.find((c) => c.kind === 'fix' && c.point === command.pointId);
+        return fix ? fail({ code: 'invalid-command', message: `Point ${command.pointId} is fixed (${fix.id}); remove the fix to move it.`, related: [fix.id] }) : ok(s);
+      });
       return applied.ok
         ? ok({ ...applied.value, drag: { sketch: command.sketchId, point: command.pointId, x: command.x, y: command.y } })
         : applied;
@@ -493,10 +496,11 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
     }
     case 'edit-feature': {
       const existing = document.timeline.find((item) => item.id === command.feature.id);
-      if (!existing || isSketch(existing) || existing.type !== command.feature.type) {
-        return invalid(`Feature ${command.feature.id} does not exist.`);
-      }
-      const feature = { ...command.feature, name: command.feature.name.trim() || existing.name } as Feature;
+      if (!existing) return invalid(`Feature ${command.feature.id} does not exist.`);
+      if (isSketch(existing)) return invalid(`${command.feature.id} is a sketch, not a feature.`);
+      // A feature may become another kind (an extruded boss a revolved one); references by id stay (CAD-118).
+      const name = command.feature.name.trim() || (existing.type === command.feature.type ? existing.name : nextName(document, featureLabels[command.feature.type]));
+      const feature = { ...command.feature, name } as Feature;
       return ok({
         document: { ...document, timeline: document.timeline.map((item) => (item.id === feature.id ? feature : item)) },
         target: feature.id,

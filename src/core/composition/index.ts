@@ -41,6 +41,11 @@ export interface Core {
   readonly assemblyManager: AssemblyManager;
   readonly drawingManager: DrawingManager;
   readonly storage: StorageKind;
+  /**
+   * Resolves once the work events started is done: components regenerated for assemblies, their
+   * results written. A script waits for it before its process ends (CAD-119).
+   */
+  settled(): Promise<void>;
 }
 
 export type StorageKind = 'browser' | 'project-folders' | 'memory';
@@ -190,6 +195,14 @@ export function createCore(host: Host): Core {
       clock: systemClock,
     }),
     storage: host.kind,
+    settled: async () => {
+      // Handlers publish further events (a request, then its answer): until none is left.
+      for (let pending = events.drained(); ; ) {
+        await pending;
+        if (pending === events.drained()) return;
+        pending = events.drained();
+      }
+    },
   };
 }
 

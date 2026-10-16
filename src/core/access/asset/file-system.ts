@@ -18,9 +18,8 @@ export class FileSystemAssetAccess implements AssetAccess {
 
   async fetch(id: AssetId): Promise<Asset | undefined> {
     const base = await this.locate(id);
-    if (!base) return undefined;
-    const meta = JSON.parse(await this.fs.readText(`${base}.json`)) as AssetMeta;
-    return { ...meta, bytes: await this.fs.readBytes(`${base}.bin`) };
+    const meta = base && (await this.metadata<AssetMeta>(base));
+    return meta ? { ...meta, bytes: await this.fs.readBytes(`${base}.bin`) } : undefined;
   }
 
   async release(id: AssetId): Promise<void> {
@@ -37,11 +36,11 @@ export class FileSystemAssetAccess implements AssetAccess {
     await this.fs.writeText(`${base}.json`, JSON.stringify(meta, null, 2));
   }
 
+  /** The result, or nothing when it cannot be read: it is built again from the document (CAD-119). */
   async latestResult(documentId: DocumentId, configuration?: string): Promise<ComponentResult | undefined> {
     const base = await this.locate(resultKey(documentId, configuration), 'results');
-    if (!base) return undefined;
-    const meta = JSON.parse(await this.fs.readText(`${base}.json`)) as Omit<ComponentResult, 'bytes'>;
-    return { ...meta, bytes: await this.fs.readBytes(`${base}.bin`) };
+    const meta = base && (await this.metadata<Omit<ComponentResult, 'bytes'>>(base));
+    return meta ? { ...meta, bytes: await this.fs.readBytes(`${base}.bin`) } : undefined;
   }
 
   async discardResult(documentId: DocumentId): Promise<void> {
@@ -51,6 +50,18 @@ export class FileSystemAssetAccess implements AssetAccess {
       for (const file of files) {
         if (file.startsWith(`${documentId}.`) || file.startsWith(`${documentId}@`)) await this.fs.remove(joinPath(folder, file));
       }
+    }
+  }
+
+  /**
+   * The metadata next to the bytes, or nothing when it is empty or cut short: a process that ended
+   * while writing it left an empty file, which stopped the whole assembly from opening (CAD-119).
+   */
+  private async metadata<T>(base: string): Promise<T | undefined> {
+    try {
+      return JSON.parse(await this.fs.readText(`${base}.json`)) as T;
+    } catch {
+      return undefined;
     }
   }
 

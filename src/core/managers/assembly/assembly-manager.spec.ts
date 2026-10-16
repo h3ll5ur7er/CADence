@@ -278,6 +278,20 @@ describe('AssemblyManager', () => {
     expect([round(both.u), round(both.v)]).toEqual([[0, 0, 1], [-1, 0, 0]]);
   });
 
+  it('leans joint frames before the tilt, so the axis can point any way (CAD-118)', () => {
+    const flat = { origin: [0, 0, 0] as const, u: [1, 0, 0] as const, v: [0, 1, 0] as const };
+    const round = (p: readonly number[]) => p.map((x) => Math.round(x * 1e9) / 1e9 + 0);
+    const axis = (f: { u: readonly number[]; v: readonly number[] }) => {
+      const [[a, b, c], [d, e, g]] = [f.u, f.v] as [[number, number, number], [number, number, number]];
+      return round([b * g - c * e, c * d - a * g, a * e - b * d]);
+    };
+    // Without a lean, a tilt only tips the axis towards −y; leaned a quarter first, towards +x.
+    expect(axis(offsetFrame(flat, { translate: [0, 0, 0], angle: 0, tilt: 90 }))).toEqual([0, -1, 0]);
+    expect(axis(offsetFrame(flat, { translate: [0, 0, 0], angle: 0, lean: 90, tilt: 90 }))).toEqual([1, 0, 0]);
+    const s = Math.SQRT1_2;
+    expect(axis(offsetFrame(flat, { translate: [0, 0, 0], angle: 30, lean: 45, tilt: 45 }))).toEqual(round([0.5, -0.5, s]));
+  });
+
   it('moves joint origins by offsets and tells where each joint is', async () => {
     await arm([0]);
     // 10 mm up the hole's axis, and turned a quarter: like the angle at 90°, lifted.
@@ -342,6 +356,30 @@ describe('AssemblyManager', () => {
       return Math.max(...xs) - Math.min(...xs);
     };
     await until(() => Math.abs(width() - 90) < 1e-6);
+  });
+
+  it('reads a component again when this process published a new result, or another wrote one unheard (CAD-116)', async () => {
+    unwrap(await insert('b1', base, identity(), true));
+    const width = () => {
+      const xs = Array.from(session.state().components.get(base)?.bodies[0]?.positions ?? []).filter((_, i) => i % 3 === 0);
+      return Math.max(...xs) - Math.min(...xs);
+    };
+    // The design editor (or edit_component) saved and published it.
+    const later = '2026-10-14T12:00:00.000Z';
+    await documents.store({ ...component('base', 'Base'), modifiedAt: later });
+    await assets.publishResult({ documentId: base, projectId: project, stamp: later, bytes: await snapshotOfPlate('base', 90, 20, [10, 10]) });
+    events.publish('resultPublished', { documentId: base });
+    await until(() => Math.abs(width() - 90) < 1e-6);
+    // Another process did, without an event: caught up with on request, unchanged ones left alone.
+    const latest = '2026-10-14T13:00:00.000Z';
+    await documents.store({ ...component('base', 'Base'), modifiedAt: latest });
+    await assets.publishResult({ documentId: base, projectId: project, stamp: latest, bytes: await snapshotOfPlate('base', 70, 20, [10, 10]) });
+    expect(width()).toBeCloseTo(90);
+    await session.catchUp();
+    expect(width()).toBeCloseTo(70);
+    const before = session.state().components.get(base);
+    await session.catchUp();
+    expect(session.state().components.get(base)).toBe(before);
   });
 
   it('gives an edited joint without a name its own or the default name (CAD-112)', async () => {

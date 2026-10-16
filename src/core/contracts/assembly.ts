@@ -70,6 +70,8 @@ export const jointDofs: Readonly<Record<JointType, readonly JointDof[]>> = {
 export interface JointOffset {
   readonly translate: Vec3;
   readonly angle: number;
+  /** Turns the frame about its normal before the tilt: which way the tilt tips the axis (CAD-118). */
+  readonly lean?: number;
   /** Tips the joint's axis over, about the frame's x axis: a joint along a direction no face has. */
   readonly tilt?: number;
 }
@@ -81,16 +83,23 @@ export interface JointOrigin {
   readonly offset?: JointOffset;
 }
 
-/** The frame moved by the offset: along its own axes, tilted about its x axis, then turned about its normal. */
+/**
+ * The frame moved by the offset: along its own axes, turned about its normal (lean), tilted about its
+ * new x axis, then turned about its new normal (angle). Lean and tilt together point the joint axis
+ * any way.
+ */
 export function offsetFrame(frame: PlaneFrame, offset: JointOffset | undefined): PlaneFrame {
   if (!offset) return frame;
-  const { origin, u } = frame;
-  const n0: Vec3 = [u[1] * frame.v[2] - u[2] * frame.v[1], u[2] * frame.v[0] - u[0] * frame.v[2], u[0] * frame.v[1] - u[1] * frame.v[0]];
+  const { origin } = frame;
+  const n0: Vec3 = [frame.u[1] * frame.v[2] - frame.u[2] * frame.v[1], frame.u[2] * frame.v[0] - frame.u[0] * frame.v[2], frame.u[0] * frame.v[1] - frame.u[1] * frame.v[0]];
   const [x, y, z] = offset.translate;
-  const at = (i: 0 | 1 | 2) => origin[i] + u[i] * x + frame.v[i] * y + n0[i] * z;
+  const at = (i: 0 | 1 | 2) => origin[i] + frame.u[i] * x + frame.v[i] * y + n0[i] * z;
+  const l = ((offset.lean ?? 0) * Math.PI) / 180;
+  const u: Vec3 = [0, 1, 2].map((i) => (frame.u[i] as number) * Math.cos(l) + (frame.v[i] as number) * Math.sin(l)) as unknown as Vec3;
+  const v0: Vec3 = [0, 1, 2].map((i) => (frame.v[i] as number) * Math.cos(l) - (frame.u[i] as number) * Math.sin(l)) as unknown as Vec3;
   // The tilt turns v towards the normal, about u.
   const t = ((offset.tilt ?? 0) * Math.PI) / 180;
-  const v: Vec3 = [frame.v[0] * Math.cos(t) + n0[0] * Math.sin(t), frame.v[1] * Math.cos(t) + n0[1] * Math.sin(t), frame.v[2] * Math.cos(t) + n0[2] * Math.sin(t)];
+  const v: Vec3 = [v0[0] * Math.cos(t) + n0[0] * Math.sin(t), v0[1] * Math.cos(t) + n0[1] * Math.sin(t), v0[2] * Math.cos(t) + n0[2] * Math.sin(t)];
   const a = (offset.angle * Math.PI) / 180;
   const [c, s] = [Math.cos(a), Math.sin(a)];
   return {

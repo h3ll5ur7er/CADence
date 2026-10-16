@@ -60,6 +60,7 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 - [X] **Print-friendly generators:** snap fits, living hinges, dovetails and press-fit pegs. *(new)* → [[CAD-73]] ✅
 - [X] **Clearances for prints:** fit classes (press, snug, loose) and a printer-specific offset applied to holes and pegs. *(new)* → [[CAD-74]] ✅
 - [ ] **Standard parts as assembly instances** from a shared library, and modelled screw threads. *(ADR-35 trade-off)*
+- [ ] **Drawings II:** offset and half sections, true-length dimensions on isometric views, tolerances and surface finish symbols. *(ADR-39 trade-offs)*
 - [ ] **Nested timeline folders**, and repair candidates matched by shape as well as distance. *(ADR-36 trade-offs)*
 - [ ] **Lithophanes and image embossing:** a picture turned into relief on a face. *(new)*
 - [ ] **Textures:** knurling and patterned surfaces on faces. *(new)*
@@ -71,8 +72,8 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 
 ## Technical drawings
 
-- [X] **Drawings of parts and assemblies:** a new document kind with standard views (front, top, side, isometric), section and detail views, dimensions and notes, a title block, and export as PDF and DXF. Views update when the model changes. *(new)* → [[CAD-87]] [[CAD-88]]
-- [X] **Hole and thread callouts, and a parts list** on drawings, from the model. *(new)* → [[CAD-89]]
+- [X] **Drawings of parts and assemblies:** a new document kind with standard views (front, top, side, isometric), section and detail views, dimensions and notes, a title block, and export as PDF and DXF. Views update when the model changes. *(new)* → [[CAD-87]] [[CAD-88]] ✅
+- [X] **Hole and thread callouts, and a parts list** on drawings, from the model. *(new)* → [[CAD-89]] ✅
 
 ## Viewport and interaction
 

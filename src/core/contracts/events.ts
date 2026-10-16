@@ -11,6 +11,8 @@ export interface DomainEvents {
   /** An editor saved a change of a document: the project's version history records it soon. */
   readonly documentSaved: { readonly projectId: ProjectId; readonly documentId: DocumentId };
   readonly documentDeleted: { readonly documentId: DocumentId };
+  /** A component's or an assembly's result was published: drawings of it read it again. */
+  readonly resultPublished: { readonly documentId: DocumentId; readonly configuration?: string };
   /** A document was saved in another tab or window of the app (relayed): what shows it reads it again. */
   readonly documentChanged: { readonly documentId: DocumentId };
   /** A request to the Design Manager: bring the component's published result up to date (ADR-11). */

@@ -3,6 +3,7 @@ import type {
   BodyOperation,
   BodyState,
   FlangeMarker,
+  Matrix4,
   PlaneFrame,
   Profile,
   Result,
@@ -11,6 +12,7 @@ import type {
   Vec2,
   Vec3,
 } from '@core/contracts';
+import type { ViewGeometry, ViewRequest } from './drawing-view';
 import type { HoleSpec } from './holes';
 
 import type { PartSolid } from './parts';
@@ -204,6 +206,13 @@ export interface ModelingEngine {
    * direction. Axes without an inside point along their largest positive world axis.
    */
   frameOf(bodies: readonly BodyState[], ref: TopologyRef): Promise<Result<PlaneFrame>>;
+  /**
+   * A drawing view of the bodies: their edges seen from a direction with hidden lines removed
+   * (OCCT HLR), a section's cut, and the named points, circles and lines to dimension.
+   */
+  drawView(bodies: readonly BodyState[], request: ViewRequest): Promise<Result<ViewGeometry>>;
+  /** Copies of bodies where an assembly puts them (ids as given), for publishing an assembly's result. */
+  place(parts: readonly { readonly id: string; readonly body: BodyState; readonly transform: Matrix4 }[]): Promise<BodyState[]>;
   /** The bodies' solids and names, for publishing as a component result. */
   snapshot(bodies: readonly BodyState[]): Promise<Uint8Array>;
   /** Loads a snapshot into the shape store (as `<prefix>:<body id>`, once) and returns its bodies. */

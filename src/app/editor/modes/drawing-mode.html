@@ -1,0 +1,237 @@
+<div class="stage">
+  <svg
+    #sheet
+    class="sheet"
+    role="application"
+    aria-label="Drawing sheet"
+    [attr.viewBox]="viewBoxText()"
+    [class.picking]="store.tool().kind !== 'select'"
+    (wheel)="zoom($event)"
+    (pointerdown)="down($event)"
+    (pointermove)="move($event)"
+    (pointerup)="up($event)"
+  >
+    @if (layout(); as layout) {
+      <rect class="paper" x="0" y="0" [attr.width]="layout.width" [attr.height]="layout.height" />
+      @for (view of layout.views; track view.id) {
+        <rect
+          class="view-box"
+          [class.selected]="isSelected(view.id)"
+          [attr.data-owner]="view.id"
+          [attr.x]="view.min[0] - 3"
+          [attr.y]="y(view.max[1]) - 3"
+          [attr.width]="view.max[0] - view.min[0] + 6"
+          [attr.height]="view.max[1] - view.min[1] + 6"
+        >
+          <title>{{ view.error ?? 'View' }}</title>
+        </rect>
+      }
+      @for (path of layout.paths; track $index) {
+        @if (path.closed) {
+          <polygon [attr.points]="points(path.points)" [attr.class]="'line ' + path.style" [class.selected]="isSelected(path.owner)" [attr.data-owner]="path.owner" />
+        } @else {
+          <polyline [attr.points]="points(path.points)" [attr.class]="'line ' + path.style" [class.selected]="isSelected(path.owner)" [attr.data-owner]="path.owner" />
+        }
+      }
+      @for (a of layout.arrows; track $index) {
+        <polygon class="arrow" [class.selected]="isSelected(a.owner)" [attr.points]="arrow(a.tip, a.direction)" [attr.data-owner]="a.owner" />
+      }
+      @for (t of layout.texts; track $index) {
+        <text
+          [attr.x]="t.at[0]"
+          [attr.y]="y(t.at[1])"
+          [attr.font-size]="t.size / 0.72"
+          [attr.text-anchor]="t.align === 'left' ? 'start' : t.align === 'right' ? 'end' : 'middle'"
+          [attr.font-weight]="t.bold ? 700 : 400"
+          [class.selected]="isSelected(t.owner)"
+          [attr.data-owner]="t.owner"
+        >{{ t.text }}</text>
+      }
+      @for (p of store.picked(); track $index) {
+        <circle class="picked" [attr.cx]="p.at[0]" [attr.cy]="y(p.at[1])" [attr.r]="p.radius ?? 1.2" />
+      }
+      @if (hover(); as h) {
+        <circle class="hover" [attr.cx]="h.at[0]" [attr.cy]="y(h.at[1])" [attr.r]="h.radius ?? 1.2" />
+      }
+    }
+  </svg>
+
+  <div class="top-tools">
+    <div class="model-bar" role="toolbar" aria-label="Drawing tools">
+      <div class="menu">
+        <button type="button" class="btn btn-primary" aria-haspopup="dialog" [attr.aria-expanded]="menu() === 'view'" (click)="toggleMenu('view')"><cad-icon name="plus" /> View</button>
+        @if (menu() === 'view') {
+          <div class="menu-list add-view" role="dialog" aria-label="Add a view">
+            <label class="field">
+              Of
+              <select id="view-source" (change)="newView.set({ ...newView(), source: value($event) })">
+                @for (s of store.sources(); track s.id) {
+                  <option [value]="s.id" [selected]="s.id === newView().source">{{ s.name }}</option>
+                } @empty {
+                  <option value="">No components or assemblies yet</option>
+                }
+              </select>
+            </label>
+            <label class="field">
+              From
+              <select id="view-direction" (change)="newView.set({ ...newView(), direction: $any(value($event)) })">
+                @for (d of directions; track d) {
+                  <option [value]="d" [selected]="d === newView().direction">{{ directionLabels[d] }}</option>
+                }
+              </select>
+            </label>
+            <label class="check"><input type="checkbox" [checked]="newView().hidden" (change)="newView.set({ ...newView(), hidden: $any($event.target).checked })" /> Hidden lines</label>
+            <button type="button" class="btn btn-primary" [disabled]="!newView().source" (click)="addView()">Add view</button>
+          </div>
+        }
+      </div>
+      <span class="divider"></span>
+      <div class="menu">
+        <button type="button" class="btn" aria-haspopup="menu" [attr.aria-expanded]="menu() === 'dimension'" [class.on]="store.tool().kind === 'dimension'" (click)="toggleMenu('dimension')"><cad-icon name="dimension" /> Dimension</button>
+        @if (menu() === 'dimension') {
+          <div class="menu-list" role="menu" aria-label="Dimension">
+            @for (type of dimensionTypes; track type) {
+              <button type="button" role="menuitem" (click)="use({ kind: 'dimension', type })">{{ dimensionLabels[type] }}</button>
+            }
+          </div>
+        }
+      </div>
+      <button type="button" class="btn" [class.on]="store.tool().kind === 'note'" (click)="use({ kind: 'note' })"><cad-icon name="text" /> Note</button>
+      <button type="button" class="icon-btn tool" aria-label="Centre mark" title="Centre mark" [class.on]="store.tool().kind === 'center-mark'" (click)="use({ kind: 'center-mark' })"><cad-icon name="origin" [size]="18" /></button>
+      <button type="button" class="icon-btn tool" aria-label="Centre line" title="Centre line" [class.on]="store.tool().kind === 'center-line'" (click)="use({ kind: 'center-line' })"><cad-icon name="construction" [size]="18" /></button>
+      <button type="button" class="icon-btn tool" aria-label="Hole callout" title="Hole callout" [class.on]="store.tool().kind === 'callout'" (click)="use({ kind: 'callout' })"><cad-icon name="hole" [size]="18" /></button>
+      <button type="button" class="icon-btn tool" aria-label="Detail view" title="Detail view" [class.on]="store.tool().kind === 'detail'" (click)="use({ kind: 'detail' })"><cad-icon name="inspect" [size]="18" /></button>
+      <button type="button" class="icon-btn tool" aria-label="Balloon" title="Balloon" [class.on]="store.tool().kind === 'balloon'" (click)="use({ kind: 'balloon' })"><cad-icon name="info" [size]="18" /></button>
+      <button type="button" class="icon-btn tool" aria-label="Parts list" title="Parts list" [class.on]="store.tool().kind === 'parts-list'" (click)="use({ kind: 'parts-list' })"><cad-icon name="copy" [size]="18" /></button>
+      <span class="divider"></span>
+      <div class="menu">
+        <button type="button" class="btn" aria-haspopup="menu" [attr.aria-expanded]="menu() === 'export'" (click)="toggleMenu('export')"><cad-icon name="download" /> Export</button>
+        @if (menu() === 'export') {
+          <div class="menu-list end" role="menu" aria-label="Export format">
+            <button type="button" role="menuitem" (click)="menu.set(undefined); store.exportPdf()">PDF</button>
+            <button type="button" role="menuitem" (click)="menu.set(undefined); store.exportDxf()">DXF (for CAD)</button>
+          </div>
+        }
+      </div>
+      <button type="button" class="icon-btn" aria-label="Fit the sheet" title="Fit the sheet" (click)="fit()"><cad-icon name="fit" [size]="18" /></button>
+      <button type="button" class="icon-btn" aria-label="Undo" title="Undo (Ctrl+Z)" [disabled]="!store.state()?.canUndo" (click)="store.undo()"><cad-icon name="undo" [size]="18" /></button>
+      <button type="button" class="icon-btn" aria-label="Redo" title="Redo (Ctrl+Y)" [disabled]="!store.state()?.canRedo" (click)="store.redo()"><cad-icon name="redo" [size]="18" /></button>
+    </div>
+  </div>
+
+  @if (hint(); as hint) {
+    <p class="notice" data-testid="drawing-hint">{{ hint }} <button type="button" class="link" (click)="cancel()">Done</button></p>
+  }
+  @if (store.error(); as error) {
+    <p class="toast" role="alert">
+      {{ error }}
+      <button type="button" class="icon-btn" aria-label="Dismiss" (click)="store.error.set(undefined)">×</button>
+    </p>
+  }
+</div>
+
+<aside class="properties" aria-label="Properties">
+  @if (selectedView(); as view) {
+    <p class="eyebrow">{{ view.detail ? 'Detail view' : 'View' }}</p>
+    <div class="head">
+      <h2>{{ viewName(view) }}</h2>
+      <button type="button" class="icon-btn" aria-label="Delete view" title="Delete" (click)="remove()"><cad-icon name="trash" [size]="14" /></button>
+    </div>
+    @if (!view.detail) {
+      <label class="field">
+        From
+        <select id="view-edit-direction" (change)="setView(view, { direction: $any(value($event)) })">
+          @for (d of directions; track d) {
+            <option [value]="d" [selected]="d === view.direction">{{ directionLabels[d] }}</option>
+          }
+        </select>
+      </label>
+    }
+    <label class="field">
+      Scale
+      <select id="view-scale" (change)="setView(view, { scale: value($event) ? +value($event) : null })">
+        <option value="" [selected]="view.scale === undefined">The sheet's</option>
+        @for (s of scales; track s.value) {
+          <option [value]="s.value" [selected]="s.value === view.scale">{{ s.label }}</option>
+        }
+      </select>
+    </label>
+    <label class="check"><input type="checkbox" [checked]="view.hidden" (change)="setView(view, { hidden: $any($event.target).checked })" /> Hidden lines</label>
+    @if (!view.detail) {
+      <label class="check"><input id="view-section" type="checkbox" [checked]="!!view.section" (change)="setView(view, { section: $any($event.target).checked ? { offset: 0 } : null, label: $any($event.target).checked ? (view.label ?? 'Section A-A') : (view.label ?? null) })" /> Section (cut through the middle)</label>
+      @if (view.section; as section) {
+        <label class="field">
+          Cut towards the viewer (mm)
+          <input id="view-section-offset" type="number" step="any" [value]="section.offset" (change)="setView(view, { section: { offset: +value($event) } })" />
+        </label>
+      }
+    }
+    <label class="field">
+      Label
+      <input id="view-label" type="text" [value]="view.label ?? ''" (change)="setView(view, { label: value($event) || null })" />
+    </label>
+  } @else if (selectedAnnotation(); as annotation) {
+    <p class="eyebrow">Annotation</p>
+    <div class="head">
+      <h2>{{ annotationName(annotation) }}</h2>
+      <button type="button" class="icon-btn" aria-label="Delete annotation" title="Delete" (click)="remove()"><cad-icon name="trash" [size]="14" /></button>
+    </div>
+    @if (annotation.kind === 'dimension') {
+      <label class="field">
+        Distance from the geometry (mm)
+        <input id="dimension-offset" type="number" step="any" [value]="annotation.offset" (change)="setAnnotation(annotation, { offset: +value($event) })" />
+      </label>
+      <label class="field">
+        Text (empty: the measured value)
+        <input id="dimension-text" type="text" [value]="annotation.text ?? ''" (change)="setAnnotation(annotation, { text: value($event) })" />
+      </label>
+    } @else if (annotation.kind === 'note') {
+      <label class="field">
+        Text
+        <textarea id="note-text" rows="4" [value]="annotation.text" (change)="setAnnotation(annotation, { text: value($event) })"></textarea>
+      </label>
+    } @else {
+      <p class="hint">Drag it on the sheet to move it.</p>
+    }
+  } @else if (store.document(); as document) {
+    <p class="eyebrow">Drawing</p>
+    <h2>{{ document.name }}</h2>
+    @if (layout()?.lost?.length) {
+      <p class="error" role="alert">{{ layout()?.lost?.length }} annotation(s) lost their geometry after a model change.</p>
+    }
+    <div class="grid two">
+      <label class="field">
+        Sheet
+        <select id="sheet-size" (change)="setSheet({ size: $any(value($event)) })">
+          @for (s of sizes; track s) {
+            <option [value]="s" [selected]="s === document.sheet.size">{{ s }}</option>
+          }
+        </select>
+      </label>
+      <label class="field">
+        Orientation
+        <select id="sheet-orientation" (change)="setSheet({ orientation: $any(value($event)) })">
+          <option value="landscape" [selected]="document.sheet.orientation === 'landscape'">Landscape</option>
+          <option value="portrait" [selected]="document.sheet.orientation === 'portrait'">Portrait</option>
+        </select>
+      </label>
+    </div>
+    <label class="field">
+      Scale
+      <select id="sheet-scale" (change)="setSheet({ scale: +value($event) })">
+        @for (s of scales; track s.value) {
+          <option [value]="s.value" [selected]="s.value === document.sheet.scale">{{ s.label }}</option>
+        }
+      </select>
+    </label>
+    <p class="eyebrow">Title block</p>
+    <label class="field">Title<input id="title-title" type="text" [placeholder]="document.name" [value]="document.titleBlock.title" (change)="setTitle({ title: value($event) })" /></label>
+    <div class="grid two">
+      <label class="field">Number<input id="title-number" type="text" [value]="document.titleBlock.number" (change)="setTitle({ number: value($event) })" /></label>
+      <label class="field">Revision<input id="title-revision" type="text" [value]="document.titleBlock.revision" (change)="setTitle({ revision: value($event) })" /></label>
+      <label class="field">Material<input id="title-material" type="text" [value]="document.titleBlock.material" (change)="setTitle({ material: value($event) })" /></label>
+      <label class="field">Drawn by<input id="title-drawn" type="text" [value]="document.titleBlock.drawnBy" (change)="setTitle({ drawnBy: value($event) })" /></label>
+    </div>
+    <p class="hint">Add views of components and assemblies, then dimension them. Drag views and notes to move them; scroll to zoom, drag the sheet to pan.</p>
+  }
+</aside>

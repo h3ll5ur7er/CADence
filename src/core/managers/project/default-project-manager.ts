@@ -86,6 +86,7 @@ const thumbnailId = (documentId: DocumentId): AssetId => asAssetId(`thumbnail-${
 const kindLabels: Readonly<Record<DocumentKind, string>> = {
   component: 'Component',
   assembly: 'Assembly',
+  drawing: 'Drawing',
   imported: 'Imported',
 };
 
@@ -744,7 +745,9 @@ export class DefaultProjectManager implements ProjectManager {
     const document: CadDocument =
       kind === 'component'
         ? { ...header, kind, units: 'mm', parameters: [], timeline: [], rollbackIndex: 0 }
-        : { ...header, kind, instances: [], joints: [], motionStudies: [] };
+        : kind === 'drawing'
+          ? { ...header, kind, sheet: { size: 'A3', orientation: 'landscape', scale: 1 }, titleBlock: { title: name, number: '', drawnBy: '', material: '', revision: 'A' }, views: [], annotations: [] }
+          : { ...header, kind, instances: [], joints: [], motionStudies: [] };
     await this.deps.documents.store(document);
     return summarize(document);
   }

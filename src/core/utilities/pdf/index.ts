@@ -6,7 +6,8 @@
 
 export type PdfOp =
   | { readonly kind: 'text'; readonly x: number; readonly y: number; readonly size: number; readonly text: string; readonly bold?: boolean; readonly align?: 'left' | 'right' | 'center' }
-  | { readonly kind: 'line'; readonly points: readonly (readonly [number, number])[]; readonly width?: number; readonly dash?: readonly number[]; readonly gray?: number; readonly closed?: boolean }
+  /** A polyline; closed and with `fill` (a gray), a filled shape. */
+  | { readonly kind: 'line'; readonly points: readonly (readonly [number, number])[]; readonly width?: number; readonly dash?: readonly number[]; readonly gray?: number; readonly closed?: boolean; readonly fill?: number }
   | { readonly kind: 'rect'; readonly x: number; readonly y: number; readonly width: number; readonly height: number; readonly fill?: number; readonly stroke?: number }
   | { readonly kind: 'image'; readonly image: number; readonly x: number; readonly y: number; readonly width: number; readonly height: number };
 
@@ -80,8 +81,13 @@ function content(page: PdfPage): string {
       case 'line': {
         const [first, ...rest] = op.points;
         if (!first) break;
+        const path = `${n(first[0])} ${n(first[1])} m ${rest.map((p) => `${n(p[0])} ${n(p[1])} l`).join(' ')}`;
+        if (op.fill !== undefined) {
+          lines.push(`${n(op.fill)} g ${path} h f 0 g`);
+          break;
+        }
         lines.push(`${n(op.width ?? 0.5)} w ${n(op.gray ?? 0)} G [${(op.dash ?? []).map(n).join(' ')}] 0 d`);
-        lines.push(`${n(first[0])} ${n(first[1])} m ${rest.map((p) => `${n(p[0])} ${n(p[1])} l`).join(' ')} ${op.closed ? 's' : 'S'}`);
+        lines.push(`${path} ${op.closed ? 's' : 'S'}`);
         break;
       }
       case 'rect':

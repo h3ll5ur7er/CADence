@@ -14,6 +14,8 @@ export type {
   ToolInput,
 } from './modeling-engine';
 export type { PartSolid } from './parts';
+export type { ViewGeometry, ViewRequest } from './drawing-view';
+export type { ProjectedCurve } from './modeling-engine';
 
 /** The OpenCascade engine; call it where the shapes live (the geometry worker, or in-process in tests). */
 export function createModelingEngine(shapes: ShapeAccess): ModelingEngine {

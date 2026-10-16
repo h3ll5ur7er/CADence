@@ -1,9 +1,10 @@
-import { find, type NamedShape, type ShapeAccess } from '@core/access/shape';
-import { type BodyMesh, fail, ok, type PlaneFrame, type Result, type TopologyRef, type Vec2, type Vec3 } from '@core/contracts';
+import { find, type NamedShape, place, type ShapeAccess } from '@core/access/shape';
+import { type BodyMesh, fail, type Matrix4, ok, type PlaneFrame, type Result, type TopologyRef, type Vec2, type Vec3 } from '@core/contracts';
 import { type Edge, type Face, getOC, measureVolume, type Shape3D, Vertex } from 'replicad';
 import { combine, type LoadedBody, renameCopy } from './bodies';
 import { BodyOperationError, combineBodies, splitBody, transformBodies } from './body-operations';
 import { DraftRibError, draftFaces, ribTool } from './draft-rib';
+import { drawingView, type ViewGeometry, type ViewRequest } from './drawing-view';
 import { edgeFlanges, FlangeError } from './flanges';
 import { HoleError, holeTool, threadGroove, threadPlacement } from './holes';
 import { PartError, partTool } from './parts';
@@ -101,6 +102,27 @@ export class OcctModelingEngine implements ModelingEngine {
     } catch (error) {
       return fail({ code: 'lost-reference', message: describe(error) });
     }
+  }
+
+  async drawView(bodies: readonly BodyState[], request: ViewRequest): Promise<Result<ViewGeometry>> {
+    await this.shapes.ready();
+    try {
+      return ok(drawingView(this.load(bodies).map((b) => ({ id: b.state.id, named: b.named })), request, projectEdge));
+    } catch (error) {
+      return fail({ code: 'view-failed', message: describe(error) });
+    }
+  }
+
+  async place(parts: readonly { readonly id: string; readonly body: BodyState; readonly transform: Matrix4 }[]): Promise<BodyState[]> {
+    await this.shapes.ready();
+    return parts.flatMap(({ id, body, transform }) => {
+      const named = this.shapes.get(body.key);
+      if (!named) return [];
+      const key = `placed:${body.key}:${transform.map((v) => Math.round(v * 1e6) / 1e6).join(',')}`;
+      // Names stay with the stored shape: placed copies are for pictures and drawings, not references.
+      if (!this.shapes.has(key)) this.shapes.put(key, { shape: place(named.shape, transform), faces: new Map(), edges: new Map() });
+      return [{ id, key }];
+    });
   }
 
   async snapshot(bodies: readonly BodyState[]): Promise<Uint8Array> {

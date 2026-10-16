@@ -1,8 +1,8 @@
 import { computed, DestroyRef, inject, Injectable, resource, signal } from '@angular/core';
-import { type DocumentId, type DocumentSummary, type InstancePattern, type Interference, isImportedModel, type Joint, jointDofs, type JointOrigin, type JointType, type Matrix4, type Measurement, type MotionFrame, type ProjectId, type Result, sourceKey } from '@core/contracts';
-import type { AssemblyCommand, AssemblyFormat, AssemblyProperties, AssemblySession, AssemblyState, PlacedRef } from '@core/managers/assembly';
+import { type DocumentId, type DocumentSummary, type ExplodedView, type InstancePattern, type Interference, isImportedModel, type Joint, jointDofs, type JointOrigin, type JointType, type Matrix4, type Measurement, type MotionFrame, type MotionLink, type ProjectId, type Result, sourceKey, type Vec3 } from '@core/contracts';
+import type { AssemblyCommand, AssemblyFormat, AssemblyProperties, AssemblySession, AssemblyState, BomLine, Collision, InstructionPicture, PlacedRef } from '@core/managers/assembly';
 import { newId } from '@core/utilities/identity';
-import { compose, fromFrame, invertRigid, rotationVector, translation, translationOf } from '@core/utilities/math';
+import { compose, fromFrame, invertRigid, rotationVector, transformPoint, translation, translationOf } from '@core/utilities/math';
 import { ASSEMBLY_MANAGER, PROJECT_MANAGER } from '../../core.providers';
 import type { Pick } from '../../viewport/picking';
 import type { MoveHandle, PartDisplay } from '../../viewport/viewport-scene';
@@ -22,8 +22,8 @@ export interface JointDraft {
   readonly target: 'a' | 'b';
 }
 
-export type AssemblySelection = { readonly kind: 'instance' | 'joint' | 'study'; readonly id: string } | undefined;
-export type AssemblyPanel = 'joint' | 'interference' | 'measure' | 'pattern' | undefined;
+export type AssemblySelection = { readonly kind: 'instance' | 'joint' | 'study' | 'link' | 'view'; readonly id: string } | undefined;
+export type AssemblyPanel = 'joint' | 'interference' | 'measure' | 'pattern' | 'bom' | undefined;
 
 /** The move handle of the selected instance: free ones move anywhere, jointed ones along their joint's free directions. */
 export type InstanceHandle = MoveHandle & { readonly instance: string; readonly joint?: Joint };
@@ -85,7 +85,7 @@ export class AssemblyStore {
     const state = this.state();
     if (!state) return [];
     const preview = this.previewPoses();
-    const flagged = new Set((this.panel() === 'interference' ? (this.interference() ?? []) : []).flatMap((i) => [i.a, i.b]));
+    const flagged = new Set([...(this.panel() === 'interference' ? (this.interference() ?? []) : []).flatMap((i) => [i.a, i.b]), ...this.flagged()]);
     // Copies of patterns show their original's component, where the pattern puts them.
     const copies = [...state.copies].flatMap(([id, copy]) => {
       const original = state.document.instances.find((i) => i.id === copy.instance);
@@ -103,6 +103,11 @@ export class AssemblyStore {
   /** Faces, edges and vertices picked with the measure tool, on any instance. */
   readonly measurePicks = signal<readonly PlacedRef[]>([]);
   readonly measurement = signal<Result<Measurement> | undefined>(undefined);
+  /** Lines from where exploded parts were to where they are shown. */
+  readonly trails = signal<readonly (readonly [Vec3, Vec3])[]>([]);
+  /** Instances flagged (pink) while a collision is shown. */
+  readonly flagged = signal<ReadonlySet<string>>(new Set());
+  readonly bom = signal<readonly BomLine[] | undefined>(undefined);
   /** A pattern being made or changed in the pattern panel. */
   readonly patternDraft = signal<InstancePattern | undefined>(undefined);
 
@@ -201,7 +206,114 @@ export class AssemblyStore {
     this.jointDraft.set(undefined);
     this.panel.set(undefined);
     this.previewPoses.set(undefined);
+    this.trails.set([]);
+    this.flagged.set(new Set());
     this.selection.set(selection);
+  }
+
+  /** A new link from the first joint to the second that has a freedom, which keeps its place (offset). */
+  async addLink(): Promise<void> {
+    const joints = (this.state()?.document.joints ?? []).filter((j) => j.values.length > 0);
+    const [driver, driven] = joints;
+    if (!driver || !driven) return;
+    const link: MotionLink = { id: newId(), name: '', kind: 'gear', driver: { joint: driver.id, dof: 0 }, driven: { joint: driven.id, dof: 0 }, ratio: -1, offset: (driven.values[0] ?? 0) + (driver.values[0] ?? 0) };
+    if (await this.run({ type: 'set-link', link })) this.select({ kind: 'link', id: link.id });
+  }
+
+  async addExplodedView(): Promise<void> {
+    const view: ExplodedView = { id: newId(), name: '', steps: [] };
+    if (await this.run({ type: 'set-exploded-view', view })) this.select({ kind: 'view', id: view.id });
+  }
+
+  /** Shows an exploded view at `position` (0: assembled … the number of steps: all apart), with trails. */
+  showExploded(viewId: string, position: number): void {
+    const session = this.session;
+    const state = this.state();
+    if (!session || !state) return;
+    const count = Math.ceil(position);
+    const poses = session.explode(viewId, count, count > 0 ? position - (count - 1) : 1);
+    this.previewPoses.set(poses);
+    const moved = state.document.explodedViews?.find((v) => v.id === viewId)?.steps.slice(0, count).flatMap((s) => s.instances) ?? [];
+    this.trails.set(
+      [...new Set(moved)].flatMap((id) => {
+        const [from, to] = [state.poses.get(id), poses.get(id)];
+        const center = this.centerOf(id);
+        return from && to && center ? [[transformPoint(from, center), transformPoint(to, center)] as const] : [];
+      }),
+    );
+  }
+
+  /** The middle of an instance's bodies, in its component's coordinates. */
+  private centerOf(instanceId: string): Vec3 | undefined {
+    const state = this.state();
+    const instance = state?.document.instances.find((i) => i.id === instanceId);
+    const bodies = instance ? (state?.components.get(sourceKey(instance.component, instance.configuration))?.bodies ?? []) : [];
+    const [min, max] = [[Infinity, Infinity, Infinity], [-Infinity, -Infinity, -Infinity]];
+    for (const body of bodies)
+      for (let i = 0; i < body.positions.length; i++) {
+        const k = i % 3;
+        min[k] = Math.min(min[k] as number, body.positions[i] as number);
+        max[k] = Math.max(max[k] as number, body.positions[i] as number);
+      }
+    return Number.isFinite(min[0]) ? [((min[0] as number) + (max[0] as number)) / 2, ((min[1] as number) + (max[1] as number)) / 2, ((min[2] as number) + (max[2] as number)) / 2] : undefined;
+  }
+
+  /** The box around all instances at the given poses, to frame pictures alike. */
+  boxOf(poses: ReadonlyMap<string, Matrix4>): { min: Vec3; max: Vec3 } | undefined {
+    const state = this.state();
+    if (!state) return undefined;
+    const [min, max] = [[Infinity, Infinity, Infinity], [-Infinity, -Infinity, -Infinity]];
+    for (const instance of state.document.instances) {
+      const m = poses.get(instance.id);
+      const bodies = state.components.get(sourceKey(instance.component, instance.configuration))?.bodies ?? [];
+      if (!m) continue;
+      for (const body of bodies)
+        for (let i = 0; i < body.positions.length; i += 3) {
+          const p = transformPoint(m, [body.positions[i] as number, body.positions[i + 1] as number, body.positions[i + 2] as number]);
+          p.forEach((v, k) => ((min[k] = Math.min(min[k] as number, v)), (max[k] = Math.max(max[k] as number, v))));
+        }
+    }
+    return Number.isFinite(min[0]) ? { min: min as unknown as Vec3, max: max as unknown as Vec3 } : undefined;
+  }
+
+  /**
+   * Build instructions as a PDF: pictures of the assembled state and after each step (framed alike,
+   * taken by `picture`), then the Assembly Manager lays out the pages.
+   */
+  async exportInstructions(viewId: string, picture: (box: { min: Vec3; max: Vec3 } | undefined) => Promise<InstructionPicture | undefined>): Promise<void> {
+    const session = this.session;
+    const steps = this.state()?.document.explodedViews?.find((v) => v.id === viewId)?.steps.length ?? 0;
+    if (!session || !steps) return;
+    const box = this.boxOf(session.explode(viewId));
+    const pictures: InstructionPicture[] = [];
+    for (let j = 0; j <= steps; j++) {
+      this.showExploded(viewId, j);
+      const shot = await picture(box);
+      if (!shot) return this.error.set('The view could not take a picture.');
+      pictures.push(shot);
+    }
+    this.showExploded(viewId, steps);
+    const result = await session.exportInstructions(viewId, pictures);
+    this.error.set(result.ok ? undefined : result.error.message);
+  }
+
+  async collisions(studyId: string, fps: number): Promise<readonly Collision[] | undefined> {
+    const result = await this.session?.collisions(studyId, fps);
+    if (!result) return undefined;
+    this.error.set(result.ok ? undefined : result.error.message);
+    return result.ok ? result.value : undefined;
+  }
+
+  async openBom(): Promise<void> {
+    this.select(undefined);
+    this.panel.set('bom');
+    this.bom.set(undefined);
+    this.bom.set((await this.session?.billOfMaterials()) ?? []);
+  }
+
+  async exportBom(): Promise<void> {
+    const result = await this.session?.exportBillOfMaterials();
+    if (result && !result.ok) this.error.set(result.error.message);
   }
 
   startJoint(type: JointType = 'revolute'): void {

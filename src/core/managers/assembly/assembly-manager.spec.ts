@@ -333,6 +333,63 @@ describe('AssemblyManager', () => {
     await until(() => Math.abs(width() - 90) < 1e-6);
   });
 
+  it('links joints: a second hinge turns with the first, the other way', async () => {
+    await arm([0]);
+    unwrap(await insert('l2', link, translation([0, 80, 0])));
+    const second: Joint = { ...hinge([0]), id: 'hinge2', a: { instance: 'b1', ref: holeOf('base'), offset: { translate: [0, 0, 20], angle: 0 } }, b: { instance: 'l2', ref: holeOf('link') } };
+    unwrap(await session.execute({ type: 'add-joint', joint: second }));
+    const gear = { id: 'g', name: '', kind: 'gear' as const, driver: { joint: 'hinge', dof: 0 }, driven: { joint: 'hinge2', dof: 0 }, ratio: -2, offset: 0 };
+    unwrap(await session.execute({ type: 'set-link', link: gear }));
+    expect(session.state().document.links?.[0]?.name).toBe('Gear 1');
+    unwrap(await session.execute({ type: 'set-joint-values', jointId: 'hinge', values: [30] }));
+    expect(session.state().document.joints.find((j) => j.id === 'hinge2')?.values[0]).toBeCloseTo(-60);
+    // Not in a circle, and not twice for one joint.
+    expect(await session.execute({ type: 'set-link', link: { ...gear, id: 'back', driver: { joint: 'hinge2', dof: 0 }, driven: { joint: 'hinge', dof: 0 } } })).toMatchObject({ ok: false });
+    unwrap(await session.execute({ type: 'remove-joint', jointId: 'hinge2' }));
+    expect(session.state().document.links).toEqual([]);
+  });
+
+  it('finds where parts hit during a motion study', async () => {
+    await arm([0]);
+    const study = { id: 's1', name: '', duration: 1, keys: [{ time: 0, joint: 'hinge', values: [0] }, { time: 1, joint: 'hinge', values: [90] }] };
+    unwrap(await session.execute({ type: 'add-study', study }));
+    const hits = unwrap(await session.collisions('s1', 2));
+    expect(hits[0]).toMatchObject({ a: 'b1', b: 'l1', time: 0 });
+    expect(hits[0]?.volume).toBeGreaterThan(0);
+  });
+
+  it('explodes the assembly step by step, lists its parts, and makes build instructions', async () => {
+    await arm([90]);
+    const view = { id: 'v1', name: '', steps: [{ id: 's1', instances: ['l1'], direction: [0, 0, 1] as const, distance: 50 }] };
+    unwrap(await session.execute({ type: 'set-exploded-view', view }));
+    expect(session.state().document.explodedViews?.[0]?.name).toBe('Exploded view 1');
+    const lifted = (poses: ReadonlyMap<string, Matrix4>) => transformPoint(poses.get('l1') as Matrix4, [5, 5, 2.5])[2];
+    expect(lifted(session.explode('v1'))).toBeCloseTo(52.5);
+    expect(lifted(session.explode('v1', 1, 0.5))).toBeCloseTo(27.5);
+    expect(lifted(session.explode('v1', 0))).toBeCloseTo(2.5);
+
+    unwrap(await session.execute({ type: 'set-pattern', pattern: { id: 'p', name: '', kind: 'linear', instances: ['b1'], direction: [0, 1, 0], origin: [0, 0, 0], count: 2, spacing: 100 } }));
+    const bom = await session.billOfMaterials();
+    expect(bom.map((l) => [l.component, l.count])).toEqual([
+      ['Base', 2],
+      ['Link', 1],
+    ]);
+    expect(bom[0]?.mass).toBeCloseTo(((60 * 20 * 5 - Math.PI * 9 * 5) * 1.24) / 1000, 1);
+    unwrap(await session.exportBillOfMaterials());
+    const csv = new TextDecoder().decode(files.delivered.at(-1)?.bytes);
+    expect(csv.split('\r\n')[0]).toBe('Component,Configuration,Count,Material,Mass each (g),Mass (g)');
+    expect(csv).toContain('Base,,2,');
+
+    const jpeg = { jpeg: Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]), width: 4, height: 3 };
+    unwrap(await session.exportInstructions('v1', [jpeg, jpeg]));
+    const pdf = files.delivered.at(-1);
+    expect(pdf?.name).toBe('Arm - Exploded view 1.pdf');
+    const text = Array.from(pdf?.bytes ?? [], (c) => String.fromCharCode(c)).join('');
+    expect(text.startsWith('%PDF-1.4')).toBe(true);
+    expect(text).toContain('/Count 3'); // the parts, one step, finished
+    expect(await session.exportInstructions('v1', [jpeg])).toMatchObject({ ok: false });
+  });
+
   it('refuses joints that cannot hold, with the reason', async () => {
     unwrap(await insert('b1', base, identity(), true));
     unwrap(await insert('l1', link));

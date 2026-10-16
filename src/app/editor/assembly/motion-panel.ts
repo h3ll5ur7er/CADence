@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, DestroyRef, inject, input, signal } from '@angular/core';
-import type { Matrix4, MotionFrame, MotionKey, MotionStudy } from '@core/contracts';
+import { jointDofs, type Matrix4, type MotionDrive, type MotionFrame, type MotionKey, type MotionStudy } from '@core/contracts';
+import type { Collision } from '@core/managers/assembly';
 import { Icon } from '../../shared/icon';
 import { AssemblyStore } from './assembly-store';
 
@@ -26,7 +27,7 @@ const fps = 30;
 
       <table class="keys" aria-label="Keys">
         <thead>
-          <tr><th>Time</th><th>Joint</th><th>Values</th><th><span class="visually-hidden">Delete</span></th></tr>
+          <tr><th>Time</th><th>Joint</th><th>Values</th><th>Ease</th><th><span class="visually-hidden">Delete</span></th></tr>
         </thead>
         <tbody>
           @for (key of sortedKeys(); track $index) {
@@ -34,12 +35,13 @@ const fps = 30;
               <td class="mono">{{ key.time }} s</td>
               <td>{{ jointName(key.joint) }}</td>
               <td class="mono">{{ key.values.join(', ') }}</td>
+              <td><input type="checkbox" [attr.aria-label]="'Ease into the key at ' + key.time + ' s'" [checked]="!!key.ease" (change)="ease(study, key, $any($event.target).checked)" /></td>
               <td>
                 <button type="button" class="icon-btn" aria-label="Delete key" (click)="removeKey(study, key)"><cad-icon name="trash" [size]="12" /></button>
               </td>
             </tr>
           } @empty {
-            <tr><td colspan="4" class="hint">Add keys: a joint's values at a moment.</td></tr>
+            <tr><td colspan="5" class="hint">Add keys: a joint's values at a moment.</td></tr>
           }
         </tbody>
       </table>
@@ -60,6 +62,26 @@ const fps = 30;
         <p class="hint">Add a joint first; keys drive joints.</p>
       }
 
+      <fieldset>
+        <legend>Constant speeds</legend>
+        @for (drive of study.drives ?? []; track $index) {
+          <div class="drive">
+            <span>{{ freedomName(drive) }}</span>
+            <input type="number" step="any" [attr.aria-label]="'Speed of ' + freedomName(drive)" [value]="shownSpeed(drive)" (change)="setSpeed(study, drive, number($event))" />
+            <span class="muted">{{ isTurn(drive) ? 'rpm' : 'mm/s' }}</span>
+            <button type="button" class="icon-btn" aria-label="Delete speed" (click)="removeDrive(study, drive)"><cad-icon name="trash" [size]="12" /></button>
+          </div>
+        }
+        <div class="drive">
+          <select aria-label="Freedom to drive" (change)="driveChoice.set(text($event))">
+            @for (f of freedoms(); track f.key) {
+              <option [value]="f.key" [selected]="f.key === driveKey()">{{ f.label }}</option>
+            }
+          </select>
+          <button type="button" class="btn" [disabled]="!freedoms().length" (click)="addDrive(study)"><cad-icon name="plus" /> Speed</button>
+        </div>
+      </fieldset>
+
       <div class="transport">
         <button type="button" class="icon-btn" [attr.aria-label]="playing() ? 'Stop' : 'Play'" (click)="playing() ? stop() : play(study)">
           <cad-icon [name]="playing() ? 'stop' : 'play'" [size]="18" />
@@ -70,6 +92,21 @@ const fps = 30;
       <button type="button" class="btn" [class.recording]="recording()" [disabled]="playing()" (click)="record(study)">
         <cad-icon name="record" /> {{ recording() ? 'Recording…' : 'Record video' }}
       </button>
+      <button type="button" class="btn" [disabled]="checking()" (click)="checkCollisions(study)"><cad-icon name="overlap" /> {{ checking() ? 'Checking…' : 'Check collisions' }}</button>
+      @if (hits(); as hits) {
+        @if (hits.length === 0) {
+          <p class="ok" data-testid="collision-result">No parts hit each other.</p>
+        } @else {
+          <ul class="hits" aria-label="Collisions" data-testid="collision-result">
+            @for (hit of hits; track hit.a + hit.b) {
+              <li>
+                <button type="button" class="link" (click)="showHit(study, hit)">{{ instanceName(hit.a) }} hits {{ instanceName(hit.b) }} at {{ hit.time.toFixed(2) }} s</button>
+              </li>
+            }
+          </ul>
+          <label class="check"><input type="checkbox" [checked]="stopAtHit()" (change)="stopAtHit.set($any($event.target).checked)" /> Stop playing at the first hit</label>
+        }
+      }
     }
   `,
   styleUrl: './assembly-panels.scss',
@@ -84,6 +121,10 @@ export class MotionPanel {
   protected readonly recording = signal(false);
   protected readonly keyTime = signal(0);
   protected readonly keyJoint = signal<string | undefined>(undefined);
+  protected readonly driveChoice = signal<string | undefined>(undefined);
+  protected readonly hits = signal<readonly Collision[] | undefined>(undefined);
+  protected readonly checking = signal(false);
+  protected readonly stopAtHit = signal(true);
   private frames: { readonly document: unknown; readonly study: string; readonly frames: readonly MotionFrame[] } | undefined;
   private animation = 0;
 
@@ -91,6 +132,11 @@ export class MotionPanel {
   protected readonly joints = computed(() => this.store.state()?.document.joints.filter((j) => j.values.length > 0) ?? []);
   protected readonly selectedJoint = computed(() => this.keyJoint() ?? this.joints()[0]?.id);
   protected readonly sortedKeys = computed(() => [...(this.study()?.keys ?? [])].sort((a, b) => a.time - b.time));
+  /** Every joint freedom a speed can drive. */
+  protected readonly freedoms = computed(() =>
+    this.joints().flatMap((j) => jointDofs[j.type].map((dof, i) => ({ key: `${j.id}:${i}`, label: `${j.name} · ${dof.label}` }))),
+  );
+  protected readonly driveKey = computed(() => this.driveChoice() ?? this.freedoms()[0]?.key);
 
   constructor() {
     inject(DestroyRef).onDestroy(() => this.stop());
@@ -121,6 +167,62 @@ export class MotionPanel {
     this.keyTime.set(Math.min(study.duration, this.keyTime() + study.duration / 2));
   }
 
+  protected ease(study: MotionStudy, key: MotionKey, on: boolean): void {
+    this.save(study, { keys: study.keys.map((k) => (k === key ? { ...k, ease: on } : k)) });
+  }
+
+  protected isTurn(drive: MotionDrive): boolean {
+    const joint = this.store.state()?.document.joints.find((j) => j.id === drive.joint);
+    return joint ? jointDofs[joint.type][drive.dof]?.kind === 'rotate' : false;
+  }
+
+  protected freedomName(drive: MotionDrive): string {
+    return this.freedoms().find((f) => f.key === `${drive.joint}:${drive.dof}`)?.label ?? drive.joint;
+  }
+
+  /** Turns in rpm (6° a second each), slides in mm/s. */
+  protected shownSpeed(drive: MotionDrive): number {
+    return Math.round((this.isTurn(drive) ? drive.speed / 6 : drive.speed) * 1000) / 1000;
+  }
+
+  protected setSpeed(study: MotionStudy, drive: MotionDrive, shown: number): void {
+    const speed = this.isTurn(drive) ? shown * 6 : shown;
+    this.save(study, { drives: (study.drives ?? []).map((d) => (d === drive ? { ...d, speed } : d)) });
+  }
+
+  protected addDrive(study: MotionStudy): void {
+    const [joint, dof] = (this.driveKey() ?? '').split(':') as [string, string];
+    if (!joint) return;
+    const drive: MotionDrive = { joint, dof: Number(dof), speed: 0 };
+    const isTurn = this.isTurn(drive);
+    this.save(study, { drives: [...(study.drives ?? []).filter((d) => !(d.joint === joint && d.dof === drive.dof)), { ...drive, speed: isTurn ? 60 : 10 }] });
+  }
+
+  protected removeDrive(study: MotionStudy, drive: MotionDrive): void {
+    this.save(study, { drives: (study.drives ?? []).filter((d) => d !== drive) });
+  }
+
+  protected instanceName(id: string): string {
+    return this.store.state()?.document.instances.find((i) => i.id === id)?.name ?? id;
+  }
+
+  protected async checkCollisions(study: MotionStudy): Promise<void> {
+    this.checking.set(true);
+    this.hits.set(undefined);
+    try {
+      this.hits.set((await this.store.collisions(study.id, 10)) ?? []);
+    } finally {
+      this.checking.set(false);
+    }
+  }
+
+  /** Shows the moment of a hit, the two parts in pink. */
+  protected async showHit(study: MotionStudy, hit: Collision): Promise<void> {
+    this.stop();
+    await this.scrub(study, hit.time);
+    this.store.flagged.set(new Set([hit.a, hit.b]));
+  }
+
   protected removeKey(study: MotionStudy, key: MotionKey): void {
     this.save(study, { keys: study.keys.filter((k) => k !== key) });
   }
@@ -141,12 +243,17 @@ export class MotionPanel {
     const frames = await this.framesOf(study);
     if (!frames) return;
     this.playing.set(true);
+    this.store.flagged.set(new Set());
     const started = performance.now() - (this.time() >= study.duration ? 0 : this.time() * 1000);
+    // Playing stops at the first hit, when asked (and found by a collision check).
+    const hit = this.stopAtHit() ? this.hits()?.find((h) => h.time >= this.time()) : undefined;
+    const end = hit ? hit.time : study.duration;
     const step = () => {
-      const time = Math.min(study.duration, (performance.now() - started) / 1000);
+      const time = Math.min(end, (performance.now() - started) / 1000);
       this.time.set(time);
       this.show(frames, time);
-      if (time < study.duration && this.playing()) {
+      if (hit && time >= end) this.store.flagged.set(new Set([hit.a, hit.b]));
+      if (time < end && this.playing()) {
         this.animation = requestAnimationFrame(step);
       } else {
         this.playing.set(false);
@@ -183,6 +290,7 @@ export class MotionPanel {
     cancelAnimationFrame(this.animation);
     this.playing.set(false);
     this.store.previewPoses.set(undefined);
+    this.store.flagged.set(new Set());
   }
 
   /** Frames are computed once per version of the assembly document. */

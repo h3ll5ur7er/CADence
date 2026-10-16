@@ -1,4 +1,4 @@
-import { appearanceProblem, type AssemblyDocument, fail, type Instance, type InstancePattern, isDefaultAppearance, type Joint, jointDofs, type JointType, ok, type Result } from '@core/contracts';
+import { appearanceProblem, type AssemblyDocument, type ExplodedView, fail, type Instance, type InstancePattern, isDefaultAppearance, type Joint, jointDofs, type JointType, type MotionLink, ok, type Result } from '@core/contracts';
 import type { AssemblyCommand } from './assembly-manager';
 
 /** The document a command produces, and the joint whose solution decides whether it is accepted. */
@@ -40,6 +40,26 @@ function checkPattern(document: AssemblyDocument, pattern: InstancePattern): str
   return undefined;
 }
 
+const linkLabels: Readonly<Record<MotionLink['kind'], string>> = { gear: 'Gear', rack: 'Rack and pinion', belt: 'Belt' };
+
+function checkLink(document: AssemblyDocument, link: MotionLink): string | undefined {
+  const freedom = (f: MotionLink['driver']) => {
+    const joint = document.joints.find((j) => j.id === f.joint);
+    return joint && Number.isInteger(f.dof) && f.dof >= 0 && f.dof < jointDofs[joint.type].length;
+  };
+  if (!freedom(link.driver) || !freedom(link.driven)) return 'A link connects freedoms of two joints of this assembly.';
+  if (link.driver.joint === link.driven.joint) return 'A link needs two different joints.';
+  if (!Number.isFinite(link.ratio) || link.ratio === 0 || !Number.isFinite(link.offset)) return 'A link needs a ratio other than zero.';
+  // A joint follows one driver, and chains may not close into a circle.
+  const others = (document.links ?? []).filter((l) => l.id !== link.id);
+  if (others.some((l) => l.driven.joint === link.driven.joint)) return 'That joint already follows another link.';
+  const drivers = new Map([...others, link].map((l) => [l.driven.joint, l.driver.joint]));
+  for (let at: string | undefined = link.driver.joint, steps = 0; at; at = drivers.get(at), steps++) {
+    if (at === link.driven.joint || steps > drivers.size) return 'Links may not drive in a circle.';
+  }
+  return undefined;
+}
+
 function checkJoint(document: AssemblyDocument, joint: Joint): string | undefined {
   const ids = new Set(document.instances.map((i) => i.id));
   if (!ids.has(joint.a.instance) || !ids.has(joint.b.instance)) return 'A joint connects two instances of this assembly.';
@@ -63,15 +83,19 @@ export function applyCommand(document: AssemblyDocument, command: AssemblyComman
       if (!instance(command.instanceId)) return invalid(`Instance ${command.instanceId} does not exist.`);
       const joints = document.joints.filter((j) => j.a.instance !== command.instanceId && j.b.instance !== command.instanceId);
       const kept = new Set(joints.map((j) => j.id));
-      // Patterns lose the instance; one left with nothing to repeat goes.
+      // Patterns lose the instance; one left with nothing to repeat goes. Links of its joints go too.
       const patterns = document.patterns?.map((p) => ({ ...p, instances: p.instances.filter((id) => id !== command.instanceId) })).filter((p) => p.instances.length);
+      const links = document.links?.filter((l) => kept.has(l.driver.joint) && kept.has(l.driven.joint));
+      const explodedViews = document.explodedViews?.map((v) => ({ ...v, steps: v.steps.map((s) => ({ ...s, instances: s.instances.filter((id) => id !== command.instanceId) })).filter((s) => s.instances.length) }));
       return ok({
         document: {
           ...document,
           instances: document.instances.filter((i) => i.id !== command.instanceId),
           ...(patterns ? { patterns } : {}),
+          ...(links ? { links } : {}),
+          ...(explodedViews ? { explodedViews } : {}),
           joints,
-          motionStudies: document.motionStudies.map((s) => ({ ...s, keys: s.keys.filter((k) => kept.has(k.joint)) })),
+          motionStudies: document.motionStudies.map((s) => ({ ...s, keys: s.keys.filter((k) => kept.has(k.joint)), ...(s.drives ? { drives: s.drives.filter((d) => kept.has(d.joint)) } : {}) })),
         },
       });
     }
@@ -121,8 +145,9 @@ export function applyCommand(document: AssemblyDocument, command: AssemblyComman
       return ok({
         document: {
           ...document,
+          ...(document.links ? { links: document.links.filter((l) => l.driver.joint !== command.jointId && l.driven.joint !== command.jointId) } : {}),
           joints: document.joints.filter((j) => j.id !== command.jointId),
-          motionStudies: document.motionStudies.map((s) => ({ ...s, keys: s.keys.filter((k) => k.joint !== command.jointId) })),
+          motionStudies: document.motionStudies.map((s) => ({ ...s, keys: s.keys.filter((k) => k.joint !== command.jointId), ...(s.drives ? { drives: s.drives.filter((d) => d.joint !== command.jointId) } : {}) })),
         },
       });
     case 'set-joint-values': {
@@ -140,6 +165,31 @@ export function applyCommand(document: AssemblyDocument, command: AssemblyComman
       const patterns = existing ? (document.patterns ?? []).map((p) => (p.id === pattern.id ? pattern : p)) : [...(document.patterns ?? []), pattern];
       return ok({ document: { ...document, patterns } });
     }
+    case 'set-link': {
+      const problem = checkLink(document, command.link);
+      if (problem) return invalid(problem);
+      const existing = document.links?.find((l) => l.id === command.link.id);
+      const link = { ...command.link, name: command.link.name.trim() || existing?.name || nextName((document.links ?? []).map((l) => l.name), linkLabels[command.link.kind]) };
+      const links = existing ? (document.links ?? []).map((l) => (l.id === link.id ? link : l)) : [...(document.links ?? []), link];
+      return ok({ document: { ...document, links }, joint: link.driven.joint });
+    }
+    case 'remove-link':
+      if (!document.links?.some((l) => l.id === command.linkId)) return invalid('That link does not exist.');
+      return ok({ document: { ...document, links: document.links.filter((l) => l.id !== command.linkId) } });
+    case 'set-exploded-view': {
+      const view: ExplodedView = command.view;
+      const ids = new Set(document.instances.map((i) => i.id));
+      if (view.steps.some((s) => !s.instances.length || s.instances.some((id) => !ids.has(id)) || !(Math.hypot(...s.direction) > 1e-9) || !Number.isFinite(s.distance))) {
+        return invalid('Each step moves instances of this assembly along a direction by a distance.');
+      }
+      const existing = document.explodedViews?.find((v) => v.id === view.id);
+      const named = { ...view, name: view.name.trim() || existing?.name || nextName((document.explodedViews ?? []).map((v) => v.name), 'Exploded view') };
+      const explodedViews = existing ? (document.explodedViews ?? []).map((v) => (v.id === named.id ? named : v)) : [...(document.explodedViews ?? []), named];
+      return ok({ document: { ...document, explodedViews } });
+    }
+    case 'remove-exploded-view':
+      if (!document.explodedViews?.some((v) => v.id === command.viewId)) return invalid('That exploded view does not exist.');
+      return ok({ document: { ...document, explodedViews: document.explodedViews.filter((v) => v.id !== command.viewId) } });
     case 'remove-pattern':
       if (!document.patterns?.some((p) => p.id === command.patternId)) return invalid('That pattern does not exist.');
       return ok({ document: { ...document, patterns: document.patterns.filter((p) => p.id !== command.patternId) } });
@@ -152,6 +202,7 @@ export function applyCommand(document: AssemblyDocument, command: AssemblyComman
       if (command.study.keys.some((k) => !joints.has(k.joint) || k.time < 0 || k.time > command.study.duration)) {
         return invalid('Keys need a joint of this assembly and a time within the study.');
       }
+      if ((command.study.drives ?? []).some((d) => !joints.has(d.joint) || !Number.isFinite(d.speed))) return invalid('Drives need a joint of this assembly and a speed.');
       const study = { ...command.study, name: command.study.name.trim() || nextName(document.motionStudies.map((s) => s.name), 'Motion study') };
       const motionStudies = exists ? document.motionStudies.map((s) => (s.id === study.id ? study : s)) : [...document.motionStudies, study];
       return ok({ document: { ...document, motionStudies } });

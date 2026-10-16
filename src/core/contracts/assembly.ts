@@ -132,11 +132,22 @@ export interface Joint {
   readonly limits: readonly (JointLimit | null)[];
 }
 
-/** A joint's values at a moment of a motion study; values between keys are interpolated linearly. */
+/**
+ * A joint's values at a moment of a motion study. Values between keys change evenly, or, with
+ * `ease`, start and end slowly (on the way to this key).
+ */
 export interface MotionKey {
   readonly time: number;
   readonly joint: string;
   readonly values: readonly number[];
+  readonly ease?: boolean;
+}
+
+/** A joint's freedom turned or moved at a constant speed (degrees or mm per second) from its value at the start. */
+export interface MotionDrive {
+  readonly joint: string;
+  readonly dof: number;
+  readonly speed: number;
 }
 
 export interface MotionStudy {
@@ -145,6 +156,44 @@ export interface MotionStudy {
   /** Seconds. */
   readonly duration: number;
   readonly keys: readonly MotionKey[];
+  /** Drives win over keys of the same joint. */
+  readonly drives?: readonly MotionDrive[];
+}
+
+/** One freedom of a joint (its index in `jointDofs`). */
+export interface JointFreedom {
+  readonly joint: string;
+  readonly dof: number;
+}
+
+/**
+ * One joint's freedom follows another's: `driven = offset + ratio × driver`. Gears turn the other
+ * way (a negative ratio, teeth over teeth), a rack moves π·d/360 mm per degree of its pinion, and a
+ * belt turns its pulleys the same way (diameter over diameter).
+ */
+export interface MotionLink {
+  readonly id: string;
+  readonly name: string;
+  readonly kind: 'gear' | 'rack' | 'belt';
+  readonly driver: JointFreedom;
+  readonly driven: JointFreedom;
+  readonly ratio: number;
+  readonly offset: number;
+}
+
+/** A step of an exploded view: instances moved apart along a direction (mm). */
+export interface ExplodeStep {
+  readonly id: string;
+  readonly instances: readonly string[];
+  readonly direction: Vec3;
+  readonly distance: number;
+}
+
+/** Steps that take an assembly apart, one after the other: for exploded pictures and build instructions. */
+export interface ExplodedView {
+  readonly id: string;
+  readonly name: string;
+  readonly steps: readonly ExplodeStep[];
 }
 
 /** A joint frame in component coordinates: the plane frame's normal is the joint axis (z). */

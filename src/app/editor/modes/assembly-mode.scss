@@ -93,3 +93,25 @@
     font: 13px var(--font);
   }
 }
+
+.bom {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+
+  th,
+  td {
+    padding: 4px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+  }
+
+  th {
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+
+  .muted {
+    color: var(--text-muted);
+  }
+}

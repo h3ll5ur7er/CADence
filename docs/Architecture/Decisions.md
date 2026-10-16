@@ -296,3 +296,15 @@ Imported SVG `<text>` and DXF `TEXT`/`MTEXT` become editable sketch texts in thi
 
 *Why:* the user asked for direct manipulation, offsets, measuring and patterns as in other CAD assemblies, and for assemblies that follow edits made elsewhere.
 *Trade-off:* the handle moves a jointed part only along the free directions of the joint that places it as the moving side, one kind of freedom at a time (slides before turns); copies cannot carry joints; another tab's edit shows once its result is published or regenerated (a second or two).
+
+## ADR-38
+
+**Motion and assembly documents: links set driven joints before each solve; collisions are interference checks of sampled frames; instructions are a PDF the Assembly Manager writes from pictures the client takes.**
+- *Links* are linear couplings of joint freedoms (`driven = offset + ratio × driver`). The Kinematics Engine applies them before solving (chains in order) and holds the driven joints like keyed ones, so loops close around them. The offset is set when a link is made or changed, so nothing jumps. Chains may not close into a circle, and a joint follows one link, which keeps the order well defined.
+- *Easing* is smoothstep on the segment into a key; *speeds* are constant rates from the value at the start, and win over keys.
+- *Collisions* reuse the Analysis Engine's interference check (OCCT common, bounding boxes first) on frames sampled 10 times a second, and report the first frame each pair overlaps; touching does not count. Between samples a fast part can pass through a thin one.
+- *Exploded views* are steps that add up; poses come from the session (`explode`), so the client only shows them and draws trails.
+- *Instructions* need pictures, which only the client's view can take: it shows each state, takes a JPEG framed on the fully exploded box, and hands them to the Assembly Manager, which lays out the pages with a small PDF writer of its own ([[src/core/utilities/pdf/index.ts]]: Helvetica text, lines, JPEG pictures). Technical drawings (Phase 22) use the same writer.
+
+*Why:* the user asked for linked mechanisms, believable motion with collision checks, exploded build instructions and a parts list; each builds on the kinematic model, the interference check and the result data already there.
+*Trade-off:* links are linear (no cams); collision checks are sampled; instruction pages use Helvetica (Latin-1 text) and pictures from one direction.

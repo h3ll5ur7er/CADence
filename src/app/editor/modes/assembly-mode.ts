@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, DestroyRef, effect, inject, input, signal, untracked, viewChild } from '@angular/core';
-import { type Appearance, type DocumentId, type DocumentSummary, type Matrix4, sourceKey } from '@core/contracts';
+import { type Appearance, type DocumentId, type DocumentSummary, type Matrix4, sourceKey, type Vec3 } from '@core/contracts';
 import type { AssemblyFormat } from '@core/managers/assembly';
 import { newId } from '@core/utilities/identity';
 import { compose, rotation, translation } from '@core/utilities/math';
@@ -8,11 +8,13 @@ import { Icon } from '../../shared/icon';
 import { Shortcuts } from '../../shared/shortcuts';
 import { Viewport } from '../../viewport/viewport';
 import { grams, millimetres, point } from '../analysis/units';
-import { AssemblyStore } from '../assembly/assembly-store';
+import { type AssemblySelection, AssemblyStore } from '../assembly/assembly-store';
 import { JointPanel } from '../assembly/joint-panel';
 import { JointProperties } from '../assembly/joint-properties';
 import { MotionPanel } from '../assembly/motion-panel';
 import { PatternPanel } from '../assembly/pattern-panel';
+import { ExplodePanel } from '../assembly/explode-panel';
+import { LinkPanel } from '../assembly/link-panel';
 import { EditorStatus } from '../editor-status';
 import { ThumbnailSaver } from '../thumbnail-saver';
 
@@ -34,7 +36,7 @@ const positionOf = (m: Matrix4): Position => {
 /** Assembly mode: instances of components, joints between them, motion studies. */
 @Component({
   selector: 'cad-assembly-mode',
-  imports: [Viewport, Icon, JointPanel, JointProperties, MotionPanel, PatternPanel],
+  imports: [Viewport, Icon, JointPanel, JointProperties, MotionPanel, PatternPanel, LinkPanel, ExplodePanel],
   providers: [AssemblyStore],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './assembly-mode.html',
@@ -74,6 +76,17 @@ export class AssemblyMode {
   protected readonly joints = computed(() => this.store.state()?.document.joints ?? []);
   protected readonly studies = computed(() => this.store.state()?.document.motionStudies ?? []);
   protected readonly patterns = computed(() => this.store.state()?.document.patterns ?? []);
+  protected readonly links = computed(() => this.store.state()?.document.links ?? []);
+  protected readonly views = computed(() => this.store.state()?.document.explodedViews ?? []);
+  /** Joints with freedoms, which links can connect. */
+  protected readonly linkable = computed(() => this.joints().filter((j) => j.values.length > 0).length);
+  /** A picture of the view for build instructions, once it shows what was just set. */
+  protected readonly picture = async (box: { min: Vec3; max: Vec3 } | undefined) => {
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const jpeg = await this.viewport().picture(1200, 800, box);
+    return jpeg ? { jpeg, width: 1200, height: 800 } : undefined;
+  };
   protected readonly selectedInstance = computed(() => {
     const selection = this.store.selection();
     const state = this.store.state();
@@ -101,7 +114,7 @@ export class AssemblyMode {
     inject(DestroyRef).onDestroy(stop);
   }
 
-  protected isSelected(kind: 'instance' | 'joint' | 'study', id: string): boolean {
+  protected isSelected(kind: NonNullable<AssemblySelection>['kind'], id: string): boolean {
     const selection = this.store.selection();
     return selection?.kind === kind && selection.id === id;
   }

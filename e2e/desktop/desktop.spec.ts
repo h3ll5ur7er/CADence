@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Browser, chromium, expect, type Page, test } from '@playwright/test';
@@ -83,7 +83,8 @@ function answerSaveDialog(path: string): Promise<void> {
 test.afterEach(quit);
 
 test('models in project folders, exports through the save dialog, and starts again', async () => {
-  const work = mkdtempSync(join(tmpdir(), 'cadence-desktop-'));
+  // The long form of the path: CI runners' temp folder is an 8.3 name (RUNNER~1), which file dialogs may not keep.
+  const work = mkdtempSync(join(realpathSync.native(tmpdir()), 'cadence-desktop-'));
   const name = `Desktop check ${Date.now()}`;
   let folder: string | undefined;
   try {
@@ -105,7 +106,13 @@ test('models in project folders, exports through the save dialog, and starts aga
     const answered = answerSaveDialog(stl);
     await page.getByRole('menuitem', { name: 'STL (for slicers)' }).click();
     await answered;
-    await expect.poll(() => existsSync(stl) && readFileSync(stl).byteLength).toBeGreaterThan(84);
+    try {
+      await expect.poll(() => (existsSync(stl) ? readFileSync(stl).byteLength : 0)).toBeGreaterThan(84);
+    } catch (error) {
+      // What the app said about the export, if anything.
+      const said = await page.getByRole('alert').allTextContents();
+      throw new Error(`No STL at ${stl}; the app says: ${said.join(' | ') || 'nothing'}`, { cause: error });
+    }
 
     // Closed and started again, the project is still there.
     await quit();

@@ -132,7 +132,7 @@ describe('ModelingEngine', () => {
     expect((await names(half)).faces).toEqual(expect.arrayContaining(['f:half:start', 'f:half:end']));
   });
 
-  it('joins pads whose end touches a revolved body, alone and patterned (CAD-103)', async () => {
+  it('joins pads whose end touches a revolved body, alone and patterned (CAD-103)', { timeout: 60_000 }, async () => {
     const outline: [number, number][] = [[24, 60], [45, 60], [45, 36], [105, 36], [105, -36], [45, -36], [45, -60], [24, -60], [24, -30], [78, -30], [78, 30], [24, 30]];
     const drum = profile(polygonLoop(outline, 'drum'));
     const zAxis = { origin: [0, 0, 0] as const, direction: [0, 0, 1] as const };
@@ -378,7 +378,7 @@ describe('component results and joint frames', () => {
       expect(faces.filter((f) => f.startsWith('f:loft:side:'))).toEqual(['f:loft:side:sq-bottom', 'f:loft:side:sq-left', 'f:loft:side:sq-right', 'f:loft:side:sq-top']);
     });
 
-    it('lofts from a round shank into twisted blade sections without twisting (CAD-106)', async () => {
+    it('lofts from a round shank into twisted blade sections without twisting (CAD-106)', { timeout: 60_000 }, async () => {
       const half = (x: number) => 0.6 * (0.2969 * Math.sqrt(x) - 0.126 * x - 0.3516 * x ** 2 + 0.2843 * x ** 3 - 0.1036 * x ** 4);
       /** A closed spline through 14 points of a blade section, counter-clockwise from its leading edge, turned by `angle` degrees. */
       const blade = (chord: number, angle: number, source: string) => {

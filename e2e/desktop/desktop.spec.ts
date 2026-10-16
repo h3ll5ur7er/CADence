@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn } from 'node:child_process';
+import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -36,12 +36,24 @@ async function launch(files: readonly string[] = []): Promise<void> {
     await expect.poll(() => fetch(`http://127.0.0.1:${port}/json/version`).then((r) => r.ok, () => false), { timeout: 90_000 }).toBe(true);
   } catch {
     const state = started.exitCode === null ? 'still running' : `exited with ${started.exitCode}`;
-    throw new Error(`No WebView2 remote debugging on port ${port}: the app is ${state}; its output: ${output || 'none'}`);
+    throw new Error(`No WebView2 remote debugging on port ${port}: the app is ${state}; its output: ${output || 'none'}
+${webView2Report()}`);
   }
   const connected = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
   browser = connected;
   await expect.poll(() => connected.contexts()[0]?.pages().length ?? 0).toBeGreaterThan(0);
   page = connected.contexts()[0]?.pages()[0] as Page;
+}
+
+/** What WebView2 was started with, what listens, and the Edge/WebView2 policies: why remote debugging may be off. */
+function webView2Report(): string {
+  const script = [
+    "Get-CimInstance Win32_Process -Filter \"name='msedgewebview2.exe'\" | Select-Object -First 3 -ExpandProperty CommandLine",
+    "Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -ge 9300 -and $_.LocalPort -le 9400 } | Format-Table LocalAddress, LocalPort, OwningProcess -AutoSize | Out-String",
+    "foreach ($key in 'HKLM:\SOFTWARE\Policies\Microsoft\Edge', 'HKLM:\SOFTWARE\Policies\Microsoft\Edge\WebView2') { if (Test-Path $key) { \"$key\"; Get-ItemProperty $key | Out-String } }",
+  ].join('; ');
+  const report = spawnSync('powershell', ['-NoProfile', '-Command', script], { encoding: 'utf8' });
+  return `WebView2: ${report.stdout}${report.stderr}`;
 }
 
 async function quit(): Promise<void> {

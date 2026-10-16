@@ -5,9 +5,10 @@ import type { Material, ManufacturingProfile } from './analysis';
 import type { ExplodedView, Instance, InstancePattern, Joint, MotionLink, MotionStudy } from './assembly';
 import type { Feature } from './feature';
 import type { Sketch } from './sketch';
+import type { DrawingAnnotation, DrawingView, Sheet, TitleBlock } from './drawing';
 
-export type DocumentKind = 'component' | 'assembly' | 'imported';
-export const documentKinds: readonly DocumentKind[] = ['component', 'assembly', 'imported'];
+export type DocumentKind = 'component' | 'assembly' | 'drawing' | 'imported';
+export const documentKinds: readonly DocumentKind[] = ['component', 'assembly', 'drawing', 'imported'];
 
 /** The kinds a user creates from scratch; imported documents come from files. */
 export type CreatableDocumentKind = Exclude<DocumentKind, 'imported'>;
@@ -120,6 +121,15 @@ export interface AssemblyDocument extends DocumentBase {
   readonly explodedViews?: readonly ExplodedView[];
 }
 
+/** A technical drawing of components and assemblies of the project (docs/Architecture/Document-model.md#drawings). */
+export interface DrawingDocument extends DocumentBase {
+  readonly kind: 'drawing';
+  readonly sheet: Sheet;
+  readonly titleBlock: TitleBlock;
+  readonly views: readonly DrawingView[];
+  readonly annotations: readonly DrawingAnnotation[];
+}
+
 export interface ImportedDocument extends DocumentBase {
   readonly kind: 'imported';
   readonly assetId: AssetId;
@@ -129,7 +139,7 @@ export interface ImportedDocument extends DocumentBase {
   readonly byteLength: number;
 }
 
-export type CadDocument = ComponentDocument | AssemblyDocument | ImportedDocument;
+export type CadDocument = ComponentDocument | AssemblyDocument | DrawingDocument | ImportedDocument;
 
 /** 2: assemblies got motion studies. */
 export const currentSchemaVersion = 2;

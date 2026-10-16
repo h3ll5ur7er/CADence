@@ -32,13 +32,14 @@ import { ThumbnailSaver } from './thumbnail-saver';
 import { AssemblyMode } from './modes/assembly-mode';
 import { ComponentMode } from './modes/component-mode';
 import { ImportedMode } from './modes/imported-mode';
+import { DrawingMode } from './modes/drawing-mode';
 
-const kindLabels = { component: 'Component', assembly: 'Assembly', imported: 'Imported' } as const;
+const kindLabels = { component: 'Component', assembly: 'Assembly', drawing: 'Drawing', imported: 'Imported' } as const;
 const storageLabels = { browser: 'This browser', 'project-folders': 'Project folders', memory: 'Memory only' } as const;
 
 @Component({
   selector: 'cad-editor-page',
-  imports: [RouterLink, Icon, DocumentsPanel, ComponentMode, AssemblyMode, ImportedMode, NameDialog, ConfirmDialog, SettingsDialog, HistoryDialog, SyncDialog, AboutDialog],
+  imports: [RouterLink, Icon, DocumentsPanel, ComponentMode, AssemblyMode, DrawingMode, ImportedMode, NameDialog, ConfirmDialog, SettingsDialog, HistoryDialog, SyncDialog, AboutDialog],
   providers: [EditorStatus, ThumbnailSaver],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './editor-page.html',
@@ -93,6 +94,7 @@ export class EditorPage {
         ...documents.map((d) => ({ label: d.name, group: kindLabels[d.kind], run: () => void this.open(d) })),
         { label: 'New component', group: 'Project', run: () => void this.create('component') },
         { label: 'New assembly', group: 'Project', run: () => void this.create('assembly') },
+        { label: 'New drawing', group: 'Project', run: () => void this.create('drawing') },
         { label: 'Sync with git', group: 'Project', run: () => this.openSync() },
         ...documents.filter((d) => d.id === this.documentId()).map((d) => ({ label: `Versions of ${d.name}`, group: 'Project', run: () => void this.history().open(d) })),
         { label: 'About CADence', group: 'CADence', run: () => this.aboutDialog().open() },

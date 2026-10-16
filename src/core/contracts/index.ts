@@ -2,6 +2,7 @@ export * from './analysis';
 export * from './appearance';
 export * from './assembly';
 export * from './document';
+export * from './drawing';
 export * from './feature';
 export type * from './events';
 export * from './ids';

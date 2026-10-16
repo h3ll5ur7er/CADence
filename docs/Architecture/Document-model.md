@@ -237,6 +237,34 @@ interface MotionStudy { id: string; name: string; duration: number; keys: { time
 - The degrees of freedom of each joint type, and the order of `values`, are `jointDofs`: a revolute joint turns about z; a slider moves along z; cylindrical does both; pin-slot slides along x and turns about z; planar moves in x and y and turns about z; a ball turns about z, y and x.
 - Joint frames come from the referenced geometry ([[Architecture/Decisions#ADR-21]]).
 
+## Drawings
+
+As implemented in [[src/core/contracts/drawing.ts]]:
+
+```ts
+interface DrawingDocument {
+  sheet: { size: 'A4' | 'A3' | 'A2' | 'A1'; orientation: 'landscape' | 'portrait'; scale: number };  // sheet mm per model mm
+  titleBlock: { title; number; drawnBy; material; revision };
+  views: DrawingView[];
+  annotations: DrawingAnnotation[];
+}
+interface DrawingView {
+  id; source: DocumentId;                       // a component or an assembly
+  direction: 'front' | 'back' | 'top' | 'bottom' | 'left' | 'right' | 'iso';
+  at: Vec2;                                     // the view's middle on the sheet (mm from the bottom left)
+  scale?: number; hidden: boolean; label?: string;
+  section?: { offset };                         // a full section across the viewing direction
+  detail?: { of: viewId; center: Vec2; radius };  // a circle of another view, in its model mm
+}
+type DrawingAnnotation =
+  | { kind: 'dimension'; type: 'linear' | 'horizontal' | 'vertical' | 'radius' | 'diameter' | 'angle'; anchors: ViewAnchor[]; offset; text? }
+  | { kind: 'note'; at; text; leader? } | { kind: 'center-mark'; circle } | { kind: 'center-line'; a; b }
+  | { kind: 'callout'; circle; at } | { kind: 'balloon'; view; instance; at } | { kind: 'parts-list'; view; at };
+interface ViewAnchor { view; kind: 'point' | 'circle' | 'line'; name }   // a persistent name of the view's source
+```
+
+Directions are third-angle names: *front* looks along +Y with Z up, *top* down the Z axis, *right* along −X. Removing a view removes its details and every annotation attached to them.
+
 ## Schema versioning
 
 Every document carries `schemaVersion`. Document Access runs pure migration functions (`vN → vN+1`, [[src/core/access/document/migrations.ts]]) on read and always writes the newest version. Each migration has a unit test.

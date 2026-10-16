@@ -27,6 +27,7 @@ import { createSketchEngine } from '@core/engines/sketch';
 import { fontSource } from '@core/utilities/text';
 import { type AssemblyManager, createAssemblyManager } from '@core/managers/assembly';
 import { createDesignManager, type DesignManager } from '@core/managers/design';
+import type { DrawingManager, DrawingManagerDependencies } from '@core/managers/drawing';
 import { createProjectManager, type ProjectManager } from '@core/managers/project';
 import { systemClock } from '@core/utilities/clock';
 import { type FileSystem, IndexedDbFileSystem, MemoryFileSystem } from '@core/utilities/file-system';
@@ -38,6 +39,7 @@ export interface Core {
   readonly projectManager: ProjectManager;
   readonly designManager: DesignManager;
   readonly assemblyManager: AssemblyManager;
+  readonly drawingManager: DrawingManager;
   readonly storage: StorageKind;
 }
 
@@ -73,6 +75,7 @@ const relayed: Partial<Record<keyof DomainEvents, keyof DomainEvents>> = {
   documentDeleted: 'documentDeleted',
   projectParametersChanged: 'projectParametersChanged',
   componentRegenerated: 'componentRegenerated',
+  resultPublished: 'resultPublished',
 };
 
 export interface HostOptions {
@@ -114,6 +117,17 @@ function deferred<K extends keyof Geometry>(engines: Promise<Geometry>, key: K):
       return (engine[method] as (...a: unknown[]) => unknown).apply(engine, args);
     },
   });
+}
+
+/** The Drawing Manager, loaded with its first drawing: most sessions never open one. */
+function lazyDrawingManager(deps: DrawingManagerDependencies): DrawingManager {
+  let manager: Promise<DrawingManager> | undefined;
+  return {
+    open: async (documentId) => {
+      manager ??= import('@core/managers/drawing').then(({ createDrawingManager }) => createDrawingManager(deps));
+      return (await manager).open(documentId);
+    },
+  };
 }
 
 export function createCore(host: Host): Core {
@@ -162,6 +176,16 @@ export function createCore(host: Host): Core {
       kinematics: createKinematicsEngine(),
       analysis: geometry.analysis,
       interchange: geometry.interchange,
+      events,
+      clock: systemClock,
+    }),
+    drawingManager: lazyDrawingManager({
+      projects,
+      documents,
+      assets,
+      externalFiles,
+      modeling: geometry.modeling,
+      parameters: createParameterEngine(),
       events,
       clock: systemClock,
     }),

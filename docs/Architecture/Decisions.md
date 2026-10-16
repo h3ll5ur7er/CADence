@@ -308,3 +308,15 @@ Imported SVG `<text>` and DXF `TEXT`/`MTEXT` become editable sketch texts in thi
 
 *Why:* the user asked for linked mechanisms, believable motion with collision checks, exploded build instructions and a parts list; each builds on the kinematic model, the interference check and the result data already there.
 *Trade-off:* links are linear (no cams); collision checks are sampled; instruction pages use Helvetica (Latin-1 text) and pictures from one direction.
+
+## ADR-39
+
+**Technical drawings are their own document kind and manager; views come from published results through OCCT hidden-line removal, and one sheet layout serves the editor, PDF and DXF.**
+- *A document kind.* A drawing references components and assemblies by id, like an assembly, so it travels with archives, copies (ids rewritten), versions and sync. A new Drawing Manager owns it; it is loaded lazily, so start-up stays as small as before.
+- *Views from results.* Drawings read the same published results as assemblies (ADR-11): components are asked to regenerate when stale, and assembly editors now publish their placed parts too. So a drawing never runs a timeline or a kinematic solve.
+- *Projection* uses OCCT's HLR (through replicad's `makeProjectedEdges`) in the geometry worker; hidden edges right under visible ones are dropped. Sections cut the bodies with a large box before projecting and report the faces on the cut plane as segments, hatched by even-odd crossings. Details clip their parent's projection to a circle, without projecting again.
+- *Attachments by name.* The view also returns the model's named vertices, circular and straight edges projected the same way; annotations store those persistent names, so dimensions follow model changes and report when their geometry is gone.
+- *One layout.* A pure function turns the document, the view geometry, callout texts and parts lists into sheet primitives (paths with an ISO line style, texts, arrowheads); the editor draws them as SVG, the PDF writer and a small DXF writer export them.
+
+*Why:* the user asked for drawings with views, sections, details, dimensions, callouts and parts lists, exported as PDF and DXF; results and persistent names already existed to build on.
+*Trade-off:* sections are full sections across the view (no offset or half sections); dimensions on isometric views are not true lengths; text is Helvetica (Latin-1 in the PDF); assemblies must have been opened once to be drawn.

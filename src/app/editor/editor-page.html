@@ -67,6 +67,11 @@
           <cad-assembly-mode [document]="doc" />
         }
       }
+      @case ('drawing') {
+        @defer (on immediate) {
+          <cad-drawing-mode [document]="doc" />
+        }
+      }
       @case ('imported') {
         @defer (on immediate) {
           <cad-imported-mode [document]="doc" />

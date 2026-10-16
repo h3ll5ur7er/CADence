@@ -92,6 +92,8 @@ class Session implements AssemblySession {
   private readonly undoStack: AssemblyDocument[] = [];
   private readonly redoStack: AssemblyDocument[] = [];
   private readonly listeners = new Set<(state: AssemblyState) => void>();
+  /** What the last published result held, so unchanged assemblies are not published again. */
+  private published = '';
   private readonly unsubscribe: (() => void)[];
   private queue: Promise<unknown> = Promise.resolve();
 
@@ -126,6 +128,7 @@ class Session implements AssemblySession {
   async start(): Promise<void> {
     for (const source of new Set(this.document.instances.map((i) => sourceKey(i.component, i.configuration)))) await this.load(source, 'open');
     this.derived = await this.derive(this.document);
+    await this.publish();
   }
 
   state(): AssemblyState {
@@ -381,6 +384,25 @@ class Session implements AssemblySession {
     await this.deps.documents.store(document);
     this.deps.events.publish('documentSaved', { projectId: document.projectId, documentId: document.id });
     this.notify();
+    await this.publish();
+  }
+
+  /**
+   * Publishes the assembly's result once every part is there: its shown parts where they are (ids:
+   * the instance, `#k` for more bodies), for drawings of the assembly.
+   */
+  private async publish(): Promise<void> {
+    const loading = this.document.instances.some((i) => this.components.get(sourceKey(i.component, i.configuration))?.view.status === 'loading');
+    if (loading) return;
+    const parts = this.readyInstances()
+      .filter(({ instance }) => !instance.appearance?.hidden)
+      .flatMap(({ instance, component, transform }) => component.bodies.map((body, k) => ({ id: component.bodies.length > 1 ? `${instance.id}#${k}` : instance.id, body, transform })));
+    const key = JSON.stringify(parts.map((p) => [p.id, p.body.key, p.transform]));
+    if (key === this.published) return;
+    this.published = key;
+    const bytes = await this.deps.modeling.snapshot(await this.deps.modeling.place(parts));
+    await this.deps.assets.publishResult({ documentId: this.document.id, projectId: this.document.projectId, stamp: this.document.modifiedAt, bytes });
+    this.deps.events.publish('resultPublished', { documentId: this.document.id });
   }
 
   /** Resolves once no component the assembly shows is still loading (or after `timeout` ms). */
@@ -409,6 +431,7 @@ class Session implements AssemblySession {
     await this.load(source, reason);
     this.derived = await this.derive(this.document);
     this.notify();
+    await this.publish();
   }
 
   /**

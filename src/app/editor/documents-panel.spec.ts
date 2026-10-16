@@ -45,7 +45,7 @@ describe('DocumentsPanel', () => {
     fixture.componentInstance.create.subscribe((kind) => created.push(kind));
     const buttons = [...(fixture.nativeElement as HTMLElement).querySelectorAll<HTMLButtonElement>('.actions button')];
     buttons.forEach((b) => b.click());
-    expect(created).toEqual(['component', 'assembly']);
+    expect(created).toEqual(['component', 'assembly', 'drawing']);
   });
 
   it('explains an empty project', async () => {

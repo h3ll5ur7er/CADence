@@ -374,6 +374,8 @@ class Session implements DesignSession {
     const state = this.state();
     for (const listener of this.listeners) listener(state);
     await this.results.publish(snapshot.document, snapshot.derived.bodies, this.context.projectParameters, snapshot.document.configuration);
+    const { configuration } = snapshot.document;
+    this.deps.events.publish('resultPublished', { documentId: snapshot.document.id, ...(configuration ? { configuration } : {}) });
   }
 
   private serialized<T>(work: () => Promise<T>): Promise<T> {

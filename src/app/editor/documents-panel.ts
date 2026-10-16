@@ -10,6 +10,7 @@ export const importAccept = '.step,.stp,.stl,.obj,.3mf,.dxf,.svg,.png,.jpg,.jpeg
 const groups: readonly { kind: DocumentKind; label: string; icon: IconName }[] = [
   { kind: 'component', label: 'Components', icon: 'component' },
   { kind: 'assembly', label: 'Assemblies', icon: 'assembly' },
+  { kind: 'drawing', label: 'Drawings', icon: 'drawing' },
   { kind: 'imported', label: 'Imported', icon: 'imported' },
 ];
 

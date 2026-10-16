@@ -106,7 +106,7 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 - [ ] **Laser: finger joints and box generator** for flat-pack designs. *(new)*
 - [ ] **Laser: test patterns** for kerf and power/speed, and raster engraving of pictures. *(new)*
 - [ ] **CNC milling (2.5D CAM):** pockets, profiles and drilling as toolpaths, exported as G-code. *(new)*
-- [X] **Simple strength check (FEA):** a linear static analysis of a part with fixed faces and loads, showing stress and deflection. *(new)* → [[CAD-93]]
+- [X] **Simple strength check (FEA):** a linear static analysis of a part with fixed faces and loads, showing stress and deflection. *(new)* → [[CAD-93]] ✅
 
 ## Assemblies
 

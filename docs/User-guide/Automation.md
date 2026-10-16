@@ -67,7 +67,7 @@ The API ([[src/automation/api.ts]]):
   - `run(...commands)` runs design commands in order and throws a `CadenceError` at the first refused one;
   - `summary()` is the component as plain data: parameters, timeline with errors, sketches with their profiles (id, area, extent), bodies with their face and edge names;
   - `export(format, { to?, bodies?, quality? })`, `exportSketch(id, format)`, `exportFlatPattern(format)` return the written file's path;
-  - `properties()`, `validate()`, `measure(refs)`, `undo()`, `redo()`, `state()`.
+  - `properties()`, `validate()`, `measure(refs)`, `simulate()` (the strength check of the setup stored with `set-simulation`), `undo()`, `redo()`, `state()`.
 - `cadence.assembly(documentId)`: `run(...commands)`, `interference()`, `export(format)`.
 
 **Commands** are the same ones the app records for every change ([[Architecture/Decisions#ADR-10]]): `create-sketch`, `add-sketch-geometry`, `add-constraint`, `set-dimension`, `add-feature`, `edit-feature`, `add-parameter`, `set-material`, `set-process` and the others in [[src/core/managers/design/design-manager.ts]]. Features are described in [[src/core/contracts/feature.ts]] and sketches in [[src/core/contracts/sketch.ts]]. Three shorthands add fully constrained outlines ([[src/automation/shapes.ts]]):

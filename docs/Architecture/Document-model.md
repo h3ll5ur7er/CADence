@@ -31,6 +31,7 @@ classDiagram
     material?: Material
     process?: ManufacturingProfile
     appearances?: Record~bodyId, Appearance~
+    simulation?: SimulationSetup
   }
   class AssemblyDocument {
     schemaVersion: number

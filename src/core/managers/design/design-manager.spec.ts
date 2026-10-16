@@ -925,6 +925,29 @@ describe('DesignManager', () => {
       expect(await session.execute({ type: 'set-material', material: { name: 'Air', density: 0 } })).toMatchObject({ ok: false, error: { code: 'invalid-command' } });
     });
 
+    it('checks the strength of a part held on one face and loaded on another', async () => {
+      await plate();
+      const faces = session.state().bodies[0]?.faces ?? [];
+      const at = (x: number) => ({ kind: 'face' as const, body: 'e1', name: faces.find((f) => Math.abs((f.center[0] as number) - x) < 1e-6 && f.planar)?.name as string });
+      expect(await session.simulate()).toMatchObject({ ok: false, error: { code: 'not-fixed' } });
+      // A 60 mm steel cantilever, 30 wide and 6 thick, 50 N down at its end: FL³/3EI = 0.033 mm, 50 · 60 · 3 / 540 = 16.7 MPa at the wall.
+      unwrap(await session.execute({ type: 'set-material', material: { name: 'Steel', density: 7.85 } }));
+      unwrap(await session.execute({ type: 'set-simulation', setup: { fixed: [at(0)], loads: [{ kind: 'force', face: at(60), force: 50, direction: [0, 0, -1] }] } }));
+      expect(session.state().document.simulation?.fixed).toHaveLength(1);
+      const result = unwrap(await session.simulate());
+      expect(result.maxDisplacement).toBeGreaterThan(0.028);
+      expect(result.maxDisplacement).toBeLessThan(0.04);
+      expect(result.safetyFactor).toBeCloseTo(250 / result.maxStress, 6);
+      expect(result.maxStress).toBeGreaterThan(12);
+      const [body] = result.bodies;
+      expect(body?.stress.length).toBe((body?.positions.length ?? 0) / 3);
+      expect(body?.indices.length).toBeGreaterThan(0);
+      expect(Math.max(...(body?.stress ?? []))).toBeGreaterThan(0);
+      expect(await session.execute({ type: 'set-simulation', setup: { fixed: [at(0)], loads: [{ kind: 'force', face: at(60), force: 50, direction: [0, 0, 0] }] } })).toMatchObject({ ok: false, error: { code: 'invalid-command' } });
+      unwrap(await session.execute({ type: 'set-simulation', setup: { fixed: [], loads: [] } }));
+      expect(session.state().document.simulation).toBeUndefined();
+    }, 60_000);
+
     it('validates against the manufacturing profile', async () => {
       await plate();
       const printing = await session.validate();

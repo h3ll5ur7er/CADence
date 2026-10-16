@@ -11,6 +11,7 @@
     [pickable]="store.pickable()"
     [selection]="store.picks()"
     [flagged]="store.flagged()"
+    [field]="store.stressField()"
     [measureLine]="measureLine()"
     [threads]="store.state()?.threads ?? []"
     (picked)="store.pick($event)"
@@ -262,6 +263,9 @@
         <button type="button" class="icon-btn tool" aria-label="Check manufacturability" title="Check manufacturability" [class.on]="store.panel() === 'check'" (click)="togglePanel('check')">
           <cad-icon name="inspect" [size]="18" />
         </button>
+        <button type="button" class="icon-btn tool" aria-label="Check strength" title="Check strength: fixed faces, loads, stresses" [class.on]="store.panel() === 'simulate'" [disabled]="bodies().length === 0" (click)="togglePanel('simulate')">
+          <cad-icon name="load" [size]="18" />
+        </button>
         <span class="divider"></span>
         <div class="menu">
           <button type="button" class="btn" aria-haspopup="menu" [attr.aria-expanded]="menu() === 'export'" [disabled]="bodies().length === 0" (click)="toggleMenu('export')">
@@ -362,6 +366,8 @@
     <cad-measure-panel />
   } @else if (store.panel() === 'check') {
     <cad-check-panel />
+  } @else if (store.panel() === 'simulate') {
+    <cad-simulate-panel />
   } @else if (store.panel() === 'repair') {
     <cad-repair-panel />
   } @else if (editedSketch(); as view) {

@@ -1,7 +1,7 @@
 import type { Appearance } from './appearance';
 import type { AssetId, DocumentId, ProjectId } from './ids';
 import type { Timestamp } from './project';
-import type { Material, ManufacturingProfile } from './analysis';
+import type { Material, ManufacturingProfile, SimulationSetup } from './analysis';
 import type { ExplodedView, Instance, InstancePattern, Joint, MotionLink, MotionStudy } from './assembly';
 import type { Feature } from './feature';
 import type { Sketch } from './sketch';
@@ -107,6 +107,8 @@ export interface ComponentDocument extends DocumentBase {
   readonly process?: ManufacturingProfile;
   /** How bodies are shown, by body id; bodies without an entry use the defaults. */
   readonly appearances?: Readonly<Record<string, Appearance>>;
+  /** The strength check's fixed faces and loads. */
+  readonly simulation?: SimulationSetup;
 }
 
 export interface AssemblyDocument extends DocumentBase {

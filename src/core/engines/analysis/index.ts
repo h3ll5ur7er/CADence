@@ -1,14 +1,18 @@
 import type { ShapeAccess } from '@core/access/shape';
 import type {
+  BodyMesh,
   BodyProperties,
   BodyState,
   Check,
   Interference,
   ManufacturingProfile,
   Matrix4,
+  Material,
   Measurement,
   Profile,
   Result,
+  SimulationResult,
+  SimulationSetup,
   Sketch,
   TopologyRef,
 } from '@core/contracts';
@@ -53,6 +57,8 @@ export interface AnalysisEngine {
   validate(subject: ValidationSubject, profile: ManufacturingProfile): Promise<Check[]>;
   /** Pairs of parts whose solids overlap (touching is fine), with the overlapping volume. */
   interference(parts: readonly PlacedPart[]): Promise<Interference[]>;
+  /** A linear static strength check of the bodies (their display meshes) under the setup's loads (CAD-93). */
+  simulate(meshes: readonly BodyMesh[], setup: SimulationSetup, material: Material): Promise<Result<SimulationResult>>;
 }
 
 export function createAnalysisEngine(shapes: ShapeAccess): AnalysisEngine {

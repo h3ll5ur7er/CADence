@@ -544,6 +544,17 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
       const appearances = Object.fromEntries(isDefaultAppearance(command.appearance) ? others : [...others, [command.body, command.appearance]]);
       return ok({ document: { ...document, appearances } });
     }
+    case 'set-simulation': {
+      const { setup } = command;
+      if (setup.size !== undefined && !(setup.size > 0)) return invalid('The element size must be above zero.');
+      for (const load of setup.loads) {
+        if (load.kind === 'force' && !(Math.hypot(...load.direction) > 0)) return invalid('A force needs a direction.');
+        if (!Number.isFinite(load.kind === 'force' ? load.force : load.pressure)) return invalid('A load needs a size.');
+      }
+      const empty = !setup.fixed.length && !setup.loads.length;
+      const { simulation: _old, ...rest } = document;
+      return ok({ document: empty ? rest : { ...document, simulation: setup } });
+    }
     case 'set-process': {
       const { process } = command;
       const sizes = process.kind === 'print' ? [...process.bed, process.nozzle, process.layerHeight] : [...process.bed, process.kerf, process.thickness];

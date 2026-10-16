@@ -17,6 +17,8 @@ import type {
   PlaneRef,
   Profile,
   Result,
+  SimulationResult,
+  SimulationSetup,
   Sketch,
   SketchConstraint,
   SketchEntity,
@@ -108,7 +110,9 @@ export type DesignCommand =
   /** The machine the component is made on (print or laser profile), for validation and kerf compensation. */
   | { readonly type: 'set-process'; readonly process: ManufacturingProfile }
   /** How a body is shown; an appearance of defaults only removes the entry. */
-  | { readonly type: 'set-appearance'; readonly body: string; readonly appearance: Appearance };
+  | { readonly type: 'set-appearance'; readonly body: string; readonly appearance: Appearance }
+  /** The strength check's fixed faces and loads; an empty setup removes it. */
+  | { readonly type: 'set-simulation'; readonly setup: SimulationSetup };
 
 /** The editing tools of the sketcher (docs/User-guide/Sketching.md#edit). */
 export type SketchOperation =
@@ -224,6 +228,8 @@ export interface DesignSession {
   properties(): Promise<BodyProperties[]>;
   /** Checks the bodies and sketches against the manufacturing profile. */
   validate(): Promise<ValidationReport>;
+  /** The strength check of the stored setup, with the component's material (CAD-93). */
+  simulate(): Promise<Result<SimulationResult>>;
 }
 
 /** Part design workflow (docs/Architecture/Components.md#design-manager). */

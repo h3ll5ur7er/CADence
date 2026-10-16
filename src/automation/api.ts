@@ -6,6 +6,7 @@ import type {
   Measurement,
   ProjectSummary,
   Result,
+  SimulationResult,
   TopologyRef,
   ValidationReport,
   Vec2,
@@ -180,6 +181,11 @@ export class ComponentScript {
 
   async measure(refs: readonly TopologyRef[]): Promise<Measurement> {
     return unwrap(await this.session.measure(refs));
+  }
+
+  /** The strength check of the stored setup (`set-simulation`): stresses in MPa, deflections in mm. */
+  async simulate(): Promise<SimulationResult> {
+    return unwrap(await this.session.simulate());
   }
 
   /** A picture of the shown bodies as a PNG (software rendering, no GPU needed). */

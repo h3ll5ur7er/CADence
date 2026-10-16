@@ -37,7 +37,6 @@ import type { EventBus } from '@core/utilities/messaging';
 import type { AssemblyCommand, AssemblyFormat, AssemblyManager, AssemblyProperties, AssemblySession, AssemblyState, BomLine, Collision, ComponentView, InstructionPicture, PlacedRef } from './assembly-manager';
 import { applyCommand } from './commands';
 import { copyId, patternTransforms } from './patterns';
-import { viewerHtml } from '@core/utilities/viewer';
 
 export interface AssemblyManagerDependencies {
   /** Project parameters are part of what a component result was made from. */
@@ -332,6 +331,7 @@ class Session implements AssemblySession {
         }),
       );
     if (parts.length === 0) return fail({ code: 'nothing-to-export', message: 'Insert components with bodies first.' });
+    const { viewerHtml } = await import('@core/utilities/viewer');
     const bytes = new TextEncoder().encode(viewerHtml({ title: this.document.name, parts }));
     await this.deps.externalFiles.deliver({ name: `${this.document.name}.html`, mediaType: 'text/html', bytes });
     return ok(undefined);

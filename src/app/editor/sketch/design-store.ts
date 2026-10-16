@@ -5,6 +5,8 @@ import {
   type DocumentSummary,
   isImportedDrawing,
   isImportedModel,
+  isImportedFont,
+  isImportedPicture,
   type ProjectId,
   type Feature,
   type FeatureType,
@@ -18,10 +20,12 @@ import {
   type TopologyRef,
   type ValidationReport,
   type LengthUnit,
+  type SketchFreedom,
 } from '@core/contracts';
 import type { DesignCommand, DesignSession, DesignState, DrawingFormat, ExportOptions, InsertDrawingOptions, SketchView, SolidFormat } from '@core/managers/design';
 import { newId } from '@core/utilities/identity';
 import { DESIGN_MANAGER, PROJECT_MANAGER } from '../../core.providers';
+import { pictureUrl } from '../../shared/picture-url';
 import type { Pick, PickKind, TopologyPick } from '../../viewport/picking';
 import { applyPick, defaultFeature, type FeatureDraft, type PickTarget, pickableFor, selectionOf } from '../modeling/feature-drafts';
 import type { SketchClipboard } from './selection';
@@ -46,6 +50,8 @@ export class DesignStore {
 
   readonly state = signal<DesignState | undefined>(undefined);
   readonly error = signal<string | undefined>(undefined);
+  /** A sketch command refused because it contradicts relations or dimensions the sketch has: those, and the command to try again. */
+  readonly conflict = signal<{ readonly sketchId: string; readonly constraints: readonly string[]; readonly command: DesignCommand } | undefined>(undefined);
   readonly editing = signal<string | undefined>(undefined);
   readonly tool = signal<Tool>('select');
   /** Corners of the polygon tool. */
@@ -69,7 +75,21 @@ export class DesignStore {
   /** The project's documents, for inserting imported files. */
   readonly projectDocuments = signal<readonly DocumentSummary[]>([]);
   readonly importedModels = computed(() => this.projectDocuments().filter(isImportedModel));
-  readonly importedDrawings = computed(() => this.projectDocuments().filter(isImportedDrawing));
+  readonly importedDrawings = computed(() => this.projectDocuments().filter((d) => isImportedDrawing(d) || isImportedPicture(d)));
+  readonly importedPictures = computed(() => this.projectDocuments().filter(isImportedPicture));
+  readonly importedFonts = computed(() => this.projectDocuments().filter(isImportedFont));
+
+  /** Imports a font file into the project; returns its document for texts to use. */
+  async importFont(file: { readonly name: string; readonly bytes: Uint8Array }): Promise<DocumentSummary | undefined> {
+    if (!this.projectId) return undefined;
+    const result = await this.projects.importFile(this.projectId, file);
+    if (!result.ok) {
+      this.error.set(result.error.message);
+      return undefined;
+    }
+    this.projectDocuments.set(await this.projects.listDocuments(this.projectId));
+    return result.value;
+  }
   /** Faces, edges and vertices picked with the measure tool. */
   readonly measurePicks = signal<readonly TopologyPick[]>([]);
   /** The check whose faces are highlighted; the first one with faces when unset. */
@@ -155,7 +175,31 @@ export class DesignStore {
     if (!this.session) return false;
     const result = await this.session.execute(command);
     this.error.set(result.ok ? undefined : result.error.message);
+    const sketchId = 'sketchId' in command ? command.sketchId : undefined;
+    this.conflict.set(!result.ok && sketchId && result.error.related?.length ? { sketchId, constraints: result.error.related, command } : undefined);
     return result.ok;
+  }
+
+  /** Removes one of the relations or dimensions a refused command conflicted with, then runs that command again. */
+  async resolveConflict(constraintId: string): Promise<void> {
+    const conflict = this.conflict();
+    if (!conflict) return;
+    if (await this.run({ type: 'delete-sketch-elements', sketchId: conflict.sketchId, ids: [constraintId] })) await this.run(conflict.command);
+  }
+
+  /** What a sketch's relations and dimensions leave free. */
+  async freedom(sketchId: string): Promise<SketchFreedom> {
+    return (await this.session?.freedom(sketchId)) ?? { points: [], radii: [] };
+  }
+
+  /** Adds the relations and dimensions that fully define a sketch as it is drawn (one change); returns how many. */
+  async fullyDefine(sketchId: string): Promise<number> {
+    const constraints = (await this.session?.suggestConstraints(sketchId, `${newId()}-`)) ?? [];
+    if (!constraints.length) {
+      this.error.set('No relations or dimensions could be found that define more of this sketch.');
+      return 0;
+    }
+    return (await this.run({ type: 'add-sketch-geometry', sketchId, entities: [], constraints })) ? constraints.length : 0;
   }
 
   async createSketch(plane: PlaneRef): Promise<void> {
@@ -317,6 +361,40 @@ export class DesignStore {
   async redo(): Promise<void> {
     await this.session?.redo();
     this.error.set(undefined);
+  }
+
+  /** Pictures shown behind sketches, by imported document: an object URL and the size in pixels. */
+  readonly pictures = signal<ReadonlyMap<string, { readonly url: string; readonly width: number; readonly height: number }>>(new Map());
+  private readonly loadingPictures = new Set<string>();
+
+  /** Loads a picture to show behind a sketch (once). */
+  async loadPicture(documentId: string): Promise<{ readonly url: string; readonly width: number; readonly height: number } | undefined> {
+    const known = this.pictures().get(documentId);
+    if (known || this.loadingPictures.has(documentId)) return known;
+    this.loadingPictures.add(documentId);
+    const preview = await this.projects.previewImported(documentId as DocumentId);
+    if (!preview.ok || preview.value.kind !== 'picture') return undefined;
+    const picture = { url: pictureUrl(preview.value.bytes, preview.value.mediaType), width: preview.value.width, height: preview.value.height };
+    this.pictures.update((pictures) => new Map(pictures).set(documentId, picture));
+    return picture;
+  }
+
+  /** Puts an imported picture behind the edited sketch, at 1/96 in a pixel, its bottom left at the origin. */
+  async addPicture(documentId: DocumentId): Promise<void> {
+    const sketchId = this.editing();
+    const picture = await this.loadPicture(documentId);
+    if (!sketchId || !picture) return;
+    const [origin, handle, id] = [newId(), newId(), newId()];
+    await this.run({
+      type: 'add-sketch-geometry',
+      sketchId,
+      entities: [
+        { id: origin, kind: 'point', x: 0, y: 0 },
+        { id: handle, kind: 'point', x: (picture.width * 25.4) / 96, y: 0 },
+        { id, kind: 'picture', document: documentId, origin, handle, opacity: 0.5, hidden: false },
+      ],
+      constraints: [],
+    });
   }
 
   /** Adds an imported drawing to the edited sketch. */

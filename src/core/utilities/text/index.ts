@@ -29,6 +29,11 @@ export interface TextPlacement {
 /** A parsed font with a cache of laid-out texts. */
 export interface TextFont {
   outline(text: string, placement: TextPlacement): Contour[];
+  /**
+   * The text set along a path: `place(distance)` gives the point and baseline direction (radians) at
+   * a distance along it; each letter stands at the place of its middle.
+   */
+  outlineAlong(text: string, height: number, place: (distance: number) => { readonly at: Vec2; readonly angle: number }): Contour[];
   /** How far the baseline of a text runs (mm), for aligning it. */
   advance(text: string, height: number): number;
   /** Capital height over font size: an SVG font size of 10 has capitals this many times as tall. */
@@ -60,6 +65,24 @@ export function fontOf(font: Font): TextFont {
         const kerning = next === undefined ? 0 : font.getKerningValue(glyph, font.charToGlyph(next));
         return sum + (((glyph.advanceWidth ?? 0) + kerning) * size) / font.unitsPerEm;
       }, 0);
+    },
+    outlineAlong(text, height, along) {
+      const size = (height * font.unitsPerEm) / capHeight;
+      const contours: Contour[] = [];
+      let pen = 0;
+      const chars = [...text];
+      chars.forEach((char, i) => {
+        const glyph = font.charToGlyph(char);
+        const advance = ((glyph.advanceWidth ?? 0) * size) / font.unitsPerEm;
+        const { at, angle } = along(pen + advance / 2);
+        const [cos, sin] = [Math.cos(angle), Math.sin(angle)];
+        const place = (x: number, y: number): Vec2 => [at[0] + x * cos + y * sin, at[1] + x * sin - y * cos];
+        contours.push(...glyphContours(glyph.getPath(-advance / 2, 0, size).commands, place));
+        const next = chars[i + 1];
+        const kerning = next === undefined ? 0 : font.getKerningValue(glyph, font.charToGlyph(next));
+        pen += advance + (kerning * size) / font.unitsPerEm;
+      });
+      return contours;
     },
     outline(text, { at, height, angle }) {
       // Font units → mm, with the capital height as the text height; Y flips (fonts draw downwards).

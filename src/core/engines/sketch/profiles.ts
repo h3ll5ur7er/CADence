@@ -75,7 +75,7 @@ function segmentsOf(sketch: Sketch, texts: TextOutlines): Segment[] {
   const at = (id: string): Vec2 => points.get(id) ?? [0, 0];
   const segments: Segment[] = [];
   for (const e of sketch.entities) {
-    if (e.kind === 'point' || e.kind === 'projection' || e.kind === 'drawing' || e.construction) continue;
+    if (e.kind === 'point' || e.kind === 'projection' || e.kind === 'drawing' || e.kind === 'equation' || e.kind === 'picture' || e.construction) continue;
     if (e.kind === 'text') {
       for (const edge of (texts.get(e.id) ?? []).flat()) {
         if (edge.kind === 'line') segments.push({ kind: 'line', a: edge.start, b: edge.end, source: e.id });

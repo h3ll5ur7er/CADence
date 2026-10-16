@@ -156,6 +156,36 @@
   box-shadow: var(--shadow);
   font-size: 13px;
   z-index: 3;
+  flex-wrap: wrap;
+
+  > p {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+  }
+}
+
+/* The relations and dimensions a refused sketch change conflicts with, each removable. */
+.conflicts {
+  display: grid;
+  gap: var(--space-1);
+  order: 3;
+  width: 100%;
+  margin: 0;
+  padding: 0 0 var(--space-1);
+  list-style: none;
+
+  li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+
+  .btn {
+    height: 26px;
+    font-size: 12px;
+  }
 }
 
 .model-bar .tool {

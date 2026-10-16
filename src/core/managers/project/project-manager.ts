@@ -52,7 +52,9 @@ export type ImportedContent =
       readonly usableAsSolid: boolean;
     }
   /** A drawing's sketch entities, with the outlines of its texts. */
-  | { readonly kind: 'drawing'; readonly entities: readonly SketchEntity[]; readonly texts: TextOutlines; readonly min: Vec3; readonly max: Vec3 };
+  | { readonly kind: 'drawing'; readonly entities: readonly SketchEntity[]; readonly texts: TextOutlines; readonly min: Vec3; readonly max: Vec3 }
+  /** A picture (PNG, JPEG): its size in pixels, and its bytes to show. */
+  | { readonly kind: 'picture'; readonly width: number; readonly height: number; readonly mediaType: string; readonly bytes: Uint8Array };
 
 /** Project and document lifecycle (see docs/Architecture/Components.md#project-manager). */
 export interface ProjectManager {

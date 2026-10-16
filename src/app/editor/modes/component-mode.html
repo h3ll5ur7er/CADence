@@ -276,10 +276,20 @@
 
   @if (store.error(); as error) {
     @if (!store.draft() && store.panel() !== 'parameters') {
-      <p class="toast" role="alert">
-        {{ error }}
-        <button type="button" class="icon-btn" aria-label="Dismiss" (click)="store.error.set(undefined)">×</button>
-      </p>
+      <div class="toast" role="alert">
+        <p>{{ error }}</p>
+        @if (conflicts().length) {
+          <ul class="conflicts" aria-label="Conflicting relations and dimensions">
+            @for (c of conflicts(); track c.id) {
+              <li>
+                <span>{{ c.label }}</span>
+                <button type="button" class="btn" [attr.aria-label]="'Remove ' + c.label + ' and apply'" (click)="store.resolveConflict(c.id)">Remove and apply</button>
+              </li>
+            }
+          </ul>
+        }
+        <button type="button" class="icon-btn" aria-label="Dismiss" (click)="store.error.set(undefined); store.conflict.set(undefined)">×</button>
+      </div>
     }
   }
 </div>
@@ -314,7 +324,51 @@
         <label class="field">Text <input aria-label="Text" [value]="t.text" (change)="setText(t, { text: $any($event.target).value })" /></label>
         <label class="field">Height (mm) <input type="number" min="0.1" step="0.5" aria-label="Height of the text" [value]="t.height" (change)="setText(t, { height: +$any($event.target).value })" /></label>
         <label class="field">Angle (°) <input type="number" step="5" aria-label="Angle of the text" [value]="round(t.angle * 180 / pi)" (change)="setText(t, { angle: +$any($event.target).value * pi / 180 })" /></label>
-        <label class="check"><input type="checkbox" [checked]="t.weight === 'bold'" (change)="setText(t, { weight: $any($event.target).checked ? 'bold' : 'regular' })" /> Bold</label>
+        <label class="check"><input type="checkbox" [checked]="t.weight === 'bold'" [disabled]="!!t.font" (change)="setText(t, { weight: $any($event.target).checked ? 'bold' : 'regular' })" /> Bold</label>
+        <label class="field">
+          Font
+          <select aria-label="Font of the text" (change)="chooseFont(t, $any($event.target).value)">
+            <option value="" [selected]="!t.font">Inter (built in)</option>
+            @for (f of store.importedFonts(); track f.id) {
+              <option [value]="f.id" [selected]="t.font === f.id">{{ f.name }}</option>
+            }
+            <option value="google" [selected]="fontSource() === 'google'">A Google Font…</option>
+            @if (systemFonts) {
+              <option value="system" [selected]="fontSource() === 'system'">A font on this computer…</option>
+            }
+          </select>
+        </label>
+        @if (fontSource() === 'google') {
+          <form class="font-form" (submit)="$event.preventDefault(); getGoogleFont(t, family.value, bold.checked)">
+            <label class="field">Family <input #family aria-label="Google Font family" placeholder="e.g. Roboto Slab" autocomplete="off" /></label>
+            <label class="check"><input #bold type="checkbox" aria-label="Bold Google Font" /> Bold</label>
+            <button type="submit" class="btn">Get the font</button>
+            <span class="hint">Downloaded once and kept in the project.</span>
+          </form>
+        }
+        @if (fontSource() === 'system') {
+          <div class="font-form">
+            <label class="field">Find <input #find aria-label="Find a font on this computer" autocomplete="off" (input)="fontFilter.set(find.value)" /></label>
+            <ul class="font-list" aria-label="Fonts on this computer">
+              @for (name of systemFontMatches(); track name) {
+                <li><button type="button" class="btn btn-ghost" (click)="pickSystemFont(t, name)">{{ name }}</button></li>
+              }
+            </ul>
+          </div>
+        }
+        <label class="field">
+          Along
+          <select aria-label="Curve the text follows" (change)="setAlong(t, $any($event.target).value)">
+            <option value="" [selected]="!t.along">A straight line</option>
+            @for (c of textCurves(); track c.id) {
+              <option [value]="c.id" [selected]="t.along?.curve === c.id">{{ c.label }}</option>
+            }
+          </select>
+        </label>
+        @if (t.along; as along) {
+          <label class="field">Start along it (mm) <input type="number" step="1" aria-label="Where the text starts along the curve" [value]="along.offset" (change)="setText(t, { along: { curve: along.curve, offset: +$any($event.target).value, reversed: along.reversed } })" /></label>
+          <label class="check"><input type="checkbox" aria-label="Text on the other side" [checked]="along.reversed" (change)="setText(t, { along: { curve: along.curve, offset: along.offset, reversed: $any($event.target).checked } })" /> Other side</label>
+        }
       </div>
     }
     @if (view.profiles.length) {

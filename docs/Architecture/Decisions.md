@@ -248,3 +248,17 @@ Imported SVG `<text>` and DXF `TEXT`/`MTEXT` become editable sketch texts in thi
 
 *Why:* one way to copy a project means one place for id handling; generated templates cannot drift from what the app can build; a viewer without dependencies keeps shared files small and working forever.
 *Trade-off:* a second app instance opens for each file opened with CADence (no single-instance hand-over yet); removing a name does not remove it from the remote; the viewer measures point to point only.
+
+## ADR-34
+
+**Sketcher III: the solver answers what is free by being pulled; pictures and fonts are imported documents; equation curves, traced pictures and texts along curves are generated geometry.**
+- *Freedom.* planegcs reports degrees of freedom but not which parameters carry them, so the Sketch Engine pulls each point a little along x and along y (a drag solve) and sees whether and where it moves: no move, one direction (it slides along something), or two. Two solves a point keep it fast for sketches of up to a few hundred points; the editor asks only while a sketch is under-constrained.
+- *Suggestions* come from the sketch as drawn (near-horizontal and near-vertical lines, lengths, sizes, positions from the origin) and are kept one by one only when the solver confirms each takes freedom away without a conflict.
+- *Conflicts.* The solver may name only the new constraint among those that conflict, so the regeneration tries removing each one involved (on the same points and curves) and offers those whose removal lets the sketch solve; `DomainError.related` carries their ids to the client.
+- *Equation curves* are evaluated by the Parameter Engine with `t` in scope and become a spline through fixed points, regenerated like drawings, so they follow parameters and form profiles.
+- *Pictures* (PNG, JPEG) are imported documents: shown behind sketches from their bytes (an object URL), or traced in the Interchange Engine (decoded by the platform, or by a small PNG decoder in Node; pixel-edge contours, Douglas–Peucker, optional Catmull–Rom smoothing) into the same sketch entities drawings make, so tracing reuses one-piece drawings and inferred relations.
+- *Fonts* (TTF, OTF, WOFF) are imported documents too, so they travel with archives and sync. The Sketch Engine receives the project's font files through a resolver (keyed by original, parsed once). Google Fonts come from Fontsource's copies on jsDelivr; installed fonts on the desktop through two Rust commands. Text along a curve places each letter at the point and direction of its middle along the curve.
+- *Desktop connections.* The desktop app's content security policy now allows `https:` connections: git remotes (ADR-30) and font downloads need them.
+
+*Why:* the user asked for what CAD users expect (Fusion's blue/black and its conflict hints, tracing, fonts); reusing the drawing and import paths keeps each new kind of input small.
+*Trade-off:* freedom directions are sampled, not derived (a point on a curve shows the direction where it is now); suggested dimensions are plain values, not design intent; traced outlines are polygonal before smoothing; only 8-bit PNGs are read outside the app; text along a curve does not stretch letters to the curvature.

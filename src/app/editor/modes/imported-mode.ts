@@ -5,6 +5,7 @@ import { byteSize, relativeTime } from '../../shared/format';
 import { Icon } from '../../shared/icon';
 import { sketchDisplay } from '../../viewport/sketch-display';
 import { Viewport } from '../../viewport/viewport';
+import { pictureUrl } from '../../shared/picture-url';
 import { grams, millimetres, point } from '../analysis/units';
 import { EditorStatus } from '../editor-status';
 import { ThumbnailSaver } from '../thumbnail-saver';
@@ -28,6 +29,9 @@ const drawingFormats: readonly { format: ImportFormat; label: string }[] = [
   template: `
     <div class="stage">
       <cad-viewport [bodies]="meshes()" [sketches]="drawing()" [fit]="extent()" (backendReady)="status.renderer.set($event)" (thumbnail)="thumbnails.save($event)" />
+      @if (pictureUrl(); as url) {
+        <img class="picture" [src]="url" [alt]="document().name" data-testid="imported-picture" />
+      }
       <section class="browser" aria-label="Imported file">
         <h2 class="eyebrow browser-title">Browser</h2>
         <ul class="tree">
@@ -37,7 +41,7 @@ const drawingFormats: readonly { format: ImportFormat; label: string }[] = [
       <div class="top-tools">
         <div class="model-bar" role="toolbar" aria-label="Imported file tools">
           <div class="menu">
-            <button type="button" class="btn" aria-haspopup="menu" [attr.aria-expanded]="menuOpen()" [disabled]="!content()" (click)="menuOpen.set(!menuOpen())">
+            <button type="button" class="btn" aria-haspopup="menu" [attr.aria-expanded]="menuOpen()" [disabled]="!content() || content()?.kind === 'picture'" (click)="menuOpen.set(!menuOpen())">
               <cad-icon name="download" /> Export as
             </button>
             @if (menuOpen()) {
@@ -55,7 +59,17 @@ const drawingFormats: readonly { format: ImportFormat; label: string }[] = [
       } @else if (problem(); as message) {
         <p class="toast" role="alert">{{ message }}</p>
       } @else if (content(); as c) {
-        <p class="notice">{{ c.kind === 'drawing' ? 'Insert it into a sketch with Insert drawing in the sketch toolbar.' : c.usableAsSolid ? 'Use it in a component with Insert body, or insert it into an assembly.' : 'Too many triangles to use as a solid; it can still be viewed and converted.' }}</p>
+        <p class="notice">
+          {{
+            c.kind === 'drawing'
+              ? 'Insert it into a sketch with Insert drawing in the sketch toolbar.'
+              : c.kind === 'picture'
+                ? 'Draw over it with Picture in the sketch toolbar, or trace it into curves with Insert drawing.'
+                : c.usableAsSolid
+                  ? 'Use it in a component with Insert body, or insert it into an assembly.'
+                  : 'Too many triangles to use as a solid; it can still be viewed and converted.'
+          }}
+        </p>
       }
     </div>
     <aside class="properties" aria-label="Properties">
@@ -85,18 +99,26 @@ const drawingFormats: readonly { format: ImportFormat; label: string }[] = [
             <dd class="mono" data-testid="imported-volume">{{ mm(c.volume, 3) }}</dd>
             <dt>PLA</dt>
             <dd class="mono">{{ grams((c.volume * 1.24) / 1000) }}</dd>
-          } @else {
+          } @else if (c.kind === 'drawing') {
             <dt>Curves</dt>
             <dd class="mono" data-testid="imported-curves">{{ curveCount() }}</dd>
           }
           <dt>Size</dt>
-          <dd class="mono" data-testid="imported-size">{{ point(size()) }} mm</dd>
+          @if (c.kind === 'picture') {
+            <dd class="mono" data-testid="imported-size">{{ c.width }} × {{ c.height }} pixels</dd>
+          } @else {
+            <dd class="mono" data-testid="imported-size">{{ point(size()) }} mm</dd>
+          }
         </dl>
       }
     </aside>
   `,
   styleUrls: ['./mode-layout.scss', './editor-tools.scss'],
-  styles: '.format { text-transform: uppercase; } .top-tools { left: 264px; }',
+  styles: `
+    .format { text-transform: uppercase; }
+    .top-tools { left: 264px; }
+    .picture { position: absolute; inset: 72px 24px 48px 264px; width: calc(100% - 288px); height: calc(100% - 120px); object-fit: contain; pointer-events: none; }
+  `,
 })
 export class ImportedMode {
   readonly document = input.required<DocumentSummary>();
@@ -144,11 +166,16 @@ export class ImportedMode {
   });
   protected readonly extent = computed(() => {
     const c = this.content();
-    return c ? { min: c.min, max: c.max } : undefined;
+    return c && c.kind !== 'picture' ? { min: c.min, max: c.max } : undefined;
   });
   protected readonly size = computed(() => {
     const c = this.content();
-    return c ? [0, 1, 2].map((axis) => (c.max[axis] as number) - (c.min[axis] as number)) : [0, 0, 0];
+    return c && c.kind !== 'picture' ? [0, 1, 2].map((axis) => (c.max[axis] as number) - (c.min[axis] as number)) : [0, 0, 0];
+  });
+  /** A picture is shown as it is, over the empty 3D view. */
+  protected readonly pictureUrl = computed(() => {
+    const c = this.content();
+    return c?.kind === 'picture' ? pictureUrl(c.bytes, c.mediaType) : undefined;
   });
   protected readonly formats = computed(() => (this.content()?.kind === 'drawing' ? drawingFormats : modelFormats));
 

@@ -42,6 +42,10 @@ The **Text** tool places text as outlines of the bundled Inter font. The height 
 
 Select a text to change it in the panel on the right: the text, its height, its angle and whether it is bold. Move it by its point, or constrain and dimension that point like any other. Text can be construction geometry too.
 
+**Fonts.** Besides the built-in Inter, a text can use any TrueType, OpenType or WOFF font: import the font file into the project (it then shows its letters in the documents panel), choose **A Google Font…** and type a family such as *Roboto Slab* (downloaded once and kept in the project), or, in the desktop app, **A font on this computer…**. The font travels with the project, in archives and through sync.
+
+**Along a curve.** Choose a line, arc, circle or spline of the sketch under **Along**: the text follows it from **Start along it** millimetres on, letters standing on its left; **Other side** turns the text round to stand on the other side and read the other way (for a circle: outside it, clockwise).
+
 ### Snapping
 
 While drawing, a click lands on what is under the pointer and keeps that relation:
@@ -109,6 +113,17 @@ Trim, extend, split, fillet and chamfer work on lines, circles and arcs.
 - **Linear pattern**: select geometry and enter how many copies (the original counts) and the step in X and Y. Each copy keeps the relations among its curves and is placed by two dimensions you can change.
 - **Circular pattern**: set the number of copies, then click the centre point. Construction spokes of equal length at the pattern angle place each copy; a turned copy keeps its shape but not horizontal or vertical relations.
 
+### Curves from equations
+
+**Shapes → Curve from equations…** draws a curve given by *x(t)* and *y(t)* for *t* from one value to another: involutes, cams, spirals, wavy outlines. Lengths are millimetres unless written with a unit, `sin` and `cos` take degrees, and parameters can be used (`r * cos(t)`). The curve runs smoothly through the given number of points and closes when it ends where it starts, so it can form a profile; it updates when its parameters change. Delete it like any curve.
+
+### Pictures
+
+Import a PNG or JPEG picture into the project, then:
+
+- **Picture** (in the sketch toolbar) puts it behind the sketch to draw over, at 96 pixels an inch, its bottom left corner on the origin. It is placed by two points, the bottom corners: move them to move and turn it, and dimension the distance between them to give the picture its real width. The same menu sets its opacity, hides it, or removes it.
+- **Insert drawing** traces the picture's dark shapes into curves: set how light a pixel may be to count as dark, and whether the outlines are smooth. As one piece, the traced drawing keeps its proportions and scales by its two handle points like an imported drawing.
+
 ## Projected geometry
 
 The **Project** tool (in the Shapes menu) copies edges of bodies into the sketch: click an edge, or a face for its whole outline. The projected curves (in pink) follow the body when it changes, cannot be moved, and form profiles like any other curves. Toggle them to construction geometry with X; deleting one deletes the whole projection.
@@ -117,10 +132,10 @@ The **Project** tool (in the Shapes menu) copies edges of bodies into the sketch
 
 The toolbar and properties panel show how far the sketch is defined:
 
-- **N degrees of freedom**: some geometry can still move (blue). Add relations or dimensions until it can't.
+- **N degrees of freedom**: some geometry can still move. What can move is drawn in blue, with arrows at the points showing which way they can go (one arrow: along a line or curve; a cross: anywhere); what is already defined is drawn in the text colour. Add relations or dimensions until nothing can move, or click **Fully define**: CADence adds the relations and dimensions the sketch shows as drawn (horizontal and vertical lines, lengths, sizes, positions from the origin) in one undoable step.
 - **Fully constrained**: nothing can move without changing a dimension (drawn in the text colour).
 
-A change that contradicts existing constraints is refused, and a message names the relations involved. So is a change that would shrink a curve to nothing, such as a line both horizontal and vertical. Undo and redo with Ctrl+Z and Ctrl+Y.
+A change that contradicts existing constraints is refused, and a message names the relations involved and lists those you could remove instead: **Remove and apply** removes that one and makes your change. A change that would shrink a curve to nothing, such as a line both horizontal and vertical, is refused too. Undo and redo with Ctrl+Z and Ctrl+Y.
 
 The **properties panel** lists the sketch's closed regions (profiles) and their areas. A circle inside a rectangle gives two profiles: the plate with a hole, and the disc.
 

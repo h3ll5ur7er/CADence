@@ -91,24 +91,35 @@ function sample(piece: PathPiece2, n: number): Vec2[] {
   return Array.from({ length: n + 1 }, (_, i) => [center[0] + r * Math.cos(t0 + (sweep * i) / n), center[1] + r * Math.sin(t0 + (sweep * i) / n)] as Vec2);
 }
 
+/** A path measured by length: its total, and the point and direction of travel at a distance along it. */
+export function measured(path: SketchPath): { readonly length: number; at(distance: number): { readonly point: Vec2; readonly direction: Vec2 } } {
+  const polyline = path.pieces.flatMap((p, i) => sample(p, 64).slice(i === 0 ? 0 : 1));
+  const lengths = [0];
+  for (let i = 1; i < polyline.length; i++) lengths.push((lengths[i - 1] as number) + distance(polyline[i - 1] as Vec2, polyline[i] as Vec2));
+  const total = lengths[lengths.length - 1] as number;
+  return {
+    length: total,
+    at(along) {
+      // Beyond the ends a path goes on straight; around a closed one it wraps.
+      const target = path.closed ? ((along % total) + total) % total : along;
+      const clamped = Math.min(Math.max(target, 0), total);
+      const i = Math.max(1, lengths.findIndex((l) => l >= clamped - 1e-12));
+      const [p, q] = [polyline[i - 1] as Vec2, polyline[i] as Vec2];
+      const span = (lengths[i] as number) - (lengths[i - 1] as number) || 1;
+      const t = (target - (lengths[i - 1] as number)) / span;
+      const d = sub(q, p);
+      const length = Math.hypot(d[0], d[1]) || 1;
+      return { point: [p[0] + d[0] * t, p[1] + d[1] * t], direction: [d[0] / length, d[1] / length] };
+    },
+  };
+}
+
 /**
  * `count` places spaced evenly along the path by length, with the direction of travel there: from
  * start to end on an open path, around and short of the start again on a closed one.
  */
 export function placesAlong(path: SketchPath, count: number): { readonly point: Vec2; readonly direction: Vec2 }[] {
-  const polyline = path.pieces.flatMap((p, i) => sample(p, 64).slice(i === 0 ? 0 : 1));
-  const lengths = [0];
-  for (let i = 1; i < polyline.length; i++) lengths.push((lengths[i - 1] as number) + distance(polyline[i - 1] as Vec2, polyline[i] as Vec2));
-  const total = lengths[lengths.length - 1] as number;
-  const step = total / (path.closed ? count : Math.max(count - 1, 1));
-  return Array.from({ length: count }, (_, k) => {
-    const target = Math.min(step * k, total);
-    const i = Math.max(1, lengths.findIndex((l) => l >= target - 1e-12));
-    const [p, q] = [polyline[i - 1] as Vec2, polyline[i] as Vec2];
-    const span = (lengths[i] as number) - (lengths[i - 1] as number) || 1;
-    const t = (target - (lengths[i - 1] as number)) / span;
-    const d = sub(q, p);
-    const length = Math.hypot(d[0], d[1]) || 1;
-    return { point: [p[0] + d[0] * t, p[1] + d[1] * t], direction: [d[0] / length, d[1] / length] };
-  });
+  const measure = measured(path);
+  const step = measure.length / (path.closed ? count : Math.max(count - 1, 1));
+  return Array.from({ length: count }, (_, k) => measure.at(Math.min(step * k, measure.length)));
 }

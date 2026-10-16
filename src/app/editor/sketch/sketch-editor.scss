@@ -182,3 +182,29 @@ path {
   box-shadow: var(--shadow);
   outline: none;
 }
+
+/* Under-constrained sketches: what is defined already, what can still move, and where to. */
+.curve.defined {
+  stroke: var(--sketch-done);
+}
+
+.curve.free {
+  stroke: var(--sketch);
+}
+
+.point.free {
+  fill: var(--sketch);
+}
+
+.freedom {
+  fill: none;
+  stroke: var(--flag);
+  stroke-width: 1.4px;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+
+/* A picture behind the sketch, to draw over. */
+.picture {
+  pointer-events: none;
+}

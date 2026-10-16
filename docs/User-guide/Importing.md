@@ -15,6 +15,8 @@ Click **Import** in the documents panel, or drop files onto it. The original fil
 | STEP (`.step`, `.stp`) | Exact solids, as made in CAD programs |
 | STL, OBJ, 3MF | Triangle meshes, as used for 3D printing (3MF: every object, with its units and placement) |
 | DXF, SVG | 2D drawings: lines, arcs, circles, ellipses, splines, polylines and paths, text; DXF blocks and hatches |
+| PNG, JPEG | Pictures: to draw over in sketches, or to trace into curves ([[User-guide/Sketching#Pictures]]) |
+| TTF, OTF, WOFF | Fonts for sketch texts ([[User-guide/Sketching#Text]]) |
 
 ## The imported viewer
 

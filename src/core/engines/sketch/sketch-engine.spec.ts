@@ -211,3 +211,35 @@ describe('SketchEngine.solve', () => {
     expect(Math.max(...ys)).toBeCloseTo(15, 1);
   });
 });
+
+describe('SketchEngine diagnostics', () => {
+  it('says which points can still move, and in which directions', async () => {
+    const { sketch } = rectangle();
+    // Without its width the rectangle can stretch along x: the right side slides, the left stays at the origin.
+    const stretchy = { ...sketch, constraints: sketch.constraints.filter((c) => c.id !== 'w') };
+    const freedom = await engine.freedom(stretchy, values({ h: 20 }));
+    expect(freedom.points.map((p) => p.point).sort()).toEqual(['p2', 'p3']);
+    for (const p of freedom.points) expect(p.directions).toEqual([[expect.closeTo(1, 1), expect.closeTo(0, 1)]]);
+    expect(await engine.freedom(sketch, values({ w: 40, h: 20 }))).toEqual({ points: [], radii: [] });
+
+    const b = new SketchBuilder();
+    const circle = b.circle(b.point(5, 5), 3);
+    const loose = await engine.freedom(b.build(), values());
+    expect(loose.radii).toEqual([circle]);
+    expect(loose.points[0]?.directions).toHaveLength(2);
+  });
+
+  it('suggests relations and dimensions that fully define a sketch as drawn', async () => {
+    const b = new SketchBuilder();
+    b.polygon([0, 0], [30, 0.5], [30.5, 15], [0, 15]);
+    const sketch = b.build();
+    const { constraints, degreesOfFreedom } = await engine.suggest(sketch, values(), 's');
+    expect(degreesOfFreedom).toBe(0);
+    expect(constraints.filter((c) => c.kind === 'horizontal' || c.kind === 'vertical')).toHaveLength(4);
+    expect(constraints.every((c) => c.id.startsWith('s'))).toBe(true);
+    // Applied, they solve without moving what was drawn much.
+    const dimensions = new Map(constraints.flatMap((c) => ('expression' in c ? [[c.id, Number.parseFloat(c.expression)] as const] : [])));
+    const solved = await engine.solve({ ...sketch, constraints: [...sketch.constraints, ...constraints] }, dimensions);
+    expect(solved.status).toBe('fully-constrained');
+  });
+});

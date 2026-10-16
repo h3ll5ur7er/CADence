@@ -11,6 +11,7 @@ import {
   type DomainEvents,
   fail,
   type Interference,
+  isModelFormat,
   type JointOrigin,
   type Matrix4,
   type MotionFrame,
@@ -339,8 +340,8 @@ class Session implements AssemblySession {
       this.components.set(id, { view: { id, name, status: 'missing', bodies: [] }, bodies: [], stamp: '' });
     };
     if (this.components.get(id)?.stamp === assetId) return;
-    const original = format === 'dxf' || format === 'svg' ? undefined : await this.deps.assets.fetch(assetId);
-    if (!original || format === 'dxf' || format === 'svg') return missing();
+    const original = isModelFormat(format) ? await this.deps.assets.fetch(assetId) : undefined;
+    if (!original || !isModelFormat(format)) return missing();
     const sources = await this.deps.interchange.readSolids(original.bytes, format, `import:${assetId}`);
     if (!sources.ok) return missing();
     const outcome = await this.deps.modeling.apply({ type: 'insert', feature: 'import', key: `imported:${assetId}`, bodies: [], sources: sources.value });

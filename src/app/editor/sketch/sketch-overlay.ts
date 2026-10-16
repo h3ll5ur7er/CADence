@@ -8,6 +8,7 @@ import {
   type Sketch,
   type SketchConstraint,
   type SketchEntity,
+  type SketchFreedom,
   sketchOriginId,
   type TextOutlines,
   type Vec2,
@@ -27,6 +28,8 @@ export function curvePath(entity: SketchEntity, points: ReadonlyMap<string, Vec2
     case 'point':
     case 'projection':
     case 'drawing':
+    case 'equation':
+    case 'picture':
     case 'text':
       return '';
     case 'line': {
@@ -100,7 +103,7 @@ function anchorOf(sketch: Sketch, id: string, points: ReadonlyMap<string, Vec2>)
   const point = points.get(id);
   if (point) return point;
   const e = sketch.entities.find((x) => x.id === id);
-  if (!e || e.kind === 'point' || e.kind === 'projection' || e.kind === 'drawing') return undefined;
+  if (!e || e.kind === 'point' || e.kind === 'projection' || e.kind === 'drawing' || e.kind === 'equation' || e.kind === 'picture') return undefined;
   const at = (p: string): Vec2 => points.get(p) ?? [0, 0];
   if (e.kind === 'text') return at(e.anchor);
   if (e.kind === 'line') {
@@ -286,7 +289,7 @@ export function hitTest(sketch: Sketch, at: Vec2, tolerance: number, texts: Text
   const point = (id: string): Vec2 => points.get(id) ?? [0, 0];
   for (const e of sketch.entities) {
     let d: number;
-    if (e.kind === 'point' || e.kind === 'projection' || e.kind === 'drawing') continue;
+    if (e.kind === 'point' || e.kind === 'projection' || e.kind === 'drawing' || e.kind === 'equation' || e.kind === 'picture') continue;
     if (e.kind === 'text') {
       // Text is hit on its outlines.
       const lines = textPolylines(texts.get(e.id) ?? []);
@@ -309,4 +312,68 @@ export function hitTest(sketch: Sketch, at: Vec2, tolerance: number, texts: Text
     if (d <= tolerance && (!best || d < best.d)) best = { hit: { id: e.id, kind: 'curve' }, d };
   }
   return best?.hit;
+}
+
+/** The points that place an entity: when one of them can move, so can the entity. */
+export function definingPoints(entity: SketchEntity): readonly string[] {
+  switch (entity.kind) {
+    case 'line':
+      return [entity.start, entity.end];
+    case 'circle':
+      return [entity.center];
+    case 'arc':
+      return [entity.center, entity.start, entity.end];
+    case 'ellipse':
+      return [entity.center, entity.major];
+    case 'spline':
+      return entity.points;
+    case 'text':
+      return [entity.anchor];
+    case 'drawing':
+      return [entity.origin, entity.handle];
+    default:
+      return [entity.id];
+  }
+}
+
+/** Entities a sketch's relations and dimensions leave free (any of their points moves, or a circle's size). */
+export function freeEntities(sketch: Sketch, freedom: SketchFreedom): Set<string> {
+  const points = new Set(freedom.points.map((p) => p.point));
+  const radii = new Set(freedom.radii);
+  return new Set(sketch.entities.filter((e) => radii.has(e.id) || definingPoints(e).some((p) => points.has(p))).map((e) => e.id));
+}
+
+/**
+ * Arrows at the points that can move, on screen: along the direction a point slides in, or a cross
+ * for a point that moves freely. Each arrow is an SVG path around (0, 0), placed at `x`, `y`.
+ */
+export function freedomArrows(freedom: SketchFreedom, points: ReadonlyMap<string, Vec2>, m: Affine): { id: string; x: number; y: number; d: string }[] {
+  const arrow = (dx: number, dy: number) => {
+    const [ux, uy] = [dx / Math.hypot(dx, dy), dy / Math.hypot(dx, dy)];
+    const tip = (s: number) => `M ${n(s * 14 * ux)} ${n(s * 14 * uy)} L ${n(s * 9 * ux - 3.5 * uy)} ${n(s * 9 * uy + 3.5 * ux)} M ${n(s * 14 * ux)} ${n(s * 14 * uy)} L ${n(s * 9 * ux + 3.5 * uy)} ${n(s * 9 * uy - 3.5 * ux)}`;
+    return `M ${n(-14 * ux)} ${n(-14 * uy)} L ${n(14 * ux)} ${n(14 * uy)} ${tip(1)} ${tip(-1)}`;
+  };
+  return freedom.points.flatMap(({ point, directions }) => {
+    const at = points.get(point);
+    if (!at) return [];
+    const [x, y] = applyAffine(m, at[0], at[1]);
+    // Directions turn with the view (the affine's linear part), lengths do not matter.
+    const d = directions.map(([dx, dy]) => arrow(m.a * dx + m.c * dy, m.b * dx + m.d * dy)).join(' ');
+    return [{ id: point, x, y, d }];
+  });
+}
+
+const dimensionTitles: Readonly<Record<Dimension['kind'], string>> = {
+  distance: 'Distance',
+  'horizontal-distance': 'Horizontal distance',
+  'vertical-distance': 'Vertical distance',
+  'point-line-distance': 'Distance to a line',
+  radius: 'Radius',
+  diameter: 'Diameter',
+  angle: 'Angle',
+};
+
+/** A relation or dimension in words, e.g. "Horizontal" or "Distance 30 mm". */
+export function describeConstraint(constraint: SketchConstraint): string {
+  return isDimension(constraint) ? `${dimensionTitles[constraint.kind]} ${constraint.expression}` : (glyphTitle[constraint.kind] ?? constraint.kind);
 }

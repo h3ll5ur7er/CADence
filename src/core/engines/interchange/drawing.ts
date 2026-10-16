@@ -44,7 +44,7 @@ export function drawingCurves(sketch: Sketch, texts: TextOutlines = new Map()): 
   for (const e of sketch.entities) if (e.kind === 'point') points.set(e.id, [e.x, e.y]);
   const at = (id: string): Vec2 => points.get(id) ?? [0, 0];
   return sketch.entities.flatMap((e): DrawingCurve[] => {
-    if (e.kind === 'point' || e.kind === 'projection' || e.kind === 'drawing' || e.construction) return [];
+    if (e.kind === 'point' || e.kind === 'projection' || e.kind === 'drawing' || e.kind === 'equation' || e.kind === 'picture' || e.construction) return [];
     if (e.kind === 'text') {
       return (texts.get(e.id) ?? []).flat().flatMap((edge): DrawingCurve[] => {
         if (edge.kind === 'line') return [{ kind: 'line', start: edge.start, end: edge.end }];

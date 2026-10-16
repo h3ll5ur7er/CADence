@@ -31,7 +31,21 @@
           @for (t of shapeTools; track t.tool) {
             <button type="button" role="menuitem" (click)="choose(t.tool)"><cad-icon [name]="t.icon" [size]="16" /> {{ t.label }}</button>
           }
+          <button type="button" role="menuitem" (click)="menu.set(undefined); equationOpen.set(true)"><cad-icon name="spline" [size]="16" /> Curve from equations…</button>
         </div>
+      }
+      @if (equationOpen()) {
+        <form class="menu-list start offset equation" aria-label="Curve from equations" (submit)="$event.preventDefault(); addEquation(ex.value, ey.value, from.value, to.value, samples.value)">
+          <label>x(t) = <input #ex type="text" aria-label="x of t" value="20 * cos(t)" /></label>
+          <label>y(t) = <input #ey type="text" aria-label="y of t" value="20 * sin(t)" /></label>
+          <label>t from <input #from type="text" aria-label="t from" value="0" /> to <input #to type="text" aria-label="t to" value="360" /></label>
+          <label>Points <input #samples type="number" min="3" max="400" aria-label="Points along the curve" value="73" /></label>
+          <span class="hint">Lengths in mm unless written with a unit; sin and cos take degrees; parameters can be used.</span>
+          <div class="actions">
+            <button type="button" class="btn" (click)="equationOpen.set(false)">Cancel</button>
+            <button type="submit" class="btn btn-primary">Add curve</button>
+          </div>
+        </form>
       }
     </div>
     @if (store.tool() === 'text') {
@@ -43,6 +57,16 @@
         {{ store.units() }}
       </label>
       <label class="sides"><input type="checkbox" aria-label="Bold text" [checked]="store.textDraft().weight === 'bold'" (change)="setText({ weight: $any($event.target).checked ? 'bold' : 'regular' })" /> Bold</label>
+      @if (store.importedFonts().length) {
+        <label class="sides">
+          <select aria-label="Font of new texts" (change)="setDraftFont($any($event.target).value)">
+            <option value="" [selected]="!store.textDraft().font">Inter</option>
+            @for (f of store.importedFonts(); track f.id) {
+              <option [value]="f.id" [selected]="store.textDraft().font === f.id">{{ f.name }}</option>
+            }
+          </select>
+        </label>
+      }
     }
     @if (store.tool() === 'polygon') {
       <label class="sides" title="Sides of the polygon">
@@ -136,6 +160,11 @@
   </div>
 
   <span class="status" [class.done]="view()?.status === 'fully-constrained'" data-testid="sketch-status">{{ status() }}</span>
+  @if (view()?.status === 'under-constrained') {
+    <button type="button" class="btn" title="Add the relations and dimensions that fully define the sketch as it is drawn (one change, undoable)" (click)="fullyDefine()">
+      Fully define
+    </button>
+  }
 
   <div class="group end" role="group" aria-label="Sketch">
     @if (store.importedDrawings().length) {
@@ -154,9 +183,40 @@
                 <option value="fix">Curves, fixed</option>
               </select>
             </label>
+            @if (store.importedPictures().length) {
+              <label class="insert-as" title="Pixels darker than this are traced">
+                Trace pictures below
+                <input type="range" min="0.1" max="0.9" step="0.05" aria-label="Trace threshold" [value]="traceThreshold()" (input)="traceThreshold.set(+$any($event.target).value)" />
+                {{ (traceThreshold() * 100).toFixed(0) }} % light
+              </label>
+              <label class="insert-as"><input type="checkbox" aria-label="Smooth traced outlines" [checked]="traceSmooth()" (change)="traceSmooth.set($any($event.target).checked)" /> Smooth outlines</label>
+            }
             @for (d of store.importedDrawings(); track d.id) {
               <button type="button" role="menuitem" (click)="insertOpen.set(false); insert(d.id)">{{ d.name }} ({{ d.format?.toUpperCase() }})</button>
             }
+          </div>
+        }
+      </div>
+    }
+    @if (store.importedPictures().length) {
+      <div class="menu">
+        <button type="button" class="btn" aria-haspopup="menu" [attr.aria-expanded]="pictureOpen()" title="A picture behind the sketch, to draw over" (click)="pictureOpen.set(!pictureOpen())">
+          <cad-icon name="imported" /> Picture
+        </button>
+        @if (pictureOpen()) {
+          <div class="menu-list pictures" role="menu" aria-label="Pictures behind the sketch">
+            @for (d of store.importedPictures(); track d.id) {
+              <button type="button" role="menuitem" (click)="pictureOpen.set(false); store.addPicture(d.id)">Put {{ d.name }} behind the sketch</button>
+            }
+            @for (p of sketchPictures(); track p.id) {
+              <div class="picture-row" role="group" [attr.aria-label]="p.name + ' behind the sketch'">
+                <span>{{ p.name }}</span>
+                <input type="range" min="0.05" max="1" step="0.05" [attr.aria-label]="'Opacity of ' + p.name" [value]="p.opacity" (change)="setPicture(p, { opacity: +$any($event.target).value })" />
+                <label><input type="checkbox" [checked]="!p.hidden" [attr.aria-label]="'Show ' + p.name" (change)="setPicture(p, { hidden: !$any($event.target).checked })" /> Shown</label>
+                <button type="button" class="icon-btn" [attr.aria-label]="'Remove ' + p.name + ' from the sketch'" (click)="removePicture(p.id)">×</button>
+              </div>
+            }
+            <p class="hint">Dimension the distance between its two corner points to scale it.</p>
           </div>
         }
       </div>

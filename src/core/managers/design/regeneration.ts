@@ -369,6 +369,12 @@ export class Regeneration {
         const g = v.value;
         return ok({ kind: 'gear', module: num(g, 'module'), teeth: num(g, 'teeth'), width: num(g, 'width'), bore: num(g, 'bore'), pressureAngle: num(g, 'pressureAngle'), helixAngle: num(g, 'helixAngle') });
       }
+      case 'ring-gear': {
+        const v = lengths({ module: part.module, teeth: part.teeth, width: part.width, outside: part.outside, pressureAngle: part.pressureAngle, helixAngle: part.helixAngle });
+        if (!v.ok) return v;
+        const g = v.value;
+        return ok({ kind: 'ring-gear', module: num(g, 'module'), teeth: num(g, 'teeth'), width: num(g, 'width'), outside: num(g, 'outside'), pressureAngle: num(g, 'pressureAngle'), helixAngle: num(g, 'helixAngle') });
+      }
       case 'rack': {
         const v = lengths({ module: part.module, teeth: part.teeth, width: part.width, height: part.height, pressureAngle: part.pressureAngle });
         if (!v.ok) return v;

@@ -1,9 +1,21 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
-import { type JointFreedom, jointDofs, type MotionLink } from '@core/contracts';
+import { type JointFreedom, jointDofs, type MotionLink, planetaryRatios } from '@core/contracts';
 import { Icon } from '../../shared/icon';
 import { AssemblyStore } from './assembly-store';
 
-const kindLabels: Readonly<Record<MotionLink['kind'], string>> = { gear: 'Gears', rack: 'Rack and pinion', belt: 'Belt or chain' };
+const kindLabels: Readonly<Record<MotionLink['kind'], string>> = { gear: 'Gears', rack: 'Rack and pinion', belt: 'Belt or chain', carrier: 'Sun to planet carrier', planet: 'Sun to planet' };
+
+/** What the two sizes are, per kind (a rack has one). */
+const sizeLabels: Readonly<Record<MotionLink['kind'], readonly [string, string?]>> = {
+  gear: ['Teeth of the driver', 'Teeth of the driven'],
+  rack: ['Pinion pitch ⌀ (mm)'],
+  belt: ['Driver pulley ⌀ (mm)', 'Driven pulley ⌀ (mm)'],
+  carrier: ['Teeth of the sun', 'Teeth of the ring (fixed)'],
+  planet: ['Teeth of the sun', 'Teeth of the ring (fixed)'],
+};
+
+/** Kinds that turn the driven joint the other way by themselves. */
+const reverses = (kind: MotionLink['kind']) => kind === 'gear' || kind === 'planet';
 
 /** A selected motion link: which joint drives which, and by how much (from teeth or diameters). */
 @Component({
@@ -39,12 +51,12 @@ const kindLabels: Readonly<Record<MotionLink['kind'], string>> = { gear: 'Gears'
       }
       <div class="grid">
         <label class="field">
-          {{ link.kind === 'gear' ? 'Teeth of the driver' : link.kind === 'rack' ? 'Pinion pitch ⌀ (mm)' : 'Driver pulley ⌀ (mm)' }}
+          {{ sizeLabels[link.kind][0] }}
           <input id="link-size-a" type="number" min="0" step="any" [value]="sizes()[0]" (change)="setSize(link, 0, $event)" />
         </label>
-        @if (link.kind !== 'rack') {
+        @if (sizeLabels[link.kind][1]; as second) {
           <label class="field">
-            {{ link.kind === 'gear' ? 'Teeth of the driven' : 'Driven pulley ⌀ (mm)' }}
+            {{ second }}
             <input id="link-size-b" type="number" min="0" step="any" [value]="sizes()[1]" (change)="setSize(link, 1, $event)" />
           </label>
         }
@@ -65,6 +77,7 @@ export class LinkPanel {
   readonly linkId = input.required<string>();
   protected readonly store = inject(AssemblyStore);
   protected readonly kindLabels = kindLabels;
+  protected readonly sizeLabels = sizeLabels;
   protected readonly kinds = Object.keys(kindLabels) as MotionLink['kind'][];
   protected readonly sides = [
     { key: 'driver', label: 'Driver' },
@@ -106,13 +119,17 @@ export class LinkPanel {
     const sizes = this.sizes().map((v, i) => (i === index ? this.number(event) : v)) as unknown as readonly [number, number];
     this.sizes.set(sizes);
     // Turned the other way round than the kind turns by itself: kept so.
-    const reversed = link.ratio < 0 !== (link.kind === 'gear');
+    const reversed = link.ratio < 0 !== reverses(link.kind);
     this.save(link, { ratio: this.ratioOf(link.kind, sizes) * (reversed ? -1 : 1) });
   }
 
-  /** Gears turn the other way by teeth over teeth; a rack moves π·d/360 mm per degree; a belt turns the same way by diameters. */
+  /**
+   * Gears turn the other way by teeth over teeth; a rack moves π·d/360 mm per degree; a belt turns the
+   * same way by diameters; a planetary set's carrier and planets follow from the sun's and ring's teeth.
+   */
   private ratioOf(kind: MotionLink['kind'], [a, b]: readonly [number, number]): number {
     if (kind === 'rack') return (Math.PI * a) / 360;
+    if (kind === 'carrier' || kind === 'planet') return planetaryRatios(a, b)[kind];
     const ratio = a / (b || 1);
     return kind === 'gear' ? -ratio : ratio;
   }

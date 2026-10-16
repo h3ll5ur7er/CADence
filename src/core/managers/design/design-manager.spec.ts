@@ -505,6 +505,8 @@ describe('DesignManager', () => {
         expect(gear).toBeGreaterThan(Math.PI * 8.75 ** 2 * 5);
         expect(gear).toBeLessThan(Math.PI * 11 ** 2 * 5);
         expect(Math.abs(gear - Math.PI * 10 ** 2 * 5) / (Math.PI * 10 ** 2 * 5)).toBeLessThan(0.05);
+        // Smooth flanks, root arcs and fillets: at most 8 faces per tooth (CAD-107), and the two ends.
+        expect(session.state().bodies[0]?.faces.length).toBeLessThanOrEqual(20 * 8 + 2);
         // Helical teeth twist but keep the volume.
         unwrap(await session.execute({ type: 'edit-feature', feature: { ...(session.state().document.timeline.find((i) => i.id === 'part') as PartFeature), part: { kind: 'gear', module: '1 mm', teeth: '20', width: '5 mm', bore: '0 mm', pressureAngle: '20 deg', helixAngle: '20 deg' } } }));
         expect(await volume()).toBeCloseTo(gear, -1);
@@ -513,7 +515,31 @@ describe('DesignManager', () => {
         // A rack: about its length times the height to the pitch line, times the width.
         const rack = await part({ kind: 'rack', module: '1 mm', teeth: '5', width: '5 mm', height: '8 mm', pressureAngle: '20 deg' });
         expect(Math.abs(rack - 5 * Math.PI * 8 * 5) / (5 * Math.PI * 8 * 5)).toBeLessThan(0.03);
+        unwrap(await session.execute({ type: 'delete-item', itemId: 'part' }));
+        unwrap(await session.execute({ type: 'delete-item', itemId: 'sp' }));
+        // A ring gear (CAD-98): the ring less about the pitch circle, teeth on the inside.
+        const ringGear = await part({ kind: 'ring-gear', module: '1 mm', teeth: '40', width: '5 mm', outside: '50 mm', pressureAngle: '20 deg', helixAngle: '0 deg' });
+        const solid = ring(40, 50, 5);
+        expect(Math.abs(ringGear - solid) / solid).toBeLessThan(0.05);
+        expect(session.state().bodies[0]?.faces.length).toBeLessThanOrEqual(40 * 6 + 3);
         // Twisting the teeth of a helical gear is slow on a CI runner.
+      }, 60_000);
+
+      it('meshes a planet inside a ring gear at the centre distance (CAD-98)', async () => {
+        const ringGear: PartSpec = { kind: 'ring-gear', module: '2 mm', teeth: '60', width: '6 mm', outside: '140 mm', pressureAngle: '20 deg', helixAngle: '0 deg' };
+        await part(ringGear);
+        const planet: PartSpec = { kind: 'gear', module: '2 mm', teeth: '18', width: '6 mm', bore: '0 mm', pressureAngle: '20 deg', helixAngle: '0 deg' };
+        /** What is left of the ring where the planet overlaps it. */
+        const placed = async (x: number) => {
+          unwrap(await session.execute({ type: 'add-sketch-geometry', sketchId: 'sp', entities: [{ id: `p${x}`, kind: 'point', x, y: 0 }], constraints: [] }));
+          unwrap(await session.execute({ type: 'add-feature', feature: { id: `planet${x}`, type: 'part', name: '', suppressed: false, part: planet, sketch: 'sp', points: [`p${x}`], angle: '0 deg', flip: false, operation: 'intersect' } }));
+          const left = await volume();
+          unwrap(await session.execute({ type: 'delete-item', itemId: `planet${x}` }));
+          return left;
+        };
+        // At 2 × (60 − 18) / 2 = 42 mm its teeth sit in the ring's spaces; 1 mm further out they bite.
+        expect(await placed(42)).toBeLessThan(0.5);
+        expect(await placed(43)).toBeGreaterThan(10);
       }, 60_000);
 
       it('makes parts for printing, and fits pegs and slots', async () => {

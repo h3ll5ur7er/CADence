@@ -1,6 +1,7 @@
 import type { NamedShape } from '@core/access/shape';
 import type { PlaneFrame, Vec2, Vec3 } from '@core/contracts';
 import { draw, drawCircle, type Drawing, drawPolysides, drawRectangle, Plane, type Shape3D } from 'replicad';
+import { gearDrawing, rackOutline, ringGearDrawing } from './gears';
 import { add3, cross3, normalOf, scale3, toWorld } from './geometry';
 import { nameShape } from './naming';
 
@@ -18,6 +19,8 @@ export type PartSolid =
   /** A round post (magnet, peg), chamfered at the top. */
   | { readonly kind: 'post'; readonly diameter: number; readonly height: number; readonly chamfer: number }
   | { readonly kind: 'gear'; readonly module: number; readonly teeth: number; readonly width: number; readonly bore: number; readonly pressureAngle: number; readonly helixAngle: number }
+  /** An internal gear: a ring of `outside` diameter with the teeth on the inside. */
+  | { readonly kind: 'ring-gear'; readonly module: number; readonly teeth: number; readonly width: number; readonly outside: number; readonly pressureAngle: number; readonly helixAngle: number }
   | { readonly kind: 'rack'; readonly module: number; readonly teeth: number; readonly width: number; readonly height: number; readonly pressureAngle: number }
   | { readonly kind: 'snap-fit'; readonly length: number; readonly width: number; readonly thickness: number; readonly hook: number }
   | { readonly kind: 'dovetail'; readonly width: number; readonly depth: number; readonly length: number; readonly angle: number }
@@ -41,58 +44,6 @@ function polygon(points: readonly Vec2[]): Drawing {
   let pen = draw([first[0], first[1]]);
   for (const p of rest) pen = pen.lineTo([p[0], p[1]]);
   return pen.close();
-}
-
-/** The outline of a spur gear with involute teeth, a tooth centred on the x axis. */
-export function gearOutline(module: number, teeth: number, pressureAngle: number): Vec2[] {
-  const z = Math.round(teeth);
-  if (z < 6) throw new PartError('A gear needs at least 6 teeth.');
-  const r = (module * z) / 2;
-  const base = r * Math.cos(pressureAngle);
-  const tip = r + module;
-  const root = r - 1.25 * module;
-  if (!(root > 0)) throw new PartError('The gear is too small for its module.');
-  const involute = (a: number) => Math.tan(a) - a;
-  // Half a tooth's angle at a radius: half the circular pitch at the pitch circle, narrowing outwards.
-  const half = (rho: number) => Math.PI / (2 * z) + involute(pressureAngle) - involute(Math.acos(Math.min(1, base / rho)));
-  const start = Math.max(base, root);
-  const steps = 8;
-  const flank = Array.from({ length: steps + 1 }, (_, i) => start + ((tip - start) * i) / steps);
-  const polar = (rho: number, angle: number): Vec2 => [rho * Math.cos(angle), rho * Math.sin(angle)];
-  const points: Vec2[] = [];
-  for (let k = 0; k < z; k++) {
-    const turn = (2 * Math.PI * k) / z;
-    if (base > root) points.push(polar(root, turn - half(start)));
-    for (const rho of flank) points.push(polar(rho, turn - half(rho)));
-    for (const rho of [...flank].reverse()) points.push(polar(rho, turn + half(rho)));
-    if (base > root) points.push(polar(root, turn + half(start)));
-    // Along the root circle to the next tooth.
-    const from = turn + half(start);
-    const to = turn + (2 * Math.PI) / z - half(start);
-    for (let i = 1; i < 4; i++) points.push(polar(root, from + ((to - from) * i) / 4));
-  }
-  return points;
-}
-
-/** The outline of a gear rack along x, the pitch line at y = height, teeth upwards. */
-function rackOutline(module: number, teeth: number, height: number, pressureAngle: number): Vec2[] {
-  const n = Math.round(teeth);
-  if (n < 1) throw new PartError('A rack needs at least one tooth.');
-  const pitch = Math.PI * module;
-  const [top, bottom] = [height + module, height - 1.25 * module];
-  if (!(bottom > 0)) throw new PartError('The rack is not high enough for its teeth.');
-  const slope = Math.tan(pressureAngle);
-  const [tipHalf, rootHalf] = [pitch / 4 - module * slope, pitch / 4 + 1.25 * module * slope];
-  const length = n * pitch;
-  const points: Vec2[] = [
-    [0, 0],
-    [length, 0],
-  ];
-  for (let k = n - 1; k >= 0; k--) {
-    const c = (k + 0.5) * pitch;
-    points.push([Math.min(length, c + rootHalf), bottom], [c + tipHalf, top], [c - tipHalf, top], [Math.max(0, c - rootHalf), bottom]);
-  }
-  return points;
 }
 
 /** One part at the origin of its local coordinates (see `PartSolid`). */
@@ -126,11 +77,20 @@ function partShape(solid: PartSolid, origin: Vec3, x: Vec3, y: Vec3, n: Vec3): S
       const section = polygon(c > 0 ? [[0, 0], [r, 0], [r, h - c], [r - c, h], [0, h]] : [[0, 0], [r, 0], [r, h], [0, h]]);
       return section.sketchOnPlane(new Plane([...origin], [...x], [...scale3(y, -1)])).revolve([...n], { origin: [...origin] }) as Shape3D;
     }
-    case 'gear': {
+    case 'gear':
+    case 'ring-gear': {
       const width = positive(solid.width, 'width');
-      let outline: Drawing = polygon(gearOutline(positive(solid.module, 'module'), solid.teeth, solid.pressureAngle));
-      if (solid.bore > 0) outline = outline.cut(drawCircle(solid.bore / 2));
-      const pitchRadius = (solid.module * Math.round(solid.teeth)) / 2;
+      const module = positive(solid.module, 'module');
+      let outline: Drawing;
+      if (solid.kind === 'gear') {
+        outline = gearDrawing(module, solid.teeth, solid.pressureAngle);
+        if (solid.bore > 0) outline = outline.cut(drawCircle(solid.bore / 2));
+      } else {
+        const root = (module * Math.round(solid.teeth)) / 2 + 1.25 * module;
+        if (!(solid.outside / 2 > root + module)) throw new PartError(`The outside diameter must be more than ${Math.round((2 * (root + module)) * 100) / 100} mm for these teeth.`);
+        outline = drawCircle(solid.outside / 2).cut(ringGearDrawing(module, solid.teeth, solid.pressureAngle));
+      }
+      const pitchRadius = (module * Math.round(solid.teeth)) / 2;
       // Helical teeth: the outline turns as it rises, by the helix angle at the pitch circle.
       const twist = solid.helixAngle ? ((width * Math.tan(solid.helixAngle)) / pitchRadius) * (180 / Math.PI) : 0;
       return outline.sketchOnPlane(on()).extrude(width, twist ? { twistAngle: twist } : {}) as Shape3D;

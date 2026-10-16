@@ -7,6 +7,7 @@ import { DraftRibError, draftFaces, ribTool } from './draft-rib';
 import { drawingView, type ViewGeometry, type ViewRequest } from './drawing-view';
 import { edgeFlanges, FlangeError } from './flanges';
 import { HoleError, holeTool, threadGroove, threadPlacement } from './holes';
+import { GearError } from './gears';
 import { PartError, partTool } from './parts';
 import { add3, cross3, dot3, normalize3, scale3, sub3, toPlane } from './geometry';
 import type { AxisInput, BodyState, ModelingEngine, ModelingOutcome, ModelingRequest, ProjectedCurve, ToolInput } from './modeling-engine';
@@ -34,7 +35,7 @@ export class OcctModelingEngine implements ModelingEngine {
     try {
       outcome = this.compute(request);
     } catch (error) {
-      const message = error instanceof FeatureError || error instanceof BooleanError || error instanceof BodyOperationError || error instanceof HoleError || error instanceof PartError || error instanceof DraftRibError || error instanceof FlangeError ? error.message : `The geometry kernel could not build this feature (${describe(error)}).`;
+      const message = error instanceof FeatureError || error instanceof BooleanError || error instanceof GearError || error instanceof BodyOperationError || error instanceof HoleError || error instanceof PartError || error instanceof DraftRibError || error instanceof FlangeError ? error.message : `The geometry kernel could not build this feature (${describe(error)}).`;
       outcome = { bodies: request.bodies, error: message };
     }
     this.remember(request.key, outcome);

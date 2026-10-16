@@ -8,6 +8,9 @@ import {
   metric,
   metricSizes,
   partLabels,
+  planetaryRatios,
+  ringGearMesh,
+  ringGearMinimumDifference,
   type PartKind,
   type PartSpec,
   type Feature,
@@ -121,15 +124,22 @@ export class FeatureDialog {
     { label: `${size} tapping (⌀${metric[size].tapDrill})`, diameter: metric[size].tapDrill },
     { label: `${size} heat-set insert (⌀${metric[size].insert.hole})`, diameter: metric[size].insert.hole },
   ]);
-  /** Teeth of the gear to mesh with, for the centre distance shown under a gear. */
+  /** Teeth of the gear (or of the planet in a ring gear) to mesh with, for the centre distance shown under a gear. */
   protected readonly mateTeeth = signal(20);
   protected readonly mate = computed(() => {
     const f = this.feature();
-    if (f?.type !== 'part' || f.part.kind !== 'gear') return undefined;
+    if (f?.type !== 'part' || (f.part.kind !== 'gear' && f.part.kind !== 'ring-gear')) return undefined;
     const [module, teeth, mate] = [parseFloat(f.part.module), Math.round(parseFloat(f.part.teeth)), this.mateTeeth()];
     if (!(module > 0 && teeth > 0 && mate > 0)) return undefined;
+    const round = (v: number) => Math.round(v * 10000) / 10000;
+    if (f.part.kind === 'ring-gear') {
+      // A tooth space faces the planet's tooth along X: no turn.
+      const { distance, fits } = ringGearMesh(module, teeth, mate);
+      const sun = teeth - 2 * mate;
+      return { distance, turn: 0, fits: fits && sun > 0, difference: ringGearMinimumDifference, sun, carrier: round(planetaryRatios(sun, teeth).carrier) };
+    }
     // With an even number of teeth, a tooth faces the first gear: turn it by half a tooth to mesh.
-    return { distance: centreDistance(module, teeth, mate), turn: mate % 2 === 0 ? 180 / mate : 0 };
+    return { distance: centreDistance(module, teeth, mate), turn: mate % 2 === 0 ? 180 / mate : 0, fits: true, difference: 0, sun: 0, carrier: 0 };
   });
 
   protected setPart(changes: Partial<Record<string, string>>): void {

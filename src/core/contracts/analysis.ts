@@ -31,6 +31,8 @@ export interface PrintProfile {
   readonly nozzle: number;
   readonly layerHeight: number;
   readonly maxOverhang: number;
+  /** Added to the diameter of holes (and taken off pegs) so parts fit as designed on this printer (mm). */
+  readonly holeCompensation?: number;
 }
 
 /** A laser cutter: bed (mm), kerf (width of the cut, mm) and sheet thickness (mm). */

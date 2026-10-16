@@ -1,3 +1,5 @@
+import type { FitClass, PartSpec } from './parts';
+
 /**
  * Features: the 3D steps of a component's timeline (docs/Architecture/Document-model.md#features).
  * Numeric values are expressions, evaluated with the component's parameters.
@@ -109,6 +111,21 @@ export interface HoleFeature extends FeatureBase {
   readonly teardrop: boolean;
   /** Print-friendly: one layer left over the hole at the bottom of a counterbore, drilled out after printing. */
   readonly bridge: boolean;
+  /** How tightly what goes in fits: its allowance (and the printer's hole compensation) widens the hole. */
+  readonly fit?: FitClass;
+}
+
+/** A part (standard, gear or for printing) at points of a sketch, on its plane (contracts/parts.ts). */
+export interface PartFeature extends FeatureBase {
+  readonly type: 'part';
+  readonly part: PartSpec;
+  readonly sketch: string;
+  readonly points: readonly string[];
+  /** Turned about the plane's normal. */
+  readonly angle: string;
+  /** Mirrored to the other side of the plane. */
+  readonly flip: boolean;
+  readonly operation: BodyOperation;
 }
 
 /** An ISO metric thread on a round face: a hole (inside) or a shaft (outside), shown as a marker or modelled. */
@@ -300,6 +317,7 @@ export interface ScaleFeature extends FeatureBase {
 }
 
 export type Feature =
+  | PartFeature
   | InsertFeature
   | BaseFlangeFeature
   | EdgeFlangeFeature

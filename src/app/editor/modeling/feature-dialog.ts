@@ -1,7 +1,15 @@
-import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import {
   type AxisRef,
+  bearings,
   type BodyOperation,
+  centreDistance,
+  defaultPart,
+  metric,
+  metricSizes,
+  partLabels,
+  type PartKind,
+  type PartSpec,
   type Feature,
   isSketch,
   isRepeatable,
@@ -40,6 +48,7 @@ const hints: Readonly<Record<Feature['type'], string>> = {
   loft: 'Click one profile in each sketch, in order; the loft blends through their outlines.',
   sweep: 'Click the profiles to sweep; the path is the curves of another sketch, starting at the profile.',
   'path-pattern': 'Repeats the selected features along the curves of a sketch, evenly spaced.',
+  part: 'Parts go at the points of a sketch (drawn with the Point tool), standing on its plane. Flip puts them on the other side.',
   hole: 'Holes go at the points of a sketch (drawn with the Point tool), into the material below it.',
   thread: 'Click the wall of a hole or a shaft. A thread is shown on the face; modelled threads are cut.',
   draft: 'Click the faces to taper. They lean away from the pull direction (the neutral plane\'s normal) by the angle.',
@@ -102,6 +111,35 @@ export class FeatureDialog {
 
   /** Sketches with points of their own, for holes. */
   protected readonly holeSketches = computed(() => this.pathSketches().filter((s) => holePoints(this.store.state()?.sketches.get(s.id)?.sketch).length > 0));
+
+  protected readonly metricSizes = metricSizes;
+  protected readonly bearingSizes = Object.keys(bearings);
+  protected readonly partKinds = Object.entries(partLabels).map(([value, label]) => ({ value: value as PartKind, label }));
+  /** Hole sizes for each screw: clearance, tapping and heat-set insert holes (mm). */
+  protected readonly holePresets = metricSizes.flatMap((size) => [
+    { label: `${size} clearance (⌀${metric[size].clearance})`, diameter: metric[size].clearance },
+    { label: `${size} tapping (⌀${metric[size].tapDrill})`, diameter: metric[size].tapDrill },
+    { label: `${size} heat-set insert (⌀${metric[size].insert.hole})`, diameter: metric[size].insert.hole },
+  ]);
+  /** Teeth of the gear to mesh with, for the centre distance shown under a gear. */
+  protected readonly mateTeeth = signal(20);
+  protected readonly mate = computed(() => {
+    const f = this.feature();
+    if (f?.type !== 'part' || f.part.kind !== 'gear') return undefined;
+    const [module, teeth, mate] = [parseFloat(f.part.module), Math.round(parseFloat(f.part.teeth)), this.mateTeeth()];
+    if (!(module > 0 && teeth > 0 && mate > 0)) return undefined;
+    // With an even number of teeth, a tooth faces the first gear: turn it by half a tooth to mesh.
+    return { distance: centreDistance(module, teeth, mate), turn: mate % 2 === 0 ? 180 / mate : 0 };
+  });
+
+  protected setPart(changes: Partial<Record<string, string>>): void {
+    const f = this.feature();
+    if (f?.type === 'part') this.set({ part: { ...f.part, ...changes } as PartSpec });
+  }
+
+  protected setPartKind(kind: PartKind): void {
+    this.set({ part: defaultPart(kind), ...(kind === 'living-hinge' || kind === 'dovetail' ? { operation: 'cut' as const } : {}) });
+  }
 
   protected setHoleSketch(id: string): void {
     this.set({ sketch: id, points: holePoints(this.store.state()?.sketches.get(id)?.sketch) });

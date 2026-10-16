@@ -6,6 +6,7 @@ import { BodyOperationError, combineBodies, splitBody, transformBodies } from '.
 import { DraftRibError, draftFaces, ribTool } from './draft-rib';
 import { edgeFlanges, FlangeError } from './flanges';
 import { HoleError, holeTool, threadGroove, threadPlacement } from './holes';
+import { PartError, partTool } from './parts';
 import { add3, cross3, dot3, normalize3, scale3, sub3, toPlane } from './geometry';
 import type { AxisInput, BodyState, ModelingEngine, ModelingOutcome, ModelingRequest, ProjectedCurve, ToolInput } from './modeling-engine';
 import { nameShape, namedSurfaces } from './naming';
@@ -31,7 +32,7 @@ export class OcctModelingEngine implements ModelingEngine {
     try {
       outcome = this.compute(request);
     } catch (error) {
-      const message = error instanceof FeatureError || error instanceof BodyOperationError || error instanceof HoleError || error instanceof DraftRibError || error instanceof FlangeError ? error.message : `The geometry kernel could not build this feature (${describe(error)}).`;
+      const message = error instanceof FeatureError || error instanceof BodyOperationError || error instanceof HoleError || error instanceof PartError || error instanceof DraftRibError || error instanceof FlangeError ? error.message : `The geometry kernel could not build this feature (${describe(error)}).`;
       outcome = { bodies: request.bodies, error: message };
     }
     this.remember(request.key, outcome);
@@ -153,6 +154,13 @@ export class OcctModelingEngine implements ModelingEngine {
         const toolKey = `${request.key}:tool`;
         this.shapes.put(toolKey, tool);
         return { ...this.store(combine(bodies, tool, 'cut', request.feature, request.key)), toolKey };
+      }
+      case 'part': {
+        const tool = partTool(request.feature, request.frame, request.points, request.angle, request.flip, request.solid);
+        if (request.operation === 'cut' && !bodies.length) throw new FeatureError('Cutting needs a body: there is none yet.');
+        const toolKey = `${request.key}:tool`;
+        this.shapes.put(toolKey, tool);
+        return { ...this.store(combine(bodies, tool, request.operation, request.feature, request.key)), toolKey };
       }
       case 'thread':
         return this.thread(request, bodies);

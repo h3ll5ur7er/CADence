@@ -1,4 +1,5 @@
 import {
+  defaultPart,
   type Feature,
   type FeatureType,
   generatorOf,
@@ -43,6 +44,7 @@ export const featureLabels: Readonly<Record<FeatureType, string>> = {
   sweep: 'Sweep',
   'path-pattern': 'Pattern along a path',
   hole: 'Hole',
+  part: 'Part',
   thread: 'Thread',
   draft: 'Draft',
   rib: 'Rib',
@@ -166,6 +168,12 @@ export function defaultFeature(type: FeatureType, id: string, state: DesignState
         bridge: false,
       };
     }
+    case 'part': {
+      // Like holes: at the points of the latest sketch with points of their own.
+      const partSketch = active.filter(isSketch).filter((s) => holePoints(state.sketches.get(s.id)?.sketch).length > 0).at(-1);
+      const points = holePoints(partSketch && state.sketches.get(partSketch.id)?.sketch);
+      return { ...base, type, part: defaultPart('screw'), sketch: partSketch?.id ?? '', points, angle: '0 deg', flip: false, operation: state.bodies.length ? 'join' : 'new-body' };
+    }
     case 'thread':
       return { ...base, type, face: { kind: 'face', body: '', name: '' }, size: 'M6', length: '', modelled: false, flip: false };
     case 'draft':
@@ -269,6 +277,7 @@ export function selectionOf(draft: FeatureDraft): Pick[] {
     case 'scale':
     case 'path-pattern':
     case 'hole':
+    case 'part':
       return [];
   }
 }

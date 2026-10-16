@@ -5,6 +5,7 @@ export * from './document';
 export * from './feature';
 export type * from './events';
 export * from './ids';
+export * from './parts';
 export type * from './mesh';
 export type * from './project';
 export { resultStamp } from './project';

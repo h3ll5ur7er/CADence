@@ -13,6 +13,8 @@ import {
   type ImportFormat,
   lengthExpression,
   type PlaneFrame,
+  type PartFeature,
+  type PartSpec,
   type PlaneRef,
   type Result,
   type SketchPoint,
@@ -467,6 +469,81 @@ describe('DesignManager', () => {
       return profile;
     }
     const volume = async () => (await session.properties()).reduce((sum, b) => sum + b.volume, 0);
+
+    describe('parts', () => {
+      /** A sketch with a point at the origin, and a part there as a new body; returns the part's volume. */
+      async function part(spec: PartSpec, options: { operation?: 'new-body' | 'cut'; plane?: PlaneRef; at?: [number, number] } = {}): Promise<number> {
+        const [x, y] = options.at ?? [0, 0];
+        unwrap(await session.execute({ type: 'create-sketch', id: 'sp', plane: options.plane ?? 'XY' }));
+        unwrap(await session.execute({ type: 'add-sketch-geometry', sketchId: 'sp', entities: [{ id: 'at', kind: 'point', x, y }], constraints: [] }));
+        const before = await volume();
+        unwrap(await session.execute({ type: 'add-feature', feature: { id: 'part', type: 'part', name: '', suppressed: false, part: spec, sketch: 'sp', points: ['at'], angle: '0 deg', flip: false, operation: options.operation ?? 'new-body' } }));
+        return Math.abs((await volume()) - before);
+      }
+      const ring = (inner: number, outer: number, height: number) => (Math.PI / 4) * (outer ** 2 - inner ** 2) * height;
+      const hexagon = (acrossFlats: number) => (Math.sqrt(3) / 2) * acrossFlats ** 2;
+
+      it('makes standard parts by size: screws, nuts, washers, inserts, magnets, bearings', async () => {
+        expect(await part({ kind: 'nut', size: 'M3' })).toBeCloseTo((hexagon(5.5) - Math.PI * 1.5 ** 2) * 2.4, 1);
+        unwrap(await session.execute({ type: 'delete-item', itemId: 'part' }));
+        unwrap(await session.execute({ type: 'delete-item', itemId: 'sp' }));
+        expect(await part({ kind: 'washer', size: 'M4' })).toBeCloseTo(ring(4.3, 9, 0.8), 1);
+        unwrap(await session.execute({ type: 'delete-item', itemId: 'part' }));
+        unwrap(await session.execute({ type: 'delete-item', itemId: 'sp' }));
+        expect(await part({ kind: 'bearing', size: '608' })).toBeCloseTo(ring(8, 22, 7), 0);
+        unwrap(await session.execute({ type: 'delete-item', itemId: 'part' }));
+        unwrap(await session.execute({ type: 'delete-item', itemId: 'sp' }));
+        // Head 5.5 × 3 less a 2.5 mm hex socket 1.8 deep, and a ⌀3 × 10 shank.
+        expect(await part({ kind: 'screw', size: 'M3', length: '10 mm' })).toBeCloseTo(Math.PI * 2.75 ** 2 * 3 - hexagon(2.5) * 1.8 + Math.PI * 1.5 ** 2 * 10, 0);
+        expect(session.state().bodies[0]?.faces.length).toBeGreaterThan(6);
+      });
+
+      it('makes gears and racks', async () => {
+        // Between the root and tip circles: about the pitch circle's area times the width.
+        const gear = await part({ kind: 'gear', module: '1 mm', teeth: '20', width: '5 mm', bore: '0 mm', pressureAngle: '20 deg', helixAngle: '0 deg' });
+        expect(gear).toBeGreaterThan(Math.PI * 8.75 ** 2 * 5);
+        expect(gear).toBeLessThan(Math.PI * 11 ** 2 * 5);
+        expect(Math.abs(gear - Math.PI * 10 ** 2 * 5) / (Math.PI * 10 ** 2 * 5)).toBeLessThan(0.05);
+        // Helical teeth twist but keep the volume.
+        unwrap(await session.execute({ type: 'edit-feature', feature: { ...(session.state().document.timeline.find((i) => i.id === 'part') as PartFeature), part: { kind: 'gear', module: '1 mm', teeth: '20', width: '5 mm', bore: '0 mm', pressureAngle: '20 deg', helixAngle: '20 deg' } } }));
+        expect(await volume()).toBeCloseTo(gear, -1);
+      });
+
+      it('makes parts for printing, and fits pegs and slots', async () => {
+        // A ⌀5 peg made 0.15 smaller (snug fit), chamfered 0.4 at the top.
+        const peg = await part({ kind: 'peg', diameter: '5 mm', height: '6 mm', fit: 'snug' });
+        const r = (5 - 0.15) / 2;
+        expect(peg).toBeCloseTo(Math.PI * r ** 2 * 5.6 + (Math.PI / 3) * 0.4 * (r ** 2 + r * (r - 0.4) + (r - 0.4) ** 2), 1);
+        unwrap(await session.execute({ type: 'delete-item', itemId: 'part' }));
+        unwrap(await session.execute({ type: 'delete-item', itemId: 'sp' }));
+        // A dovetail 8 wide, 4 deep at 15°, 30 long.
+        const tail = await part({ kind: 'dovetail', width: '8 mm', depth: '4 mm', length: '30 mm', angle: '15 deg', fit: 'snug' });
+        expect(tail).toBeCloseTo((8 + 4 * Math.tan(Math.PI / 12)) * 4 * 30, 1);
+        unwrap(await session.execute({ type: 'delete-item', itemId: 'part' }));
+        unwrap(await session.execute({ type: 'delete-item', itemId: 'sp' }));
+        expect(await part({ kind: 'snap-fit', length: '12 mm', width: '6 mm', thickness: '1.6 mm', hook: '1 mm' })).toBeCloseTo((1.6 * 12 + 0.5 * 1 * 1.5) * 6, 1);
+      });
+
+      it('cuts living hinges and fitted dovetail slots into a plate', async () => {
+        await plate();
+        // At the middle of the plate's top face (where its sketches have their origin): a 40 × 6 groove 4 deep.
+        const top: PlaneRef = { face: { kind: 'face', body: 'e1', name: 'f:e1:end' } };
+        const groove = await part({ kind: 'living-hinge', length: '40 mm', width: '6 mm', depth: '4 mm' }, { operation: 'cut', plane: top });
+        expect(groove).toBeCloseTo(40 * 6 * 4, 1);
+      });
+    });
+
+    it('widens holes by their fit and the printer\'s compensation', async () => {
+      await plate();
+      unwrap(await session.execute({ type: 'set-process', process: { kind: 'print', name: 'Test', bed: [200, 200, 200], nozzle: 0.4, layerHeight: 0.2, maxOverhang: 45, holeCompensation: 0.1 } }));
+      unwrap(await session.execute({ type: 'create-sketch', id: 'sh', plane: { face: { kind: 'face', body: 'e1', name: 'f:e1:end' } } }));
+      unwrap(await session.execute({ type: 'add-sketch-geometry', sketchId: 'sh', entities: [{ id: 'hp', kind: 'point', x: 0, y: 0 }], constraints: [] }));
+      const before = await volume();
+      const hole = { id: 'h1', type: 'hole', name: '', suppressed: false, sketch: 'sh', points: ['hp'], kind: 'simple', diameter: '5 mm', extent: 'through', depth: '0 mm', boreDiameter: '0 mm', boreDepth: '0 mm', sinkDiameter: '0 mm', sinkAngle: '90 deg', teardrop: false, bridge: false, fit: 'loose' } as const;
+      unwrap(await session.execute({ type: 'add-feature', feature: hole }));
+      // ⌀5 + 0.3 (loose) + 0.1 (printer) through 6 mm.
+      expect(before - (await volume())).toBeCloseTo(Math.PI * 2.7 ** 2 * 6, 1);
+    });
 
     it('extrudes a sketch profile into a body driven by parameters', async () => {
       await plate();

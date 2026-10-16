@@ -82,7 +82,7 @@ A component optionally stores what it is made of and on which machine ([[src/cor
 ```ts
 interface Material { name: string; density: number }   // g/cm³; PLA (1.24) when absent
 type ManufacturingProfile =
-  | { kind: 'print'; name; bed: [x, y, z]; nozzle; layerHeight; maxOverhang }   // mm, overhang in degrees from vertical
+  | { kind: 'print'; name; bed: [x, y, z]; nozzle; layerHeight; maxOverhang; holeCompensation? }   // mm, overhang in degrees from vertical; holeCompensation widens fitted holes
   | { kind: 'laser'; name; bed: [x, y]; kerf; thickness };                    // mm
 ```
 
@@ -145,7 +145,8 @@ Each feature type is its own interface in [[src/core/contracts/feature.ts]]. All
 | `loft` | sections: a profile of each of two or more sketches, in order | ruled (straight) or smooth; operation |
 | `sweep` | sketch, profile ids, path (a sketch whose curves form one chain) | operation |
 | `path-pattern` | features to repeat, path (a sketch) | count; align (turn with the path) |
-| `hole` | sketch and its points (centres) | kind (simple, counterbore, countersink); diameter; through or a depth; counterbore diameter and depth; countersink diameter and angle; teardrop; bridge |
+| `hole` | sketch and its points (centres) | kind (simple, counterbore, countersink); diameter; through or a depth; counterbore diameter and depth; countersink diameter and angle; teardrop; bridge; fit (`press`, `snug`, `loose`: widened by `fitAllowance` plus the print profile's hole compensation) |
+| `part` | sketch and its points | `part`: a `PartSpec` ([[src/core/contracts/parts.ts]]): screw, nut, washer, insert, bearing by catalogue size; magnet; gear, rack; snap-fit, peg, dovetail, living hinge, with expressions; angle; flip; operation |
 | `thread` | a round face | ISO metric size (`metricThreads`); length (empty: the whole face); modelled; flip |
 | `draft` | faces, neutral plane | angle |
 | `rib` | sketch (open curves) | thickness; depth; direction |

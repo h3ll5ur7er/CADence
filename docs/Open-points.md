@@ -55,10 +55,11 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 - [ ] **NURBS**
 - [ ] **Scale bodies per axis.** Needs `BRepBuilderAPI_GTransform`, missing from the bundled OpenCascade build; a custom `replicad-opencascadejs` build could add it (and `gp_Cone`, `gp_Torus`). *(ADR-28)*
 - [ ] **Rib up to the next face** instead of a set depth, and **drill points** at the bottom of blind holes. *(ADR-28 trade-offs)*
-- [X] **Standard parts library:** screws, nuts, washers, bearings, heat-set inserts and magnets by size (ISO/DIN), inserted into components or assemblies, with matching holes. *(new)* → [[CAD-71]]
-- [X] **Gear generator:** spur, helical and rack gears from module and number of teeth, with matching pairs. *(new)* → [[CAD-72]]
-- [X] **Print-friendly generators:** snap fits, living hinges, dovetails and press-fit pegs. *(new)* → [[CAD-73]]
-- [X] **Clearances for prints:** fit classes (press, snug, loose) and a printer-specific offset applied to holes and pegs. *(new)* → [[CAD-74]]
+- [X] **Standard parts library:** screws, nuts, washers, bearings, heat-set inserts and magnets by size (ISO/DIN), inserted into components or assemblies, with matching holes. *(new)* → [[CAD-71]] ✅
+- [X] **Gear generator:** spur, helical and rack gears from module and number of teeth, with matching pairs. *(new)* → [[CAD-72]] ✅
+- [X] **Print-friendly generators:** snap fits, living hinges, dovetails and press-fit pegs. *(new)* → [[CAD-73]] ✅
+- [X] **Clearances for prints:** fit classes (press, snug, loose) and a printer-specific offset applied to holes and pegs. *(new)* → [[CAD-74]] ✅
+- [ ] **Standard parts as assembly instances** from a shared library, and modelled screw threads. *(ADR-35 trade-off)*
 - [ ] **Lithophanes and image embossing:** a picture turned into relief on a face. *(new)*
 - [ ] **Textures:** knurling and patterned surfaces on faces. *(new)*
 - [ ] **Direct editing of imported solids:** push and pull faces, delete holes and fillets of a STEP part without its history. *(new)*

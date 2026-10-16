@@ -77,6 +77,7 @@ const featureMenus: readonly { id: string; label: string; icon: IconName; items:
       { type: 'loft', icon: 'loft' },
       { type: 'sweep', icon: 'sweep' },
       { type: 'hole', icon: 'hole' },
+      { type: 'part', icon: 'part' },
       { type: 'rib', icon: 'rib' },
       { type: 'thread', icon: 'thread' },
       { type: 'base-flange', icon: 'sheet' },
@@ -109,6 +110,7 @@ const featureMenus: readonly { id: string; label: string; icon: IconName; items:
 ];
 
 const itemIcons: Readonly<Record<TimelineItem['type'], IconName>> = {
+  part: 'part',
   insert: 'imported',
   sketch: 'sketch',
   extrude: 'extrude',

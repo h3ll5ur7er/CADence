@@ -50,7 +50,7 @@ function webView2Report(): string {
   const script = [
     "Get-CimInstance Win32_Process -Filter \"name='msedgewebview2.exe'\" | Select-Object -First 3 -ExpandProperty CommandLine",
     "Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -ge 9300 -and $_.LocalPort -le 9400 } | Format-Table LocalAddress, LocalPort, OwningProcess -AutoSize | Out-String",
-    "foreach ($key in 'HKLM:\SOFTWARE\Policies\Microsoft\Edge', 'HKLM:\SOFTWARE\Policies\Microsoft\Edge\WebView2') { if (Test-Path $key) { \"$key\"; Get-ItemProperty $key | Out-String } }",
+    "foreach ($key in 'HKLM:/SOFTWARE/Policies/Microsoft/Edge', 'HKLM:/SOFTWARE/Policies/Microsoft/Edge/WebView2') { if (Test-Path $key) { \"$key\"; Get-ItemProperty $key | Out-String } }",
   ].join('; ');
   const report = spawnSync('powershell', ['-NoProfile', '-Command', script], { encoding: 'utf8' });
   return `WebView2: ${report.stdout}${report.stderr}`;

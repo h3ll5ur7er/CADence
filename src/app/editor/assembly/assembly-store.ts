@@ -1,10 +1,11 @@
-import { computed, DestroyRef, inject, Injectable, signal } from '@angular/core';
-import { type DocumentId, type DocumentSummary, type Interference, isImportedModel, type Joint, jointDofs, type JointOrigin, type JointType, type Matrix4, type MotionFrame, type ProjectId, sourceKey } from '@core/contracts';
-import type { AssemblyCommand, AssemblyFormat, AssemblySession, AssemblyState } from '@core/managers/assembly';
+import { computed, DestroyRef, inject, Injectable, resource, signal } from '@angular/core';
+import { type DocumentId, type DocumentSummary, type InstancePattern, type Interference, isImportedModel, type Joint, jointDofs, type JointOrigin, type JointType, type Matrix4, type Measurement, type MotionFrame, type ProjectId, type Result, sourceKey } from '@core/contracts';
+import type { AssemblyCommand, AssemblyFormat, AssemblyProperties, AssemblySession, AssemblyState, PlacedRef } from '@core/managers/assembly';
 import { newId } from '@core/utilities/identity';
+import { compose, fromFrame, invertRigid, rotationVector, translation, translationOf } from '@core/utilities/math';
 import { ASSEMBLY_MANAGER, PROJECT_MANAGER } from '../../core.providers';
 import type { Pick } from '../../viewport/picking';
-import type { PartDisplay } from '../../viewport/viewport-scene';
+import type { MoveHandle, PartDisplay } from '../../viewport/viewport-scene';
 
 /** One side of a joint being drawn; flat faces are remembered to mate them face to face. */
 export interface DraftSide {
@@ -22,7 +23,10 @@ export interface JointDraft {
 }
 
 export type AssemblySelection = { readonly kind: 'instance' | 'joint' | 'study'; readonly id: string } | undefined;
-export type AssemblyPanel = 'joint' | 'interference' | undefined;
+export type AssemblyPanel = 'joint' | 'interference' | 'measure' | 'pattern' | undefined;
+
+/** The move handle of the selected instance: free ones move anywhere, jointed ones along their joint's free directions. */
+export type InstanceHandle = MoveHandle & { readonly instance: string; readonly joint?: Joint };
 
 /** Gap between a newly inserted instance and the ones already there, so it does not start inside them. */
 const insertGap = 20;
@@ -82,7 +86,12 @@ export class AssemblyStore {
     if (!state) return [];
     const preview = this.previewPoses();
     const flagged = new Set((this.panel() === 'interference' ? (this.interference() ?? []) : []).flatMap((i) => [i.a, i.b]));
-    return state.document.instances.flatMap((instance) => {
+    // Copies of patterns show their original's component, where the pattern puts them.
+    const copies = [...state.copies].flatMap(([id, copy]) => {
+      const original = state.document.instances.find((i) => i.id === copy.instance);
+      return original ? [{ ...original, id }] : [];
+    });
+    return [...state.document.instances, ...copies].flatMap((instance) => {
       const component = state.components.get(sourceKey(instance.component, instance.configuration));
       const transform = preview?.get(instance.id) ?? state.poses.get(instance.id);
       if (!component || !transform) return [];
@@ -91,11 +100,53 @@ export class AssemblyStore {
     });
   });
 
-  /** Faces and edges a joint origin can be put on, while a joint is drawn. */
-  readonly pickable = computed(() => new Set(this.jointDraft() ? (['face', 'edge'] as const) : (['face'] as const)));
+  /** Faces, edges and vertices picked with the measure tool, on any instance. */
+  readonly measurePicks = signal<readonly PlacedRef[]>([]);
+  readonly measurement = signal<Result<Measurement> | undefined>(undefined);
+  /** A pattern being made or changed in the pattern panel. */
+  readonly patternDraft = signal<InstancePattern | undefined>(undefined);
+
+  /** Mass, volume and centre of mass of the whole assembly, recomputed as it changes. */
+  readonly weight = resource({
+    params: () => this.state(),
+    loader: (): Promise<AssemblyProperties | undefined> => this.session?.properties() ?? Promise.resolve(undefined),
+  });
+
+  readonly handle = computed((): InstanceHandle | undefined => {
+    const state = this.state();
+    const selection = this.selection();
+    if (!state || selection?.kind !== 'instance' || this.panel()) return undefined;
+    const instance = state.document.instances.find((i) => i.id === selection.id);
+    const pose = state.poses.get(selection.id);
+    if (!instance || !pose) return undefined;
+    if (!state.placed.has(instance.id)) {
+      return instance.grounded ? undefined : { instance: instance.id, at: translation(translationOf(pose)), mode: 'translate', axes: ['X', 'Y', 'Z'] };
+    }
+    // Along the free directions of the joint that places it.
+    const joint = state.document.joints.find((j) => j.b.instance === instance.id && state.jointFrames.has(j.id));
+    const frame = joint && state.jointFrames.get(joint.id);
+    if (!joint || !frame) return undefined;
+    const dofs = jointDofs[joint.type];
+    const moves = dofs.filter((d) => d.kind === 'translate');
+    const turns = dofs.filter((d) => d.kind === 'rotate');
+    const used = moves.length ? moves : turns;
+    if (!used.length) return undefined;
+    const { u, v } = frame;
+    const n: [number, number, number] = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+    return { instance: instance.id, joint, at: fromFrame(frame.origin, u, v, n), mode: moves.length ? 'translate' : 'rotate', axes: used.map((d) => (['X', 'Y', 'Z'] as const)[d.axis]) };
+  });
+
+
+  /** Faces and edges a joint origin can be put on, while a joint is drawn; anything while measuring. */
+  readonly pickable = computed(() =>
+    new Set<'face' | 'edge' | 'vertex'>(this.panel() === 'measure' ? ['face', 'edge', 'vertex'] : this.jointDraft() ? ['face', 'edge'] : ['face']),
+  );
 
   /** The picked joint origins, shown as selected. */
   readonly picks = computed((): Pick[] => {
+    if (this.panel() === 'measure') {
+      return this.measurePicks().map((r) => (r.kind === 'face' ? { kind: 'face', body: r.body, name: r.name, hint: r.hint ?? [0, 0, 0], planar: false, instance: r.instance } : { kind: r.kind, body: r.body, name: r.name, hint: r.hint ?? [0, 0, 0], instance: r.instance }));
+    }
     const draft = this.jointDraft();
     const origins = draft ? [draft.a?.origin, draft.b?.origin] : [];
     return origins.flatMap((o) =>
@@ -167,9 +218,22 @@ export class AssemblyStore {
   /** A click in the view: fills the next side of the joint being drawn, or selects an instance. */
   pick(pick: Pick): void {
     if (pick.kind === 'profile' || !pick.instance) return;
+    if (this.panel() === 'measure') {
+      const ref: PlacedRef = { instance: pick.instance, kind: pick.kind, body: pick.body, name: pick.name, hint: pick.hint };
+      const same = (r: PlacedRef) => r.instance === ref.instance && r.kind === ref.kind && r.body === ref.body && r.name === ref.name;
+      const picks = this.measurePicks().some(same) ? this.measurePicks().filter((r) => !same(r)) : [...this.measurePicks(), ref];
+      this.measurePicks.set(picks);
+      void this.measure(picks);
+      return;
+    }
     const draft = this.jointDraft();
     if (!draft) {
-      this.select({ kind: 'instance', id: pick.instance });
+      // A pattern's copy selects its original.
+      this.select({ kind: 'instance', id: this.state()?.copies.get(pick.instance)?.instance ?? pick.instance });
+      return;
+    }
+    if (this.state()?.copies.has(pick.instance)) {
+      this.error.set('Joints connect instances, not the copies of a pattern.');
       return;
     }
     const side: DraftSide = {
@@ -220,6 +284,71 @@ export class AssemblyStore {
     if (!result) return undefined;
     this.error.set(result.ok ? undefined : result.error.message);
     return result.ok ? result.value : undefined;
+  }
+
+  /** Opens the measure tool, or closes it. */
+  toggleMeasure(): void {
+    const open = this.panel() !== 'measure';
+    this.select(undefined);
+    this.measurePicks.set([]);
+    this.measurement.set(undefined);
+    this.panel.set(open ? 'measure' : undefined);
+  }
+
+  private async measure(picks: readonly PlacedRef[]): Promise<void> {
+    this.measurement.set(picks.length ? await this.session?.measure(picks) : undefined);
+  }
+
+  /** Starts a pattern of the selected instance (or the first one), or edits an existing pattern. */
+  startPattern(kind: InstancePattern['kind'], existing?: InstancePattern): void {
+    const state = this.state();
+    if (!state) return;
+    const selected = this.selection()?.kind === 'instance' ? this.selection()?.id : undefined;
+    const first = selected ?? state.document.instances[0]?.id;
+    const pattern: InstancePattern = existing ?? {
+      id: newId(),
+      name: '',
+      kind,
+      instances: first ? [first] : [],
+      direction: kind === 'mirror' ? [1, 0, 0] : kind === 'circular' ? [0, 0, 1] : [1, 0, 0],
+      origin: [0, 0, 0],
+      count: kind === 'circular' ? 4 : 3,
+      spacing: kind === 'circular' ? 90 : 50,
+    };
+    this.select(undefined);
+    this.patternDraft.set(pattern);
+    this.panel.set('pattern');
+  }
+
+  async commitPattern(): Promise<void> {
+    const pattern = this.patternDraft();
+    if (pattern && (await this.run({ type: 'set-pattern', pattern }))) {
+      this.patternDraft.set(undefined);
+      this.panel.set(undefined);
+    }
+  }
+
+  /** The move handle was dragged to `at`: a free instance moves with it; a jointed one changes its joint's values. */
+  async moveHandle(at: readonly number[], done: boolean): Promise<void> {
+    const handle = this.handle();
+    const state = this.state();
+    const pose = handle && state?.poses.get(handle.instance);
+    if (!handle || !state || !pose) return;
+    if (!handle.joint) {
+      const [from, to] = [translationOf(handle.at), translationOf(at)];
+      const moved = compose(translation([to[0] - from[0], to[1] - from[1], to[2] - from[2]]), pose);
+      if (!done) return this.previewPoses.set(new Map([...state.poses, [handle.instance, moved]]));
+      this.previewPoses.set(undefined);
+      await this.run({ type: 'move-instance', instanceId: handle.instance, transform: moved });
+      return;
+    }
+    // How far the handle moved and turned, in the joint's own axes.
+    const relative = compose(invertRigid(handle.at), at);
+    const [move, turn] = [translationOf(relative), rotationVector(relative)];
+    const joint = handle.joint;
+    const values = jointDofs[joint.type].map((dof, i) => (joint.values[i] ?? 0) + (dof.kind === 'translate' ? move[dof.axis] : (turn[dof.axis] * 180) / Math.PI));
+    if (done) await this.setJointValues(joint.id, values);
+    else this.preview(joint.id, values);
   }
 
   async checkInterference(): Promise<void> {

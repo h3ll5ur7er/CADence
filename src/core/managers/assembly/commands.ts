@@ -1,4 +1,4 @@
-import { appearanceProblem, type AssemblyDocument, fail, type Instance, isDefaultAppearance, type Joint, jointDofs, type JointType, ok, type Result } from '@core/contracts';
+import { appearanceProblem, type AssemblyDocument, fail, type Instance, type InstancePattern, isDefaultAppearance, type Joint, jointDofs, type JointType, ok, type Result } from '@core/contracts';
 import type { AssemblyCommand } from './assembly-manager';
 
 /** The document a command produces, and the joint whose solution decides whether it is accepted. */
@@ -29,6 +29,17 @@ export function nextName(names: readonly string[], label: string): string {
   return `${label} ${Math.max(0, ...used) + 1}`;
 }
 
+const patternLabels: Readonly<Record<InstancePattern['kind'], string>> = { linear: 'Linear pattern', circular: 'Circular pattern', mirror: 'Mirror' };
+
+function checkPattern(document: AssemblyDocument, pattern: InstancePattern): string | undefined {
+  const ids = new Set(document.instances.map((i) => i.id));
+  if (!pattern.instances.length || pattern.instances.some((id) => !ids.has(id))) return 'A pattern repeats instances of this assembly; choose at least one.';
+  if (!(Math.hypot(...pattern.direction) > 1e-9)) return pattern.kind === 'mirror' ? 'A mirror needs a plane.' : 'A pattern needs a direction.';
+  if (pattern.kind !== 'mirror' && !(Number.isInteger(pattern.count) && pattern.count >= 2 && pattern.count <= 100)) return 'A pattern has 2 to 100 copies, the originals included.';
+  if (pattern.kind !== 'mirror' && !Number.isFinite(pattern.spacing)) return 'The spacing needs a number.';
+  return undefined;
+}
+
 function checkJoint(document: AssemblyDocument, joint: Joint): string | undefined {
   const ids = new Set(document.instances.map((i) => i.id));
   if (!ids.has(joint.a.instance) || !ids.has(joint.b.instance)) return 'A joint connects two instances of this assembly.';
@@ -52,10 +63,13 @@ export function applyCommand(document: AssemblyDocument, command: AssemblyComman
       if (!instance(command.instanceId)) return invalid(`Instance ${command.instanceId} does not exist.`);
       const joints = document.joints.filter((j) => j.a.instance !== command.instanceId && j.b.instance !== command.instanceId);
       const kept = new Set(joints.map((j) => j.id));
+      // Patterns lose the instance; one left with nothing to repeat goes.
+      const patterns = document.patterns?.map((p) => ({ ...p, instances: p.instances.filter((id) => id !== command.instanceId) })).filter((p) => p.instances.length);
       return ok({
         document: {
           ...document,
           instances: document.instances.filter((i) => i.id !== command.instanceId),
+          ...(patterns ? { patterns } : {}),
           joints,
           motionStudies: document.motionStudies.map((s) => ({ ...s, keys: s.keys.filter((k) => kept.has(k.joint)) })),
         },
@@ -117,6 +131,18 @@ export function applyCommand(document: AssemblyDocument, command: AssemblyComman
       if (command.values.length !== joint.values.length || command.values.some((v) => !Number.isFinite(v))) return invalid('Each degree of freedom needs a number.');
       return ok({ document: { ...document, joints: document.joints.map((j) => (j.id === joint.id ? { ...j, values: command.values } : j)) }, joint: joint.id });
     }
+    case 'set-pattern': {
+      const problem = checkPattern(document, command.pattern);
+      if (problem) return invalid(problem);
+      const existing = document.patterns?.find((p) => p.id === command.pattern.id);
+      const name = command.pattern.name.trim() || existing?.name || nextName((document.patterns ?? []).map((p) => p.name), patternLabels[command.pattern.kind]);
+      const pattern = { ...command.pattern, name };
+      const patterns = existing ? (document.patterns ?? []).map((p) => (p.id === pattern.id ? pattern : p)) : [...(document.patterns ?? []), pattern];
+      return ok({ document: { ...document, patterns } });
+    }
+    case 'remove-pattern':
+      if (!document.patterns?.some((p) => p.id === command.patternId)) return invalid('That pattern does not exist.');
+      return ok({ document: { ...document, patterns: document.patterns.filter((p) => p.id !== command.patternId) } });
     case 'add-study':
     case 'edit-study': {
       const exists = document.motionStudies.some((s) => s.id === command.study.id);

@@ -214,13 +214,14 @@ The Modeling Engine names every face after each feature (*generative naming*, [[
 As implemented in [[src/core/contracts/assembly.ts]]:
 
 ```ts
-interface AssemblyDocument { instances: Instance[]; joints: Joint[]; motionStudies: MotionStudy[] }
+interface AssemblyDocument { instances: Instance[]; joints: Joint[]; motionStudies: MotionStudy[]; patterns?: InstancePattern[] }
+interface InstancePattern { id; name; kind: 'linear' | 'circular' | 'mirror'; instances: string[]; direction: Vec3; origin: Vec3; count: number; spacing: number }  // copies `<pattern>/<instance>/<k>`
 interface Instance { id: string; component: DocumentId; name: string; transform: Matrix4; grounded: boolean; appearance?: Appearance }
 interface Appearance { hidden?: boolean; color?: string /* #rrggbb */; opacity?: number /* 0.1 to 1 */ }  // display only, never geometry
 interface Joint {
   id: string; name: string;
   type: 'rigid' | 'revolute' | 'slider' | 'cylindrical' | 'pin-slot' | 'planar' | 'ball';
-  a: JointOrigin; b: JointOrigin;          // { instance, ref?: TopologyRef }; no ref = component origin
+  a: JointOrigin; b: JointOrigin;          // { instance, ref?: TopologyRef, offset?: { translate: Vec3, angle } }; no ref = component origin
   flip: boolean;                            // B's frame turned over
   values: number[];                         // one per degree of freedom: mm or degrees
   limits: ({ min: number; max: number } | null)[];

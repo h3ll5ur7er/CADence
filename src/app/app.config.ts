@@ -24,6 +24,8 @@ const options = {
   solverWasmUrl: new URL('wasm/planegcs.wasm', document.baseURI).href,
   fontUrls: { regular: new URL(`fonts/${fontFiles.regular}`, document.baseURI).href, bold: new URL(`fonts/${fontFiles.bold}`, document.baseURI).href },
   geometry: new Worker(new URL('../workers/geometry.worker', import.meta.url), { type: 'module' }),
+  // Other tabs and windows hear about saved components, so their open assemblies update (CAD-82).
+  ...(typeof BroadcastChannel === 'undefined' ? {} : { channel: new BroadcastChannel('cadence-events') }),
 };
 
 /** The host decides where projects live and how exports are saved. */

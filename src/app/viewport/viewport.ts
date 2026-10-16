@@ -23,7 +23,7 @@ import type { Pick, PickKind } from './picking';
 import type { SketchDisplay } from './sketch-display';
 import type { Affine } from './sketch-planes';
 import { ViewCube } from './view-cube';
-import { type PartDisplay, type RendererBackend, type StandardView, ViewportScene, type ViewportTheme } from './viewport-scene';
+import { type MoveHandle, type PartDisplay, type RendererBackend, type StandardView, ViewportScene, type ViewportTheme } from './viewport-scene';
 
 function readTheme(element: HTMLElement): ViewportTheme {
   const style = getComputedStyle(element);
@@ -158,6 +158,9 @@ export class Viewport {
   readonly threads = input<readonly ThreadMarker[]>([]);
   readonly backendReady = output<RendererBackend>();
   readonly picked = output<Pick>();
+  /** A handle to drag a part by (assemblies), and where it is dragged to. */
+  readonly handle = input<MoveHandle | undefined>(undefined);
+  readonly handleMoved = output<{ readonly at: readonly number[]; readonly done: boolean }>();
   /** A picture of the model (PNG), a moment after what it shows changed. */
   readonly thumbnail = output<Uint8Array>();
 
@@ -193,6 +196,7 @@ export class Viewport {
       scene.onCameraChange = (view) => this.cube().setCamera(view);
       scene.onPlaneMatrix = (matrix) => this.planeMatrix.set(matrix);
       scene.onPick = (pick) => this.picked.emit(pick);
+      scene.onHandleMove = (at, done) => this.handleMoved.emit({ at, done });
       // Resizing in the next frame keeps layout changes out of the observer callback.
       let pending = 0;
       const resize = new ResizeObserver(([entry]) => {
@@ -229,6 +233,7 @@ export class Viewport {
     effect(() => this.scene()?.setFlagged(this.flagged()));
     effect(() => this.scene()?.setMeasureLine(this.measureLine()));
     effect(() => this.scene()?.setThreads(this.threads()));
+    effect(() => this.scene()?.setHandle(this.handle()));
     // A picture once the model has settled: after its bodies, parts or sketches stop changing.
     let pending: ReturnType<typeof setTimeout> | undefined;
     effect((onCleanup) => {

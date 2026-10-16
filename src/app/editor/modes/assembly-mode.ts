@@ -7,11 +7,12 @@ import { relativeTime } from '../../shared/format';
 import { Icon } from '../../shared/icon';
 import { Shortcuts } from '../../shared/shortcuts';
 import { Viewport } from '../../viewport/viewport';
-import { millimetres } from '../analysis/units';
+import { grams, millimetres, point } from '../analysis/units';
 import { AssemblyStore } from '../assembly/assembly-store';
 import { JointPanel } from '../assembly/joint-panel';
 import { JointProperties } from '../assembly/joint-properties';
 import { MotionPanel } from '../assembly/motion-panel';
+import { PatternPanel } from '../assembly/pattern-panel';
 import { EditorStatus } from '../editor-status';
 import { ThumbnailSaver } from '../thumbnail-saver';
 
@@ -33,7 +34,7 @@ const positionOf = (m: Matrix4): Position => {
 /** Assembly mode: instances of components, joints between them, motion studies. */
 @Component({
   selector: 'cad-assembly-mode',
-  imports: [Viewport, Icon, JointPanel, JointProperties, MotionPanel],
+  imports: [Viewport, Icon, JointPanel, JointProperties, MotionPanel, PatternPanel],
   providers: [AssemblyStore],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './assembly-mode.html',
@@ -44,10 +45,13 @@ export class AssemblyMode {
   protected readonly status = inject(EditorStatus);
   protected readonly thumbnails = inject(ThumbnailSaver);
   protected readonly store = inject(AssemblyStore);
-  protected readonly menu = signal<'insert' | 'export' | undefined>(undefined);
+  protected readonly menu = signal<'insert' | 'export' | 'pattern' | undefined>(undefined);
   protected readonly exportFormats = exportFormats;
   protected readonly relativeTime = relativeTime;
   protected readonly mm = millimetres;
+  protected readonly grams = grams;
+  protected readonly at = point;
+  protected readonly round = (v: number) => Math.round(v * 100) / 100;
   protected readonly positionFields = [
     { label: 'X (mm)', index: 0 },
     { label: 'Y (mm)', index: 1 },
@@ -69,6 +73,7 @@ export class AssemblyMode {
   });
   protected readonly joints = computed(() => this.store.state()?.document.joints ?? []);
   protected readonly studies = computed(() => this.store.state()?.document.motionStudies ?? []);
+  protected readonly patterns = computed(() => this.store.state()?.document.patterns ?? []);
   protected readonly selectedInstance = computed(() => {
     const selection = this.store.selection();
     const state = this.store.state();
@@ -105,7 +110,12 @@ export class AssemblyMode {
     return this.store.state()?.document.instances.find((i) => i.id === id)?.name ?? id;
   }
 
-  protected toggleMenu(menu: 'insert' | 'export'): void {
+  protected pattern(kind: 'linear' | 'circular' | 'mirror'): void {
+    this.menu.set(undefined);
+    this.store.startPattern(kind);
+  }
+
+  protected toggleMenu(menu: 'insert' | 'export' | 'pattern'): void {
     this.menu.set(this.menu() === menu ? undefined : menu);
   }
 

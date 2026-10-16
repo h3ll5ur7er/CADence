@@ -5,6 +5,8 @@
     [parts]="store.parts()"
     [pickable]="store.pickable()"
     [selection]="store.picks()"
+    [handle]="store.handle()"
+    (handleMoved)="store.moveHandle($event.at, $event.done)"
     (picked)="store.pick($event)"
     (backendReady)="status.renderer.set($event)"
   />
@@ -61,6 +63,26 @@
           }
         </ul>
       </li>
+      @if (patterns().length) {
+        <li>
+          <div class="node"><cad-icon name="pattern" /> Patterns <span class="count">{{ patterns().length }}</span></div>
+          <ul aria-label="Patterns">
+            @for (pattern of patterns(); track pattern.id) {
+              <li class="node item">
+                <button type="button" class="item-main" [attr.aria-label]="'Edit ' + pattern.name" (click)="store.startPattern(pattern.kind, pattern)">
+                  <cad-icon [name]="pattern.kind === 'mirror' ? 'mirror' : pattern.kind === 'circular' ? 'circular' : 'pattern'" />
+                  <span class="item-name">{{ pattern.name }}</span>
+                </button>
+                <span class="item-actions">
+                  <button type="button" class="icon-btn" [attr.aria-label]="'Delete ' + pattern.name" title="Delete" (click)="store.run({ type: 'remove-pattern', patternId: pattern.id })">
+                    <cad-icon name="trash" [size]="14" />
+                  </button>
+                </span>
+              </li>
+            }
+          </ul>
+        </li>
+      }
       <li>
         <div class="node"><cad-icon name="film" /> Motion studies <span class="count">{{ studies().length }}</span></div>
         <ul aria-label="Motion studies">
@@ -99,6 +121,21 @@
       </button>
       <button type="button" class="btn" [disabled]="joints().length === 0" (click)="addStudy()">
         <cad-icon name="film" /> Motion
+      </button>
+      <div class="menu">
+        <button type="button" class="btn" aria-haspopup="menu" [attr.aria-expanded]="menu() === 'pattern'" [disabled]="instances().length === 0" (click)="toggleMenu('pattern')">
+          <cad-icon name="pattern" /> Pattern
+        </button>
+        @if (menu() === 'pattern') {
+          <div class="menu-list" role="menu" aria-label="Pattern">
+            <button type="button" role="menuitem" (click)="pattern('linear')">Linear pattern</button>
+            <button type="button" role="menuitem" (click)="pattern('circular')">Circular pattern</button>
+            <button type="button" role="menuitem" (click)="pattern('mirror')">Mirror</button>
+          </div>
+        }
+      </div>
+      <button type="button" class="icon-btn tool" aria-label="Measure" title="Measure between instances" [class.on]="store.panel() === 'measure'" [disabled]="instances().length === 0" (click)="store.toggleMeasure()">
+        <cad-icon name="ruler" [size]="18" />
       </button>
       <button type="button" class="icon-btn tool" aria-label="Check interference" title="Check interference" [class.on]="store.panel() === 'interference'" [disabled]="instances().length < 2" (click)="store.checkInterference()">
         <cad-icon name="overlap" [size]="18" />
@@ -140,6 +177,44 @@
   @let selection = store.selection();
   @if (store.panel() === 'joint') {
     <cad-joint-panel />
+  } @else if (store.panel() === 'pattern') {
+    <cad-pattern-panel />
+  } @else if (store.panel() === 'measure') {
+    <p class="eyebrow">Inspect</p>
+    <div class="head">
+      <h2>Measure</h2>
+      <button type="button" class="icon-btn" aria-label="Close measure" (click)="store.toggleMeasure()">×</button>
+    </div>
+    <p class="hint">Click faces, edges and corners of any instances. One gives its size; two give the distance and angle between them.</p>
+    <p class="hint" data-testid="measure-picks">{{ store.measurePicks().length }} picked</p>
+    @if (store.measurement(); as result) {
+      @if (!result.ok) {
+        <p class="error" role="alert">{{ result.error.message }}</p>
+      } @else {
+        <dl aria-label="Measurement">
+          @if (result.value.distance !== undefined) {
+            <dt>Distance</dt>
+            <dd class="mono" data-testid="measure-distance">{{ mm(result.value.distance) }}</dd>
+          }
+          @if (result.value.angle !== undefined) {
+            <dt>Angle</dt>
+            <dd class="mono" data-testid="measure-angle">{{ round(result.value.angle) }}°</dd>
+          }
+          @if (result.value.radius !== undefined) {
+            <dt>Radius</dt>
+            <dd class="mono">{{ mm(result.value.radius) }}</dd>
+          }
+          @if (result.value.length !== undefined) {
+            <dt>Length</dt>
+            <dd class="mono">{{ mm(result.value.length) }}</dd>
+          }
+          @if (result.value.area !== undefined) {
+            <dt>Area</dt>
+            <dd class="mono">{{ mm(result.value.area, 2) }}</dd>
+          }
+        </dl>
+      }
+    }
   } @else if (store.panel() === 'interference') {
     <p class="eyebrow">Inspect</p>
     <div class="head">
@@ -207,8 +282,11 @@
       }
     </div>
     @if (row.placed) {
-      <p class="hint">A joint places this instance. Move it with the joint's values.</p>
+      <p class="hint">A joint places this instance. Drag the handle in the view along its free directions, or change the joint's values.</p>
     } @else {
+      @if (!row.instance.grounded) {
+        <p class="hint">Drag the arrows in the view to move it.</p>
+      }
       <p class="eyebrow">Position</p>
       <div class="position">
         @for (field of positionFields; track field.label) {
@@ -229,6 +307,16 @@
       <dd>{{ joints().length }}</dd>
       <dt>Modified</dt>
       <dd>{{ relativeTime(document().modifiedAt) }}</dd>
+      @if (store.weight.value(); as w) {
+        @if (w.parts.length) {
+          <dt>Mass</dt>
+          <dd class="mono" data-testid="assembly-mass">{{ grams(w.mass) }}</dd>
+          <dt>Volume</dt>
+          <dd class="mono">{{ mm(w.volume, 3) }}</dd>
+          <dt>Centre of mass</dt>
+          <dd class="mono" data-testid="assembly-centre">{{ at(w.centerOfMass) }}</dd>
+        }
+      }
     </dl>
     <p class="hint">Insert components, connect them with joints, then drag a joint's values or play a motion study.</p>
   }

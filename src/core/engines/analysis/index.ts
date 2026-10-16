@@ -45,6 +45,8 @@ export interface ValidationSubject {
 export interface AnalysisEngine {
   /** Area, length, radius, distance and angle of picked faces and edges. */
   measure(bodies: readonly BodyState[], refs: readonly TopologyRef[]): Promise<Result<Measurement>>;
+  /** Like `measure`, between faces, edges and vertices of placed parts (each reference names its part's instance). */
+  measurePlaced(parts: readonly PlacedPart[], refs: readonly (TopologyRef & { readonly instance: string })[]): Promise<Result<Measurement>>;
   /** Volume, area, mass (density in g/cm³), centre of mass and bounding box of each body. */
   properties(bodies: readonly BodyState[], density: number): Promise<BodyProperties[]>;
   /** The manufacturability rules of the profile's process, applied to the bodies and sketches. */

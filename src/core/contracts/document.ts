@@ -2,7 +2,7 @@ import type { Appearance } from './appearance';
 import type { AssetId, DocumentId, ProjectId } from './ids';
 import type { Timestamp } from './project';
 import type { Material, ManufacturingProfile } from './analysis';
-import type { Instance, Joint, MotionStudy } from './assembly';
+import type { Instance, InstancePattern, Joint, MotionStudy } from './assembly';
 import type { Feature } from './feature';
 import type { Sketch } from './sketch';
 
@@ -113,6 +113,8 @@ export interface AssemblyDocument extends DocumentBase {
   readonly instances: readonly Instance[];
   readonly joints: readonly Joint[];
   readonly motionStudies: readonly MotionStudy[];
+  /** Copies of instances in rows, around axes or mirrored. */
+  readonly patterns?: readonly InstancePattern[];
 }
 
 export interface ImportedDocument extends DocumentBase {

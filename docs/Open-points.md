@@ -91,7 +91,7 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 - [ ] **Resin (SLA) printer profiles** with their own rules (no nozzle; drain holes, suction cups). *([[CAD-21]])*
 - [ ] **Machine profiles per user,** shared by all components (today each component stores its own). *(ADR-19 trade-off)*
 - [ ] **A finer wall check** that cannot miss a thin spot inside one large flat triangle. *(ADR-18 trade-off)*
-- [X] **Measure in assemblies,** between instances. *(phase 5)* → [[CAD-80]]
+- [X] **Measure in assemblies,** between instances. *(phase 5)* → [[CAD-80]] ✅
 - [ ] **Mass properties of assemblies:** total mass and centre of mass. *(new)*
 - [ ] **Material per body** rather than per component. *(phase 4)*
 - [ ] **Print orientation:** suggest the orientation with the least support. *(new)*
@@ -109,7 +109,7 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 
 ## Assemblies
 
-- [X] **Drag parts in the 3D view:** free instances anywhere, jointed ones along their free directions. Today they move with fields and sliders. *([[CAD-22]], [[CAD-23]])* → [[CAD-79]]
+- [X] **Drag parts in the 3D view:** free instances anywhere, jointed ones along their free directions. Today they move with fields and sliders. *([[CAD-22]], [[CAD-23]])* → [[CAD-79]] ✅
 - [X] **Joint offsets:** place a joint origin away from the picked face or edge. *(ADR-21 trade-off)* → [[CAD-79]]
 - [ ] **Sub-assemblies** and a STEP product tree that keeps them. *([[CAD-25]])*
 - [X] **Motion links:** gears, rack and pinion, belts (one joint drives another by a ratio). *(new)* → [[CAD-83]]
@@ -119,8 +119,8 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 - [X] **Exploded views.** *(new)* → [[CAD-85]]
 - [X] **Bill of materials:** parts, counts, materials, masses; exported as CSV. *(new)* → [[CAD-86]]
 - [X] **Assembly instructions:** step-by-step exploded steps, exported as a PDF, for flat-pack and kit builds. *(new)* → [[CAD-85]]
-- [X] **Patterns and mirrors of instances.** *(new)* → [[CAD-81]]
-- [X] **Live updates:** an open assembly updates when a component changes in another tab or window (today on reopening). *(phase 5)* → [[CAD-82]]
+- [X] **Patterns and mirrors of instances.** *(new)* → [[CAD-81]] ✅
+- [X] **Live updates:** an open assembly updates when a component changes in another tab or window (today on reopening). *(phase 5)* → [[CAD-82]] ✅
 
 ## Import
 

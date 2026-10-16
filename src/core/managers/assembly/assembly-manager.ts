@@ -4,12 +4,17 @@ import type {
   BodyMesh,
   DocumentId,
   Instance,
+  InstancePattern,
   Interference,
   Joint,
   Matrix4,
+  Measurement,
   MotionFrame,
   MotionStudy,
+  PlaneFrame,
   Result,
+  TopologyRef,
+  Vec3,
 } from '@core/contracts';
 
 /** Every change to an assembly is one of these commands; ids come from the caller. */
@@ -32,6 +37,9 @@ export type AssemblyCommand =
   /** Also removes the joint's motion keys. */
   | { readonly type: 'remove-joint'; readonly jointId: string }
   | { readonly type: 'set-joint-values'; readonly jointId: string; readonly values: readonly number[] }
+  /** Adds a pattern of instances, or changes one (same id); an empty name gets the next default ("Linear pattern 2"). */
+  | { readonly type: 'set-pattern'; readonly pattern: InstancePattern }
+  | { readonly type: 'remove-pattern'; readonly patternId: string }
   | { readonly type: 'add-study'; readonly study: MotionStudy }
   | { readonly type: 'edit-study'; readonly study: MotionStudy }
   | { readonly type: 'remove-study'; readonly studyId: string };
@@ -61,11 +69,30 @@ export interface AssemblyState {
   readonly placed: ReadonlySet<string>;
   /** Joints that do not hold, with the reason. */
   readonly jointErrors: ReadonlyMap<string, string>;
+  /** Copies made by patterns (placed in `poses` too): the instance each copies, and the pattern. */
+  readonly copies: ReadonlyMap<string, { readonly instance: string; readonly pattern: string }>;
+  /** Where each joint is (its frame on instance A, offset included), in assembly coordinates: its free directions are its axes. */
+  readonly jointFrames: ReadonlyMap<string, PlaneFrame>;
   readonly canUndo: boolean;
   readonly canRedo: boolean;
 }
 
 export type AssemblyFormat = 'step' | 'stl' | 'obj' | '3mf';
+
+/** A face, edge or vertex of an instance (or a pattern's copy). */
+export interface PlacedRef extends TopologyRef {
+  readonly instance: string;
+}
+
+/** Mass properties of the whole assembly, from each component's material. */
+export interface AssemblyProperties {
+  /** Grams. */
+  readonly mass: number;
+  /** mm³. */
+  readonly volume: number;
+  readonly centerOfMass: Vec3;
+  readonly parts: readonly { readonly instance: string; readonly name: string; readonly material: string; readonly mass: number }[];
+}
 
 /** An editing session on one assembly document. */
 export interface AssemblySession {
@@ -78,6 +105,10 @@ export interface AssemblySession {
   previewJoint(jointId: string, values: readonly number[]): Promise<Result<ReadonlyMap<string, Matrix4>>>;
   /** The frames of a motion study, `fps` per second. */
   motion(studyId: string, fps: number): Promise<Result<readonly MotionFrame[]>>;
+  /** Area, length, radius, distance and angle of faces, edges and vertices of instances, where they are. */
+  measure(refs: readonly PlacedRef[]): Promise<Result<Measurement>>;
+  /** Total mass, volume and centre of mass of the shown instances and copies. */
+  properties(): Promise<AssemblyProperties>;
   /** Instances whose solids overlap in the current positions. */
   interference(): Promise<Interference[]>;
   /** STEP keeps one named solid per instance; mesh formats get one object per instance. */

@@ -42,12 +42,28 @@ if (-not $name) { throw "No save dialog with a file name field in process $Proce
 Add-Type -Namespace Win32 -Name Messages -MemberDefinition @'
 [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr wParam, string lParam);
 [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr wParam, System.Text.StringBuilder lParam);
 [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr window);
 [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr window);
 '@
 $WM_SETTEXT = 0x000C
+$WM_GETTEXT = 0x000D
 $BM_CLICK = 0x00F5
-[void][Win32.Messages]::SendMessage([IntPtr]$name.Current.NativeWindowHandle, $WM_SETTEXT, [IntPtr]::Zero, $Path)
+# The dialog fills in its suggested name while it starts (later on slow machines): type the path until
+# the field has held it for a second.
+$field = [IntPtr]$name.Current.NativeWindowHandle
+function FieldText {
+  $text = New-Object System.Text.StringBuilder 1024
+  [void][Win32.Messages]::SendMessage($field, $WM_GETTEXT, [IntPtr]1024, $text)
+  $text.ToString()
+}
+$settled = (Get-Date).AddSeconds(15)
+$held = 0
+while ($held -lt 4 -and (Get-Date) -lt $settled) {
+  if ((FieldText) -eq $Path) { $held++ } else { $held = 0; [void][Win32.Messages]::SendMessage($field, $WM_SETTEXT, [IntPtr]::Zero, $Path) }
+  Start-Sleep -Milliseconds 250
+}
+if ($held -lt 4) { throw "The save dialog's file name field does not keep the path; it holds: $(FieldText)" }
 $save = $dialog.FindFirst($scope::Descendants, (Control '1' 'Button'))
 if (-not $save) { throw 'No Save button in the save dialog' }
 [void][Win32.Messages]::SendMessage([IntPtr]$save.Current.NativeWindowHandle, $BM_CLICK, [IntPtr]::Zero, [IntPtr]::Zero)

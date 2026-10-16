@@ -20,8 +20,10 @@ export interface SolveOutcome {
   readonly sketch: Sketch;
   readonly status: SketchStatus;
   readonly degreesOfFreedom: number;
-  /** Ids of the constraints that contradict each other. */
+  /** Ids of the constraints that contradict each other, or say the same twice. */
   readonly conflicting: readonly string[];
+  /** Of those, the ones that only say what others already do (redundant, not contradictory). */
+  readonly redundant?: readonly string[];
 }
 
 type Primitive = Record<string, unknown> & { id: string; type: string };
@@ -373,6 +375,7 @@ export class PlanegcsSolver {
       status: !failed && degreesOfFreedom === 0 ? 'fully-constrained' : status,
       degreesOfFreedom,
       conflicting: outcomes.flatMap((o) => o.conflicting),
+      redundant: outcomes.flatMap((o) => o.redundant ?? []),
     };
   }
 
@@ -388,16 +391,16 @@ export class PlanegcsSolver {
     }
     gcs.push_primitives_and_params(primitives as never);
     const result: number = gcs.solve();
-    const conflicting = [
-      ...new Set([...gcs.get_gcs_conflicting_constraints(), ...gcs.get_gcs_redundant_constraints()].map(ownerOf)),
-    ];
+    const contradicting = new Set(gcs.get_gcs_conflicting_constraints().map(ownerOf));
+    const redundant = [...new Set(gcs.get_gcs_redundant_constraints().map(ownerOf))].filter((id) => !contradicting.has(id));
+    const conflicting = [...contradicting, ...redundant];
     // An ellipse's minor radius is a freedom of its own until a dimension sets it.
     const minorRadii = new Map(
       sketch.constraints.flatMap((c) => (c.kind === 'radius' && sketch.entities.find((e) => e.id === c.curve)?.kind === 'ellipse' ? [[c.curve, values.get(c.id)] as const] : [])),
     );
     const degreesOfFreedom = gcs.gcs.dof() + sketch.entities.filter((e) => e.kind === 'ellipse' && minorRadii.get(e.id) === undefined).length;
     if (conflicting.length > 0) {
-      return { sketch, status: 'over-constrained', degreesOfFreedom, conflicting };
+      return { sketch, status: 'over-constrained', degreesOfFreedom, conflicting, redundant: contradicting.size ? [] : redundant };
     }
     if (result !== solveStatus.success && result !== solveStatus.converged) {
       return { sketch, status: 'failed', degreesOfFreedom, conflicting };

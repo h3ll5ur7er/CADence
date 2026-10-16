@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { basename, extname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createNodeCore } from '@core/composition/node';
-import type { ImportFormat, RemoteCredentials } from '@core/contracts';
+import type { ImportFormat, RemoteCredentials, Vec3 } from '@core/contracts';
 import type { DrawingFormat, SolidFormat } from '@core/managers/design';
 import { Cadence, CadenceError, unwrap } from './api';
 import { McpServer, serveStdio } from './mcp';
@@ -16,7 +16,9 @@ Commands:
   projects                              List the projects
   documents <project>                   List a project's documents
   export <project> <document> <format>  Export a component (step, stl, obj, 3mf; dxf or svg with --sketch <id> or --flat-pattern)
-  picture <project> <document> <file>  A PNG of a component or an assembly (--view iso|front|back|top|bottom|left|right, --width, --height, --white)
+  picture <project> <document> <file>  A PNG of a component or an assembly (--view iso|front|back|top|bottom|left|right or
+                                        --direction x,y,z [--up x,y,z], --width, --height, --white, --focus/--hide/--ghost a,b;
+                                        assemblies also --explode <view> [--steps n], --study <id> --time <s>)
   convert <input> <output>              Convert a file; formats from the extensions (step, stl, obj, 3mf, dxf, svg)
   run <script> [arguments]              Run a script: its default export is called with the API and the arguments
   open-git <url>                        Open a project from a git repository (--cors-proxy <url>)
@@ -125,11 +127,25 @@ export async function runCli(args: readonly string[], io: Io, reference = '', ve
         const number = (key: string) => (typeof options[key] === 'string' ? Number(options[key]) : undefined);
         const width = number('width');
         const height = number('height');
+        const text = (key: string) => (typeof options[key] === 'string' ? (options[key] as string) : undefined);
+        const list = (key: string) => (text(key) ? { [key]: (text(key) as string).split(',') } : {});
+        const vector = (key: string) => (text(key) ? { [key]: (text(key) as string).split(',').map(Number) as unknown as Vec3 } : {});
+        const steps = number('steps');
+        const time = number('time');
         const png = await cadence.picture(document.id, {
-          ...(typeof options['view'] === 'string' ? { view: options['view'] as 'iso' } : {}),
+          ...(text('view') ? { view: text('view') as 'iso' } : {}),
+          ...vector('direction'),
+          ...vector('up'),
           ...(width ? { width } : {}),
           ...(height ? { height } : {}),
           ...(options['white'] ? { white: true } : {}),
+          ...list('focus'),
+          ...list('hide'),
+          ...list('ghost'),
+          ...(text('explode') ? { explode: text('explode') as string } : {}),
+          ...(steps !== undefined ? { steps } : {}),
+          ...(text('study') ? { study: text('study') as string } : {}),
+          ...(time !== undefined ? { time } : {}),
         });
         await writeFile(rest[2] as string, png);
         io.out(rest[2] as string);

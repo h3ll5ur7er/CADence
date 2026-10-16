@@ -17,6 +17,10 @@ export interface RasterMesh {
   readonly transform?: Matrix4;
   /** `#rrggbb`. */
   readonly color?: string;
+  /** See-through, 0 … 1 (absent: solid): drawn over the solid meshes, hiding nothing. */
+  readonly opacity?: number;
+  /** Frame the picture to the meshes marked so (absent on all: to every mesh). */
+  readonly focus?: boolean;
 }
 
 export interface RasterOptions {
@@ -90,7 +94,8 @@ export function rasterize(meshes: readonly RasterMesh[], options: RasterOptions)
     }
     return { mesh, points, normals, edges, color: rgb(mesh.color) };
   });
-  const all = placed.flatMap((m) => m.points);
+  const framed = placed.some((m) => m.mesh.focus) ? placed.filter((m) => m.mesh.focus) : placed;
+  const all = framed.flatMap((m) => m.points);
   if (!all.length) return pixels;
   const [minX, maxX, minY, maxY] = [Math.min(...all.map((p) => p[0])), Math.max(...all.map((p) => p[0])), Math.min(...all.map((p) => p[1])), Math.max(...all.map((p) => p[1]))];
   const scale = 0.88 * Math.min(width / Math.max(maxX - minX, 1e-9), height / Math.max(maxY - minY, 1e-9));
@@ -99,7 +104,14 @@ export function rasterize(meshes: readonly RasterMesh[], options: RasterOptions)
   // Light from the upper left, a little towards the viewer.
   const light = unit([-0.4, 0.6, 0.7]);
 
-  for (const { mesh, points, normals, color } of placed) {
+  // Solid meshes first; see-through ones blend over them without hiding what lies behind.
+  const solidFirst = [...placed].sort((a, b) => Number((a.mesh.opacity ?? 1) < 1) - Number((b.mesh.opacity ?? 1) < 1));
+  const paint = (k: number, rgb: Vec3, opacity: number) => {
+    for (let c = 0; c < 3; c++) pixels[k * 4 + c] = Math.min(255, (pixels[k * 4 + c] as number) * (1 - opacity) + (rgb[c] as number) * opacity);
+    pixels[k * 4 + 3] = Math.max(pixels[k * 4 + 3] as number, Math.round(255 * opacity));
+  };
+  for (const { mesh, points, normals, color } of solidFirst) {
+    const opacity = Math.max(0, Math.min(1, mesh.opacity ?? 1));
     const s = points.map(screen);
     for (let t = 0; t < mesh.indices.length; t += 3) {
       const [ia, ib, ic] = [mesh.indices[t] as number, mesh.indices[t + 1] as number, mesh.indices[t + 2] as number];
@@ -119,20 +131,23 @@ export function rasterize(meshes: readonly RasterMesh[], options: RasterOptions)
           const z = w0 * a[2] + w1 * b[2] + w2 * c[2];
           const k = y * width + x;
           if (z <= (depth[k] as number)) continue;
-          depth[k] = z;
           const normal = unit([w0 * na[0] + w1 * nb[0] + w2 * nc[0], w0 * na[1] + w1 * nb[1] + w2 * nc[1], w0 * na[2] + w1 * nb[2] + w2 * nc[2]]);
           // Two-sided: faces seen from behind are lit like their front.
           const shade = 0.38 + 0.62 * Math.abs(dot(normal, light));
-          pixels[k * 4] = Math.min(255, color[0] * shade);
-          pixels[k * 4 + 1] = Math.min(255, color[1] * shade);
-          pixels[k * 4 + 2] = Math.min(255, color[2] * shade);
-          pixels[k * 4 + 3] = 255;
+          const lit: Vec3 = [color[0] * shade, color[1] * shade, color[2] * shade];
+          if (opacity < 1) {
+            paint(k, lit, opacity);
+            continue;
+          }
+          depth[k] = z;
+          paint(k, lit, 1);
         }
     }
   }
   // Edges in front of (or on) the faces, a little towards the viewer so they win ties.
   const bias = 1e-3 * Math.max(maxX - minX, maxY - minY, 1);
-  for (const { edges } of placed) {
+  for (const { edges, mesh } of placed) {
+    const opacity = Math.max(0, Math.min(1, mesh.opacity ?? 1));
     for (let e = 0; e + 1 < edges.length; e += 2) {
       const [a, b] = [screen(edges[e] as Vec3), screen(edges[e + 1] as Vec3)];
       const steps = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1])));
@@ -143,7 +158,7 @@ export function rasterize(meshes: readonly RasterMesh[], options: RasterOptions)
         const k = y * width + x;
         const z = a[2] + (b[2] - a[2]) * t;
         if (z + bias < (depth[k] as number)) continue;
-        pixels.set([40, 46, 54, 255], k * 4);
+        paint(k, [40, 46, 54], opacity);
       }
     }
   }

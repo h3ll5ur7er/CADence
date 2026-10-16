@@ -283,3 +283,4 @@ function simplify(polygon: readonly Vec2[], tolerance: number): Vec2[] {
   }
   return points;
 }
+export { encodeGif } from './gif';

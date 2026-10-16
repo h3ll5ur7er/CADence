@@ -26,6 +26,19 @@ describe('raster', () => {
     expect(middle[0]).toBe(0);
   });
 
+  it('frames chosen meshes, and draws see-through ones over the others (CAD-100)', () => {
+    const far = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 10, 0, 0, 1];
+    // Framed to the far square alone, it fills the middle of the picture.
+    const framed = rasterize([square('#ff0000'), { ...square('#0000ff', far), focus: true }], { width: 40, height: 40, ...rasterViews.top });
+    expect(framed[(20 * 40 + 20) * 4 + 2]).toBeGreaterThan(100);
+    // A see-through blue square over a red one: both show.
+    const over = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 1];
+    const ghost = rasterize([square('#ff0000'), { ...square('#0000ff', over), opacity: 0.4 }], { width: 40, height: 40, ...rasterViews.top, background: [255, 255, 255, 255] });
+    const [r, , b] = Array.from(ghost.subarray((20 * 40 + 20) * 4, (20 * 40 + 20) * 4 + 3));
+    expect(r).toBeGreaterThan(60);
+    expect(b).toBeGreaterThan(30);
+  });
+
   it('writes pictures as PNG', async () => {
     const pixels = rasterize([square('#a9b6c2')], { width: 32, height: 24, ...rasterViews.iso, background: [255, 255, 255, 255] });
     const png = await encodePng({ width: 32, height: 24, data: pixels });

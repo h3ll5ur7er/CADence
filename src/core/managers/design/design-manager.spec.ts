@@ -508,7 +508,13 @@ describe('DesignManager', () => {
         // Helical teeth twist but keep the volume.
         unwrap(await session.execute({ type: 'edit-feature', feature: { ...(session.state().document.timeline.find((i) => i.id === 'part') as PartFeature), part: { kind: 'gear', module: '1 mm', teeth: '20', width: '5 mm', bore: '0 mm', pressureAngle: '20 deg', helixAngle: '20 deg' } } }));
         expect(await volume()).toBeCloseTo(gear, -1);
-      });
+        unwrap(await session.execute({ type: 'delete-item', itemId: 'part' }));
+        unwrap(await session.execute({ type: 'delete-item', itemId: 'sp' }));
+        // A rack: about its length times the height to the pitch line, times the width.
+        const rack = await part({ kind: 'rack', module: '1 mm', teeth: '5', width: '5 mm', height: '8 mm', pressureAngle: '20 deg' });
+        expect(Math.abs(rack - 5 * Math.PI * 8 * 5) / (5 * Math.PI * 8 * 5)).toBeLessThan(0.03);
+        // Twisting the teeth of a helical gear is slow on a CI runner.
+      }, 60_000);
 
       it('makes parts for printing, and fits pegs and slots', async () => {
         // A ⌀5 peg made 0.15 smaller (snug fit), chamfered 0.4 at the top.

@@ -44,3 +44,13 @@ $BM_CLICK = 0x00F5
 $save = $dialog.FindFirst($scope::Descendants, (Control '1' 'Button'))
 if (-not $save) { throw 'No Save button in the save dialog' }
 [void][Win32.Messages]::SendMessage([IntPtr]$save.Current.NativeWindowHandle, $BM_CLICK, [IntPtr]::Zero, [IntPtr]::Zero)
+
+# The dialog closes once it took the path; if it stays, say what it shows (a question, another name).
+$closed = (Get-Date).AddSeconds(10)
+while ((Get-Date) -lt $closed) {
+  try { $null = $dialog.Current.Name } catch { exit 0 }
+  if ($dialog.Current.IsOffscreen) { exit 0 }
+  Start-Sleep -Milliseconds 250
+}
+$texts = @($A::RootElement.FindAll($scope::Children, $ofProcess) | ForEach-Object { $_.FindAll($scope::Descendants, [System.Windows.Automation.Condition]::TrueCondition) } | ForEach-Object { $_.Current.Name } | Where-Object { $_ } | Select-Object -First 30)
+throw "The save dialog stayed open; it shows: $($texts -join ' | '); the file name field says: $($name.Current.Name)" 

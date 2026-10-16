@@ -19,20 +19,23 @@ $isDialog = New-Object System.Windows.Automation.PropertyCondition($A::ClassName
 $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
 $dialog = $null
 $name = $null
+$fallback = $null
 while (-not $name -and (Get-Date) -lt $deadline) {
   foreach ($window in $A::RootElement.FindAll($scope::Children, $ofProcess)) {
     $candidates = @($window.FindAll($scope::Descendants, $isDialog))
     if ($window.Current.ClassName -eq '#32770') { $candidates = @($window) + $candidates }
     foreach ($candidate in $candidates) {
-      # Only a dialog on screen: the process keeps hidden ones too.
-      if ($candidate.Current.IsOffscreen) { continue }
       $field = $candidate.FindFirst($scope::Descendants, (Control '1001' 'Edit'))
-      if ($field -and -not $field.Current.IsOffscreen) { $dialog = $candidate; $name = $field; break }
+      if (-not $field) { continue }
+      # A dialog on screen first: the process keeps hidden ones too (the first of those is the fallback).
+      if (-not $candidate.Current.IsOffscreen) { $dialog = $candidate; $name = $field; break }
+      if (-not $fallback) { $fallback = @($candidate, $field) }
     }
     if ($name) { break }
   }
   if (-not $name) { Start-Sleep -Milliseconds 250 }
 }
+if (-not $name -and $fallback) { $dialog, $name = $fallback }
 if (-not $name) { throw "No save dialog with a file name field in process $ProcessId within $TimeoutSeconds s" }
 
 # UI Automation can find these controls but not operate them: Win32 messages can.

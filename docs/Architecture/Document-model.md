@@ -228,7 +228,7 @@ interface Appearance { hidden?: boolean; color?: string /* #rrggbb */; opacity?:
 interface Joint {
   id: string; name: string;
   type: 'rigid' | 'revolute' | 'slider' | 'cylindrical' | 'pin-slot' | 'planar' | 'ball';
-  a: JointOrigin; b: JointOrigin;          // { instance, ref?: TopologyRef, offset?: { translate: Vec3, tilt?, angle } }; no ref = component origin
+  a: JointOrigin; b: JointOrigin;          // { instance, ref?: TopologyRef, offset?: { translate: Vec3, lean?, tilt?, angle } }; no ref = component origin
   flip: boolean;                            // B's frame turned over
   values: number[];                         // one per degree of freedom: mm or degrees
   limits: ({ min: number; max: number } | null)[];

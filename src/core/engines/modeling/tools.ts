@@ -10,6 +10,9 @@ import type { PathPiece } from './modeling-engine';
 import { cut, fuse } from './booleans';
 import { alignSections } from './sections';
 
+/** A revolve the kernel cannot build, in words for the user. */
+export class RevolveError extends Error {}
+
 /** The surface a profile edge sweeps out, to recognise which tool face it made. */
 interface Expected {
   readonly source: string;
@@ -131,6 +134,11 @@ export function revolveTool(
 ): NamedShape {
   const direction = normalize3(axis.direction);
   const line: Line = { point: axis.origin, direction };
+  // The kernel only answers "command not done" for an outline across the axis, even by 0.0005 mm (CAD-118).
+  const across = acrossAxis(frame, profiles, { origin: axis.origin, direction });
+  if (across > 1e-7) {
+    throw new RevolveError(`The outline crosses the axis (by ${Number(across.toPrecision(3))} mm). A revolve needs the whole outline on one side of its axis: move it, or put its edge on the axis exactly.`);
+  }
   const shape = profilesDrawing(profiles)
     .sketchOnPlane(toPlane(frame))
     .revolve([...direction], { origin: [...axis.origin], angle: (angle * 180) / Math.PI }) as Shape3D;
@@ -179,6 +187,22 @@ function distanceToPlane(p: Vec3, plane: Extract<Surface, { type: 'plane' }>): n
 }
 
 /** A point halfway along any profile edge, where the face it sweeps or lofts must pass. */
+/** How far an outline reaches across an axis in its plane, on the side it reaches less (0 when it stays on one side). */
+function acrossAxis(frame: PlaneFrame, profiles: readonly Profile[], axis: { readonly origin: Vec3; readonly direction: Vec3 }): number {
+  const normal = normalOf(frame);
+  // An axis out of the outline's plane has no sides in it.
+  if (Math.abs(dot3(normal, axis.direction)) > 1e-9) return 0;
+  const across = normalize3(cross3(normal, axis.direction));
+  let [low, high] = [0, 0];
+  for (const edge of edgesOf(profiles)) {
+    for (const point of [edge.start, midOf(edge), edge.end]) {
+      const side = dot3(sub3(toWorld(frame, point), axis.origin), across);
+      [low, high] = [Math.min(low, side), Math.max(high, side)];
+    }
+  }
+  return Math.min(-low, high);
+}
+
 function midOf(edge: ProfileEdge): Vec2 {
   if (edge.kind === 'bezier' || edge.kind === 'ellipse') return middleOf(edge);
   if (edge.kind === 'line') return [(edge.start[0] + edge.end[0]) / 2, (edge.start[1] + edge.end[1]) / 2];

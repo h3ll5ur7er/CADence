@@ -261,6 +261,13 @@ describe('DesignManager', () => {
     expect(pointAt('d')?.[1]).toBeCloseTo(40); // d follows c: horizontal top side
   });
 
+  it('says a fixed point stays where it is fixed (CAD-118)', async () => {
+    await drawRectangle();
+    unwrap(await session.execute({ type: 'add-constraint', sketchId: 's1', constraint: { id: 'pin', kind: 'fix', point: 'c', x: 30, y: 16 } }));
+    expect(await session.execute({ type: 'move-point', sketchId: 's1', pointId: 'c', x: 50, y: 40 })).toEqual({ ok: false, error: { code: 'invalid-command', message: 'Point c is fixed (pin); remove the fix to move it.', related: ['pin'] } });
+    expect(pointAt('c')).toEqual([30, 16]);
+  });
+
   it('deletes curves with their relations and orphaned points', async () => {
     await drawRectangle();
     unwrap(await session.execute({ type: 'delete-sketch-elements', sketchId: 's1', ids: ['ab'] }));
@@ -470,6 +477,16 @@ describe('DesignManager', () => {
       return profile;
     }
     const volume = async () => (await session.properties()).reduce((sum, b) => sum + b.volume, 0);
+
+    it('turns a feature into another kind, keeping its id (CAD-118)', async () => {
+      const profile = await plate();
+      const revolve = { id: 'e1', type: 'revolve', name: '', suppressed: false, sketch: 's1', profiles: [profile], axis: { kind: 'origin', axis: 'Y' }, angle: '360 deg', operation: 'new-body' } as const;
+      unwrap(await session.execute({ type: 'edit-feature', feature: revolve }));
+      const feature = session.state().document.timeline.find((i) => i.id === 'e1');
+      expect(feature).toMatchObject({ type: 'revolve', name: 'Revolve 1' });
+      expect(await volume()).toBeCloseTo(Math.PI * 60 * 60 * 30, 0);
+      expect(await session.execute({ type: 'edit-feature', feature: { ...revolve, id: 's1' } })).toMatchObject({ ok: false, error: { message: 's1 is a sketch, not a feature.' } });
+    });
 
     describe('parts', () => {
       /** A sketch with a point at the origin, and a part there as a new body; returns the part's volume. */

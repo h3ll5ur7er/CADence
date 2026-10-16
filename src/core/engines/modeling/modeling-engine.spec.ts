@@ -132,6 +132,15 @@ describe('ModelingEngine', () => {
     expect((await names(half)).faces).toEqual(expect.arrayContaining(['f:half:start', 'f:half:end']));
   });
 
+  it('says when an outline crosses the revolve axis, even barely (CAD-118)', async () => {
+    const revolve = (x: number) =>
+      engine.apply({ type: 'revolve', feature: 'r', key: `across-${x}`, bodies: [], frame: originFrames.XZ, profiles: [profile(rectangleLoop(x, 0, 10, 20, 'p'))], axis: { origin: [0, 0, 0], direction: [0, 0, 1] }, angle: 2 * Math.PI, operation: 'new-body' });
+    expect((await revolve(-0.0005)).error).toBe('The outline crosses the axis (by 0.0005 mm). A revolve needs the whole outline on one side of its axis: move it, or put its edge on the axis exactly.');
+    expect((await revolve(-5)).error).toContain('crosses the axis (by 5 mm)');
+    // Near the axis but not across it is fine.
+    expect(await volume(ok(await revolve(0.0005)))).toBeCloseTo(Math.PI * (10.0005 ** 2 - 0.0005 ** 2) * 20, 3);
+  });
+
   it('joins pads whose end touches a revolved body, alone and patterned (CAD-103)', { timeout: 60_000 }, async () => {
     const outline: [number, number][] = [[24, 60], [45, 60], [45, 36], [105, 36], [105, -36], [45, -36], [45, -60], [24, -60], [24, -30], [78, -30], [78, 30], [24, 30]];
     const drum = profile(polygonLoop(outline, 'drum'));
@@ -327,6 +336,31 @@ describe('component results and joint frames', () => {
       const turned = [original[0] * Math.cos(a) - original[1] * Math.sin(a), original[0] * Math.sin(a) + original[1] * Math.cos(a), original[2]];
       expect(x * (turned[0] as number) + y * (turned[1] as number) + z * (turned[2] as number)).toBeCloseTo(1, 6);
     }
+  });
+
+  it('puts the frames of patterned holes at the same place along each hole (CAD-117)', async () => {
+    // Radial holes through a ring's wall: their walls end on the ring's round faces, so their boxes are lopsided.
+    const ring = ok(await engine.apply({ type: 'revolve', feature: 'ring', key: 'axial-ring', bodies: [], frame: originFrames.XZ, profiles: [profile(rectangleLoop(60, -10, 40, 20, 'wall'))], axis: { origin: [0, 0, 0], direction: [0, 0, 1] }, angle: 2 * Math.PI, operation: 'new-body' }));
+    const seat = { ...originFrames.YZ, origin: [110, 0, 3] as const };
+    const hole = await engine.apply({ type: 'extrude', feature: 'guide', key: 'axial-hole', bodies: ring, frame: seat, profiles: [profile(circleLoop(0, 0, 4, 'guide'))], distance: 60, direction: 'reverse', operation: 'cut' });
+    const tools = [{ feature: 'guide', toolKey: hole.toolKey as string, operation: 'cut' as const }];
+    const guides = ok(await engine.apply({ type: 'circular-pattern', feature: 'bosses', key: 'axial-holes', bodies: ok(hole), tools, axis: { origin: [0, 0, 0], direction: [0, 0, 1] }, count: 9, angle: 2 * Math.PI }));
+    // Meshed or not, the frames are the same.
+    await engine.tessellate(guides.slice(0, 1));
+    const walls = (await names(guides)).faces.filter((f) => f.startsWith('f:guide:side:guide') && !f.endsWith('~2'));
+    expect(walls).toHaveLength(9);
+    const away: number[] = [];
+    for (const name of walls) {
+      const frame = await engine.frameOf(guides, { kind: 'face', body: 'ring', name });
+      if (!frame.ok) throw new Error(frame.error.message);
+      const [x, y, z] = frame.value.origin;
+      away.push(Math.hypot(x, y));
+      expect(z).toBeCloseTo(3, 6);
+    }
+    // The middle of the wall's reach along the hole, between the ring's faces at 60 and 100 mm.
+    for (const distance of away) expect(distance).toBeCloseTo(away[0] as number, 3);
+    expect(away[0]).toBeGreaterThan(60);
+    expect(away[0]).toBeLessThan(100);
   });
 
   it('puts joint frames on face centres, hole axes and circular edges', async () => {

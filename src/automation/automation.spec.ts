@@ -222,6 +222,46 @@ describe('the MCP server', () => {
   });
 });
 
+describe('open assemblies after their components change (CAD-116)', () => {
+  it('checks the parts as edit_component and other processes left them', { timeout: 180_000 }, async () => {
+    const projects = folder();
+    const core = createNodeCore({ projects, exports: folder() });
+    const cadence = new Cadence(core, core.exports);
+    const server = new McpServer(cadence, { commands: '// the types' }, '1.2.3');
+    let id = 0;
+    const call = async (name: string, args: Record<string, unknown> = {}) => server.handle({ jsonrpc: '2.0', id: ++id, method: 'tools/call', params: { name, arguments: args } });
+    const created = JSON.parse(text(await call('create_project', { name: 'Overlap' }))) as { project: { id: string }; component: { id: string } };
+    const block = created.component.id;
+    await call('edit_component', { document: block, commands: [{ type: 'create-sketch', id: 's', plane: 'XY' }, { type: 'add-rectangle', sketchId: 's', id: 'r', x: 0, y: 0, width: 10, height: 10 }] });
+    const profile = (JSON.parse(text(await call('get_component', { document: block, only: ['sketches'] }))) as ComponentSummary).sketches[0]?.profiles[0]?.id;
+    const extrude = (distance: string) => ({ type: 'extrude', id: 'e', name: 'Extrude 1', suppressed: false, sketch: 's', profiles: [profile], distance, direction: 'normal', operation: 'new-body' });
+    await call('edit_component', { document: block, commands: [{ type: 'add-feature', feature: extrude('4 mm') }] });
+    // Two blocks in one place overlap by a whole block.
+    const assembly = (JSON.parse(text(await call('create_document', { project: created.project.id, kind: 'assembly', name: 'Pair' }))) as { id: string }).id;
+    const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    await call('edit_assembly', { document: assembly, commands: ['a', 'b'].map((i) => ({ type: 'insert-instance', instance: { id: i, component: block, name: '', transform: identity, grounded: true } })) });
+    const overlap = async () => (JSON.parse(text(await call('check_assembly', { document: assembly }))) as { volume: number }[])[0]?.volume;
+    expect(await overlap()).toBeCloseTo(400, 3);
+
+    // Taller through the same server: the open assembly sees it at once.
+    await call('edit_component', { document: block, commands: [{ type: 'edit-feature', feature: extrude('8 mm') }] });
+    expect(await overlap()).toBeCloseTo(800, 3);
+
+    // Lower through another process on the same folders: seen too, and the server's component is opened again.
+    const other = createNodeCore({ projects, exports: folder() });
+    const script = await new Cadence(other, other.exports).component(block);
+    await script.run({ type: 'edit-feature', feature: extrude('2 mm') } as never);
+    expect(await overlap()).toBeCloseTo(200, 3);
+    expect((JSON.parse(text(await call('component_properties', { document: block }))) as { volume: number }[])[0]?.volume).toBeCloseTo(200, 3);
+
+    // New project parameters make the result stale: the assembly asks for it again, and a script waits for it (CAD-119).
+    await call('set_project_parameters', { project: created.project.id, parameters: [{ name: 'gap', expression: '1 mm' }] });
+    await cadence.settled();
+    expect([...(await cadence.assembly(assembly)).state().components.values()].map((c) => c.status)).toEqual(['ready']);
+    expect(text(await call('get_assembly', { document: assembly }))).not.toContain('loading');
+  });
+});
+
 describe('scripting papercuts (CAD-108)', () => {
   it('places shorthands by expressions, parts at the origin, and names what conflicts', { timeout: 120_000 }, async () => {
     const core = createNodeCore({ exports: folder() });

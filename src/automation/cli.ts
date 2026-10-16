@@ -164,7 +164,10 @@ export async function runCli(args: readonly string[], io: Io, reference: Readonl
         need(1);
         const script = (await import(pathToFileURL(resolve(rest[0] as string)).href)) as { default?: (cadence: Cadence, args: readonly string[]) => unknown };
         if (typeof script.default !== 'function') throw new CadenceError('no-script', `${rest[0]} has no default export to run.`);
-        await script.default(open(folder), rest.slice(1));
+        const cadence = open(folder);
+        await script.default(cadence, rest.slice(1));
+        // Results still being written when the process ends would be left cut short (CAD-119).
+        await cadence.settled();
         return 0;
       }
       case 'open-git': {

@@ -183,6 +183,11 @@ export interface AssemblySession {
   exportViewer(): Promise<Result<void>>;
   /** Hands a recorded animation to the user (a download or a save dialog). */
   saveRecording(bytes: Uint8Array, studyName: string): Promise<void>;
+  /**
+   * Reads again the components whose documents changed since they were loaded without an event
+   * saying so: another process (the app, a script) edited them in the same project folders (CAD-116).
+   */
+  catchUp(): Promise<void>;
   /** Stops listening for component changes. */
   close(): void;
 }

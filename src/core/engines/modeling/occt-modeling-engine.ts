@@ -14,7 +14,7 @@ import type { AxisInput, BodyState, ModelingEngine, ModelingOutcome, ModelingReq
 import { nameShape, namedSurfaces } from './naming';
 import { readSnapshot, snapshotOf } from './results';
 import { tessellate } from './tessellation';
-import { extrudeTool, loftTool, revolveTool, sweepTool } from './tools';
+import { extrudeTool, loftTool, RevolveError, revolveTool, sweepTool } from './tools';
 import { BooleanError, cut, valid } from './booleans';
 
 /** A failure the user can act on, as opposed to a defect. */
@@ -35,7 +35,7 @@ export class OcctModelingEngine implements ModelingEngine {
     try {
       outcome = this.compute(request);
     } catch (error) {
-      const message = error instanceof FeatureError || error instanceof BooleanError || error instanceof GearError || error instanceof BodyOperationError || error instanceof HoleError || error instanceof PartError || error instanceof DraftRibError || error instanceof FlangeError ? error.message : `The geometry kernel could not build this feature (${describe(error)}).`;
+      const message = error instanceof FeatureError || error instanceof BooleanError || error instanceof GearError || error instanceof BodyOperationError || error instanceof HoleError || error instanceof PartError || error instanceof DraftRibError || error instanceof FlangeError || error instanceof RevolveError ? error.message : `The geometry kernel could not build this feature (${describe(error)}).`;
       outcome = { bodies: request.bodies, error: message };
     }
     this.remember(request.key, outcome);
@@ -474,22 +474,28 @@ function axisOf(element: Face | Edge): { origin: Vec3; direction: Vec3 } | undef
   interface Xyz { X(): number; Y(): number; Z(): number }
   interface Axis { Location(): Xyz; Direction(): Xyz }
   const tuple = (p: Xyz): Vec3 => [p.X(), p.Y(), p.Z()];
-  /** The point of the axis nearest the element's centre, so the joint sits in the middle of a hole. */
-  const onAxis = (point: Vec3, direction: Vec3, center: Vec3): Vec3 => add3(point, scale3(direction, dot3(sub3(center, point), direction)));
-  const center = element.boundingBox.center as Vec3;
   if ('normalAt' in element) {
     if (element.geomType === 'PLANE') return { origin: element.center.toTuple() as Vec3, direction: normalize3(element.normalAt(element.center).toTuple() as Vec3) };
     if (element.geomType !== 'CYLINDRE' && element.geomType !== 'CONE') return undefined;
     const surface = new oc.BRepAdaptor_Surface(element.wrapped, false);
     try {
-      const axis = ((element.geomType === 'CYLINDRE' ? surface.Cylinder() : surface.Cone()) as unknown as { Axis(): Axis }).Axis();
+      const cone = element.geomType === 'CONE' ? (surface.Cone() as unknown as { Axis(): Axis; SemiAngle(): number }) : undefined;
+      const axis = (cone ?? (surface.Cylinder() as unknown as { Axis(): Axis })).Axis();
       const direction = normalize3(tuple(axis.Direction()));
-      return { origin: onAxis(tuple(axis.Location()), direction, center), direction };
+      // The middle of the face's extent along the axis, so the joint sits in the middle of a hole. The
+      // surface's v runs along the axis (on a cone, along its slant). Not the face's box: that turns with
+      // the face and depends on whether it was meshed, so pattern copies and sessions differed (CAD-117).
+      const { vMin, vMax } = element.UVBounds;
+      const along = ((vMin + vMax) / 2) * (cone ? Math.cos(cone.SemiAngle()) : 1);
+      return { origin: add3(tuple(axis.Location()), scale3(direction, along)), direction };
     } finally {
       surface.delete();
     }
   }
-  if (element.geomType === 'LINE') return { origin: center, direction: normalize3(element.tangentAt(0).toTuple() as Vec3) };
+  if (element.geomType === 'LINE') {
+    const [start, end] = [element.startPoint.toTuple() as Vec3, element.endPoint.toTuple() as Vec3];
+    return { origin: scale3(add3(start, end), 0.5), direction: normalize3(sub3(end, start)) };
+  }
   if (element.geomType !== 'CIRCLE') return undefined;
   const curve = new oc.BRepAdaptor_Curve(element.wrapped);
   try {
@@ -557,7 +563,13 @@ function missing(named: NamedShape, ref: TopologyRef): string {
 }
 
 function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  if (error instanceof Error) return error.message;
+  // The kernel throws WebAssembly exceptions, which only say "[object WebAssembly.Exception]" as text.
+  if (typeof WebAssembly !== 'undefined' && 'Exception' in WebAssembly && error instanceof (WebAssembly as unknown as { Exception: new () => object }).Exception) {
+    const [type, message] = (getOC() as unknown as { getExceptionMessage(e: unknown): [string, string] }).getExceptionMessage(error);
+    return `${type}: ${message}`;
+  }
+  return String(error);
 }
 
 /** One edge projected onto the plane: straight lines and circles in the plane's direction stay exact, others become 24 short lines. */

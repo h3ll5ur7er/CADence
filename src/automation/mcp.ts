@@ -57,7 +57,7 @@ Model a part:
 Assemble:
 1. create_document with kind "assembly", then edit_assembly with commands, e.g. [{"type":"insert-instance","instance":{"id":"base","component":"<component id>","name":"","transform":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"grounded":true}}]. Transforms are 4 x 4, column-major, mm (translation at 12, 13, 14).
 2. A joint lays instance b's frame on instance a's: {"type":"add-joint","joint":{"id":"j1","name":"","type":"revolute","a":{"instance":"base","ref":{"kind":"face","body":"<body>","name":"<face>"}},"b":{"instance":"arm"},"flip":false,"values":[0],"limits":[null]}}.
-   A side's frame: without ref, the component's origin (its XY plane, z up); on a flat face, its centre and outward normal; on a round face or a circular edge, its axis. "offset":{"translate":[x,y,z],"tilt":degrees,"angle":degrees} moves a frame along its own axes, tilts it about its x (for a joint along a direction no face has), then turns it about its z. flip turns b over (its z against a's). values move b along or about the frame's z, in mm or degrees, in the order of jointDofs (revolute: angle; slider: distance; cylindrical: angle, distance).
+   A side's frame: without ref, the component's origin (its XY plane, z up); on a flat face, its centre and outward normal; on a round face or a circular edge, its axis. "offset":{"translate":[x,y,z],"lean":degrees,"tilt":degrees,"angle":degrees} moves a frame along its own axes, turns it about its z (lean), tilts it about its new x (lean and tilt point a joint along any direction no face has), then turns it about its new z. flip turns b over (its z against a's). values move b along or about the frame's z, in mm or degrees, in the order of jointDofs (revolute: angle; slider: distance; cylindrical: angle, distance).
 3. get_assembly lists instances (where they are), joints (with why they fail), links, patterns, motion studies and exploded views. set-link makes one joint drive another (gears, planetary sets; a cam with a profile of [angle, lift] pairs moves its follower), set-pattern copies instances, add-study keys or drives joints over time, set-exploded-view takes the assembly apart (steps may name pattern copies, "<pattern>/<instance>/<n>", and "radial": true moves each part away from the axis along the direction).
 4. render_picture with explode (and steps) or study and time shows it apart or moving; animate_study writes a GIF and shows a sheet of moments; check_assembly finds overlaps and collisions (with "seconds" to limit a long study check); assembly_properties gives the mass and the bill of materials.
 Lengths are expressions ("6 mm", "2 * wall", "1 in"); plain numbers are millimetres. command_reference has every command, feature, part and assembly type as TypeScript, by topic (commands, sketch, features, document, assembly).`;
@@ -380,10 +380,7 @@ export class McpServer {
         ),
         run: async (args, progress) => {
           const script = await assembly(args);
-          if (args['study'] === undefined) {
-            await script.ready();
-            return script.interference();
-          }
+          if (args['study'] === undefined) return script.interference();
           return script.collisions(String(args['study']), args['fps'] === undefined ? undefined : Number(args['fps']), {
             onProgress: (done, total) => progress(done, total, `Moment ${done} of ${total} checked`),
             ...(args['seconds'] !== undefined ? { seconds: Number(args['seconds']) } : {}),

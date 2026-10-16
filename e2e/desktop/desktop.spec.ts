@@ -110,7 +110,9 @@ test('models in project folders, exports through the save dialog, and starts aga
     } catch (error) {
       // What the app said about the export, if anything.
       const said = await page.getByRole('alert').allTextContents();
-      throw new Error(`No STL at ${stl}; the app says: ${said.join(' | ') || 'nothing'}`, { cause: error });
+      // Where STL files went in the last minutes, if somewhere else.
+      const recent = spawnSync('powershell', ['-NoProfile', '-Command', "Get-ChildItem $env:USERPROFILE -Recurse -Filter *.stl -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt (Get-Date).AddMinutes(-10) } | Select-Object -ExpandProperty FullName"], { encoding: 'utf8' });
+      throw new Error(`No STL at ${stl}; the app says: ${said.join(' | ') || 'nothing'}; recent STL files: ${recent.stdout.trim() || 'none'}`, { cause: error });
     }
 
     // Closed and started again, the project is still there.

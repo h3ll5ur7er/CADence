@@ -71,12 +71,16 @@ async function quit(): Promise<void> {
 }
 
 /** Answers the next native save dialog of the app with `path`. */
-function answerSaveDialog(path: string): Promise<void> {
+/** Answers the save dialog; resolves with what the script logged about the dialogs it found. */
+function answerSaveDialog(path: string): Promise<string> {
   const script = join(import.meta.dirname, 'save-dialog.ps1');
   const answer = spawn('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-ProcessId', String(app?.pid), '-Path', path]);
   let errors = '';
+  let log = '';
+  answer.stdout.on('data', (chunk: Buffer) => (log += chunk.toString()));
   answer.stderr.on('data', (chunk: Buffer) => (errors += chunk.toString()));
-  return new Promise((resolve, reject) => answer.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(errors || `exit ${code}`)))));
+  return new Promise((resolve, reject) => answer.on('exit', (code) => (code === 0 ? resolve(log) : reject(new Error(`${errors || `exit ${code}`}
+${log}`)))));
 }
 
 test.afterAll(quit);
@@ -104,7 +108,7 @@ test('models in project folders, exports through the save dialog, and starts aga
     await page.getByRole('button', { name: 'Export' }).click();
     const answered = answerSaveDialog(stl);
     await page.getByRole('menuitem', { name: 'STL (for slicers)' }).click();
-    await answered;
+    const dialogLog = await answered;
     try {
       await expect.poll(() => (existsSync(stl) ? readFileSync(stl).byteLength : 0)).toBeGreaterThan(84);
     } catch (error) {
@@ -112,7 +116,7 @@ test('models in project folders, exports through the save dialog, and starts aga
       const said = await page.getByRole('alert').allTextContents();
       // Where STL files went in the last minutes, if somewhere else.
       const recent = spawnSync('powershell', ['-NoProfile', '-Command', "Get-ChildItem $env:USERPROFILE -Recurse -Filter *.stl -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt (Get-Date).AddMinutes(-10) } | Select-Object -ExpandProperty FullName"], { encoding: 'utf8' });
-      throw new Error(`No STL at ${stl}; the app says: ${said.join(' | ') || 'nothing'}; recent STL files: ${recent.stdout.trim() || 'none'}`, { cause: error });
+      throw new Error(`No STL at ${stl}; the app says: ${said.join(' | ') || 'nothing'}; recent STL files: ${recent.stdout.trim() || 'none'}; the dialog script: ${dialogLog.trim()}`, { cause: error });
     }
 
     // Closed and started again, the project is still there.

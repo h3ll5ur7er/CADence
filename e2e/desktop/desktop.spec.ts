@@ -11,8 +11,8 @@ import { evidence, plateProject } from '../support';
  */
 const repository = join(import.meta.dirname, '..', '..');
 const executable = join(repository, 'src-tauri', 'target', 'release', 'cadence.exe');
-/** WebView2's remote debugging port; each start gets its own, since the last one's WebView2 may still hold the port. */
-let port = 9333;
+/** WebView2's remote debugging port: built into the test build (`tauri.test.conf.json`), and asked for through the environment too. */
+const port = 9333;
 /** Where the desktop app keeps projects (Tauri's app data folder). */
 const dataFolder = join(process.env['APPDATA'] ?? '', 'dev.cadence.app');
 
@@ -23,7 +23,6 @@ let browser: Browser | undefined;
 let page: Page;
 
 async function launch(): Promise<void> {
-  port++;
   const started = spawn(executable, [], { env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` } });
   app = started;
   // What the app said, for when it does not come up.
@@ -63,8 +62,10 @@ async function quit(): Promise<void> {
   app = undefined;
   if (!running || running.exitCode !== null) return;
   const exited = new Promise((resolve) => running.once('exit', resolve));
-  running.kill();
+  // The whole tree: WebView2's processes would otherwise keep the debugging port.
+  spawnSync('taskkill', ['/PID', String(running.pid), '/T', '/F']);
   await exited;
+  await expect.poll(() => fetch(`http://127.0.0.1:${port}/json/version`).then(() => true, () => false), { timeout: 30_000 }).toBe(false);
 }
 
 /** Answers the next native save dialog of the app with `path`. */

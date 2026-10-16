@@ -1,5 +1,6 @@
 import { appearanceProblem, type AssemblyDocument, type ExplodedView, fail, type Instance, type InstancePattern, isDefaultAppearance, type Joint, jointDofs, type JointType, type MotionLink, ok, type Result } from '@core/contracts';
 import type { AssemblyCommand } from './assembly-manager';
+import { copyId, patternTransforms } from './patterns';
 
 /** The document a command produces, and the joint whose solution decides whether it is accepted. */
 export interface Applied {
@@ -144,7 +145,11 @@ export function applyCommand(document: AssemblyDocument, command: AssemblyComman
       if (!document.joints.some((j) => j.id === command.joint.id)) return invalid(`Joint ${command.joint.id} does not exist.`);
       const problem = checkJoint(document, command.joint);
       if (problem) return invalid(problem);
-      return ok({ document: { ...document, joints: document.joints.map((j) => (j.id === command.joint.id ? command.joint : j)) }, joint: command.joint.id });
+      // An empty name keeps the joint's own, or gets the next default as when it was added.
+      const existing = document.joints.find((j) => j.id === command.joint.id) as Joint;
+      const others = document.joints.filter((j) => j.id !== command.joint.id).map((j) => j.name);
+      const name = command.joint.name.trim() || existing.name.trim() || nextName(others, jointLabels[command.joint.type]);
+      return ok({ document: { ...document, joints: document.joints.map((j) => (j.id === command.joint.id ? { ...command.joint, name } : j)) }, joint: command.joint.id });
     }
     case 'remove-joint':
       return ok({
@@ -183,8 +188,11 @@ export function applyCommand(document: AssemblyDocument, command: AssemblyComman
       return ok({ document: { ...document, links: document.links.filter((l) => l.id !== command.linkId) } });
     case 'set-exploded-view': {
       const view: ExplodedView = command.view;
-      const ids = new Set(document.instances.map((i) => i.id));
-      if (view.steps.some((s) => !s.instances.length || s.instances.some((id) => !ids.has(id)) || !(Math.hypot(...s.direction) > 1e-9) || !Number.isFinite(s.distance))) {
+      // Instances and the copies their patterns make (CAD-110).
+      const ids = new Set([...document.instances.map((i) => i.id), ...(document.patterns ?? []).flatMap((p) => p.instances.flatMap((instance) => patternTransforms(p).map((_, k) => copyId(p.id, instance, k + 1))))]);
+      const unknown = view.steps.flatMap((s) => s.instances).find((id) => !ids.has(id));
+      if (unknown !== undefined) return invalid(`"${unknown}" is not an instance or a pattern copy of this assembly.`);
+      if (view.steps.some((s) => !s.instances.length || !(Math.hypot(...s.direction) > 1e-9) || !Number.isFinite(s.distance) || (s.origin && !s.origin.every(Number.isFinite)))) {
         return invalid('Each step moves instances of this assembly along a direction by a distance.');
       }
       const existing = document.explodedViews?.find((v) => v.id === view.id);

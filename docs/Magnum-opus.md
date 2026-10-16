@@ -6,7 +6,10 @@ A nine-cylinder radial aircraft engine, modelled entirely by an AI agent through
 
 ## Status
 
-All parts are modelled except the internal ring gear of the propeller reduction. The assembly (joints, links, patterns, motion study, exploded view) is not started; the plan for it is below. Every finding is fixed in phase 26 ([[Roadmap]]): the ring gear ([[CAD-98]]) and the assembly tools ([[CAD-97]]) exist now, and the valve train can follow the cam ring ([[CAD-99]]).
+All parts are modelled, including the internal ring gear. The assembly **Radial engine** is built through `edit_assembly`: 71 instances and 50 pattern copies, 57 joints with nine closed slider-crank loops that solve, gear, carrier and planet links, nine cam-driven tappets, and a motion study. Round 2 stopped at two findings: no picture or animation of the whole engine can be taken ([[CAD-109]]), and the exploded view cannot move pattern copies ([[CAD-110]]). In the motion study only one of the three blades turns: pattern copies stand still ([[CAD-115]]). Pictures focused on a few instances work. The pushrods stay put, since nothing can join them to the tappets at their angle ([[CAD-113]]).
+
+> [!WARNING]
+> The interference check found mistakes in my own design, to fix in the next round: the rear case has no bore for the crankcase's rear boss (101,712 mm³ overlap); the rear case's intake ports (13 mm) are smaller than the pipes (16 mm); the hub's blade sockets (20.2 mm) are smaller than the blades' round roots (26 mm); the master rod's small eye (22 mm) reaches into piston 1's crown; neighbouring spark plugs touch; the tappet guide cut leaves 0.4 mm of nose case wall; the flat tappet feet dip into the round cam; and the gears are not phased, so meshing teeth overlap (sun and planets 307 mm³ each). Phasing the gears needs link offsets of half a tooth.
 
 > [!NOTE]
 > With phase 26 the existing parts regenerate without errors, but some names changed: gear teeth have fewer faces ([[CAD-107]]), faces split into pieces keep their numbers ([[CAD-104]]), and patterned bodies are numbered without gaps (the master rod's knuckle pins are `kp`, then `kpat`, `kpat:2`, … `kpat:7`).
@@ -74,12 +77,13 @@ Positions along the crank axis (engine z, mm), needed for joint offsets:
 | Cylinder barrel | One revolve of a 52-point outline: spigot, flange, eleven fins | 9 |
 | Cylinder head | Finned revolve, rocker boxes and shafts, exhaust and intake ports (mirrored), two plug bosses (mirrored) | 9 |
 | Spark plug | Revolve, hex, modelled M10 thread | 18 |
-| Pushrod | Revolve with ball ends | 18 |
+| Pushrod | Revolve with ball ends, 83 mm, from the tappet to the front rocker box | 9 |
 | Exhaust stub, intake pipe | Sweeps of a tube along a line, arc and line | 9 + 9 |
 | Cam ring | Disc with two tracks of five lobes (circular patterns) and a 96-tooth gear | 1 |
 | Crank gear, lay gear | 48 teeth; 60 and 12 teeth on one hub (module 1) | 1 + 1 |
 | Sun, planet gear | 24 and 18 teeth, module 2, 18 mm wide | 1 + 3 |
-| Ring gear | 60 teeth, internal — needs [[CAD-98]] | 1 |
+| Ring gear | 60 teeth, internal (ring gear part) | 1 |
+| Tappet | Revolve: a 10 mm stem in the nose case's guide, riding on the cam ring | 9 |
 | Planet carrier | Plates and hollow propeller shaft in one revolve, three planet pins, six hub bolt holes | 1 |
 | Nose case | Revolved shell, nine tappet guide bosses (circular pattern) | 1 |
 | Propeller blade, hub, spinner | Loft through five twisted NACA sections (closed splines) with an extruded shank; hub with three sockets; spinner revolved from a spline | 3 + 1 + 1 |
@@ -134,7 +138,23 @@ flowchart LR
 | [[CAD-107]] | Gear teeth are polygons: 23 faces per tooth | improvement | smooth flanks: 4 to 8 faces ✅ |
 | [[CAD-108]] | MCP and sketcher papercuts | improvement | ✅ |
 
-What worked well: revolves of long outlines, sweeps along line-arc-line paths, lofts through spline sections, circular patterns of cuts and of new bodies, mirrors, configurations (two crankcase halves from one component), the gear generator's geometry, modelled threads (from the shoulder), fillets and chamfers, and `render_picture` for checking every part.
+Round 2 (checking phase 26 and building the assembly):
+
+| Task | What | Kind | Fixed by (phase 27) |
+| --- | --- | --- | --- |
+| [[CAD-104]] | Reopened: a revolve that joins names its trimmed faces after another curve | bug | a point inside the face, not off it ✅ |
+| [[CAD-109]] | Pictures and animations of large assemblies crash ("Maximum call stack size exceeded") | bug, blocking | bounds in loops ✅ |
+| [[CAD-110]] | Exploded views cannot move pattern copies | missing, blocking | copies in steps, radial steps ✅ |
+| [[CAD-111]] | Assembly answers too long; `command_reference` too long and missing the parts contract; `near` by centres | improvement | brief answers, reference by topic, `near` by geometry ✅ |
+| [[CAD-112]] | Joint frames on pattern copies point either way; touching parts count as interference; cam profiles dip | bug | copies' frames like the original's; touching tolerance; monotone cams ✅ |
+| [[CAD-113]] | Joint offsets cannot tilt a frame | missing | `offset.tilt` ✅ |
+| [[CAD-114]] | Collision check of the study: no answer within 30 minutes | improvement | changed pairs only, mesh screening, no leaks, progress ✅ |
+| [[CAD-115]] | Pattern copies stand still in motion studies (and the collision check skips them) | bug | copies in every frame ✅ |
+
+> [!NOTE]
+> After phase 27, the joints on tappet guides 5–8 that needed `flip: true` (and the cam links' ratio −1) point the other way: the copies' frames now follow the original's ([[CAD-112]]). Take those flips out.
+
+What worked well: revolves of long outlines, sweeps along line-arc-line paths, lofts through spline sections (from a round root since phase 26), circular patterns of cuts and of new bodies, mirrors, configurations (two crankcase halves from one component), the gear generator (spur and ring gears), modelled threads, fillets and chamfers, and `render_picture` for every part. In the assembly: nine closed loops solved from good starting values, links chained crank → lay gear → cam ring → nine cam followers, planetary links, patterns of turning instances (at rest; see [[CAD-115]]), mass and bill of materials with configurations and copies.
 
 ## Tips for agents
 

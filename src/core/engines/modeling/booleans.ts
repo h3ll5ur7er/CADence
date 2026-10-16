@@ -1,4 +1,5 @@
-import { cast, getOC, measureVolume, type Shape3D } from 'replicad';
+import { adopt } from '@core/access/shape';
+import { getOC, measureVolume, type Shape3D } from 'replicad';
 
 type Operation = 'fuse' | 'cut' | 'common';
 
@@ -22,7 +23,7 @@ function solidsOf(shape: Shape3D): Shape3D[] {
   const solids: Shape3D[] = [];
   const explorer = new oc.TopExp_Explorer(shape.wrapped, oc.TopAbs_ShapeEnum.TopAbs_SOLID, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
   try {
-    for (; explorer.More(); explorer.Next()) solids.push(cast(explorer.Current()) as Shape3D);
+    for (; explorer.More(); explorer.Next()) solids.push(adopt(explorer.Current()) as Shape3D);
   } finally {
     explorer.delete();
   }
@@ -44,9 +45,9 @@ function build(operation: Operation, shape: Shape3D, tools: readonly Shape3D[], 
     if (fuzzy) builder.SetFuzzyValue(fuzzy);
     builder.Build();
     if (!builder.IsDone() || builder.HasErrors()) return [];
-    const raw = cast(builder.Shape()) as Shape3D;
+    const raw = adopt(builder.Shape()) as Shape3D;
     builder.SimplifyResult(true, true, 0.001);
-    return [cast(builder.Shape()) as Shape3D, raw];
+    return [adopt(builder.Shape()) as Shape3D, raw];
   } finally {
     builder.delete();
     objects.delete();

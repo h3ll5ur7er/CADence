@@ -76,6 +76,63 @@ export class RayCaster {
     return count;
   }
 
+  /**
+   * How a triangle (nine coordinates) meets the mesh: 2 when it crosses one of its triangles by more
+   * than `slack` on every separating axis (the surfaces pass through each other), 1 when it only comes
+   * within `slack` (they touch), 0 when it stays apart. The hierarchy's boxes are tested first.
+   */
+  meets(triangle: ArrayLike<number>, slack: number): 0 | 1 | 2 {
+    if (this.nodeCount === 0) return 0;
+    const low = [0, 1, 2].map((k) => Math.min(triangle[k] as number, triangle[k + 3] as number, triangle[k + 6] as number) - slack);
+    const high = [0, 1, 2].map((k) => Math.max(triangle[k] as number, triangle[k + 3] as number, triangle[k + 6] as number) + slack);
+    const stack = [0];
+    const other = new Float64Array(9);
+    let best: 0 | 1 = 0;
+    while (stack.length) {
+      const node = stack.pop() as number;
+      let apart = false;
+      for (let k = 0; k < 3 && !apart; k++) apart = (this.bounds[node * 6 + k] as number) > (high[k] as number) || (this.bounds[node * 6 + k + 3] as number) < (low[k] as number);
+      if (apart) continue;
+      const first = this.nodes[node * 2] as number;
+      const count = this.nodes[node * 2 + 1] as number;
+      if (count === 0) {
+        stack.push(node + 1, first);
+        continue;
+      }
+      for (let i = first; i < first + count; i++) {
+        const t = this.order[i] as number;
+        for (let corner = 0; corner < 3; corner++) for (let k = 0; k < 3; k++) other[corner * 3 + k] = this.vertex(t, corner, k);
+        if (!trianglesMeet(triangle, other, slack)) continue;
+        if (trianglesMeet(triangle, other, -slack)) return 2;
+        best = 1;
+      }
+    }
+    return best;
+  }
+
+  /** Where the ray crosses the mesh beyond its origin, nearest first. */
+  hits(origin: Vec3, direction: Vec3): number[] {
+    if (this.nodeCount === 0) return [];
+    const inverse = [1 / direction[0], 1 / direction[1], 1 / direction[2]];
+    const found: number[] = [];
+    const stack = [0];
+    while (stack.length) {
+      const node = stack.pop() as number;
+      if (!this.hitsBox(node, origin, inverse, Infinity)) continue;
+      const first = this.nodes[node * 2] as number;
+      const leaf = this.nodes[node * 2 + 1] as number;
+      if (leaf === 0) {
+        stack.push(node + 1, first);
+        continue;
+      }
+      for (let i = first; i < first + leaf; i++) {
+        const t = this.hitTriangle(this.order[i] as number, origin, direction);
+        if (t !== undefined && t > 0) found.push(t);
+      }
+    }
+    return found.sort((x, y) => x - y);
+  }
+
   private vertex(triangle: number, corner: number, axis: number): number {
     return this.positions[(this.indices[triangle * 3 + corner] as number) * 3 + axis] as number;
   }
@@ -145,4 +202,33 @@ export class RayCaster {
     if (v < 0 || u + v > 1) return undefined;
     return (e2x * qx + e2y * qy + e2z * qz) * inv;
   }
+}
+
+/** Whether two triangles (nine coordinates each) come within `slack` of each other (overlap by more than −slack): no separating axis. */
+function trianglesMeet(a: ArrayLike<number>, b: ArrayLike<number>, slack: number): boolean {
+  const at = (t: ArrayLike<number>, i: number) => t[i] as number;
+  // Edges: e[i] = corner (i + 1) − corner i, for both triangles.
+  const edges = new Float64Array(18);
+  for (let i = 0; i < 3; i++)
+    for (let k = 0; k < 3; k++) {
+      edges[i * 3 + k] = at(a, ((i + 1) % 3) * 3 + k) - at(a, i * 3 + k);
+      edges[9 + i * 3 + k] = at(b, ((i + 1) % 3) * 3 + k) - at(b, i * 3 + k);
+    }
+  const separates = (x: number, y: number, z: number): boolean => {
+    const length = Math.hypot(x, y, z);
+    if (length < 1e-12) return false;
+    let [aLow, aHigh, bLow, bHigh] = [Infinity, -Infinity, Infinity, -Infinity];
+    for (let i = 0; i < 3; i++) {
+      const da = (at(a, i * 3) * x + at(a, i * 3 + 1) * y + at(a, i * 3 + 2) * z) / length;
+      const db = (at(b, i * 3) * x + at(b, i * 3 + 1) * y + at(b, i * 3 + 2) * z) / length;
+      [aLow, aHigh, bLow, bHigh] = [Math.min(aLow, da), Math.max(aHigh, da), Math.min(bLow, db), Math.max(bHigh, db)];
+    }
+    return aHigh + slack < bLow || bHigh + slack < aLow;
+  };
+  const e = (j: number) => edges[j] as number;
+  // The cross product of edge u (index into edges) and edge v.
+  const crossSeparates = (u: number, v: number) => separates(e(u + 1) * e(v + 2) - e(u + 2) * e(v + 1), e(u + 2) * e(v) - e(u) * e(v + 2), e(u) * e(v + 1) - e(u + 1) * e(v));
+  if (crossSeparates(0, 3) || crossSeparates(9, 12)) return false; // the normals
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) if (crossSeparates(i * 3, 9 + j * 3)) return false;
+  return true;
 }

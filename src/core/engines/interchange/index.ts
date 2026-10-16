@@ -1,4 +1,4 @@
-import { ellipseParameter } from '@core/utilities/math';
+import { ellipseParameter, range } from '@core/utilities/math';
 import { place, type ShapeAccess } from '@core/access/shape';
 import {
   fail,
@@ -111,9 +111,8 @@ function extentOf(entities: readonly SketchEntity[], texts: TextOutlines): Drawi
     }),
     ...[...texts.values()].flat(2).flatMap((edge) => [edge.start, edge.end]),
   ];
-  const xs = corners.map((p) => p[0]);
-  const ys = corners.map((p) => p[1]);
-  return { min: [Math.min(...xs), Math.min(...ys)], max: [Math.max(...xs), Math.max(...ys)] };
+  const [xs, ys] = [range(corners.map((p) => p[0])), range(corners.map((p) => p[1]))];
+  return { min: [xs[0], ys[0]], max: [xs[1], ys[1]] };
 }
 
 /** Expected failures (unreadable files, unsupported combinations) as results with the reader's message. */

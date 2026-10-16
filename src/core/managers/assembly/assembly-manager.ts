@@ -100,6 +100,21 @@ export interface Collision {
   readonly volume: number;
 }
 
+/** How a motion study is checked for collisions. */
+export interface CollisionOptions {
+  /** Called after each moment checked. */
+  readonly onProgress?: (done: number, total: number) => void;
+  /** Stop after this long (the moments checked so far are reported). */
+  readonly seconds?: number;
+}
+
+/** Where instances hit while a study plays, and how many of its moments were checked. */
+export interface CollisionReport {
+  readonly collisions: readonly Collision[];
+  readonly checked: number;
+  readonly moments: number;
+}
+
 /** A line of the bill of materials: one component (or configuration of it) and how many there are. */
 export interface BomLine {
   readonly component: string;
@@ -144,8 +159,11 @@ export interface AssemblySession {
   measure(refs: readonly PlacedRef[]): Promise<Result<Measurement>>;
   /** Total mass, volume and centre of mass of the shown instances and copies. */
   properties(): Promise<AssemblyProperties>;
-  /** Where instances hit while a motion study plays (sampled `fps` times a second): the first moment for each pair. */
-  collisions(studyId: string, fps: number): Promise<Result<readonly Collision[]>>;
+  /**
+   * Where instances and pattern copies hit while a motion study plays (sampled `fps` times a second):
+   * the first moment for each pair. Pairs that keep their relative position are tested once.
+   */
+  collisions(studyId: string, fps: number, options?: CollisionOptions): Promise<Result<CollisionReport>>;
   /** Where the instances are with the first `steps` steps of an exploded view applied (all by default), the last one by `amount` (0 … 1). */
   explode(viewId: string, steps?: number, amount?: number): ReadonlyMap<string, Matrix4>;
   /** The components of the assembly with their counts, materials and masses. */

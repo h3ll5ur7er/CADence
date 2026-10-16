@@ -39,6 +39,14 @@ describe('raster', () => {
     expect(b).toBeGreaterThan(30);
   });
 
+  it('frames meshes of millions of vertices (CAD-109)', () => {
+    const n = 1_000_000;
+    const positions = new Float32Array(n * 3).map((_, i) => (i % 3 === 2 ? 0 : (i * 7919) % 1000) / 100);
+    const normals = new Float32Array(n * 3).map((_, i) => (i % 3 === 2 ? 1 : 0));
+    const pixels = rasterize([{ positions, normals, indices: new Uint32Array([0, 1, 2]) }], { width: 16, height: 16, ...rasterViews.top });
+    expect(pixels.length).toBe(16 * 16 * 4);
+  });
+
   it('writes pictures as PNG', async () => {
     const pixels = rasterize([square('#a9b6c2')], { width: 32, height: 24, ...rasterViews.iso, background: [255, 255, 255, 255] });
     const png = await encodePng({ width: 32, height: 24, data: pixels });

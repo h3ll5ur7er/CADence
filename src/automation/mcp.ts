@@ -15,11 +15,14 @@ export interface JsonRpcMessage {
   readonly params?: Record<string, unknown>;
 }
 
+/** Reports how far a long tool call has got (MCP progress notifications, when the client asked for them). */
+type Progress = (done: number, total: number, message: string) => void;
+
 interface Tool {
   readonly name: string;
   readonly description: string;
   readonly inputSchema: Record<string, unknown>;
-  run(args: Record<string, unknown>): Promise<unknown>;
+  run(args: Record<string, unknown>, progress: Progress): Promise<unknown>;
 }
 
 /** A picture to look at with a line about it. */
@@ -54,10 +57,10 @@ Model a part:
 Assemble:
 1. create_document with kind "assembly", then edit_assembly with commands, e.g. [{"type":"insert-instance","instance":{"id":"base","component":"<component id>","name":"","transform":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"grounded":true}}]. Transforms are 4 x 4, column-major, mm (translation at 12, 13, 14).
 2. A joint lays instance b's frame on instance a's: {"type":"add-joint","joint":{"id":"j1","name":"","type":"revolute","a":{"instance":"base","ref":{"kind":"face","body":"<body>","name":"<face>"}},"b":{"instance":"arm"},"flip":false,"values":[0],"limits":[null]}}.
-   A side's frame: without ref, the component's origin (its XY plane, z up); on a flat face, its centre and outward normal; on a round face or a circular edge, its axis. "offset":{"translate":[x,y,z],"angle":degrees} moves a frame along its own axes, then turns it about its z. flip turns b over (its z against a's). values move b along or about the frame's z, in mm or degrees, in the order of jointDofs (revolute: angle; slider: distance; cylindrical: angle, distance).
-3. get_assembly lists instances (where they are), joints (with why they fail), links, patterns, motion studies and exploded views. set-link makes one joint drive another (gears, planetary sets; a cam with a profile of [angle, lift] pairs moves its follower), set-pattern copies instances, add-study keys or drives joints over time, set-exploded-view takes the assembly apart.
-4. render_picture with explode (and steps) or study and time shows it apart or moving; animate_study writes a GIF and shows a sheet of moments; check_assembly finds overlaps and collisions; assembly_properties gives the mass and the bill of materials.
-Lengths are expressions ("6 mm", "2 * wall", "1 in"); plain numbers are millimetres. command_reference has every command, feature and assembly type as TypeScript.`;
+   A side's frame: without ref, the component's origin (its XY plane, z up); on a flat face, its centre and outward normal; on a round face or a circular edge, its axis. "offset":{"translate":[x,y,z],"tilt":degrees,"angle":degrees} moves a frame along its own axes, tilts it about its x (for a joint along a direction no face has), then turns it about its z. flip turns b over (its z against a's). values move b along or about the frame's z, in mm or degrees, in the order of jointDofs (revolute: angle; slider: distance; cylindrical: angle, distance).
+3. get_assembly lists instances (where they are), joints (with why they fail), links, patterns, motion studies and exploded views. set-link makes one joint drive another (gears, planetary sets; a cam with a profile of [angle, lift] pairs moves its follower), set-pattern copies instances, add-study keys or drives joints over time, set-exploded-view takes the assembly apart (steps may name pattern copies, "<pattern>/<instance>/<n>", and "radial": true moves each part away from the axis along the direction).
+4. render_picture with explode (and steps) or study and time shows it apart or moving; animate_study writes a GIF and shows a sheet of moments; check_assembly finds overlaps and collisions (with "seconds" to limit a long study check); assembly_properties gives the mass and the bill of materials.
+Lengths are expressions ("6 mm", "2 * wall", "1 in"); plain numbers are millimetres. command_reference has every command, feature, part and assembly type as TypeScript, by topic (commands, sketch, features, document, assembly).`;
 
 /** The MCP server: CADence's scripting API as tools (docs/User-guide/Automation.md). */
 export class McpServer {
@@ -65,15 +68,15 @@ export class McpServer {
 
   constructor(
     private readonly cadence: Cadence,
-    /** The command and feature types, for `command_reference`. */
-    private readonly reference: string,
+    /** The command and feature types by topic, for `command_reference`. */
+    private readonly reference: Readonly<Record<string, string>>,
     private readonly version: string,
   ) {
     this.tools = this.createTools();
   }
 
-  /** The response to a message; undefined for notifications. */
-  async handle(message: JsonRpcMessage): Promise<Record<string, unknown> | undefined> {
+  /** The response to a message; undefined for notifications. `notify` sends notifications (progress) meanwhile. */
+  async handle(message: JsonRpcMessage, notify: (notification: Record<string, unknown>) => void = () => undefined): Promise<Record<string, unknown> | undefined> {
     const { id, method, params = {} } = message;
     if (id === undefined || id === null) return undefined;
     const reply = (result: unknown) => ({ jsonrpc: '2.0', id, result });
@@ -91,19 +94,24 @@ export class McpServer {
         return reply({});
       case 'tools/list':
         return reply({ tools: this.tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
-      case 'tools/call':
-        return reply(await this.call(String(params['name']), (params['arguments'] ?? {}) as Record<string, unknown>));
+      case 'tools/call': {
+        const token = (params['_meta'] as { progressToken?: string | number } | undefined)?.progressToken;
+        const progress: Progress = (done, total, text) => {
+          if (token !== undefined) notify({ jsonrpc: '2.0', method: 'notifications/progress', params: { progressToken: token, progress: done, total, message: text } });
+        };
+        return reply(await this.call(String(params['name']), (params['arguments'] ?? {}) as Record<string, unknown>, progress));
+      }
       default:
         return { jsonrpc: '2.0', id, error: { code: -32601, message: `Unknown method ${method}` } };
     }
   }
 
-  private async call(name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+  private async call(name: string, args: Record<string, unknown>, progress: Progress): Promise<Record<string, unknown>> {
     const tool = this.tools.find((t) => t.name === name);
     if (!tool) return { content: [{ type: 'text', text: `Unknown tool ${name}.` }], isError: true };
     const image = (bytes: Uint8Array) => ({ type: 'image', data: Buffer.from(bytes).toString('base64'), mimeType: 'image/png' });
     try {
-      const result = await tool.run(args);
+      const result = await tool.run(args, progress);
       // Pictures go back as images the agent can look at.
       if (result instanceof Uint8Array) return { content: [image(result)] };
       if (result && typeof result === 'object' && 'picture' in result) {
@@ -359,15 +367,27 @@ export class McpServer {
       },
       {
         name: 'check_assembly',
-        description: 'Instances whose solids overlap where they are now (with the volume, mm³); with a motion study, where instances hit while it plays (the first moment of each pair).',
-        inputSchema: object({ document: documentArg, study: string('A motion study id, to check it for collisions.'), fps: number('Moments checked per second of the study (10 by default).') }, ['document']),
-        run: async (args) => {
+        description:
+          'Instances whose solids overlap where they are now (with the volume, mm³); with a motion study, where instances and pattern copies hit while it plays (the first moment of each pair), with progress notifications and an optional time limit.',
+        inputSchema: object(
+          {
+            document: documentArg,
+            study: string('A motion study id, to check it for collisions.'),
+            fps: number('Moments checked per second of the study (10 by default).'),
+            seconds: number('Stop after this long and report the moments checked so far.'),
+          },
+          ['document'],
+        ),
+        run: async (args, progress) => {
           const script = await assembly(args);
           if (args['study'] === undefined) {
             await script.ready();
             return script.interference();
           }
-          return script.collisions(String(args['study']), args['fps'] === undefined ? undefined : Number(args['fps']));
+          return script.collisions(String(args['study']), args['fps'] === undefined ? undefined : Number(args['fps']), {
+            onProgress: (done, total) => progress(done, total, `Moment ${done} of ${total} checked`),
+            ...(args['seconds'] !== undefined ? { seconds: Number(args['seconds']) } : {}),
+          });
         },
       },
       {
@@ -423,9 +443,16 @@ export class McpServer {
       },
       {
         name: 'command_reference',
-        description: 'The TypeScript types of every design and assembly command, feature, sketch entity, constraint, joint, link, study and exploded view, with their documentation.',
-        inputSchema: object({}),
-        run: async () => this.reference,
+        description:
+          'The TypeScript types of the commands and contracts, with their documentation, by topic: commands (design commands and shorthands), sketch (entities and constraints), features (features and parts: gears, ring gears, screws, bearings …), document (components, materials, checks, appearance), assembly (assembly commands, instances, joints, links, studies, exploded views). Without a topic, the list of topics.',
+        inputSchema: object({ topic: { type: 'string', enum: Object.keys(this.reference) } }),
+        run: async (args) => {
+          const topic = args['topic'] === undefined ? undefined : String(args['topic']);
+          if (topic === undefined) return `Topics: ${Object.entries(this.reference).map(([name, text]) => `${name} (${Math.round(text.length / 1000)}k characters)`).join(', ')}. Ask for one with {"topic": "<name>"}.`;
+          const text = this.reference[topic];
+          if (text === undefined) throw new CadenceError('usage', `No topic "${topic}". Topics: ${Object.keys(this.reference).join(', ')}.`);
+          return text;
+        },
       },
     ];
   }
@@ -445,7 +472,8 @@ export function serveStdio(server: McpServer, input: NodeJS.ReadableStream = pro
         output.write(`${JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } })}\n`);
         return;
       }
-      const response = await server.handle(message).catch((error: Error) => ({ jsonrpc: '2.0', id: message.id ?? null, error: { code: -32603, message: error.message } }));
+      const notify = (notification: Record<string, unknown>) => output.write(`${JSON.stringify(notification)}\n`);
+      const response = await server.handle(message, notify).catch((error: Error) => ({ jsonrpc: '2.0', id: message.id ?? null, error: { code: -32603, message: error.message } }));
       if (response) output.write(`${JSON.stringify(response)}\n`);
     });
   });

@@ -15,7 +15,7 @@ import type {
   Vec3,
 } from '@core/contracts';
 import { sourceKey } from '@core/contracts';
-import type { AssemblyCommand, AssemblyFormat, AssemblySession, AssemblyState, BomLine, Collision } from '@core/managers/assembly';
+import type { AssemblyCommand, AssemblyFormat, AssemblySession, AssemblyState, BomLine, CollisionOptions, CollisionReport } from '@core/managers/assembly';
 import type { DesignSession, DesignState, DrawingFormat, ExportOptions, SolidFormat } from '@core/managers/design';
 import type { ProjectManager } from '@core/managers/project';
 import { encodeGif, encodePng, type Pixels } from '@core/utilities/picture';
@@ -175,7 +175,7 @@ export interface SummaryFilter {
   readonly body?: string;
   /** Faces and edges whose names match, with `*` for any text: `f:pocket:*`. */
   readonly match?: string;
-  /** Faces and edges whose centre (or middle) lies within `within` mm (5 by default) of this point. */
+  /** Faces and edges that pass within `within` mm (5 by default) of this point. */
   readonly near?: Vec3;
   readonly within?: number;
 }
@@ -195,6 +195,55 @@ export interface ComponentChanges {
   readonly goneBodies?: readonly string[];
   readonly parameters?: ComponentSummary['parameters'];
   readonly hint: string;
+}
+
+type Point = readonly [number, number, number];
+const minus = (a: Point, b: Point): Point => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const dotted = (a: Point, b: Point) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+
+/** How far a point is from a segment. */
+function segmentDistance(p: Point, a: Point, b: Point): number {
+  const ab = minus(b, a);
+  const t = Math.max(0, Math.min(1, dotted(minus(p, a), ab) / (dotted(ab, ab) || 1)));
+  const q = minus(p, [a[0] + t * ab[0], a[1] + t * ab[1], a[2] + t * ab[2]]);
+  return Math.hypot(q[0], q[1], q[2]);
+}
+
+/** How far a point is from a triangle (Ericson's closest point, by region). */
+function triangleDistance(p: Point, a: Point, b: Point, c: Point): number {
+  const [ab, ac] = [minus(b, a), minus(c, a)];
+  const n: Point = [ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2], ab[0] * ac[1] - ab[1] * ac[0]];
+  const area = dotted(n, n);
+  if (area > 0) {
+    // Inside the triangle's prism: the distance to its plane.
+    const ap = minus(p, a);
+    const side = (u: Point, v: Point, w: Point) => {
+      const [uv, uw] = [minus(v, u), minus(w, u)];
+      const cross: Point = [uv[1] * uw[2] - uv[2] * uw[1], uv[2] * uw[0] - uv[0] * uw[2], uv[0] * uw[1] - uv[1] * uw[0]];
+      return dotted(cross, n);
+    };
+    if (side(a, b, p) >= 0 && side(b, c, p) >= 0 && side(c, a, p) >= 0) return Math.abs(dotted(ap, n)) / Math.sqrt(area);
+  }
+  return Math.min(segmentDistance(p, a, b), segmentDistance(p, b, c), segmentDistance(p, c, a));
+}
+
+/** How far a point is from a face of a body mesh (its triangles), so a point on a round wall finds it (CAD-111). */
+function faceDistance(body: { positions: Float32Array; indices: Uint32Array }, face: { start: number; count: number }, p: Point): number {
+  const vertex = (i: number): Point => {
+    const k = (body.indices[i] as number) * 3;
+    return [body.positions[k] as number, body.positions[k + 1] as number, body.positions[k + 2] as number];
+  };
+  let nearest = Infinity;
+  for (let i = face.start; i < face.start + face.count; i += 3) nearest = Math.min(nearest, triangleDistance(p, vertex(i), vertex(i + 1), vertex(i + 2)));
+  return nearest;
+}
+
+/** How far a point is from an edge of a body mesh (its segments). */
+function edgeDistance(body: { edgePositions: Float32Array }, edge: { start: number; count: number }, p: Point): number {
+  const at = (i: number): Point => [body.edgePositions[i * 3] as number, body.edgePositions[i * 3 + 1] as number, body.edgePositions[i * 3 + 2] as number];
+  let nearest = Infinity;
+  for (let i = edge.start; i + 1 < edge.start + edge.count; i += 2) nearest = Math.min(nearest, segmentDistance(p, at(i), at(i + 1)));
+  return nearest;
 }
 
 /** Half-way along an edge: its segments (pairs of points) in the body mesh's edge positions. */
@@ -254,7 +303,7 @@ export class ComponentScript {
     const notes: string[] = [];
     const named = matcher(filter.match);
     const near = filter.near;
-    const close = (point: readonly number[]) => !near || Math.hypot(...near.map((v, i) => v - (point[i] as number))) <= (filter.within ?? 5);
+    const within = filter.within ?? 5;
     const cut = <T>(list: readonly T[], what: string): readonly T[] => {
       if (list.length <= listLimit) return list;
       notes.push(`${list.length - listLimit} more ${what}: filter by body, match or near to see them.`);
@@ -315,10 +364,20 @@ export class ComponentScript {
                 faceCount: body.faces.length,
                 edgeCount: body.edges.length,
                 ...(wanted('faces')
-                  ? { faces: cut(body.faces.map((face) => ({ name: face.name, planar: face.planar, center: roundAll(face.center) })).filter((f) => named(f.name) && close(f.center)), `faces of ${body.body}`) }
+                  ? {
+                      faces: cut(
+                        body.faces.filter((face) => named(face.name) && (!near || faceDistance(body, face, near) <= within)).map((face) => ({ name: face.name, planar: face.planar, center: roundAll(face.center) })),
+                        `faces of ${body.body}`,
+                      ),
+                    }
                   : {}),
                 ...(wanted('edges')
-                  ? { edges: cut(body.edges.map((edge) => ({ name: edge.name, middle: middleOf(body.edgePositions, edge.start, edge.count) })).filter((e) => named(e.name) && close(e.middle)), `edges of ${body.body}`) }
+                  ? {
+                      edges: cut(
+                        body.edges.filter((edge) => named(edge.name) && (!near || edgeDistance(body, edge, near) <= within)).map((edge) => ({ name: edge.name, middle: middleOf(body.edgePositions, edge.start, edge.count) })),
+                        `edges of ${body.body}`,
+                      ),
+                    }
                   : {}),
               })),
           }
@@ -437,17 +496,28 @@ export interface AssemblySummary {
   readonly explodedViews: NonNullable<AssemblyDocument['explodedViews']>;
 }
 
-/** What one edit changed in an assembly. */
+type AssemblyKind = 'instances' | 'joints' | 'links' | 'patterns' | 'studies' | 'explodedViews';
+
+/** What one edit changed in an assembly, short (CAD-111): get_assembly has the whole of it. */
 export interface AssemblyChanges {
   readonly id: string;
-  /** Added or changed, by kind; `removed` lists the ids that are gone. */
-  readonly changed: Partial<Record<'instances' | 'joints' | 'links' | 'patterns' | 'studies' | 'explodedViews', readonly unknown[]>>;
+  /** What the commands made, in full (cam profiles and study keys counted, not listed). */
+  readonly created?: Partial<Record<AssemblyKind, readonly unknown[]>>;
+  /** Joints whose values (or errors) changed: id, values and error. */
+  readonly joints?: readonly { readonly id: string; readonly values: readonly number[]; readonly error?: string }[];
+  /** Ids of other things that changed, by kind. */
+  readonly changed?: Partial<Record<AssemblyKind, readonly string[]>>;
   readonly removed?: readonly string[];
   /** Every joint that does not hold now, with the reason. */
   readonly jointErrors?: Readonly<Record<string, string>>;
   /** Instances that moved, with their new origins. */
   readonly moved?: Readonly<Record<string, Vec3>>;
   readonly counts: { readonly instances: number; readonly copies: number; readonly joints: number };
+}
+
+/** An item as an answer shows it: long lists (a cam's profile, a study's keys) as their count. */
+function brief(item: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(item).map(([key, value]) => (Array.isArray(value) && value.length > 8 && Array.isArray(value[0]) ? [key, `${value.length} entries`] : key === 'keys' && Array.isArray(value) ? [key, `${value.length} keys`] : [key, value])));
 }
 
 const originOf = (transform: Matrix4 | undefined): Vec3 => roundAll([transform?.[12] ?? 0, transform?.[13] ?? 0, transform?.[14] ?? 0]) as unknown as Vec3;
@@ -514,15 +584,28 @@ export class AssemblyScript {
   async changes(before: AssemblySummary): Promise<AssemblyChanges> {
     const after = await this.summary();
     const kinds = ['instances', 'joints', 'links', 'patterns', 'studies', 'explodedViews'] as const;
-    const changed: Partial<Record<(typeof kinds)[number], readonly unknown[]>> = {};
+    const created: Partial<Record<AssemblyKind, readonly unknown[]>> = {};
+    const changed: Partial<Record<AssemblyKind, readonly string[]>> = {};
     const removed: string[] = [];
     const moved: Record<string, Vec3> = {};
+    const without = (item: object, ...keys: string[]) => Object.fromEntries(Object.entries(item).filter(([key]) => !keys.includes(key)));
     for (const kind of kinds) {
       const [was, is] = [before[kind] as readonly { id: string }[], after[kind] as readonly { id: string }[]];
-      const different = is.filter((item) => JSON.stringify(was.find((w) => w.id === item.id)) !== JSON.stringify(item));
-      if (different.length) changed[kind] = kind === 'instances' ? different.map((i) => ({ ...i, transform: undefined })) : different;
+      const added = is.filter((item) => !was.some((w) => w.id === item.id));
+      if (added.length) created[kind] = added.map((item) => brief(item as unknown as Record<string, unknown>));
+      // Instances move and joints change values all the time: those are reported apart, below.
+      const ignored = kind === 'instances' ? ['transform', 'origin', 'placed'] : kind === 'joints' ? ['values', 'error'] : [];
+      const different = is.filter((item) => {
+        const old = was.find((w) => w.id === item.id);
+        return old && JSON.stringify(without(old, ...ignored)) !== JSON.stringify(without(item, ...ignored));
+      });
+      if (different.length) changed[kind] = different.map((item) => item.id);
       removed.push(...was.filter((w) => !is.some((i) => i.id === w.id)).map((w) => w.id));
     }
+    const joints = after.joints.flatMap((joint) => {
+      const old = before.joints.find((j) => j.id === joint.id);
+      return old && (JSON.stringify(old.values) !== JSON.stringify(joint.values) || old.error !== joint.error) ? [{ id: joint.id, values: joint.values, ...(joint.error ? { error: joint.error } : {}) }] : [];
+    });
     for (const instance of after.instances) {
       const was = before.instances.find((i) => i.id === instance.id);
       if (was && JSON.stringify(was.origin) !== JSON.stringify(instance.origin)) moved[instance.id] = instance.origin;
@@ -530,7 +613,9 @@ export class AssemblyScript {
     const jointErrors = Object.fromEntries(after.joints.flatMap((j) => (j.error ? [[j.id, j.error]] : [])));
     return {
       id: after.id,
-      changed,
+      ...(Object.keys(created).length ? { created } : {}),
+      ...(joints.length ? { joints } : {}),
+      ...(Object.keys(changed).length ? { changed } : {}),
       ...(removed.length ? { removed } : {}),
       ...(Object.keys(jointErrors).length ? { jointErrors } : {}),
       ...(Object.keys(moved).length ? { moved } : {}),
@@ -542,10 +627,10 @@ export class AssemblyScript {
     return this.session.interference();
   }
 
-  /** Where instances hit while a motion study plays: the first moment for each pair. */
-  async collisions(studyId: string, fps = 10): Promise<readonly Collision[]> {
+  /** Where instances hit while a motion study plays: the first moment for each pair, and how many moments were checked. */
+  async collisions(studyId: string, fps = 10, options: CollisionOptions = {}): Promise<CollisionReport> {
     await this.ready();
-    return unwrap(await this.session.collisions(studyId, fps));
+    return unwrap(await this.session.collisions(studyId, fps, options));
   }
 
   async properties() {

@@ -31,10 +31,24 @@ import type { InterchangeEngine } from '@core/engines/interchange';
 import type { KinematicJoint, KinematicModel, KinematicsEngine } from '@core/engines/kinematics';
 import type { ModelingEngine } from '@core/engines/modeling';
 import type { Clock } from '@core/utilities/clock';
-import { compose, fromFrame, transformPoint, translation } from '@core/utilities/math';
+import { compose, fromFrame, invertRigid, transformPoint, translation } from '@core/utilities/math';
 import { toCsv } from '@core/utilities/csv';
 import type { EventBus } from '@core/utilities/messaging';
-import type { AssemblyCommand, AssemblyFormat, AssemblyManager, AssemblyProperties, AssemblySession, AssemblyState, BomLine, Collision, ComponentView, InstructionPicture, PlacedRef } from './assembly-manager';
+import type {
+  AssemblyCommand,
+  AssemblyFormat,
+  AssemblyManager,
+  AssemblyProperties,
+  AssemblySession,
+  AssemblyState,
+  BomLine,
+  Collision,
+  CollisionOptions,
+  CollisionReport,
+  ComponentView,
+  InstructionPicture,
+  PlacedRef,
+} from './assembly-manager';
 import { applyCommand } from './commands';
 import { copyId, patternTransforms } from './patterns';
 
@@ -179,7 +193,8 @@ class Session implements AssemblySession {
     const { model } = await this.model(this.document);
     const { frames, error } = this.deps.kinematics.simulate(model, study, fps);
     if (error) return fail({ code: 'motion-failed', message: `At ${error.time.toFixed(2)} s, ${this.jointName(error.joint)}: ${error.message}` });
-    return ok(frames);
+    // Pattern copies move with their originals in every frame (CAD-115).
+    return ok(frames.map((frame) => ({ ...frame, poses: Object.fromEntries(withCopies(this.document, new Map(Object.entries(frame.poses))).poses) })));
   }
 
   async measure(refs: readonly PlacedRef[]): Promise<Result<Measurement>> {
@@ -206,22 +221,43 @@ class Session implements AssemblySession {
     return { mass, volume, centerOfMass, parts };
   }
 
-  async collisions(studyId: string, fps: number): Promise<Result<readonly Collision[]>> {
+  async collisions(studyId: string, fps: number, options: CollisionOptions = {}): Promise<Result<CollisionReport>> {
     const frames = await this.motion(studyId, fps);
     if (!frames.ok) return frames;
     const found = new Map<string, Collision>();
-    const ready = this.readyInstances().filter(({ instance }) => !this.derived.copies.has(instance.id));
+    // Pattern copies take part too (CAD-115).
+    const ready = this.readyInstances();
+    const started = this.deps.clock().getTime();
+    // A pair is tested again only when it moved against itself since it was last tested (CAD-114).
+    const tested = new Map<string, Matrix4>();
+    let checked = 0;
     for (const frame of frames.value) {
+      if (options.seconds !== undefined && this.deps.clock().getTime() - started > options.seconds * 1000) break;
       const parts = ready.flatMap(({ instance, component }) => {
         const transform = frame.poses[instance.id];
         return transform ? [{ instance: instance.id, bodies: component.bodies, transform }] : [];
       });
-      for (const hit of await this.deps.analysis.interference(parts)) {
-        const key = `${hit.a}|${hit.b}`;
-        if (!found.has(key)) found.set(key, { time: frame.time, a: hit.a, b: hit.b, volume: hit.volume });
+      const pairs: [string, string][] = [];
+      for (let i = 0; i < parts.length; i++)
+        for (let j = i + 1; j < parts.length; j++) {
+          const [a, b] = [parts[i] as (typeof parts)[number], parts[j] as (typeof parts)[number]];
+          const key = `${a.instance}|${b.instance}`;
+          if (found.has(key)) continue;
+          const relative = compose(invertRigid(a.transform), b.transform);
+          const before = tested.get(key);
+          if (before && relative.every((v, k) => Math.abs(v - (before[k] as number)) < 1e-9 * (k >= 12 ? 1000 : 1))) continue;
+          tested.set(key, relative);
+          pairs.push([a.instance, b.instance]);
+        }
+      if (pairs.length) {
+        for (const hit of await this.deps.analysis.interference(parts, pairs)) {
+          const key = `${hit.a}|${hit.b}`;
+          if (!found.has(key)) found.set(key, { time: frame.time, a: hit.a, b: hit.b, volume: hit.volume });
+        }
       }
+      options.onProgress?.(++checked, frames.value.length);
     }
-    return ok([...found.values()].sort((x, y) => x.time - y.time));
+    return ok({ collisions: [...found.values()].sort((x, y) => x.time - y.time), checked, moments: frames.value.length });
   }
 
   explode(viewId: string, steps?: number, amount = 1): ReadonlyMap<string, Matrix4> {
@@ -232,13 +268,27 @@ class Session implements AssemblySession {
     view.steps.slice(0, count).forEach((step, i) => {
       const share = i === count - 1 ? Math.max(0, Math.min(1, amount)) : 1;
       const length = Math.hypot(...step.direction) || 1;
-      const move = translation(step.direction.map((d) => (d / length) * step.distance * share) as [number, number, number]);
+      const along: Vec3 = [step.direction[0] / length, step.direction[1] / length, step.direction[2] / length];
       for (const instance of step.instances) {
         const pose = poses.get(instance);
-        if (pose) poses.set(instance, compose(move, pose));
+        if (!pose) continue;
+        // A radial step moves each instance straight away from the axis through `origin` (CAD-110).
+        const direction = step.radial ? this.awayFrom(instance, pose, step.origin ?? [0, 0, 0], along) : along;
+        poses.set(instance, compose(translation(direction.map((d) => d * step.distance * share) as [number, number, number]), pose));
       }
     });
     return poses;
+  }
+
+  /** From an axis to the middle of an instance's bodies, square to the axis; along the axis when it lies on it. */
+  private awayFrom(instance: string, pose: Matrix4, origin: Vec3, axis: Vec3): Vec3 {
+    const part = this.readyInstances().find((p) => p.instance.id === instance);
+    const middle = part ? transformPoint(pose, boundsMiddle(part.component.view.bodies)) : ([pose[12] ?? 0, pose[13] ?? 0, pose[14] ?? 0] as const);
+    const offset: Vec3 = [middle[0] - origin[0], middle[1] - origin[1], middle[2] - origin[2]];
+    const along = offset[0] * axis[0] + offset[1] * axis[1] + offset[2] * axis[2];
+    const away: Vec3 = [offset[0] - along * axis[0], offset[1] - along * axis[1], offset[2] - along * axis[2]];
+    const length = Math.hypot(...away);
+    return length > 1e-9 ? [away[0] / length, away[1] / length, away[2] / length] : axis;
   }
 
   async billOfMaterials(): Promise<readonly BomLine[]> {
@@ -531,21 +581,7 @@ class Session implements AssemblySession {
       const m = compose(pose, frameMatrix(joint.a.frame));
       jointFrames.set(joint.id, { origin: [m[12] as number, m[13] as number, m[14] as number], u: [m[0] as number, m[1] as number, m[2] as number], v: [m[4] as number, m[5] as number, m[6] as number] });
     }
-    // Copies follow their originals.
-    const poses = new Map(solution.poses);
-    const copies = new Map<string, { instance: string; pattern: string }>();
-    for (const pattern of document.patterns ?? []) {
-      const transforms = patternTransforms(pattern);
-      for (const instance of pattern.instances) {
-        const pose = solution.poses.get(instance);
-        if (!pose) continue;
-        transforms.forEach((t, k) => {
-          const id = copyId(pattern.id, instance, k + 1);
-          poses.set(id, compose(t, pose));
-          copies.set(id, { instance, pattern: pattern.id });
-        });
-      }
-    }
+    const { poses, copies } = withCopies(document, solution.poses);
     return { poses, placed: solution.placed, values: solution.values, errors, copies, jointFrames };
   }
 
@@ -585,6 +621,39 @@ class Session implements AssemblySession {
     this.queue = run.catch(() => undefined);
     return run;
   }
+}
+
+/** The poses with the pattern copies added: each copy is its pattern's transform after its original's pose. */
+function withCopies(document: AssemblyDocument, originals: ReadonlyMap<string, Matrix4>): { poses: Map<string, Matrix4>; copies: Map<string, { instance: string; pattern: string }> } {
+  const poses = new Map(originals);
+  const copies = new Map<string, { instance: string; pattern: string }>();
+  for (const pattern of document.patterns ?? []) {
+    const transforms = patternTransforms(pattern);
+    for (const instance of pattern.instances) {
+      const pose = originals.get(instance);
+      if (!pose) continue;
+      transforms.forEach((t, k) => {
+        const id = copyId(pattern.id, instance, k + 1);
+        poses.set(id, compose(t, pose));
+        copies.set(id, { instance, pattern: pattern.id });
+      });
+    }
+  }
+  return { poses, copies };
+}
+
+/** The middle of the bodies' bounding box, in component coordinates. */
+function boundsMiddle(bodies: readonly BodyMesh[]): Vec3 {
+  const low: [number, number, number] = [Infinity, Infinity, Infinity];
+  const high: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+  for (const body of bodies)
+    for (let i = 0; i < body.positions.length; i += 3)
+      for (const k of [0, 1, 2] as const) {
+        const v = body.positions[i + k] as number;
+        if (v < low[k]) low[k] = v;
+        if (v > high[k]) high[k] = v;
+      }
+  return low[0] === Infinity ? [0, 0, 0] : [(low[0] + high[0]) / 2, (low[1] + high[1]) / 2, (low[2] + high[2]) / 2];
 }
 
 export class DefaultAssemblyManager implements AssemblyManager {

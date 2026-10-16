@@ -72,7 +72,7 @@ export interface Io {
 }
 
 /** Runs one command line; returns the exit code. */
-export async function runCli(args: readonly string[], io: Io, reference = '', version = '0.0.0', env: NodeJS.ProcessEnv = process.env): Promise<number> {
+export async function runCli(args: readonly string[], io: Io, reference: Readonly<Record<string, string>> = {}, version = '0.0.0', env: NodeJS.ProcessEnv = process.env): Promise<number> {
   const { positional, options } = parseArguments(args);
   const [command, ...rest] = positional;
   if (!command || options['help']) {

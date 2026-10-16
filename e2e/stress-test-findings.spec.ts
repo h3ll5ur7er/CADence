@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { cutHole, evidence, fromModelMenu, hinge, plateProject, setThickness, standardView, topPoints } from './support';
 
-/** Phase 26 (stress-test findings, CAD-96) user journey: ring gears with planets, and cams. */
+/** Phases 26 and 27 (stress-test findings, CAD-96) user journeys: ring gears with planets, cams, and radial exploded views of pattern copies. */
 test.setTimeout(240_000);
 
 test('makes a ring gear with smooth teeth and says where a planet goes (CAD-98, CAD-107)', async ({ page }) => {
@@ -64,4 +64,37 @@ test('moves a follower by a cam profile (CAD-99)', async ({ page }) => {
   await page.getByRole('button', { name: 'Select Gear 1' }).click();
   await standardView(page, 'Home');
   await evidence(page, '95-cam-link');
+});
+
+test('takes a circular pattern apart in one radial step (CAD-110)', async ({ page }) => {
+  await plateProject(page, 'Radial');
+  await page.getByRole('button', { name: 'Assembly', exact: true }).click();
+  await page.getByRole('button', { name: 'Insert', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Component 1' }).click();
+  await expect(page.getByRole('list', { name: 'Instances' })).not.toContainText('loading');
+  // Four plates around Z.
+  await page.getByRole('button', { name: 'Pattern', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Circular pattern' }).click();
+  await page.getByRole('checkbox', { name: 'Component 1 1', exact: true }).check();
+  await page.locator('#pattern-axis').selectOption({ label: 'Z' });
+  await page.locator('#pattern-count').fill('4');
+  await page.locator('#pattern-count').press('Tab');
+  await page.locator('#pattern-spacing').fill('90');
+  await page.locator('#pattern-spacing').press('Tab');
+  await page.getByRole('button', { name: 'OK' }).click();
+  await expect(page.getByRole('list', { name: 'Patterns' })).toContainText('Circular pattern 1');
+
+  // The original and its copies in one step, each away from the Z axis.
+  await page.getByRole('button', { name: 'Explode', exact: true }).click();
+  await page.getByRole('checkbox', { name: 'Component 1 1', exact: true }).check();
+  for (const k of [1, 2, 3]) await page.getByRole('checkbox', { name: `Component 1 1 (copy ${k})`, exact: true }).check();
+  await page.getByRole('button', { name: 'Add step' }).click();
+  await expect(page.getByRole('list', { name: 'Steps' })).toContainText('Component 1 1 (copy 3)');
+  await page.getByRole('checkbox', { name: 'Step 1 moves away from the axis' }).check();
+  await page.getByRole('spinbutton', { name: 'Distance of step 1' }).fill('40');
+  await page.getByRole('spinbutton', { name: 'Distance of step 1' }).press('Tab');
+  await expect(page.getByRole('checkbox', { name: 'Step 1 moves away from the axis' })).toBeChecked();
+  await page.getByRole('slider', { name: 'Explode' }).fill('1');
+  await standardView(page, 'Top');
+  await evidence(page, '96-radial-explode');
 });

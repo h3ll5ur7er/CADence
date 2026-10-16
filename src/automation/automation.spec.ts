@@ -31,7 +31,7 @@ describe('the MCP server', () => {
   it('models, checks and exports the plate of its instructions', { timeout: 120_000 }, async () => {
     const exports = folder();
     const core = createNodeCore({ exports });
-    const server = new McpServer(new Cadence(core, core.exports), '// the types', '1.2.3');
+    const server = new McpServer(new Cadence(core, core.exports), { commands: '// the types' }, '1.2.3');
     let id = 0;
     const call = async (name: string, args: Record<string, unknown> = {}) => server.handle({ jsonrpc: '2.0', id: ++id, method: 'tools/call', params: { name, arguments: args } });
 
@@ -85,13 +85,17 @@ describe('the MCP server', () => {
     const corner = JSON.parse(text(await call('get_component', { document, only: ['edges'], near: [60, 15, 6], within: 1 }))) as ComponentSummary;
     expect(corner.bodies[0]?.edges?.map((e) => e.name)).toEqual(['e:f:e1:end|f:e1:side:r:right']);
     expect(corner.bodies[0]?.edges?.[0]?.middle).toHaveLength(3);
+    // A point on the hole's wall finds it, though the wall's centre lies on its axis (CAD-111).
+    const wall = JSON.parse(text(await call('get_component', { document, only: ['faces'], near: [15, 19, 1], within: 0.5 }))) as ComponentSummary;
+    expect(wall.bodies[0]?.faces?.map((f) => f.name.split('~')[0])).toEqual(['f:e1:side:c']);
 
     const [properties] = JSON.parse(text(await call('component_properties', { document }))) as { volume: number }[];
     expect(properties?.volume).toBeCloseTo((1800 - Math.PI * 16) * 6, 0);
     const path = text(await call('export_component', { document, format: 'stl' }));
     expect(path.startsWith(exports)).toBe(true);
     expect(readFileSync(path).byteLength).toBeGreaterThan(84);
-    expect(text(await call('command_reference'))).toBe('// the types');
+    expect(text(await call('command_reference', { topic: 'commands' }))).toBe('// the types');
+    expect(text(await call('command_reference'))).toMatch(/^Topics: commands \(0k characters\)/);
 
     // A picture to look at: the plate from above, grey on white, with its hole.
     const picture = (await call('render_picture', { document, view: 'top', width: 120, height: 80 })) as { result: { content: { type: string; data: string; mimeType: string }[] } };
@@ -124,7 +128,7 @@ describe('the MCP server', () => {
   it('assembles, moves, explodes and checks an assembly (CAD-97, CAD-100)', { timeout: 180_000 }, async () => {
     const exports = folder();
     const core = createNodeCore({ exports });
-    const server = new McpServer(new Cadence(core, core.exports), '// the types', '1.2.3');
+    const server = new McpServer(new Cadence(core, core.exports), { commands: '// the types' }, '1.2.3');
     let id = 0;
     const call = async (name: string, args: Record<string, unknown> = {}) => server.handle({ jsonrpc: '2.0', id: ++id, method: 'tools/call', params: { name, arguments: args } });
     const result = (response: unknown) => (response as { result: { isError?: boolean; content: { type: string; text?: string; data?: string }[] } }).result;
@@ -158,9 +162,16 @@ describe('the MCP server', () => {
           ],
         }),
       ),
-    ) as { changed: { instances: unknown[]; joints: unknown[] }; moved?: Record<string, number[]>; counts: { instances: number } };
+    ) as { created: { instances: unknown[]; joints: unknown[] }; counts: { instances: number } };
     expect(hinged.counts.instances).toBe(2);
-    expect(hinged.changed.joints).toHaveLength(1);
+    expect(hinged.created.instances).toHaveLength(2);
+    expect(hinged.created.joints).toHaveLength(1);
+    // Turning the hinge answers with its values and where the arm went, not the whole joint (CAD-111).
+    const turned = JSON.parse(text(await call('edit_assembly', { document: linkage, commands: [{ type: 'set-joint-values', jointId: 'hinge', values: [45] }] })));
+    expect(turned).toMatchObject({ joints: [{ id: 'hinge', values: [45] }] });
+    expect(turned).not.toHaveProperty('created');
+    expect(turned).not.toHaveProperty('changed');
+    await call('edit_assembly', { document: linkage, commands: [{ type: 'set-joint-values', jointId: 'hinge', values: [90] }] });
     const listed = JSON.parse(text(await call('get_assembly', { document: linkage }))) as { instances: { id: string; origin: number[]; placed: boolean }[]; joints: { id: string; error?: string }[] };
     const arm = listed.instances.find((i) => i.id === 'arm');
     expect(arm?.placed).toBe(true);
@@ -190,6 +201,13 @@ describe('the MCP server', () => {
     const wrong = result(await call('render_picture', { document: linkage, focus: ['nothing'] }));
     expect(wrong.isError).toBe(true);
     expect(wrong.content[0]?.text).toContain('There is no body or instance "nothing"');
+
+    // A study's collision check tells how far it got, when the client asks for progress (CAD-114).
+    const notes: Record<string, unknown>[] = [];
+    const checked = await server.handle({ jsonrpc: '2.0', id: ++id, method: 'tools/call', params: { name: 'check_assembly', arguments: { document: linkage, study: 'swing', fps: 2 }, _meta: { progressToken: 'p1' } } }, (n) => notes.push(n));
+    expect(JSON.parse(text(checked))).toMatchObject({ checked: 3, moments: 3 });
+    expect(notes.map((n) => (n['params'] as { progress: number }).progress)).toEqual([1, 2, 3]);
+    expect(notes[0]).toMatchObject({ method: 'notifications/progress', params: { progressToken: 'p1', total: 3, message: 'Moment 1 of 3 checked' } });
 
     const animated = result(await call('animate_study', { document: linkage, study: 'swing', width: 120, height: 90, fps: 4, moments: 4 }));
     expect(animated.content.map((c) => c.type)).toEqual(['image', 'text']);
@@ -336,16 +354,20 @@ describe('the built command line', () => {
     send({ id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } } });
     send({ method: 'notifications/initialized' });
     send({ id: 2, method: 'tools/call', params: { name: 'create_project', arguments: { name: 'Over stdio' } } });
-    send({ id: 3, method: 'tools/call', params: { name: 'command_reference', arguments: {} } });
+    send({ id: 3, method: 'tools/call', params: { name: 'command_reference', arguments: { topic: 'commands' } } });
+    send({ id: 4, method: 'tools/call', params: { name: 'command_reference', arguments: { topic: 'features' } } });
+    send({ id: 5, method: 'tools/call', params: { name: 'command_reference', arguments: { topic: 'assembly' } } });
     child.stdin.end();
     const code = await new Promise<number | null>((resolve) => child.on('close', resolve));
     expect(code).toBe(0);
-    expect(responses.map((r) => r['id'])).toEqual([1, 2, 3]);
+    expect(responses.map((r) => r['id'])).toEqual([1, 2, 3, 4, 5]);
     expect(text(responses[1])).toContain('"name": "Over stdio"');
-    // The embedded reference holds the command and feature types.
+    // The embedded reference holds the command, feature, part and assembly types, by topic, each short enough to read whole (CAD-111).
     expect(text(responses[2])).toContain("readonly type: 'add-feature'");
-    expect(text(responses[2])).toContain('export interface ExtrudeFeature');
-    expect(text(responses[2])).toContain('export type AssemblyCommand');
-    expect(text(responses[2])).toContain('export interface Joint');
+    expect(text(responses[3])).toContain('export interface ExtrudeFeature');
+    expect(text(responses[3])).toContain("readonly kind: 'ring-gear'");
+    expect(text(responses[4])).toContain('export type AssemblyCommand');
+    expect(text(responses[4])).toContain('export interface Joint');
+    for (const response of responses.slice(2)) expect(text(response).length).toBeLessThan(30_000);
   });
 });

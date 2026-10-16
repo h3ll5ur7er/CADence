@@ -11,43 +11,49 @@ Model a nine-cylinder radial aircraft engine through the MCP server, as an AI ag
 
 Done means: every part is modelled, the assembly animates (crank driving all nine pistons, the cam ring and the propeller through the reduction gear) and comes apart in an exploded view, and the findings are filed.
 
-**Status (2026-10-16): unblocked.** All findings ([[CAD-97]] to [[CAD-108]]) are done in phase 26; the ring gear and the assembly can be built now. All other parts are modelled in the project *Magnum Opus R-9 radial engine*, and regenerate without errors with phase 26 (some face and body names changed, see [[Magnum opus#Status]]).
+**Status (2026-10-16, round 2): unblocked again.** All round 2 findings ([[CAD-104]], [[CAD-109]] to [[CAD-115]]) are done in phase 27; the joints with `flip: true` on tappets 5–8 need their flips taken out ([[CAD-112]]). Before: Phase 26 fixed every round-1 finding except one case of [[CAD-104]] (reopened). All parts exist, the assembly *Radial engine* is built and solves, but no picture or animation of it can be taken ([[CAD-109]]) and the exploded view cannot include pattern copies ([[CAD-110]]). Pictures focused on a few instances work; in them the propeller shows that pattern copies stand still in the study ([[CAD-115]]).
 
 ## Parts (components, through `edit_component`)
 
-- [x] Crankcase, front and rear half as configurations of one component (nine-sided instead of a round drum with pads, because of [[CAD-103]])
+- [x] Crankcase, front and rear half as configurations of one component (nine-sided; a round drum with pads works now too, [[CAD-103]])
 - [x] Crankshaft with counterweight
 - [x] Master rod with eight knuckle pins (circular pattern of new bodies)
 - [x] Link rod
 - [x] Piston and wrist pin
 - [x] Cylinder barrel (eleven fins)
-- [x] Cylinder head (fins, rocker boxes, ports, plug bosses)
-- [x] Spark plug (modelled M10 thread, see [[CAD-105]]), pushrod, intake pipe and exhaust stub (sweeps)
+- [x] Cylinder head (fins, rocker boxes outboard for the pushrods, ports, plug bosses)
+- [x] Spark plug (modelled M10 thread), pushrod, tappet, intake pipe and exhaust stub (sweeps)
 - [x] Cam drive: crank gear 48T, lay gear 60T/12T, cam ring with two five-lobe tracks and a 96T gear
-- [x] Reduction gear: sun 24T, planet 18T, planet carrier with propeller shaft
-- [ ] Ring gear 60T (internal) — blocked by [[CAD-98]]
+- [x] Reduction gear: sun 24T, planet 18T, ring gear 60T (internal, [[CAD-98]]), planet carrier with propeller shaft
 - [x] Nose case with nine tappet guides
-- [x] Propeller blade (loft through five twisted airfoil sections; round shank extruded separately because of [[CAD-106]]), hub and spinner
+- [x] Propeller blade (loft from a round root through five twisted airfoil sections, [[CAD-106]]), hub and spinner
 - [x] Rear case with nine intake bosses, magneto, display stand
 
-## Assembly — blocked by [[CAD-97]]
+## Assembly *Radial engine* (through `edit_assembly`)
 
-- [ ] Instances, grounded barrels, joints (nine slider-crank loops)
-- [ ] Gear links: cam drive (1/10, same direction), propeller reduction (2/7) and planets; valve train needs [[CAD-99]]
-- [ ] Instance patterns for heads, plugs, pushrods and pipes; blades as a circular pattern on the turning hub
-- [ ] Motion study and exploded view, checked in pictures ([[CAD-100]])
+- [x] 71 instances: grounded cases, stand, ring gear and nine barrels; crankshaft, master rod, eight link rods, nine pistons and wrist pins, cam ring, lay gear, nine tappets, carrier, planets, hub, spinner, blade
+- [x] 57 joints, nine closed slider-crank loops through the master rod (cylindrical piston joints); solved at 0° and 90° of crank angle, values match the hand-computed kinematics
+- [x] Links: lay gear −48/60, cam ring −12/96 (cam at 1/10), carrier 2/7, planets −20/21, nine cam followers (tappets) with per-cylinder lobe profiles ([[CAD-99]])
+- [x] Patterns: heads, exhaust, intake, two plugs and pushrod ×9; blades ×3 on the turning hub (50 copies)
+- [x] Motion study *Running at 60 rpm* (constant crank speed, 4 s)
+- [x] Mass, bill of materials, interference check
+- [ ] Collision check of the study — timed out after 30 minutes ([[CAD-114]])
+- [ ] Pictures and the animation of the study — blocked by [[CAD-109]] (focused pictures work) and [[CAD-115]]
+- [ ] Exploded view with every cylinder's parts outwards — blocked by [[CAD-110]]
+- [ ] Pushrods following the tappets — needs [[CAD-113]]
+- [ ] Fix my own design interferences the check found (see [[Magnum opus#Status]])
 
 ## Findings
 
-- [[CAD-97]] MCP tools for assemblies (missing, blocks the assembly)
-- [[CAD-98]] Internal (ring) gears (missing, blocks the reduction gear)
-- [[CAD-99]] Cam joints (missing, blocks the valve train's motion)
-- [[CAD-100]] Pictures of exploded views and motion for agents (missing)
-- [[CAD-101]] Fillet and chamfer faces named after the first edge
-- [[CAD-102]] Leaner MCP answers (gears overflow the client)
-- [[CAD-103]] Joining a pad onto a revolved body fails for some sizes
-- [[CAD-104]] Face names on shared surfaces, and `~n` that renumber
-- [[CAD-105]] A modelled thread ending at a shoulder cuts nothing
-- [[CAD-106]] A loft from a circle into splines twists
-- [[CAD-107]] Gear teeth are polygons (23 faces per tooth)
-- [[CAD-108]] Agent papercuts in the MCP server and the sketcher
+Round 1 (all done in phase 26, [[CAD-104]] reopened for joins):
+[[CAD-97]] [[CAD-98]] [[CAD-99]] [[CAD-100]] [[CAD-101]] [[CAD-102]] [[CAD-103]] [[CAD-104]] [[CAD-105]] [[CAD-106]] [[CAD-107]] [[CAD-108]]
+
+Round 2:
+
+- [[CAD-109]] Pictures and animations of large assemblies crash (blocking)
+- [[CAD-110]] Exploded views cannot move pattern copies (missing, blocking)
+- [[CAD-111]] Leaner assembly answers, a readable command reference, `near` by geometry
+- [[CAD-112]] Joint frames on pattern copies point either way (and smaller assembly issues)
+- [[CAD-113]] Joint offsets cannot tilt a frame (missing)
+- [[CAD-114]] Collision check of a study too slow for large assemblies, no progress
+- [[CAD-115]] Pattern copies stand still in motion studies

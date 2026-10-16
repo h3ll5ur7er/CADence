@@ -106,15 +106,15 @@ The server tells the agent how to model when it connects, and offers these tools
 | --- | --- |
 | `list_projects`, `create_project`, `list_documents`, `create_document`, `rename_document`, `delete_document`, `import_file` | Projects and documents |
 | `set_project_parameters` | Parameters for every component of a project |
-| `get_component` | The component as data (as `summary()` above), with the same filters |
+| `get_component` | The component as data (as `summary()` above), with the same filters; `near` measures to the face or edge itself |
 | `edit_component` | Runs commands in order and answers with what changed: timeline items, sketches and their profiles, the bodies' face counts and new face names; a refused command is reported with its number, reason and the ids involved |
 | `undo_component` | Undoes the last change; answers with what changed |
 | `component_properties`, `check_component` | Mass properties; the print or laser checks |
 | `export_component`, `export_imported` | Files for printing, cutting or other CAD programs; returns the path |
-| `get_assembly`, `edit_assembly`, `undo_assembly` | An assembly as data; runs assembly commands (instances, joints, links, patterns, motion studies, exploded views) and answers with what changed and which joints fail |
-| `check_assembly`, `assembly_properties`, `export_assembly` | Overlaps now or collisions while a study plays; mass and the bill of materials; STEP, 3MF, STL or OBJ |
+| `get_assembly`, `edit_assembly`, `undo_assembly` | An assembly as data; runs assembly commands (instances, joints, links, patterns, motion studies, exploded views) and answers briefly: what the commands created, the joints whose values changed, where instances moved, and which joints fail |
+| `check_assembly`, `assembly_properties`, `export_assembly` | Overlaps now or collisions while a study plays (with progress notifications and `seconds` as a time limit); mass and the bill of materials; STEP, 3MF, STL or OBJ |
 | `render_picture` | A picture of a component or an assembly, returned as an image the agent can look at: from a view or a direction, zoomed onto bodies or instances, others hidden or see-through; assemblies also exploded or at a moment of a study |
 | `animate_study` | A motion study as an animated GIF (its path) and a sheet of moments to look at |
-| `command_reference` | Every design and assembly command, feature and contract as TypeScript types with their documentation |
+| `command_reference` | The commands and contracts as TypeScript types with their documentation, by `topic`: `commands`, `sketch`, `features` (with the parts: gears, ring gears, screws, bearings …), `document`, `assembly`; each short enough for an agent to read whole |
 
 Ask the agent for a part ("a wall bracket for a 25 mm pipe, 4 mm thick, with two screw holes, as a 3MF"), and open the result in the desktop app, or sync it to the web app through git.

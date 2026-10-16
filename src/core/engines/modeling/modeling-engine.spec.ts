@@ -196,6 +196,15 @@ describe('ModelingEngine', () => {
       expect(journal('f:shaft:side:rear-right')).toBeLessThan(0);
     });
 
+    it('names joined faces of one revolve after their own outline, though they share a surface', async () => {
+      const disc = ok(await engine.apply({ type: 'extrude', feature: 'disc', key: 'join-disc', bodies: [], frame: { ...XY, origin: [0, 0, 13] }, profiles: [profile(circleLoop(0, 0, 30, 'disc'))], distance: 12, direction: 'normal', operation: 'new-body' }));
+      const outlines = [profile(rectangleLoop(0, 13, 20, 47, 'front'), [], 'p1'), profile(rectangleLoop(0, -60, 20, 47, 'rear'), [], 'p2')];
+      const joined = ok(await engine.apply({ type: 'revolve', feature: 'shafts', key: 'join-two-outlines', bodies: disc, frame: originFrames.XZ, profiles: outlines, axis: { origin: [0, 0, 0], direction: [0, 0, 1] }, angle: 2 * Math.PI, operation: 'join' }));
+      const [mesh] = await engine.tessellate(joined);
+      const journals = mesh?.faces.filter((f) => f.name.startsWith('f:shafts:side:') && f.name.includes('right')).map((f) => [f.name, Math.sign(f.center[2])]);
+      expect(journals).toEqual(expect.arrayContaining([['f:shafts:side:front-right', 1], ['f:shafts:side:rear-right', -1]]));
+    });
+
     it('keeps the number of a split face that a later feature leaves alone', async () => {
       const slot = (bodies: readonly BodyState[], x: number) =>
         engine.apply({ type: 'extrude', feature: `slot${x}`, key: `keep-slot-${x}-${bodies[0]?.key}`, bodies, frame: { ...XY, origin: [0, 0, 5] }, profiles: [profile(rectangleLoop(x, -1, 4, 42, `slot${x}`))], distance: 2, direction: 'reverse', operation: 'cut' });
@@ -295,6 +304,29 @@ describe('component results and joint frames', () => {
     const [after] = await createModelingEngine(fresh).tessellate(restored);
     expect(after?.faces.map((f) => f.name).sort()).toEqual(before?.faces.map((f) => f.name).sort());
     expect(after?.edges.map((e) => e.name).sort()).toEqual(before?.edges.map((e) => e.name).sort());
+  });
+
+  it('turns the frames of patterned holes with the pattern (CAD-112)', async () => {
+    // A ring about Z with a radial hole through its wall along X, and eight copies of the hole 40° apart.
+    const ring = ok(await engine.apply({ type: 'revolve', feature: 'ring', key: 'guide-ring', bodies: [], frame: originFrames.XZ, profiles: [profile(rectangleLoop(80, -10, 20, 20, 'wall'))], axis: { origin: [0, 0, 0], direction: [0, 0, 1] }, angle: 2 * Math.PI, operation: 'new-body' }));
+    const seat = { ...originFrames.YZ, origin: [110, 0, 0] as const };
+    const hole = await engine.apply({ type: 'extrude', feature: 'guide', key: 'guide-hole', bodies: ring, frame: seat, profiles: [profile(circleLoop(0, 0, 5, 'guide'))], distance: 40, direction: 'reverse', operation: 'cut' });
+    const tools = [{ feature: 'guide', toolKey: hole.toolKey as string, operation: 'cut' as const }];
+    const guides = ok(await engine.apply({ type: 'circular-pattern', feature: 'bosses', key: 'guide-holes', bodies: ok(hole), tools, axis: { origin: [0, 0, 0], direction: [0, 0, 1] }, count: 9, angle: 2 * Math.PI }));
+    const walls = (await names(guides)).faces.filter((f) => f.startsWith('f:guide:side:guide'));
+    const frameOf = async (name: string) => {
+      const frame = await engine.frameOf(guides, { kind: 'face', body: 'ring', name });
+      if (!frame.ok) throw new Error(frame.error.message);
+      return normal(frame.value) as [number, number, number];
+    };
+    const original = await frameOf(walls.find((w) => !w.includes('@')) as string);
+    for (let k = 1; k < 9; k++) {
+      const copy = await frameOf(walls.find((w) => w.includes(`@bosses.${k}`)) as string);
+      const [x, y, z] = copy;
+      const a = (40 * k * Math.PI) / 180;
+      const turned = [original[0] * Math.cos(a) - original[1] * Math.sin(a), original[0] * Math.sin(a) + original[1] * Math.cos(a), original[2]];
+      expect(x * (turned[0] as number) + y * (turned[1] as number) + z * (turned[2] as number)).toBeCloseTo(1, 6);
+    }
   });
 
   it('puts joint frames on face centres, hole axes and circular edges', async () => {

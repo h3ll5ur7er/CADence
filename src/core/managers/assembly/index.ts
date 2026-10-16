@@ -7,6 +7,8 @@ export type {
   AssemblyFormat,
   BomLine,
   Collision,
+  CollisionOptions,
+  CollisionReport,
   InstructionPicture,
   AssemblyProperties,
   PlacedRef,

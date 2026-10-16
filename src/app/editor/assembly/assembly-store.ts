@@ -301,7 +301,7 @@ export class AssemblyStore {
     const result = await this.session?.collisions(studyId, fps);
     if (!result) return undefined;
     this.error.set(result.ok ? undefined : result.error.message);
-    return result.ok ? result.value : undefined;
+    return result.ok ? result.value.collisions : undefined;
   }
 
   async openBom(): Promise<void> {

@@ -27,6 +27,19 @@ export const ccwSweep = (start: number, end: number): number => {
   return sweep === 0 ? 2 * Math.PI : sweep;
 };
 
+/**
+ * The smallest and largest of many values, in a loop: spreading a large array into `Math.min`
+ * exceeds the engine's argument limit (CAD-109). Empty: [Infinity, -Infinity].
+ */
+export function range(values: Iterable<number>): [number, number] {
+  let [low, high] = [Infinity, -Infinity];
+  for (const v of values) {
+    if (v < low) low = v;
+    if (v > high) high = v;
+  }
+  return [low, high];
+}
+
 /** Signed area of a closed polygon; positive when counter-clockwise. */
 export const signedArea = (polygon: readonly Vec2[]): number => {
   let sum = 0;

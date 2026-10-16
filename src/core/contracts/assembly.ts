@@ -63,10 +63,15 @@ export const jointDofs: Readonly<Record<JointType, readonly JointDof[]>> = {
   ],
 };
 
-/** Moves a joint origin away from what was picked: along the frame's axes (mm), then turned about its normal (degrees). */
+/**
+ * Moves a joint origin away from what was picked: along the frame's axes (mm), then tilted about its
+ * own x axis (degrees, CAD-113), then turned about its normal (degrees).
+ */
 export interface JointOffset {
   readonly translate: Vec3;
   readonly angle: number;
+  /** Tips the joint's axis over, about the frame's x axis: a joint along a direction no face has. */
+  readonly tilt?: number;
 }
 
 /** Where a joint attaches: a face or edge of the instance's component, or the component's origin, maybe moved by an offset. */
@@ -76,13 +81,16 @@ export interface JointOrigin {
   readonly offset?: JointOffset;
 }
 
-/** The frame moved by the offset: along its own axes, then turned about its normal. */
+/** The frame moved by the offset: along its own axes, tilted about its x axis, then turned about its normal. */
 export function offsetFrame(frame: PlaneFrame, offset: JointOffset | undefined): PlaneFrame {
   if (!offset) return frame;
-  const { origin, u, v } = frame;
-  const n: Vec3 = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+  const { origin, u } = frame;
+  const n0: Vec3 = [u[1] * frame.v[2] - u[2] * frame.v[1], u[2] * frame.v[0] - u[0] * frame.v[2], u[0] * frame.v[1] - u[1] * frame.v[0]];
   const [x, y, z] = offset.translate;
-  const at = (i: 0 | 1 | 2) => origin[i] + u[i] * x + v[i] * y + n[i] * z;
+  const at = (i: 0 | 1 | 2) => origin[i] + u[i] * x + frame.v[i] * y + n0[i] * z;
+  // The tilt turns v towards the normal, about u.
+  const t = ((offset.tilt ?? 0) * Math.PI) / 180;
+  const v: Vec3 = [frame.v[0] * Math.cos(t) + n0[0] * Math.sin(t), frame.v[1] * Math.cos(t) + n0[1] * Math.sin(t), frame.v[2] * Math.cos(t) + n0[2] * Math.sin(t)];
   const a = (offset.angle * Math.PI) / 180;
   const [c, s] = [Math.cos(a), Math.sin(a)];
   return {
@@ -188,7 +196,10 @@ export interface MotionLink {
   readonly profile?: readonly (readonly [number, number])[];
 }
 
-/** A cam profile's lift at an angle: a smooth periodic curve (Catmull-Rom) through its points. */
+/**
+ * A cam profile's lift at an angle: a smooth periodic curve through its points that keeps their shape
+ * (monotone cubic, Fritsch–Carlson): it never dips below a flat stretch or overshoots a peak (CAD-112).
+ */
 export function camLift(profile: readonly (readonly [number, number])[], angle: number): number {
   const n = profile.length;
   if (n < 2) return profile[0]?.[1] ?? 0;
@@ -198,12 +209,20 @@ export function camLift(profile: readonly (readonly [number, number])[], angle: 
     const [x, y] = profile[((k % n) + n) % n] as readonly [number, number];
     return [x + 360 * Math.floor(k / n), y];
   };
+  const slope = (k: number) => (at(k + 1)[1] - at(k)[1]) / (at(k + 1)[0] - at(k)[0]);
+  // A point's tangent: zero where the curve turns or is flat on either side, else a harmonic mean of the slopes.
+  const tangent = (k: number) => {
+    const [before, after] = [slope(k - 1), slope(k)];
+    if (before * after <= 0) return 0;
+    const [h0, h1] = [at(k)[0] - at(k - 1)[0], at(k + 1)[0] - at(k)[0]];
+    return (3 * (h0 + h1)) / ((2 * h1 + h0) / before + (h1 + 2 * h0) / after);
+  };
   let k = -1;
   while (k + 1 < n && at(k + 1)[0] <= a) k++;
-  const [p0, p1, p2, p3] = [at(k - 1), at(k), at(k + 1), at(k + 2)];
+  const [p1, p2] = [at(k), at(k + 1)];
   const span = p2[0] - p1[0];
   const t = (a - p1[0]) / span;
-  const [m1, m2] = [((p2[1] - p0[1]) / (p2[0] - p0[0])) * span, ((p3[1] - p1[1]) / (p3[0] - p1[0])) * span];
+  const [m1, m2] = [tangent(k) * span, tangent(k + 1) * span];
   const [t2, t3] = [t * t, t * t * t];
   return (2 * t3 - 3 * t2 + 1) * p1[1] + (t3 - 2 * t2 + t) * m1 + (-2 * t3 + 3 * t2) * p2[1] + (t3 - t2) * m2;
 }
@@ -216,9 +235,16 @@ export function linkedValue(link: MotionLink, driver: number): number {
 /** A step of an exploded view: instances moved apart along a direction (mm). */
 export interface ExplodeStep {
   readonly id: string;
+  /** Instances, or pattern copies by their ids (`<pattern>/<instance>/<n>`). */
   readonly instances: readonly string[];
   readonly direction: Vec3;
   readonly distance: number;
+  /**
+   * Each part moves straight away from the axis along `direction` through `origin` (default the
+   * origin) instead of along it: a circular pattern comes apart in one step.
+   */
+  readonly radial?: boolean;
+  readonly origin?: Vec3;
 }
 
 /** Steps that take an assembly apart, one after the other: for exploded pictures and build instructions. */

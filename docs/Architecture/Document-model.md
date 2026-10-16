@@ -219,8 +219,8 @@ As implemented in [[src/core/contracts/assembly.ts]]:
 ```ts
 interface AssemblyDocument { instances: Instance[]; joints: Joint[]; motionStudies: MotionStudy[]; patterns?: InstancePattern[]; links?: MotionLink[]; explodedViews?: ExplodedView[] }
 interface MotionLink { id; name; kind: 'gear' | 'rack' | 'belt' | 'carrier' | 'planet' | 'cam'; driver: { joint, dof }; driven: { joint, dof }; ratio; offset; profile?: [angle, lift][] }
-// driven = offset + ratio × driver; a cam: offset + ratio × lift(driver), its profile smooth over one turn
-interface ExplodedView { id; name; steps: { id; instances: string[]; direction: Vec3; distance }[] }    // steps add up in order
+// driven = offset + ratio × driver; a cam: offset + ratio × lift(driver), its profile a monotone cubic over one turn
+interface ExplodedView { id; name; steps: { id; instances: string[]; direction: Vec3; distance; radial?: boolean; origin?: Vec3 }[] }    // steps add up in order; instances may be pattern copies; radial: away from the axis
 // MotionStudy: keys may `ease`; drives: { joint, dof, speed }[] (° or mm per second from the start value)
 interface InstancePattern { id; name; kind: 'linear' | 'circular' | 'mirror'; instances: string[]; direction: Vec3; origin: Vec3; count: number; spacing: number }  // copies `<pattern>/<instance>/<k>`
 interface Instance { id: string; component: DocumentId; name: string; transform: Matrix4; grounded: boolean; appearance?: Appearance }
@@ -228,7 +228,7 @@ interface Appearance { hidden?: boolean; color?: string /* #rrggbb */; opacity?:
 interface Joint {
   id: string; name: string;
   type: 'rigid' | 'revolute' | 'slider' | 'cylindrical' | 'pin-slot' | 'planar' | 'ball';
-  a: JointOrigin; b: JointOrigin;          // { instance, ref?: TopologyRef, offset?: { translate: Vec3, angle } }; no ref = component origin
+  a: JointOrigin; b: JointOrigin;          // { instance, ref?: TopologyRef, offset?: { translate: Vec3, tilt?, angle } }; no ref = component origin
   flip: boolean;                            // B's frame turned over
   values: number[];                         // one per degree of freedom: mm or degrees
   limits: ({ min: number; max: number } | null)[];

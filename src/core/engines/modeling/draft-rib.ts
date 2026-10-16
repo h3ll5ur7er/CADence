@@ -1,6 +1,6 @@
-import type { NamedShape } from '@core/access/shape';
+import { adopt, type NamedShape } from '@core/access/shape';
 import type { PlaneFrame, Vec3 } from '@core/contracts';
-import { cast, draw, drawCircle, type Drawing, type Face, getOC, type Shape3D } from 'replicad';
+import { draw, drawCircle, type Drawing, type Face, getOC, type Shape3D } from 'replicad';
 import { dot3, normalOf, sub3, toPlane } from './geometry';
 import type { PathPiece } from './modeling-engine';
 import { nameShape, namedSurfaces } from './naming';
@@ -28,12 +28,12 @@ export function draftFaces(named: NamedShape, faces: readonly Face[], frame: Pla
     }
     builder.Build();
     if (!builder.IsDone()) throw new DraftRibError('The draft could not be built with this angle.');
-    const shape = cast(builder.Shape()) as Shape3D;
+    const shape = adopt(builder.Shape()) as Shape3D;
     // The drafted faces by their history: each keeps the name it had.
     const drafted = new Map<number, string>();
     for (const face of faces) {
       const name = named.faces.get(face.hashCode);
-      const modified = cast(builder.ModifiedShape(face.wrapped));
+      const modified = adopt(builder.ModifiedShape(face.wrapped));
       if (name && 'normalAt' in modified) drafted.set((modified as Face).hashCode, name);
     }
     return nameShape(shape, candidates, (face) => drafted.get(face.hashCode), feature);

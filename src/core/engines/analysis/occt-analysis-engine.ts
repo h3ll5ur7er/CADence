@@ -1,14 +1,18 @@
 import { find, place, type ShapeAccess } from '@core/access/shape';
 import {
+  type BodyMesh,
   type BodyProperties,
   type BodyState,
   type Check,
   fail,
   type Interference,
   type ManufacturingProfile,
+  type Material,
   type Measurement,
   ok,
   type Result,
+  type SimulationResult,
+  type SimulationSetup,
   type TopologyRef,
   type Vec3,
 } from '@core/contracts';
@@ -17,6 +21,7 @@ import type { AnalysisEngine, PlacedPart, ValidationSubject } from './index';
 import { laserChecks } from './laser';
 import { measureElements } from './measure';
 import { type LoadedBody, printChecks, triangles, type Triangles } from './printing';
+import { simulate } from './simulation';
 
 const meshCacheSize = 8;
 
@@ -124,6 +129,10 @@ export class OcctAnalysisEngine implements AnalysisEngine {
       for (const part of placed) for (const shape of part.shapes) shape.delete();
     }
     return found;
+  }
+
+  async simulate(meshes: readonly BodyMesh[], setup: SimulationSetup, material: Material): Promise<Result<SimulationResult>> {
+    return simulate(meshes, setup, material);
   }
 
   private meshOf({ body, named }: LoadedBody): Triangles {

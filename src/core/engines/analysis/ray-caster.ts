@@ -53,6 +53,29 @@ export class RayCaster {
     return best === Infinity ? undefined : best;
   }
 
+  /** How many times the ray crosses the mesh beyond its origin (odd: the origin is inside a closed mesh). */
+  crossings(origin: Vec3, direction: Vec3): number {
+    if (this.nodeCount === 0) return 0;
+    const inverse = [1 / direction[0], 1 / direction[1], 1 / direction[2]];
+    let count = 0;
+    const stack = [0];
+    while (stack.length) {
+      const node = stack.pop() as number;
+      if (!this.hitsBox(node, origin, inverse, Infinity)) continue;
+      const first = this.nodes[node * 2] as number;
+      const leaf = this.nodes[node * 2 + 1] as number;
+      if (leaf === 0) {
+        stack.push(node + 1, first);
+        continue;
+      }
+      for (let i = first; i < first + leaf; i++) {
+        const t = this.hitTriangle(this.order[i] as number, origin, direction);
+        if (t !== undefined && t > 0) count++;
+      }
+    }
+    return count;
+  }
+
   private vertex(triangle: number, corner: number, axis: number): number {
     return this.positions[(this.indices[triangle * 3 + corner] as number) * 3 + axis] as number;
   }

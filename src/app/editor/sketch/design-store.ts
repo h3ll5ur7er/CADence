@@ -17,7 +17,11 @@ import {
   type Parameter,
   type PlaneRef,
   type Result,
+  type SimulationLoad,
+  type SimulationResult,
+  type SimulationSetup,
   type TopologyRef,
+  type Vec3,
   type ValidationReport,
   type LengthUnit,
   type SketchFreedom,
@@ -27,12 +31,13 @@ import { newId } from '@core/utilities/identity';
 import { DESIGN_MANAGER, PROJECT_MANAGER } from '../../core.providers';
 import { pictureUrl } from '../../shared/picture-url';
 import type { Pick, PickKind, TopologyPick } from '../../viewport/picking';
+import type { StressField } from '../../viewport/surface-analysis';
 import { applyPick, defaultFeature, type FeatureDraft, type PickTarget, pickableFor, selectionOf } from '../modeling/feature-drafts';
 import type { SketchClipboard } from './selection';
 import type { TextDraft, Tool } from './sketch-tools';
 
 /** What the properties column shows besides feature dialogs and sketch info. */
-export type SidePanel = 'parameters' | 'measure' | 'check' | 'repair';
+export type SidePanel = 'parameters' | 'measure' | 'check' | 'repair' | 'simulate';
 
 const toRef = (pick: TopologyPick): TopologyRef => ({ kind: pick.kind, body: pick.body, name: pick.name, hint: pick.hint });
 const pickOfRef = (ref: TopologyRef): Pick =>
@@ -102,11 +107,42 @@ export class DesignStore {
   readonly measurePicks = signal<readonly TopologyPick[]>([]);
   /** The check whose faces are highlighted; the first one with faces when unset. */
   readonly focusedCheck = signal<string | undefined>(undefined);
+  /** Whether a face picked with the simulate panel open is held fixed or gets a load. */
+  readonly simulationPick = signal<'fixed' | 'load'>('fixed');
+  /** The strength check's setup as stored in the component. */
+  readonly simulationSetup = computed((): SimulationSetup => this.state()?.document.simulation ?? { fixed: [], loads: [] });
+  /** The last strength check and the state it was run on. */
+  private readonly simulation = signal<{ readonly state: DesignState | undefined; readonly result: Result<SimulationResult> } | undefined>(undefined);
+  readonly simulating = signal(false);
+  /** The last strength check while the model is unchanged since. */
+  readonly simulationResult = computed(() => {
+    const run = this.simulation();
+    return run && run.state === this.state() ? run.result : undefined;
+  });
+  /** Shows the bodies bent by the loads, exaggerated. */
+  readonly showDeformed = signal(true);
+  /** Stresses (and the bent shape) for the viewport while the simulate panel is open. */
+  readonly stressField = computed((): StressField | undefined => {
+    const result = this.simulationResult();
+    if (this.panel() !== 'simulate' || !result?.ok) return undefined;
+    const { value } = result;
+    // Bent so the largest deflection shows as a twentieth of the model's size.
+    const [min, max] = [[Infinity, Infinity, Infinity], [-Infinity, -Infinity, -Infinity]];
+    for (const body of this.state()?.bodies ?? [])
+      body.positions.forEach((v, i) => {
+        min[i % 3] = Math.min(min[i % 3] as number, v);
+        max[i % 3] = Math.max(max[i % 3] as number, v);
+      });
+    const size = Math.max(...max.map((v, k) => v - (min[k] as number)));
+    const deform = this.showDeformed() && value.maxDisplacement > 0 ? (0.05 * size) / value.maxDisplacement : 0;
+    return { bodies: new Map(value.bodies.map((b) => [b.body, b])), max: value.maxStress, deform };
+  });
 
   readonly pickable = computed((): ReadonlySet<PickKind> => {
     // While sketching, the project tool picks edges and faces of bodies to project.
     if (this.editing()) return this.tool() === 'project' ? new Set<PickKind>(['edge', 'face']) : new Set<PickKind>();
     if (!this.draft() && this.panel() === 'measure') return new Set<PickKind>(['face', 'edge', 'vertex']);
+    if (!this.draft() && this.panel() === 'simulate') return new Set<PickKind>(['face']);
     if (!this.draft() && this.panel() === 'repair') {
       const target = this.broken()[this.repairTarget()];
       return new Set<PickKind>(target ? [target.ref.kind] : []);
@@ -117,6 +153,7 @@ export class DesignStore {
     const draft = this.draft();
     if (draft) return selectionOf(draft);
     if (this.panel() === 'measure') return this.measurePicks();
+    if (this.panel() === 'simulate') return this.simulationSetup().fixed.map(pickOfRef);
     // While repairing, the candidates for the lost reference light up.
     if (this.panel() === 'repair') return (this.broken()[this.repairTarget()]?.candidates ?? []).map(({ ref }) => pickOfRef(ref));
     const face = this.pickedFace();
@@ -140,6 +177,8 @@ export class DesignStore {
 
   /** Faces the focused check is about, for the viewport. */
   readonly flagged = computed((): readonly TopologyRef[] => {
+    // Loaded faces stand out from the fixed ones (the selection).
+    if (this.panel() === 'simulate') return this.simulationResult()?.ok ? [] : this.simulationSetup().loads.map((l) => l.face);
     if (this.panel() !== 'check') return [];
     const checks = this.report.value()?.checks ?? [];
     const focused = this.focusedCheck();
@@ -246,9 +285,52 @@ export class DesignStore {
       if (target && pick.kind === target.ref.kind) void this.replaceReference(target.ref, toRef(pick));
       return;
     }
+    if (this.panel() === 'simulate') {
+      if (pick.kind === 'face') void this.toggleSimulationFace(toRef(pick));
+      return;
+    }
     if (pick.kind !== 'face') return;
     const current = this.pickedFace();
     this.pickedFace.set(current?.name === pick.name && current.body === pick.body ? undefined : pick);
+  }
+
+  /** Holds a face fixed or loads it (100 N into it), or takes that back. */
+  private async toggleSimulationFace(face: TopologyRef): Promise<void> {
+    const setup = this.simulationSetup();
+    const same = (ref: TopologyRef) => ref.body === face.body && ref.name === face.name;
+    if (this.simulationPick() === 'fixed') {
+      await this.setSimulation({ ...setup, fixed: setup.fixed.some(same) ? setup.fixed.filter((r) => !same(r)) : [...setup.fixed, face] });
+      return;
+    }
+    const loads: SimulationLoad[] = setup.loads.some((l) => same(l.face))
+      ? setup.loads.filter((l) => !same(l.face))
+      : [...setup.loads, { kind: 'force', face, force: 100, direction: this.inward(face) }];
+    await this.setSimulation({ ...setup, loads });
+  }
+
+  /** Into a face: against its normal (where it starts, for curved faces). */
+  inward(face: TopologyRef): Vec3 {
+    const mesh = this.state()?.bodies.find((b) => b.body === face.body);
+    const meshFace = mesh?.faces.find((f) => f.name === face.name);
+    if (!mesh || !meshFace) return [0, 0, -1];
+    const vertex = mesh.indices[meshFace.start] as number;
+    return [0, 1, 2].map((k) => Math.round(-(mesh.normals[vertex * 3 + k] as number) * 1e6) / 1e6 || 0) as unknown as Vec3;
+  }
+
+  async setSimulation(setup: SimulationSetup): Promise<void> {
+    await this.run({ type: 'set-simulation', setup });
+  }
+
+  /** Runs the strength check (seconds for detailed parts). */
+  async simulate(): Promise<void> {
+    if (!this.session || this.simulating()) return;
+    this.simulating.set(true);
+    const state = this.state();
+    try {
+      this.simulation.set({ state, result: await this.session.simulate() });
+    } finally {
+      this.simulating.set(false);
+    }
   }
 
   /** Projects a picked edge or face (its outline) into the sketch being edited. */

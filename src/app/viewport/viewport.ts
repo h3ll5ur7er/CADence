@@ -19,7 +19,7 @@ import { mouseBindings } from '../shared/keymap';
 import { Shortcuts } from '../shared/shortcuts';
 import { UserSettings } from '../shared/user-settings';
 import { sectionAxis, sectionPlane, type SectionSetting } from './looks';
-import type { SurfaceAnalysis } from './surface-analysis';
+import type { StressField, SurfaceAnalysis } from './surface-analysis';
 import type { Pick, PickKind } from './picking';
 import type { SketchDisplay } from './sketch-display';
 import type { Affine } from './sketch-planes';
@@ -195,6 +195,8 @@ export class Viewport {
   readonly measureLine = input<readonly [Vec3, Vec3] | undefined>(undefined);
   /** Threads, drawn as helices on their faces. */
   readonly threads = input<readonly ThreadMarker[]>([]);
+  /** Results of a strength check drawn on the bodies. */
+  readonly field = input<StressField | undefined>(undefined);
   readonly backendReady = output<RendererBackend>();
   readonly picked = output<Pick>();
   /** A handle to drag a part by (assemblies), and where it is dragged to. */
@@ -279,6 +281,7 @@ export class Viewport {
     effect(() => this.scene()?.setPickable(this.pickable()));
     effect(() => this.scene()?.setSelection(this.selection()));
     effect(() => this.scene()?.setFlagged(this.flagged()));
+    effect(() => this.scene()?.setField(this.field()));
     effect(() => this.scene()?.setMeasureLine(this.measureLine()));
     effect(() => this.scene()?.setThreads(this.threads()));
     effect(() => this.scene()?.setHandle(this.handle()));

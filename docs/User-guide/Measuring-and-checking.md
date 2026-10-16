@@ -1,6 +1,6 @@
 # Measuring and checking
 
-Weigh a part, measure it, and check that your printer or laser cutter can make it. All three work on the live model and update after every change.
+Weigh a part, measure it, check that your printer or laser cutter can make it, and check that it is strong enough. They work on the live model.
 
 [TOC]
 
@@ -53,6 +53,32 @@ Checks that concern particular faces show **Show N faces**. The faces of the sel
 
 > [!TIP]
 > A check that fails points at the geometry, not at the export. Fix the model (a thicker wall, a chamfer under an overhang), and the check updates by itself.
+
+## Check strength
+
+Will the bracket hold? Click the bent beam in the toolbar (**Check strength**). It calculates how a part bends and how much stress builds up in it under loads, for the component's **Material**.
+
+1. With **Hold fixed** chosen, click the faces that are held: screwed down, glued, clamped. Click a face again to release it.
+2. Choose **Load** and click the faces that are pushed or pulled. Each load starts as 100 N into its face. Change it to:
+   - a **Force** in N, spread over the face, into the face or along an axis (down is −Z);
+   - a **Pressure** in MPa (N/mm²), pushing on the face wherever it faces.
+3. Click **Run**. A few seconds later the panel shows:
+
+| Value | Meaning |
+| --- | --- |
+| Largest stress | the highest von Mises stress, in MPa |
+| Largest deflection | how far the part moves at most, in mm |
+| Safety factor | the material's yield strength over the largest stress: below 1 it bends for good or breaks, below 2 it is close |
+| Elements | how many pieces the part was split into |
+
+The part is coloured by stress, from blue (none) to red (the largest), and drawn bent, exaggerated so you can see how. Untick **Show the bent shape** to see it straight. **Element size** (mm) makes the calculation finer or coarser; it is chosen from the part's size when left empty. Smaller elements take longer.
+
+The fixed faces and loads are saved with the component; run the check again after a change.
+
+> [!WARNING]
+> This is a quick check, not an engineering approval. It is linear and static and uses the solid material's stiffness and strength. 3D-printed parts are weaker, above all across their layers, and sharp inside corners show more stress than they really carry. Treat safety factors below 2 with care.
+
+Bodies are checked one by one: a body needs a fixed face of its own, and bodies do not hold each other up. Each material in the list knows its stiffness (Young's modulus), Poisson's ratio and yield strength.
 
 ## Export for the laser with kerf compensation
 

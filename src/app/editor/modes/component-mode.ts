@@ -37,6 +37,7 @@ import type { SolidFormat } from '@core/managers/design';
 import { NameDialog } from '../../shared/dialogs';
 import { CheckPanel } from '../analysis/check-panel';
 import { MeasurePanel } from '../analysis/measure-panel';
+import { SimulatePanel } from '../analysis/simulate-panel';
 import { grams, lengthIn, point, pointIn } from '../analysis/units';
 import { relativeTime } from '../../shared/format';
 import { Icon, type IconName } from '../../shared/icon';
@@ -155,7 +156,7 @@ const exportFormats: readonly { format: SolidFormat; label: string }[] = [
 /** Part modeling mode: sketches, features, parameters and bodies. */
 @Component({
   selector: 'cad-component-mode',
-  imports: [Viewport, PictureDialog, Icon, SketchEditor, SketchToolbar, NameDialog, FolderDialog, NoteDialog, FeatureDialog, ParametersPanel, MeasurePanel, CheckPanel, RepairPanel],
+  imports: [Viewport, PictureDialog, Icon, SketchEditor, SketchToolbar, NameDialog, FolderDialog, NoteDialog, FeatureDialog, ParametersPanel, MeasurePanel, CheckPanel, SimulatePanel, RepairPanel],
   providers: [DesignStore],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './component-mode.html',
@@ -265,6 +266,7 @@ export class ComponentMode {
       shortcuts.registerActions([
         ...featureMenus.flatMap((menu) => menu.items.map((item) => ({ label: featureLabels[item.type], group: menu.label, run: () => this.startFeature(item.type) }))),
         { label: 'Check manufacturability', group: 'Inspect', run: () => this.togglePanel('check') },
+        { label: 'Check strength (simulate loads)', group: 'Inspect', run: () => this.togglePanel('simulate') },
         { label: 'New folder in the timeline', group: 'Timeline', run: () => void this.newFolder() },
         { label: 'Export configurations as CSV', group: 'Parameters', run: () => void this.store.exportConfigurations() },
         ...exportFormats.map((f) => ({ label: `Export ${f.label}`, group: 'Export', run: () => void this.store.exportBodies(f.format) })),
@@ -385,7 +387,7 @@ export class ComponentMode {
     if (material) void this.store.run({ type: 'set-material', material });
   }
 
-  protected togglePanel(panel: 'measure' | 'check'): void {
+  protected togglePanel(panel: 'measure' | 'check' | 'simulate'): void {
     this.store.openPanel(this.store.panel() === panel ? undefined : panel);
   }
 

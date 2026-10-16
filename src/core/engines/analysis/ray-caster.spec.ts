@@ -27,6 +27,12 @@ describe('RayCaster', () => {
     expect(caster.cast([0.5, 0.25, 0], [0, 0, 1], 1e-4)).toBeCloseTo(2);
   });
 
+  it('counts every crossing beyond the origin', () => {
+    expect(caster.crossings([0.25, 0.5, -1], [0, 0, 1])).toBe(2);
+    expect(caster.crossings([0.25, 0.5, 1], [0, 0, 1])).toBe(1);
+    expect(caster.crossings([0.25, 0.5, 3], [0, 0, 1])).toBe(0);
+  });
+
   it('stays fast on large meshes', () => {
     const n = 200; // a 200 × 200 grid: 80,000 triangles
     const grid = new Float32Array((n + 1) * (n + 1) * 3);

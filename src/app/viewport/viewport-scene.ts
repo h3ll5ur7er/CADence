@@ -35,7 +35,7 @@ import {
 import type { DragAction, MouseBindings } from '../shared/keymap';
 import { lookOf, type SectionPlane } from './looks';
 import { meshVertices, type Pick, pickAt, type PickKind, pickKey, type TopologyPick } from './picking';
-import type { SurfaceAnalysis } from './surface-analysis';
+import type { StressField, SurfaceAnalysis } from './surface-analysis';
 import { createBody, createPlane, createSketch, edgeHighlight, faceHighlight, lines, threadHelix, type ViewportTheme } from './scene-content';
 import type { SketchDisplay } from './sketch-display';
 import type { Affine } from './sketch-planes';
@@ -141,6 +141,8 @@ export class ViewportScene {
   private handle: { readonly controls: TransformControls; readonly proxy: Object3D } | undefined;
   /** Faces coloured by a surface analysis instead of their looks. */
   private analysis: SurfaceAnalysis | undefined;
+  /** Bodies coloured by stress and bent by their displacements (CAD-93), over any surface analysis. */
+  private field: StressField | undefined;
   /** What the bodies were last set to, to draw them again when the analysis changes. */
   private lastBodies: { readonly meshes: readonly BodyMesh[]; readonly appearances: Readonly<Record<string, Appearance>> } = { meshes: [], appearances: {} };
   private readonly sun: DirectionalLight;
@@ -219,7 +221,7 @@ export class ViewportScene {
       return look ? [{ mesh, look }] : [];
     });
     this.meshes = shown.map((s) => s.mesh);
-    this.replace(this.bodies, shown.map(({ mesh, look }) => createBody(mesh, this.theme, look, this.analysis)));
+    this.replace(this.bodies, shown.map(({ mesh, look }) => createBody(mesh, this.theme, look, this.analysis, this.field)));
     this.showCuts();
     this.updateHighlights();
     this.placeGround();
@@ -231,6 +233,13 @@ export class ViewportScene {
     this.analysis = analysis;
     this.setBodies(this.lastBodies.meshes, this.lastBodies.appearances);
     this.setParts([...this.partEntries.values()].map((e) => e.part));
+  }
+
+  /** Shows the results of a strength check on the component's bodies, or their looks again. */
+  setField(field: StressField | undefined): void {
+    if (field === this.field) return;
+    this.field = field;
+    this.setBodies(this.lastBodies.meshes, this.lastBodies.appearances);
   }
 
   /**

@@ -1,4 +1,4 @@
-import type { BodyMesh, Vec3 } from '@core/contracts';
+import type { BodyMesh, SimulationSurface, Vec3 } from '@core/contracts';
 
 /**
  * How faces are coloured to show their shape (CAD-91): zebra stripes (smoothness across edges),
@@ -15,10 +15,27 @@ const unit = (v: Vec3): Vec3 => {
   return [v[0] / l, v[1] / l, v[2] / l];
 };
 
+/**
+ * Results of a strength check drawn on the bodies (CAD-93): von Mises stress as colours from blue (none)
+ * to red (`max`), and the bodies bent by their displacement times `deform`.
+ */
+export interface StressField {
+  readonly bodies: ReadonlyMap<string, SimulationSurface>;
+  readonly max: number;
+  readonly deform: number;
+}
+
 /** A colour ramp from blue (0) through green to red (1). */
 export function ramp(t: number): Vec3 {
   const x = Math.max(0, Math.min(1, t));
   return x < 0.5 ? [0, x * 2, 1 - x * 2] : [(x - 0.5) * 2, 1 - (x - 0.5) * 2, 0];
+}
+
+/** An RGB colour (0 … 1) for every vertex, by its stress. */
+export function stressColors(stress: Float32Array, max: number): Float32Array {
+  const colors = new Float32Array(stress.length * 3);
+  stress.forEach((s, i) => colors.set(ramp(s / (max || 1)), i * 3));
+  return colors;
 }
 
 /** An RGB colour (0 … 1) for every vertex of the mesh. */

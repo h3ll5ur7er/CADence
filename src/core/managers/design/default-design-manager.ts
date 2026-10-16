@@ -20,6 +20,7 @@ import {
   type Parameter,
   type Result,
   resultStamp,
+  type SimulationResult,
   type TopologyRef,
   type ValidationReport,
   type SketchConstraint,
@@ -50,7 +51,6 @@ import type {
   SolidFormat,
 } from './design-manager';
 import { type Derived, importedFonts, Regeneration, type RegenerationContext } from './regeneration';
-import { viewerHtml } from '@core/utilities/viewer';
 
 export interface DesignManagerDependencies {
   /** Where project parameters are read. */
@@ -273,6 +273,8 @@ class Session implements DesignSession {
         return { name: names.get(body.body) ?? body.body, ...(look?.color ? { color: look.color } : {}), opacity: look?.opacity ?? 1, positions: body.positions, normals: body.normals, indices: body.indices, edges: body.edgePositions };
       });
     if (parts.length === 0) return fail({ code: 'nothing-to-export', message: 'There are no bodies to show yet.' });
+    // Loaded when needed: the viewer page is large and rarely made.
+    const { viewerHtml } = await import('@core/utilities/viewer');
     const bytes = new TextEncoder().encode(viewerHtml({ title: document.name, parts }));
     await this.deps.externalFiles.deliver({ name: `${document.name}.html`, mediaType: 'text/html', bytes });
     return ok(undefined);
@@ -310,6 +312,17 @@ class Session implements DesignSession {
     const sketches = [...derived.sketches.values()].filter((v) => !v.error).map((v) => ({ sketch: v.sketch, profiles: v.profiles }));
     const checks = await this.deps.analysis.validate({ bodies: this.namedBodies(), sketches }, profile);
     return { profile, checks };
+  }
+
+  async simulate(): Promise<Result<SimulationResult>> {
+    const { document, derived } = this.current;
+    if (!document.simulation) return fail({ code: 'not-fixed', message: 'Hold at least one face fixed.' });
+    // Materials saved before strength checks have no stiffness: those of the catalogue's namesake stand in.
+    const material = materialOf(document);
+    const known = materials.find((m) => m.name === material.name);
+    // Copies: buffers sent to the geometry worker move there, and the view keeps drawing these meshes.
+    const meshes = (await this.meshes(derived)).map((m) => ({ ...m, positions: m.positions.slice(), normals: m.normals.slice(), indices: m.indices.slice(), edgePositions: m.edgePositions.slice() }));
+    return this.deps.analysis.simulate(meshes, document.simulation, { ...known, ...material });
   }
 
   /** Bodies with the names of the features that made them. */

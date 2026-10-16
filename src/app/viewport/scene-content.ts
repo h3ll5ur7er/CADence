@@ -1,4 +1,4 @@
-import type { BodyMesh, PlaneFrame, ThreadMarker, Vec2, Vec3 } from '@core/contracts';
+import type { BodyMesh, PlaneFrame, SimulationSurface, ThreadMarker, Vec2, Vec3 } from '@core/contracts';
 import {
   BackSide,
   BufferAttribute,
@@ -18,7 +18,7 @@ import {
   ShapeGeometry,
 } from 'three/webgpu';
 import type { Look } from './looks';
-import { analysisColors, type SurfaceAnalysis } from './surface-analysis';
+import { analysisColors, type StressField, stressColors, type SurfaceAnalysis } from './surface-analysis';
 import type { SketchDisplay } from './sketch-display';
 
 /** Colours resolved from the CSS design tokens, so the 3D scene follows the app theme. */
@@ -131,11 +131,16 @@ const finishes: Readonly<Record<NonNullable<Look['finish']>, { readonly roughnes
   wood: { roughness: 0.75, metalness: 0, tint: '#a06a3b' },
 };
 
-/** A body: its faces (in its look, or coloured by a surface analysis), its edges, and its section cut. */
-export function createBody(mesh: BodyMesh, theme: ViewportTheme, look: Look = { color: theme.body, opacity: 1 }, analysis?: SurfaceAnalysis): Group {
+/**
+ * A body: its faces (in its look, or coloured by a surface analysis), its edges, and its section cut.
+ * With the results of a strength check, its faces are only picked: the solution's surface is drawn
+ * instead, coloured by stress and bent by the displacements (then without edges).
+ */
+export function createBody(mesh: BodyMesh, theme: ViewportTheme, look: Look = { color: theme.body, opacity: 1 }, analysis?: SurfaceAnalysis, field?: StressField): Group {
   const group = new Group();
   group.name = `body-${mesh.body}`;
   const geometry = new BufferGeometry();
+  const results = field?.bodies.get(mesh.body);
   geometry.setAttribute('position', new BufferAttribute(mesh.positions, 3));
   geometry.setAttribute('normal', new BufferAttribute(mesh.normals, 3));
   geometry.setIndex(new BufferAttribute(mesh.indices, 1));
@@ -168,7 +173,24 @@ export function createBody(mesh: BodyMesh, theme: ViewportTheme, look: Look = { 
   cut.name = 'cut';
   cut.visible = false;
   group.add(faces, edges, cut);
+  if (results && field) {
+    faces.visible = false; // still hit by picking rays
+    edges.visible = field.deform === 0;
+    group.add(stressSurface(results, field, offset));
+  }
   return group;
+}
+
+/** The solution's surface of a body, coloured by stress and bent by `deform` times the displacements. */
+function stressSurface(results: SimulationSurface, field: StressField, offset: object): Mesh {
+  const geometry = new BufferGeometry();
+  const positions = field.deform > 0 ? results.positions.map((p, i) => p + (results.displacement[i] as number) * field.deform) : results.positions;
+  geometry.setAttribute('position', new BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new BufferAttribute(stressColors(results.stress, field.max), 3));
+  geometry.setIndex(new BufferAttribute(results.indices, 1));
+  const surface = new Mesh(geometry, new MeshBasicMaterial({ vertexColors: true, ...offset }));
+  surface.name = 'stress';
+  return surface;
 }
 
 /** A construction plane: a translucent square with an outline. */

@@ -331,3 +331,15 @@ Imported SVG `<text>` and DXF `TEXT`/`MTEXT` become editable sketch texts in thi
 
 *Why:* the user asked for nicer pictures to share, for surface checks known from other CAD programs, and for agents that can look at what they made.
 *Trade-off:* zebra stripes are fixed to the model, not the camera; curvature is a mesh estimate; software pictures have no reflections or shadows; turntables are recorded in real time.
+
+## ADR-41
+
+**Simulation: a small linear static finite element solver in TypeScript, on a grid mesh moved onto the surface.**
+- *Mesh:* the body is filled with a grid of cubes (kept where their middle is inside, tested by ray parity on the display mesh), each split into the same six tetrahedra so neighbours fit. Corner nodes on the boundary move onto the nearest point of the surface; a move that would turn a tetrahedron inside out is taken back. No Delaunay mesher is needed, and the mesh never fails on odd geometry.
+- *Elements:* 10-node quadratic tetrahedra with a four-point Gauss rule. Linear tetrahedra are far too stiff in bending; quadratic ones match beam theory within a few percent with two elements across.
+- *Solver:* the stiffness matrix in 3 × 3 block CSR, solved by conjugate gradients preconditioned by symmetric Gauss-Seidel sweeps (about three times fewer steps than the diagonal alone). Loads are consistent for 6-node triangles (all of a uniform load on the mid-edge nodes).
+- *Results:* von Mises stress at the corners of each element, averaged at nodes. The viewport draws the solution's own surface (each quadratic face as four triangles) coloured and bent; the display mesh stays underneath, hidden, for picking.
+- *Where:* in the Analysis engine (geometry worker), from the display meshes the session already has, so OCCT is not needed. The setup (fixed faces, loads, element size) is part of the component document; the result is not stored.
+
+*Why:* the user asked for a simple strength check; a hobby part needs a credible number and picture, not a professional solver. Pure TypeScript keeps it in the existing worker with no new build steps.
+*Trade-off:* the grid makes sharp edges slightly round and cannot follow features smaller than an element; slender parts (thin plates, long beams) need many solver steps (seconds), which [[CAD-95]] may speed up; no contact between bodies, no plasticity, no anisotropy of printed parts.

@@ -1,6 +1,7 @@
 import type {
   Appearance,
   AssemblyDocument,
+  ExplodedView,
   BodyMesh,
   DocumentId,
   Instance,
@@ -10,6 +11,7 @@ import type {
   Matrix4,
   Measurement,
   MotionFrame,
+  MotionLink,
   MotionStudy,
   PlaneFrame,
   Result,
@@ -40,6 +42,12 @@ export type AssemblyCommand =
   /** Adds a pattern of instances, or changes one (same id); an empty name gets the next default ("Linear pattern 2"). */
   | { readonly type: 'set-pattern'; readonly pattern: InstancePattern }
   | { readonly type: 'remove-pattern'; readonly patternId: string }
+  /** Adds a motion link, or changes one (same id); an empty name gets the next default ("Gear 2"). */
+  | { readonly type: 'set-link'; readonly link: MotionLink }
+  | { readonly type: 'remove-link'; readonly linkId: string }
+  /** Adds an exploded view, or changes one (same id). */
+  | { readonly type: 'set-exploded-view'; readonly view: ExplodedView }
+  | { readonly type: 'remove-exploded-view'; readonly viewId: string }
   | { readonly type: 'add-study'; readonly study: MotionStudy }
   | { readonly type: 'edit-study'; readonly study: MotionStudy }
   | { readonly type: 'remove-study'; readonly studyId: string };
@@ -84,6 +92,33 @@ export interface PlacedRef extends TopologyRef {
   readonly instance: string;
 }
 
+/** Where two instances hit during a motion study: the first moment, and how much overlaps then (mm³). */
+export interface Collision {
+  readonly time: number;
+  readonly a: string;
+  readonly b: string;
+  readonly volume: number;
+}
+
+/** A line of the bill of materials: one component (or configuration of it) and how many there are. */
+export interface BomLine {
+  readonly component: string;
+  readonly configuration?: string;
+  readonly count: number;
+  readonly material: string;
+  /** Grams, each. */
+  readonly mass: number;
+  /** The instances (and copies) it covers. */
+  readonly instances: readonly string[];
+}
+
+/** A picture of the assembly for each state of an exploded view: assembled, then after each step. */
+export interface InstructionPicture {
+  readonly jpeg: Uint8Array;
+  readonly width: number;
+  readonly height: number;
+}
+
 /** Mass properties of the whole assembly, from each component's material. */
 export interface AssemblyProperties {
   /** Grams. */
@@ -109,6 +144,19 @@ export interface AssemblySession {
   measure(refs: readonly PlacedRef[]): Promise<Result<Measurement>>;
   /** Total mass, volume and centre of mass of the shown instances and copies. */
   properties(): Promise<AssemblyProperties>;
+  /** Where instances hit while a motion study plays (sampled `fps` times a second): the first moment for each pair. */
+  collisions(studyId: string, fps: number): Promise<Result<readonly Collision[]>>;
+  /** Where the instances are with the first `steps` steps of an exploded view applied (all by default), the last one by `amount` (0 … 1). */
+  explode(viewId: string, steps?: number, amount?: number): ReadonlyMap<string, Matrix4>;
+  /** The components of the assembly with their counts, materials and masses. */
+  billOfMaterials(): Promise<readonly BomLine[]>;
+  /** The bill of materials as a CSV file. */
+  exportBillOfMaterials(): Promise<Result<void>>;
+  /**
+   * Build instructions as a PDF: the parts list, then one page per step (the steps of the exploded
+   * view in reverse, fitting its parts), from pictures of the assembled state and after each step.
+   */
+  exportInstructions(viewId: string, pictures: readonly InstructionPicture[]): Promise<Result<void>>;
   /** Instances whose solids overlap in the current positions. */
   interference(): Promise<Interference[]>;
   /** STEP keeps one named solid per instance; mesh formats get one object per instance. */

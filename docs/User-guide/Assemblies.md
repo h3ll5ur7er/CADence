@@ -36,6 +36,18 @@ Where a joint sits depends on what you click:
 
 Select a joint to drag its values with the sliders (or type them), to set **limits**, or to **turn the moving side over**. Its **offsets** move each side's joint origin away from what you clicked: X and Y along the face or edge, Z along the joint's axis (mm), and **Turn** about the axis (°). A hinge 10 mm above a plate, or a part turned 45° on its pin, needs no extra geometry. Joints that close a loop, like a four-bar linkage, are kept closed: dragging one joint moves the others. A change that no joint arrangement can satisfy is refused with the reason.
 
+## Motion links
+
+**Link** makes one joint drive another, so a mechanism moves as one:
+
+| Kind | Enter | Ratio |
+| --- | --- | --- |
+| Gears | the teeth of both gears | turns the other way, teeth over teeth (20 driving 10: −2) |
+| Rack and pinion | the pinion's pitch diameter | π × ⌀ / 360 mm of rack per degree |
+| Belt or chain | both pulley diameters | turns the same way, diameter over diameter |
+
+Choose the driving and the driven joint (and which of their freedoms), or type the ratio; **The other way round** reverses it. The driven joint keeps where it is when the link is made and follows from then on; links can chain (a gear train), but not in a circle, and a joint follows one link.
+
 ## Patterns and mirrors
 
 **Pattern → Linear pattern**, **Circular pattern** or **Mirror** repeats instances: in a row along X, Y or Z with a spacing, around an axis (through a point) with an angle between copies, or mirrored across a plane. Count includes the originals. Copies follow their originals (moving them, their joints, their configuration and the component's changes) and are part of checks, measures, mass and exports, but cannot be joined themselves. Edit or delete a pattern in the browser.
@@ -54,6 +66,20 @@ Click **Motion** to start a study. It has a duration and *keys*: a joint's value
 3. Press **Play**, or drag the time slider to look at any moment. Between keys, values change evenly.
 
 **Record video** plays the study from the start and saves it as a WebM video.
+
+- **Ease** on a key makes the motion into it start and end slowly instead of evenly.
+- **Constant speeds** turn a joint at a speed (rpm) or slide it (mm/s) from where it is at the start, for the whole study; they win over keys of the same joint. Linked joints follow.
+- **Check collisions** plays the study (10 frames a second) and lists the parts that hit each other with the moment they first do. Click one to see it, the parts in pink; **Stop playing at the first hit** ends playback there.
+
+## Exploded views and build instructions
+
+**Explode** starts an exploded view: choose the instances the next step moves, **Add step**, and set its direction and distance. Steps add up, one after the other; the **Shown** slider takes the assembly apart step by step, with lines from where each part was.
+
+**Build instructions (PDF)** makes an A4 document: the parts list and the assembly taken apart, then one page per step, fitting the parts in the reverse order of the exploded view, and the finished assembly. Pictures are taken from the home direction, all framed alike.
+
+## Bill of materials
+
+The **bill of materials** (the stacked squares) lists every component (and configuration) with its count, material and mass, copies of patterns included. **Export CSV** saves it for a spreadsheet.
 
 ## Check and export
 

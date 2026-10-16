@@ -122,6 +122,10 @@ interface AssemblySession {
   previewJoint(jointId, values): Promise<Result<poses>>;            // slider drags, not saved
   motion(studyId, fps): Promise<Result<MotionFrame[]>>;
   measure(refs: PlacedRef[]): Promise<Result<Measurement>>;      // faces, edges, vertices of instances where they are
+  collisions(studyId, fps): Promise<Result<Collision[]>>;        // first hit of each pair while a study plays
+  explode(viewId, steps?, amount?): poses;                       // an exploded view's steps applied
+  billOfMaterials(): Promise<BomLine[]>; exportBillOfMaterials(): Promise<Result<void>>;  // CSV
+  exportInstructions(viewId, pictures): Promise<Result<void>>;   // PDF: parts, a page per step, finished
   properties(): Promise<AssemblyProperties>;                     // mass, volume, centre of mass, by each component's material
   interference(): Promise<Interference[]>;
   exportAssembly(format: 'step' | 'stl' | 'obj' | '3mf'): Promise<Result<void>>;
@@ -130,7 +134,7 @@ interface AssemblySession {
 }
 ```
 
-Instances can be components or imported 3D files (read once per original). Commands: `insert-instance`, `remove-instance` (with its joints and their keys), `rename-instance`, `move-instance` (refused for instances a joint places), `ground-instance`, `add-joint`, `edit-joint`, `remove-joint`, `set-joint-values`, `add-study`, `edit-study`, `remove-study`, `set-pattern`, `remove-pattern`. A joint command is refused when its joint cannot hold. The state also has each joint's frame in assembly coordinates (`jointFrames`, for the move handle) and the copies patterns make (`copies`, placed in `poses` after the kinematic solution).
+Instances can be components or imported 3D files (read once per original). Commands: `insert-instance`, `remove-instance` (with its joints and their keys), `rename-instance`, `move-instance` (refused for instances a joint places), `ground-instance`, `add-joint`, `edit-joint`, `remove-joint`, `set-joint-values`, `add-study`, `edit-study`, `remove-study`, `set-pattern`, `remove-pattern`, `set-link`, `remove-link`, `set-exploded-view`, `remove-exploded-view`. A joint command is refused when its joint cannot hold. The state also has each joint's frame in assembly coordinates (`jointFrames`, for the move handle) and the copies patterns make (`copies`, placed in `poses` after the kinematic solution).
 
 The Assembly Manager never regenerates a component. It restores each instance from the component's **published result** (Asset Access → Modeling Engine `restore` + `tessellate`). When a result is missing or stale, it queues `regenerateComponent` to the Design Manager and reloads the component on `componentRegenerated` ([[Architecture/Decisions#ADR-11]]). It also follows `documentRenamed`, `documentDeleted` (a deleted component shows as missing) and `documentChanged`: a component saved in another tab or window, relayed by the composition root over a `BroadcastChannel` ([[Architecture/Decisions#ADR-37]]). Joint frames come from the Modeling Engine (`frameOf`, cached per component version); positions from the Kinematics Engine.
 

@@ -35,7 +35,7 @@ const axes: readonly { readonly label: string; readonly direction: Vec3 }[] = [
       </fieldset>
       <label class="field">
         {{ p.kind === 'mirror' ? 'Across the plane normal to' : p.kind === 'circular' ? 'Around the axis' : 'Along' }}
-        <select id="pattern-axis" (change)="change({ direction: axes[+value($event)]!.direction })">
+        <select id="pattern-axis" (change)="change({ direction: axisAt(+value($event)) })">
           @for (a of axes; track a.label; let i = $index) {
             <option [value]="i" [selected]="same(a.direction, p.direction)">{{ a.label }}</option>
           }
@@ -96,6 +96,10 @@ export class PatternPanel {
   protected setOrigin(index: number, event: Event): void {
     const draft = this.store.patternDraft();
     if (draft) this.change({ origin: draft.origin.map((v, i) => (i === index ? Number(this.value(event)) : v)) as unknown as Vec3 });
+  }
+
+  protected axisAt(index: number): Vec3 {
+    return axes[index]?.direction ?? [1, 0, 0];
   }
 
   protected same(a: Vec3, b: Vec3): boolean {

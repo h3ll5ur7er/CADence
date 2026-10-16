@@ -115,6 +115,8 @@ export class ViewportScene {
   private readonly annotations = new Group();
   private readonly grid: Group;
   private readonly threads = new Group();
+  /** Lines from where exploded parts were to where they are. */
+  private readonly trails = new Group();
   private readonly parts = new Group();
   private partEntries = new Map<string, { readonly group: Group; readonly signature: string; readonly part: PartDisplay }>();
   private flagged: readonly { readonly body: string; readonly name: string }[] = [];
@@ -159,7 +161,7 @@ export class ViewportScene {
     this.origin = createOrigin(theme);
     this.model.enabled = false;
     this.model.add(this.bodies, this.parts);
-    this.scene.add(this.origin, this.model, this.sketches, this.planes, this.threads, this.highlights, this.annotations);
+    this.scene.add(this.origin, this.model, this.sketches, this.planes, this.threads, this.trails, this.highlights, this.annotations);
     this.controls.target.copy(homeTarget);
     this.placeCamera(viewDirections.home, homeDistance);
 
@@ -295,6 +297,11 @@ export class ViewportScene {
       children.push(line, ...ends);
     }
     this.replace(this.annotations, children);
+    this.requestRender();
+  }
+
+  setTrails(segments: readonly (readonly [Vec3, Vec3])[]): void {
+    this.replace(this.trails, segments.length ? [lines(segments.flatMap(([a, b]) => [...a, ...b]), this.theme.construction)] : []);
     this.requestRender();
   }
 
@@ -603,8 +610,8 @@ export class ViewportScene {
    * A picture of the model from the home direction, framed to fit (without the grid, origin, planes
    * and highlights), cropped to `width` × `height`, as PNG bytes.
    */
-  async snapshot(width = 320, height = 200): Promise<Uint8Array | undefined> {
-    const box = new Box3().setFromObject(this.model);
+  async snapshot(width = 320, height = 200, type: 'image/png' | 'image/jpeg' = 'image/png', frame?: { readonly min: Vec3; readonly max: Vec3 }): Promise<Uint8Array | undefined> {
+    const box = frame ? new Box3(new Vector3(...frame.min), new Vector3(...frame.max)) : new Box3().setFromObject(this.model);
     if (box.isEmpty()) box.setFromObject(this.sketches);
     if (box.isEmpty()) return undefined;
     const helpers = [this.grid, this.origin, this.planes, this.highlights, this.annotations];
@@ -631,8 +638,13 @@ export class ViewportScene {
       // Crop the middle of the view to the picture's proportions.
       const scale = Math.min(source.width / width, source.height / height);
       const [w, h] = [width * scale, height * scale];
+      // JPEG has no transparency: white behind the model.
+      if (type === 'image/jpeg') {
+        context.fillStyle = '#ffffff';
+        context.fillRect(0, 0, width, height);
+      }
       context.drawImage(source, (source.width - w) / 2, (source.height - h) / 2, w, h, 0, 0, width, height);
-      const blob = await new Promise<Blob | null>((resolve) => picture.toBlob(resolve, 'image/png'));
+      const blob = await new Promise<Blob | null>((resolve) => picture.toBlob(resolve, type, 0.9));
       return blob ? new Uint8Array(await blob.arrayBuffer()) : undefined;
     } finally {
       helpers.forEach((h, i) => (h.visible = shown[i] as boolean));

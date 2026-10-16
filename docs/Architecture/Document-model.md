@@ -214,7 +214,10 @@ The Modeling Engine names every face after each feature (*generative naming*, [[
 As implemented in [[src/core/contracts/assembly.ts]]:
 
 ```ts
-interface AssemblyDocument { instances: Instance[]; joints: Joint[]; motionStudies: MotionStudy[]; patterns?: InstancePattern[] }
+interface AssemblyDocument { instances: Instance[]; joints: Joint[]; motionStudies: MotionStudy[]; patterns?: InstancePattern[]; links?: MotionLink[]; explodedViews?: ExplodedView[] }
+interface MotionLink { id; name; kind: 'gear' | 'rack' | 'belt'; driver: { joint, dof }; driven: { joint, dof }; ratio; offset }  // driven = offset + ratio × driver
+interface ExplodedView { id; name; steps: { id; instances: string[]; direction: Vec3; distance }[] }    // steps add up in order
+// MotionStudy: keys may `ease`; drives: { joint, dof, speed }[] (° or mm per second from the start value)
 interface InstancePattern { id; name; kind: 'linear' | 'circular' | 'mirror'; instances: string[]; direction: Vec3; origin: Vec3; count: number; spacing: number }  // copies `<pattern>/<instance>/<k>`
 interface Instance { id: string; component: DocumentId; name: string; transform: Matrix4; grounded: boolean; appearance?: Appearance }
 interface Appearance { hidden?: boolean; color?: string /* #rrggbb */; opacity?: number /* 0.1 to 1 */ }  // display only, never geometry

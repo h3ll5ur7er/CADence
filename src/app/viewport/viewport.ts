@@ -160,6 +160,8 @@ export class Viewport {
   readonly picked = output<Pick>();
   /** A handle to drag a part by (assemblies), and where it is dragged to. */
   readonly handle = input<MoveHandle | undefined>(undefined);
+  /** Lines from where exploded parts were to where they are. */
+  readonly trails = input<readonly (readonly [Vec3, Vec3])[]>([]);
   readonly handleMoved = output<{ readonly at: readonly number[]; readonly done: boolean }>();
   /** A picture of the model (PNG), a moment after what it shows changed. */
   readonly thumbnail = output<Uint8Array>();
@@ -234,6 +236,7 @@ export class Viewport {
     effect(() => this.scene()?.setMeasureLine(this.measureLine()));
     effect(() => this.scene()?.setThreads(this.threads()));
     effect(() => this.scene()?.setHandle(this.handle()));
+    effect(() => this.scene()?.setTrails(this.trails()));
     // A picture once the model has settled: after its bodies, parts or sketches stop changing.
     let pending: ReturnType<typeof setTimeout> | undefined;
     effect((onCleanup) => {
@@ -270,6 +273,11 @@ export class Viewport {
   }
 
   /** The rendered picture as a video stream, for recording animations. */
+  /** A JPEG picture of the model from the home direction, framing `box` (the whole model by default). */
+  picture(width: number, height: number, box?: { readonly min: Vec3; readonly max: Vec3 }): Promise<Uint8Array | undefined> {
+    return this.scene()?.snapshot(width, height, 'image/jpeg', box) ?? Promise.resolve(undefined);
+  }
+
   captureStream(fps: number): MediaStream {
     return this.canvas().nativeElement.captureStream(fps);
   }

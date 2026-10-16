@@ -138,4 +138,50 @@ describe('KinematicsEngine motion studies', () => {
     expect(frames).toHaveLength(0);
     expect(error).toMatchObject({ time: 0, joint: 'self' });
   });
+
+  it('drives one joint from another: gears turn the other way, a rack slides with its pinion', () => {
+    // Two gears on the base, 20 and 10 teeth; a rack on the second gear's pinion (⌀10: π·10/360 mm per degree).
+    const model: KinematicModel = {
+      instances: [instance('base', true), instance('big'), instance('small'), instance('rack')],
+      joints: [
+        joint('g1', 'revolute', ['base', [0, 0, 0]], ['big', [0, 0, 0]], [90]),
+        joint('g2', 'revolute', ['base', [30, 0, 0]], ['small', [0, 0, 0]], [0]),
+        joint('r', 'slider', ['base', [30, 20, 0]], ['rack', [0, 0, 0]], [0]),
+      ],
+      links: [
+        { id: 'l1', name: '', kind: 'gear', driver: { joint: 'g1', dof: 0 }, driven: { joint: 'g2', dof: 0 }, ratio: -2, offset: 0 },
+        { id: 'l2', name: '', kind: 'rack', driver: { joint: 'g2', dof: 0 }, driven: { joint: 'r', dof: 0 }, ratio: (Math.PI * 10) / 360, offset: 5 },
+      ],
+    };
+    const { values } = engine.solve(model);
+    expect(values.get('g2')?.[0]).toBeCloseTo(-180);
+    expect(values.get('r')?.[0]).toBeCloseTo(5 - Math.PI * 5);
+  });
+
+  it('eases between keys and turns drives at their speed', () => {
+    const model: KinematicModel = {
+      instances: [instance('base', true), instance('arm'), instance('wheel')],
+      joints: [joint('hinge', 'revolute', ['base', [0, 0, 0]], ['arm', [0, 0, 0]], [0]), joint('axle', 'revolute', ['base', [50, 0, 0]], ['wheel', [0, 0, 0]], [10])],
+    };
+    const study = {
+      id: 's',
+      name: '',
+      duration: 1,
+      keys: [
+        { time: 0, joint: 'hinge', values: [0] },
+        { time: 1, joint: 'hinge', values: [100], ease: true },
+      ],
+      // 60 rpm: 360° a second.
+      drives: [{ joint: 'axle', dof: 0, speed: 360 }],
+    };
+    const { frames } = engine.simulate(model, study, 4);
+    const angle = (frame: number, id: string, pivot: Vec3) => {
+      const p = transformPoint(frames[frame]?.poses[id] as Matrix4, [10, 0, 0]);
+      return (Math.atan2(p[1] - pivot[1], p[0] - pivot[0]) * 180) / Math.PI;
+    };
+    // A quarter of the way, eased: 15.6 % instead of 25 %.
+    expect(angle(1, 'arm', [0, 0, 0])).toBeCloseTo(15.625, 3);
+    expect(angle(2, 'arm', [0, 0, 0])).toBeCloseTo(50, 3);
+    expect(angle(1, 'wheel', [50, 0, 0])).toBeCloseTo(100, 3);
+  });
 });

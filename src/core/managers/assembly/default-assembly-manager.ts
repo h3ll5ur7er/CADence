@@ -31,9 +31,10 @@ import type { InterchangeEngine } from '@core/engines/interchange';
 import type { KinematicJoint, KinematicModel, KinematicsEngine } from '@core/engines/kinematics';
 import type { ModelingEngine } from '@core/engines/modeling';
 import type { Clock } from '@core/utilities/clock';
-import { compose, fromFrame, transformPoint } from '@core/utilities/math';
+import { compose, fromFrame, transformPoint, translation } from '@core/utilities/math';
+import { toCsv } from '@core/utilities/csv';
 import type { EventBus } from '@core/utilities/messaging';
-import type { AssemblyCommand, AssemblyFormat, AssemblyManager, AssemblyProperties, AssemblySession, AssemblyState, ComponentView, PlacedRef } from './assembly-manager';
+import type { AssemblyCommand, AssemblyFormat, AssemblyManager, AssemblyProperties, AssemblySession, AssemblyState, BomLine, Collision, ComponentView, InstructionPicture, PlacedRef } from './assembly-manager';
 import { applyCommand } from './commands';
 import { copyId, patternTransforms } from './patterns';
 import { viewerHtml } from '@core/utilities/viewer';
@@ -201,6 +202,87 @@ class Session implements AssemblySession {
     }
     const centerOfMass: Vec3 = mass > 0 ? [(moment[0] as number) / mass, (moment[1] as number) / mass, (moment[2] as number) / mass] : [0, 0, 0];
     return { mass, volume, centerOfMass, parts };
+  }
+
+  async collisions(studyId: string, fps: number): Promise<Result<readonly Collision[]>> {
+    const frames = await this.motion(studyId, fps);
+    if (!frames.ok) return frames;
+    const found = new Map<string, Collision>();
+    const ready = this.readyInstances().filter(({ instance }) => !this.derived.copies.has(instance.id));
+    for (const frame of frames.value) {
+      const parts = ready.flatMap(({ instance, component }) => {
+        const transform = frame.poses[instance.id];
+        return transform ? [{ instance: instance.id, bodies: component.bodies, transform }] : [];
+      });
+      for (const hit of await this.deps.analysis.interference(parts)) {
+        const key = `${hit.a}|${hit.b}`;
+        if (!found.has(key)) found.set(key, { time: frame.time, a: hit.a, b: hit.b, volume: hit.volume });
+      }
+    }
+    return ok([...found.values()].sort((x, y) => x.time - y.time));
+  }
+
+  explode(viewId: string, steps?: number, amount = 1): ReadonlyMap<string, Matrix4> {
+    const view = this.document.explodedViews?.find((v) => v.id === viewId);
+    const poses = new Map(this.derived.poses);
+    if (!view) return poses;
+    const count = Math.min(steps ?? view.steps.length, view.steps.length);
+    view.steps.slice(0, count).forEach((step, i) => {
+      const share = i === count - 1 ? Math.max(0, Math.min(1, amount)) : 1;
+      const length = Math.hypot(...step.direction) || 1;
+      const move = translation(step.direction.map((d) => (d / length) * step.distance * share) as [number, number, number]);
+      for (const instance of step.instances) {
+        const pose = poses.get(instance);
+        if (pose) poses.set(instance, compose(move, pose));
+      }
+    });
+    return poses;
+  }
+
+  async billOfMaterials(): Promise<readonly BomLine[]> {
+    const lines = new Map<string, { line: Omit<BomLine, 'mass' | 'instances' | 'count'>; instances: string[]; mass: Promise<number> }>();
+    for (const { instance, component } of this.readyInstances()) {
+      const source = sourceKey(instance.component, instance.configuration);
+      const entry = lines.get(source);
+      if (entry) {
+        entry.instances.push(instance.id);
+        continue;
+      }
+      const configuration = instance.configuration ? component.view.configurations?.find((c) => c.id === instance.configuration)?.name : undefined;
+      const name = this.components.get(source)?.view.name.replace(/ \(.*\)$/, '') ?? 'Component';
+      const mass = this.deps.analysis.properties(component.bodies, component.material.density).then((bodies) => bodies.reduce((sum, b) => sum + b.mass, 0));
+      lines.set(source, { line: { component: name, ...(configuration ? { configuration } : {}), material: component.material.name }, instances: [instance.id], mass });
+    }
+    const result: BomLine[] = [];
+    for (const { line, instances, mass } of lines.values()) result.push({ ...line, count: instances.length, mass: await mass, instances });
+    return result.sort((a, b) => a.component.localeCompare(b.component));
+  }
+
+  async exportBillOfMaterials(): Promise<Result<void>> {
+    await this.loaded();
+    const lines = await this.billOfMaterials();
+    if (!lines.length) return fail({ code: 'nothing-to-export', message: 'Insert components first.' });
+    const grams = (v: number) => (Math.round(v * 100) / 100).toString();
+    const csv = toCsv([
+      ['Component', 'Configuration', 'Count', 'Material', 'Mass each (g)', 'Mass (g)'],
+      ...lines.map((l) => [l.component, l.configuration ?? '', String(l.count), l.material, grams(l.mass), grams(l.mass * l.count)]),
+    ]);
+    await this.deps.externalFiles.deliver({ name: `${this.document.name} bill of materials.csv`, mediaType: 'text/csv', bytes: new TextEncoder().encode(csv) });
+    return ok(undefined);
+  }
+
+  async exportInstructions(viewId: string, pictures: readonly InstructionPicture[]): Promise<Result<void>> {
+    const view = this.document.explodedViews?.find((v) => v.id === viewId);
+    if (!view?.steps.length) return fail({ code: 'invalid-command', message: 'Make an exploded view with steps first.' });
+    if (pictures.length !== view.steps.length + 1) return fail({ code: 'invalid-command', message: 'One picture is needed for the assembled state and one after each step.' });
+    await this.loaded();
+    const bom = await this.billOfMaterials();
+    const names = new Map([...this.document.instances, ...this.readyInstances().map((r) => r.instance)].map((i) => [i.id, i.name]));
+    // Loaded when needed: most sessions never make instructions.
+    const { instructionsPdf } = await import('./instructions');
+    const bytes = instructionsPdf({ title: this.document.name, view, bom, names, pictures });
+    await this.deps.externalFiles.deliver({ name: `${this.document.name} - ${view.name}.pdf`, mediaType: 'application/pdf', bytes });
+    return ok(undefined);
   }
 
   interference(): Promise<Interference[]> {
@@ -411,7 +493,7 @@ class Session implements AssemblySession {
       joints.push({ ...joint, a: { instance: joint.a.instance, frame: a.value }, b: { instance: joint.b.instance, frame: b.value } });
     }
     const instances = document.instances.map((i) => ({ id: i.id, transform: i.transform, grounded: i.grounded }));
-    return { model: { instances, joints }, errors };
+    return { model: { instances, joints, ...(document.links?.length ? { links: document.links } : {}) }, errors };
   }
 
   private async derive(document: AssemblyDocument, driven?: ReadonlySet<string>): Promise<Derived> {

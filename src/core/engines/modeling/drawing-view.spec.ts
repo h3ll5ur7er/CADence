@@ -62,7 +62,8 @@ describe('drawing views', () => {
 
   it('places copies of bodies for an assembly result', async () => {
     const [body] = await plate();
-    const placed = await engine.place([{ id: 'a1', body: body as NonNullable<typeof body>, transform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 100, 0, 0, 1] }]);
+    const snapshot = await engine.snapshotPlaced([{ id: 'a1', body: body as NonNullable<typeof body>, transform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 100, 0, 0, 1] }]);
+    const placed = await engine.restore(snapshot, 'placed-result');
     const view = await engine.drawView(placed, top);
     if (!view.ok) throw new Error(view.error.message);
     expect(Math.round(view.value.box.min[0])).toBe(100);

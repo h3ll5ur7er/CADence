@@ -33,6 +33,11 @@ function crc(bytes: Uint8Array): number {
   return (c ^ 0xffffffff) >>> 0;
 }
 
+/** Bytes deflated (zlib) with the platform's CompressionStream (browsers and Node). */
+export async function deflate(bytes: Uint8Array): Promise<Uint8Array> {
+  return new Uint8Array(await new Response(new Blob([bytes as BlobPart]).stream().pipeThrough(new CompressionStream('deflate'))).arrayBuffer());
+}
+
 /** Pixels as a PNG (RGBA, 8 bit), deflated with the platform's CompressionStream (browsers and Node). */
 export async function encodePng(pixels: Pixels): Promise<Uint8Array> {
   const { width, height, data } = pixels;
@@ -53,7 +58,7 @@ export async function encodePng(pixels: Pixels): Promise<Uint8Array> {
   // Each row starts with filter type 0 (none).
   const raw = new Uint8Array(height * (width * 4 + 1));
   for (let y = 0; y < height; y++) raw.set(data.subarray(y * width * 4, (y + 1) * width * 4), y * (width * 4 + 1) + 1);
-  const compressed = new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new CompressionStream('deflate'))).arrayBuffer());
+  const compressed = await deflate(raw);
   const parts = [new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', header), chunk('IDAT', compressed), chunk('IEND', new Uint8Array())];
   const out = new Uint8Array(parts.reduce((n, part) => n + part.length, 0));
   parts.reduce((offset, part) => (out.set(part, offset), offset + part.length), 0);

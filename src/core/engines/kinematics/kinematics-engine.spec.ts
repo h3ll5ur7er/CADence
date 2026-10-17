@@ -79,6 +79,37 @@ describe('KinematicsEngine', () => {
     expect(Math.hypot((rockerTip[0] as number) - 40, rockerTip[1] as number)).toBeCloseTo(20, 5);
   });
 
+  it('keeps a slider-crank on its branch when the crank jumps (CAD-120)', () => {
+    // Crank 10 about Z, rod 40, piston sliding along X: at crank 0 the piston is at x = 50.
+    const along: PlaneFrame = { origin: [0, 0, 0], u: [0, 1, 0], v: [0, 0, 1] };
+    const crank = (angle: number, rest: KinematicJoint[] = []): KinematicModel => ({
+      instances: [instance('ground', true), instance('crank'), instance('rod'), instance('piston')],
+      joints: [
+        joint('crank', 'revolute', ['ground', [0, 0, 0]], ['crank', [0, 0, 0]], [angle]),
+        { ...joint('slide', 'slider', ['ground', [0, 0, 0]], ['piston', [0, 0, 0]], [50]), a: { instance: 'ground', frame: along }, b: { instance: 'piston', frame: along } },
+        joint('rod', 'revolute', ['crank', [10, 0, 0]], ['rod', [0, 0, 0]], [0]),
+        joint('pin', 'revolute', ['rod', [40, 0, 0]], ['piston', [0, 0, 0]], [0]),
+      ].map((j) => rest.find((r) => r.id === j.id) ?? j),
+    });
+    const values = (solution: ReturnType<typeof engine.solve>, model: KinematicModel) => model.joints.map((j) => ({ ...j, values: solution.values.get(j.id) ?? j.values }));
+    const piston = (solution: ReturnType<typeof engine.solve>) => where(solution.poses, 'piston', [0, 0, 0])[0];
+    let model = crank(0);
+    let solution = engine.solve(model, new Set(['crank']));
+    expect(piston(solution)).toBeCloseTo(50, 5);
+    // To bottom dead centre and straight back.
+    let bottom: KinematicJoint[] = [];
+    for (const [angle, x] of [[180, 30], [0, 50]] as const) {
+      const before = new Map(values(solution, model).map((j) => [j.id, j.values]));
+      model = crank(angle, values(solution, model).filter((j) => j.id !== 'crank'));
+      solution = engine.solve(model, new Set(['crank']), before);
+      expect(solution.error).toBeUndefined();
+      expect(piston(solution)).toBeCloseTo(x, 4);
+      if (angle === 180) bottom = values(solution, model).filter((j) => j.id !== 'crank');
+    }
+    // In one jump from bottom dead centre, the loop lands in its mirror: the piston through the crank.
+    expect(piston(engine.solve(crank(0, bottom), new Set(['crank'])))).toBeCloseTo(-30, 4);
+  });
+
   it('reports a loop that cannot close', () => {
     // The coupler is too short to reach the rocker.
     const model: KinematicModel = {

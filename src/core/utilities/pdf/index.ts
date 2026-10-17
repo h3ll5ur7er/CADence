@@ -17,12 +17,11 @@ export interface PdfPage {
   readonly ops: readonly PdfOp[];
 }
 
-/** A JPEG picture (its bytes as they are) and its size in pixels. */
-export interface PdfImage {
-  readonly jpeg: Uint8Array;
-  readonly width: number;
-  readonly height: number;
-}
+/**
+ * A picture and its size in pixels: a JPEG (its bytes as they are), or RGB pixels deflated (zlib),
+ * which scripts make without a JPEG encoder.
+ */
+export type PdfImage = { readonly width: number; readonly height: number } & ({ readonly jpeg: Uint8Array } | { readonly deflatedRgb: Uint8Array });
 
 /** Page sizes in points. */
 export const pageSizes = {
@@ -134,9 +133,10 @@ export function pdfDocument(pages: readonly PdfPage[], images: readonly PdfImage
   object(3, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
   object(4, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
   object(5, `<< /Title ${hexText(title)} /Producer (CADence) >>`);
-  images.forEach((image, i) =>
-    object(firstImage + i, `<< /Type /XObject /Subtype /Image /Width ${image.width} /Height ${image.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${image.jpeg.length} >>`, image.jpeg),
-  );
+  images.forEach((image, i) => {
+    const [filter, bytes] = 'jpeg' in image ? ['DCTDecode', image.jpeg] : ['FlateDecode', image.deflatedRgb];
+    object(firstImage + i, `<< /Type /XObject /Subtype /Image /Width ${image.width} /Height ${image.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /${filter} /Length ${bytes.length} >>`, bytes);
+  });
   const xObjects = images.map((_, i) => `/Im${i} ${firstImage + i} 0 R`).join(' ');
   pages.forEach((page, i) => {
     const id = pageIds[i] as number;

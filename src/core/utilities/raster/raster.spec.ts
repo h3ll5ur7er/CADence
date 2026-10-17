@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { decodePicture, encodePng } from '../picture';
-import { rasterize, rasterViews } from '.';
+import { boundsOf, rasterize, rasterViews } from '.';
 
 /** A unit square in the XY plane facing +Z, as two triangles, with its outline. */
 const square = (color: string, transform?: number[]) => ({
@@ -24,6 +24,19 @@ describe('raster', () => {
     const middle = at(30, 20); // both squares here: the blue one is nearer
     expect(middle[2]).toBeGreaterThan(100);
     expect(middle[0]).toBe(0);
+  });
+
+  it('keeps the camera on a given box, so a moving part moves in the picture (CAD-122)', () => {
+    const moved = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 3, 0, 0, 1];
+    const box = boundsOf([square('#ff0000'), square('#ff0000', moved)]);
+    expect(box).toEqual([[0, 0, 0], [4, 1, 0]]);
+    // Framed to itself the square fills the middle; framed to the box of both places it sits left, then right.
+    const red = (pixels: Uint8Array, x: number) => (pixels[(20 * 80 + x) * 4] as number) > 100;
+    const options = { width: 80, height: 40, ...rasterViews.top };
+    expect(red(rasterize([square('#ff0000', moved)], options), 40)).toBe(true);
+    const [before, after] = [rasterize([square('#ff0000')], { ...options, bounds: box as NonNullable<typeof box> }), rasterize([square('#ff0000', moved)], { ...options, bounds: box as NonNullable<typeof box> })];
+    expect([red(before, 12), red(before, 68)]).toEqual([true, false]);
+    expect([red(after, 12), red(after, 68)]).toEqual([false, true]);
   });
 
   it('frames chosen meshes, and draws see-through ones over the others (CAD-100)', () => {

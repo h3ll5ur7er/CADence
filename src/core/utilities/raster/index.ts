@@ -32,6 +32,41 @@ export interface RasterOptions {
   readonly up: Vec3;
   /** RGBA 0–255; the default is transparent. */
   readonly background?: readonly [number, number, number, number];
+  /** Frame the picture to this box (world coordinates) instead of the meshes: one camera for every frame of an animation. */
+  readonly bounds?: readonly [Vec3, Vec3];
+  /** A section view: what lies on the side of the plane its normal points to is taken away (world coordinates). */
+  readonly clip?: { readonly point: Vec3; readonly normal: Vec3 };
+}
+
+/** The box around meshes where they are (their transforms applied to their own boxes' corners). */
+export function boundsOf(meshes: readonly RasterMesh[]): [Vec3, Vec3] | undefined {
+  let [low, high]: [number[], number[]] = [[Infinity, Infinity, Infinity], [-Infinity, -Infinity, -Infinity]];
+  for (const mesh of meshes) {
+    const [a, b] = ownBox(mesh.positions);
+    for (let corner = 0; corner < 8; corner++) {
+      const p = apply(mesh.transform, [corner & 1 ? b[0] : a[0], corner & 2 ? b[1] : a[1], corner & 4 ? b[2] : a[2]]);
+      low = low.map((v, k) => Math.min(v, p[k] as number));
+      high = high.map((v, k) => Math.max(v, p[k] as number));
+    }
+  }
+  return Number.isFinite(low[0]) ? [low as unknown as Vec3, high as unknown as Vec3] : undefined;
+}
+
+/** A mesh's own box, measured once per positions array. */
+const boxes = new WeakMap<Float32Array, [Vec3, Vec3]>();
+function ownBox(positions: Float32Array): [Vec3, Vec3] {
+  let box = boxes.get(positions);
+  if (!box) {
+    const [low, high] = [[Infinity, Infinity, Infinity], [-Infinity, -Infinity, -Infinity]];
+    for (let i = 0; i < positions.length; i++) {
+      const v = positions[i] as number;
+      if (v < (low[i % 3] as number)) low[i % 3] = v;
+      if (v > (high[i % 3] as number)) high[i % 3] = v;
+    }
+    box = [low as unknown as Vec3, high as unknown as Vec3];
+    boxes.set(positions, box);
+  }
+  return box;
 }
 
 /** The standard views by name: direction towards the viewer and up. */
@@ -95,7 +130,13 @@ export function rasterize(meshes: readonly RasterMesh[], options: RasterOptions)
     return { mesh, points, normals, edges, color: rgb(mesh.color) };
   });
   const framed = placed.some((m) => m.mesh.focus) ? placed.filter((m) => m.mesh.focus) : placed;
-  const all = framed.flatMap((m) => m.points);
+  const box = options.bounds;
+  const all = box
+    ? Array.from({ length: 8 }, (_, c): Vec3 => {
+        const p: Vec3 = [c & 1 ? box[1][0] : box[0][0], c & 2 ? box[1][1] : box[0][1], c & 4 ? box[1][2] : box[0][2]];
+        return [dot(p, right), dot(p, up), dot(p, n)];
+      })
+    : framed.flatMap((m) => m.points);
   if (!all.length) return pixels;
   // In a loop: spreading millions of points into Math.min exceeds the argument limit (CAD-109).
   let [minX, maxX, minY, maxY] = [Infinity, -Infinity, Infinity, -Infinity];
@@ -117,9 +158,14 @@ export function rasterize(meshes: readonly RasterMesh[], options: RasterOptions)
     for (let c = 0; c < 3; c++) pixels[k * 4 + c] = Math.min(255, (pixels[k * 4 + c] as number) * (1 - opacity) + (rgb[c] as number) * opacity);
     pixels[k * 4 + 3] = Math.max(pixels[k * 4 + 3] as number, Math.round(255 * opacity));
   };
+  // The section plane in view coordinates; how far each point lies in front of it.
+  const clipNormal: Vec3 | undefined = options.clip && unit([dot(options.clip.normal, right), dot(options.clip.normal, up), dot(options.clip.normal, n)]);
+  const clipAt = options.clip ? dot([dot(options.clip.point, right), dot(options.clip.point, up), dot(options.clip.point, n)], clipNormal as Vec3) : 0;
+  const ahead = (p: Vec3) => (clipNormal ? dot(p, clipNormal) - clipAt : -1);
   for (const { mesh, points, normals, color } of solidFirst) {
     const opacity = Math.max(0, Math.min(1, mesh.opacity ?? 1));
     const s = points.map(screen);
+    const cut = points.map(ahead);
     for (let t = 0; t < mesh.indices.length; t += 3) {
       const [ia, ib, ic] = [mesh.indices[t] as number, mesh.indices[t + 1] as number, mesh.indices[t + 2] as number];
       const [a, b, c] = [s[ia] as Vec3, s[ib] as Vec3, s[ic] as Vec3];
@@ -128,6 +174,8 @@ export function rasterize(meshes: readonly RasterMesh[], options: RasterOptions)
       const [x0, x1] = [Math.max(0, Math.floor(Math.min(a[0], b[0], c[0]))), Math.min(width - 1, Math.ceil(Math.max(a[0], b[0], c[0])))];
       const [y0, y1] = [Math.max(0, Math.floor(Math.min(a[1], b[1], c[1]))), Math.min(height - 1, Math.ceil(Math.max(a[1], b[1], c[1])))];
       const [na, nb, nc] = [normals[ia] as Vec3, normals[ib] as Vec3, normals[ic] as Vec3];
+      const [da, db, dc] = [cut[ia] as number, cut[ib] as number, cut[ic] as number];
+      if (da > 0 && db > 0 && dc > 0) continue;
       for (let y = y0; y <= y1; y++)
         for (let x = x0; x <= x1; x++) {
           const [px, py] = [x + 0.5, y + 0.5];
@@ -135,6 +183,7 @@ export function rasterize(meshes: readonly RasterMesh[], options: RasterOptions)
           const w1 = ((c[0] - px) * (a[1] - py) - (c[1] - py) * (a[0] - px)) / area;
           const w2 = 1 - w0 - w1;
           if (w0 < 0 || w1 < 0 || w2 < 0) continue;
+          if (w0 * da + w1 * db + w2 * dc > 0) continue;
           const z = w0 * a[2] + w1 * b[2] + w2 * c[2];
           const k = y * width + x;
           if (z <= (depth[k] as number)) continue;
@@ -156,10 +205,13 @@ export function rasterize(meshes: readonly RasterMesh[], options: RasterOptions)
   for (const { edges, mesh } of placed) {
     const opacity = Math.max(0, Math.min(1, mesh.opacity ?? 1));
     for (let e = 0; e + 1 < edges.length; e += 2) {
+      const [da, db] = [ahead(edges[e] as Vec3), ahead(edges[e + 1] as Vec3)];
+      if (da > 0 && db > 0) continue;
       const [a, b] = [screen(edges[e] as Vec3), screen(edges[e + 1] as Vec3)];
       const steps = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1])));
       for (let i = 0; i <= steps; i++) {
         const t = i / steps;
+        if (da + (db - da) * t > 0) continue;
         const [x, y] = [Math.floor(a[0] + (b[0] - a[0]) * t), Math.floor(a[1] + (b[1] - a[1]) * t)];
         if (x < 0 || y < 0 || x >= width || y >= height) continue;
         const k = y * width + x;
@@ -171,3 +223,5 @@ export function rasterize(meshes: readonly RasterMesh[], options: RasterOptions)
   }
   return pixels;
 }
+
+export { type Point, rasterizeVector, type VectorPicture } from './vector';

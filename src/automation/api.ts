@@ -9,43 +9,22 @@ import type {
   ProjectSummary,
   Result,
   SimulationResult,
+  SketchConstraint,
+  SketchFreedom,
   TopologyRef,
   ValidationReport,
   Vec2,
   Vec3,
 } from '@core/contracts';
-import { sourceKey } from '@core/contracts';
-import type { AssemblyCommand, AssemblyFormat, AssemblySession, AssemblyState, BomLine, CollisionOptions, CollisionReport } from '@core/managers/assembly';
-import type { DesignSession, DesignState, DrawingFormat, ExportOptions, SolidFormat } from '@core/managers/design';
+import { type MotionFrame, sourceKey } from '@core/contracts';
+import type { AssemblyCommand, AssemblyFormat, AssemblySession, AssemblyState, BomLine, CollisionOptions, CollisionReport, InstructionPicture, PlacedRef } from '@core/managers/assembly';
+import type { BrokenReference, DesignSession, DesignState, DrawingFormat, ExportOptions, SolidFormat } from '@core/managers/design';
 import type { ProjectManager } from '@core/managers/project';
-import { encodeGif, encodePng, type Pixels } from '@core/utilities/picture';
-import { type RasterMesh, rasterize, type RasterView, rasterViews } from '@core/utilities/raster';
+import { deflate, encodeGif, encodePng, type Pixels } from '@core/utilities/picture';
+import { boundsOf, type RasterMesh, rasterize, type RasterView, rasterViews, type Vec3 as RasterVec3 } from '@core/utilities/raster';
+import { DrawingScript } from './drawing';
+import { CadenceError, type ExportTarget, unwrap } from './results';
 import { expandShape, roughValue, type ScriptCommand } from './shapes';
-
-/** A refused command or a missing project, document or file; `code` is the core's error code. */
-export class CadenceError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-  ) {
-    super(message);
-  }
-}
-
-/** Where exported files go. */
-export interface ExportTarget {
-  /** Paths of the files written so far, oldest first. */
-  readonly delivered: readonly string[];
-  deliverNextTo(path: string): void;
-}
-
-/** A value, or the error of a result (with the ids of what is at fault, for agents). */
-function unwrap<T>(result: Result<T>): T {
-  if (result.ok) return result.value;
-  const ids = result.error.involved ?? result.error.related;
-  const related = ids?.length ? ` The ones involved: ${ids.join(', ')}.` : '';
-  throw new CadenceError(result.error.code, `${result.error.message}${related}`);
-}
 
 /** How a picture of a component or an assembly is taken. */
 export interface PictureOptions {
@@ -65,6 +44,8 @@ export interface PictureOptions {
   readonly hide?: readonly string[];
   /** Bodies or instances shown see-through, to look at what is behind or inside them. */
   readonly ghost?: readonly string[];
+  /** A section view, as the app's section plane: what lies on the side the normal points to is taken away. */
+  readonly section?: { readonly point: Vec3; readonly normal: Vec3 };
 }
 
 /** An assembly's picture: also exploded, or at a moment of a motion study. */
@@ -80,8 +61,8 @@ export interface AssemblyPictureOptions extends PictureOptions {
 /** A mesh to draw, with the body or instance it shows (for focus, hide and ghost). */
 type Shown = RasterMesh & { readonly of: string };
 
-/** The meshes as pixels, seen from the chosen view or camera. */
-function pixels(meshes: readonly Shown[], options: PictureOptions): Pixels {
+/** The meshes as pixels, seen from the chosen view or camera; `bounds` keeps the camera where another picture had it. */
+function pixels(meshes: readonly Shown[], options: PictureOptions & { readonly bounds?: readonly [RasterVec3, RasterVec3] }): Pixels {
   const view = options.direction ? { direction: options.direction, up: options.up ?? [0, 0, 1] } : rasterViews[options.view ?? 'iso'];
   if (!view) throw new CadenceError('usage', `No view "${options.view}".`);
   const [width, height] = [Math.round(options.width ?? 800), Math.round(options.height ?? 600)];
@@ -90,8 +71,44 @@ function pixels(meshes: readonly Shown[], options: PictureOptions): Pixels {
   for (const id of [...focus, ...hide, ...ghost]) if (!meshes.some((m) => m.of === id)) throw new CadenceError('usage', `There is no body or instance "${id}" to show.`);
   const shown = meshes.filter((m) => !hide.has(m.of)).map((m): RasterMesh => ({ ...m, ...(focus.has(m.of) ? { focus: true } : {}), ...(ghost.has(m.of) ? { opacity: 0.25 } : {}) }));
   if (!shown.length) throw new CadenceError('nothing-to-show', 'There are no bodies to show yet.');
-  const data = rasterize(shown, { width, height, ...view, ...(options.white ? { background: [255, 255, 255, 255] as const } : {}) });
+  const data = rasterize(shown, { width, height, ...view, ...(options.white ? { background: [255, 255, 255, 255] as const } : {}), ...(options.bounds ? { bounds: options.bounds } : {}), ...(options.section ? { clip: options.section } : {}) });
   return { width, height, data };
+}
+
+/**
+ * One box for the camera over several pictures (the frames of an animation): around what each
+ * frames, so the view stays put while the parts move (CAD-122).
+ */
+function framing(pictures: readonly (readonly Shown[])[], options: PictureOptions): [RasterVec3, RasterVec3] | undefined {
+  const [focus, hide] = [new Set(options.focus), new Set(options.hide)];
+  const boxes = pictures.flatMap((meshes) => {
+    const shown = meshes.filter((m) => !hide.has(m.of));
+    const box = boundsOf(focus.size ? shown.filter((m) => focus.has(m.of)) : shown);
+    return box ? [box] : [];
+  });
+  if (!boxes.length) return undefined;
+  return [0, 1].map((side) => [0, 1, 2].map((k) => (side ? Math.max : Math.min)(...boxes.map((b) => b[side]?.[k] as number)))) as unknown as [RasterVec3, RasterVec3];
+}
+
+/**
+ * Frames for a sheet of `count` moments, spread over the study, each showing a pose no other one
+ * shows: a study of whole turns shows the same pose at every whole second (CAD-122).
+ */
+function distinctMoments(frames: readonly MotionFrame[], count: number): number[] {
+  const pose = (frame: MotionFrame) => Object.entries(frame.poses).map(([id, m]) => `${id}:${m.map((v) => v.toFixed(3)).join(',')}`).join(';');
+  const poses = frames.map(pose);
+  const [picked, seen] = [new Set<number>(), new Set<string>()];
+  for (let i = 0; i < count; i++) {
+    const target = Math.round((i * (frames.length - 1)) / Math.max(1, count - 1));
+    for (let d = 0; d < frames.length; d++) {
+      const k = [target + d, target - d].find((j) => j >= 0 && j < frames.length && !picked.has(j) && !seen.has(poses[j] as string));
+      if (k === undefined) continue;
+      picked.add(k);
+      seen.add(poses[k] as string);
+      break;
+    }
+  }
+  return [...picked].sort((a, b) => a - b);
 }
 
 /** Pictures side by side in rows, left to right and top to bottom. */
@@ -273,7 +290,44 @@ export class ComponentScript {
 
   /** Runs the commands in order; stops at the first refusal with a CadenceError (the ones before stay). */
   async run(...commands: readonly ScriptCommand[]): Promise<void> {
-    for (const command of commands) unwrap(await this.session.execute(expandShape(command, this.guess())));
+    for (const command of commands) {
+      if (command.type === 'insert-drawing') {
+        const { sketchId, document, idPrefix, onePiece, relations } = command;
+        unwrap(await this.session.insertDrawing(sketchId, document as DocumentId, idPrefix, { ...(onePiece !== undefined ? { onePiece } : {}), ...(relations ? { relations } : {}) }));
+      } else if (command.type === 'import-configurations') {
+        const read = unwrap(this.session.readConfigurations(command.csv));
+        if (read.problems.length) throw new CadenceError('invalid-configurations', read.problems.join(' '));
+        unwrap(await this.session.execute({ type: 'set-configurations', configurations: read.configurations }));
+      } else if (command.type === 'add-suggested-constraints') {
+        const constraints = await this.session.suggestConstraints(command.sketchId, command.idPrefix);
+        if (constraints.length) unwrap(await this.session.execute({ type: 'add-sketch-geometry', sketchId: command.sketchId, entities: [], constraints }));
+      } else unwrap(await this.session.execute(expandShape(command, this.guess())));
+    }
+  }
+
+  /** What a sketch's relations and dimensions leave free: points that still move (and which way), circles of open size. */
+  freedom(sketchId: string): Promise<SketchFreedom> {
+    return this.session.freedom(sketchId);
+  }
+
+  /** Relations the sketcher would suggest for a sketch, not yet added. */
+  suggestConstraints(sketchId: string, idPrefix = 'suggested'): Promise<SketchConstraint[]> {
+    return this.session.suggestConstraints(sketchId, idPrefix);
+  }
+
+  /** The references of a timeline item that no longer find their face or edge, each with the nearest candidates. */
+  async brokenReferences(itemId: string): Promise<readonly BrokenReference[]> {
+    return unwrap(await this.session.brokenReferences(itemId));
+  }
+
+  /** The configuration table as CSV; returns the path. */
+  exportConfigurations(options: { readonly to?: string } = {}): Promise<string> {
+    return this.delivered(options.to, () => this.session.exportConfigurations());
+  }
+
+  /** The shown bodies as one HTML file with a viewer, for people without CADence; returns the path. */
+  exportViewer(options: { readonly to?: string } = {}): Promise<string> {
+    return this.delivered(options.to, () => this.session.exportViewer());
   }
 
   /** Rough values of expressions from the parameters' values, for where shorthands start their points. */
@@ -687,23 +741,69 @@ export class AssemblyScript {
     const frames = unwrap(await this.session.motion(studyId, fps));
     if (!frames.length) throw new CadenceError('nothing-to-show', 'The study has no frames.');
     const [width, height] = [options.width ?? 480, options.height ?? 360];
-    const pictures = frames.map((frame) => pixels(this.meshes(this.withCopies(frame.poses)), { ...options, width, height, white: true }));
+    const shown = frames.map((frame) => this.meshes(this.withCopies(frame.poses)));
+    const bounds = framing(shown, options);
+    const pictures = shown.map((meshes) => pixels(meshes, { ...options, width, height, white: true, ...(bounds ? { bounds } : {}) }));
     if (options.to) this.exports.deliverNextTo(options.to);
     const before = this.exports.delivered.length;
     const name = this.session.state().document.motionStudies.find((s) => s.id === studyId)?.name ?? studyId;
     await this.deliver({ name: `${name}.gif`, mediaType: 'image/gif', bytes: encodeGif(pictures, 1000 / fps) });
     const moments = Math.max(1, Math.min(16, options.moments ?? 9, frames.length));
-    const picked = Array.from({ length: moments }, (_, i) => Math.round((i * (frames.length - 1)) / Math.max(1, moments - 1)));
-    const columns = Math.ceil(Math.sqrt(moments));
-    const small = picked.map((i) => pixels(this.meshes(this.withCopies((frames[i] as (typeof frames)[number]).poses)), { ...options, width: Math.round(width / 1.5), height: Math.round(height / 1.5), white: true }));
+    const picked = distinctMoments(frames, moments);
+    const columns = Math.ceil(Math.sqrt(picked.length));
+    const small = picked.map((i) => pixels(shown[i] as Shown[], { ...options, width: Math.round(width / 1.5), height: Math.round(height / 1.5), white: true, ...(bounds ? { bounds } : {}) }));
     return { path: this.exports.delivered[before] as string, sheet: await encodePng(sheet(small, columns)), times: picked.map((i) => round((frames[i] as (typeof frames)[number]).time)) };
   }
 
   async export(format: AssemblyFormat, options: { readonly to?: string } = {}): Promise<string> {
     await this.loaded();
-    if (options.to) this.exports.deliverNextTo(options.to);
+    return this.delivered(options.to, () => this.session.exportAssembly(format));
+  }
+
+  /** Area, length, radius, distance and angle of faces, edges and vertices of instances, where they are. */
+  async measure(refs: readonly PlacedRef[]): Promise<Measurement> {
+    await this.loaded();
+    return unwrap(await this.session.measure(refs));
+  }
+
+  /** The bill of materials as CSV; returns the path. */
+  async exportBillOfMaterials(options: { readonly to?: string } = {}): Promise<string> {
+    await this.loaded();
+    return this.delivered(options.to, () => this.session.exportBillOfMaterials());
+  }
+
+  /** The assembly as one HTML file with a viewer (turn, measure, hide, explode); returns the path. */
+  async exportViewer(options: { readonly to?: string } = {}): Promise<string> {
+    await this.loaded();
+    return this.delivered(options.to, () => this.session.exportViewer());
+  }
+
+  /**
+   * Build instructions as a PDF from an exploded view: the parts list, a page per step and the
+   * finished assembly, from pictures framed alike (the app's are its viewport's); returns the path.
+   */
+  async exportInstructions(viewId: string, options: PictureOptions & { readonly to?: string } = {}): Promise<string> {
+    await this.loaded();
+    const view = this.session.state().document.explodedViews?.find((v) => v.id === viewId);
+    if (!view) throw new CadenceError('usage', `There is no exploded view "${viewId}".`);
+    const [width, height] = [options.width ?? 1200, options.height ?? 800];
+    const states = Array.from({ length: view.steps.length + 1 }, (_, k) => this.meshes(this.session.explode(viewId, k)));
+    const bounds = framing(states, options);
+    const pictures: InstructionPicture[] = [];
+    for (const meshes of states) {
+      const { data } = pixels(meshes, { ...options, width, height, white: true, ...(bounds ? { bounds } : {}) });
+      const rgb = new Uint8Array(width * height * 3);
+      for (let i = 0; i < width * height; i++) rgb.set(data.subarray(i * 4, i * 4 + 3), i * 3);
+      pictures.push({ width, height, deflatedRgb: await deflate(rgb) });
+    }
+    return this.delivered(options.to, () => this.session.exportInstructions(viewId, pictures));
+  }
+
+  /** Runs an export and returns the path of the file it wrote. */
+  private async delivered(to: string | undefined, write: () => Promise<Result<void>>): Promise<string> {
+    if (to) this.exports.deliverNextTo(to);
     const before = this.exports.delivered.length;
-    unwrap(await this.session.exportAssembly(format));
+    unwrap(await write());
     return this.exports.delivered[before] as string;
   }
 
@@ -777,10 +877,12 @@ export class Cadence {
   readonly projects: ProjectManager;
   private readonly components = new Map<string, Promise<ComponentScript>>();
   private readonly assemblies = new Map<string, Promise<AssemblyScript>>();
+  private readonly drawings = new Map<string, Promise<DrawingScript>>();
 
   constructor(
     private readonly core: Core,
-    private readonly exports: ExportTarget,
+    /** Where exported files go. */
+    readonly exports: ExportTarget,
   ) {
     this.projects = core.projectManager;
   }
@@ -816,19 +918,33 @@ export class Cadence {
     return this.opened(this.assemblies, documentId, async () => new AssemblyScript(unwrap(await this.core.assemblyManager.open(documentId as DocumentId)), this.exports, deliver, () => this.assemblies.delete(documentId), () => this.core.settled()));
   }
 
+  /** A technical drawing open for scripting; kept open until closed, and opened again when another process changed it (CAD-123). */
+  drawing(documentId: string): Promise<DrawingScript> {
+    return this.opened(this.drawings, documentId, async () => new DrawingScript(unwrap(await this.core.drawingManager.open(documentId as DocumentId)), this.exports, () => this.drawings.delete(documentId), () => this.core.settled()));
+  }
+
   /** Resolves once the work this process started is done: components rebuilt, results written (CAD-119). */
   settled(): Promise<void> {
     return this.core.settled();
   }
 
-  /** A picture of a component or an assembly as a PNG. */
+  /** A picture of a component, an assembly or a drawing (`focus` on one of its views zooms onto it) as a PNG. */
   async picture(documentId: string, options: AssemblyPictureOptions = {}): Promise<Uint8Array> {
     const document = await this.document(documentId);
+    if (document.kind === 'imported') {
+      const content = unwrap(await this.projects.previewImported(document.id));
+      if (content.kind !== 'model') throw new CadenceError('not-a-model', `${document.name} is a ${content.kind}, not a 3D file: insert it into a sketch to use it.`);
+      return encodePng(pixels(content.meshes.map((m) => ({ of: m.body, positions: m.positions, normals: m.normals, indices: m.indices, edges: m.edgePositions })), options));
+    }
+    if (document.kind === 'drawing') {
+      if ((options.focus?.length ?? 0) > 1) throw new CadenceError('usage', 'A picture of a drawing zooms onto one view at most.');
+      return (await this.drawing(document.id)).picture({ ...(options.width ? { width: options.width } : {}), ...(options.focus?.[0] ? { view: options.focus[0] } : {}) });
+    }
     if (document.kind === 'component') {
       if (options.explode !== undefined || options.study !== undefined) throw new CadenceError('usage', 'Exploded views and motion studies belong to assemblies.');
       return (await this.component(document.id)).picture(options);
     }
-    if (document.kind !== 'assembly') throw new CadenceError('not-a-model', `${document.name} is not a component or an assembly.`);
+    if (document.kind !== 'assembly') throw new CadenceError('not-a-model', `${document.name} is not a component, an assembly, a drawing or an imported file.`);
     return (await this.assembly(document.id)).picture(options);
   }
 
@@ -844,12 +960,12 @@ export class Cadence {
    * A document open for scripting: the one already open, unless its document changed since (the app or
    * another process saved it), which an edit here would overwrite (CAD-116).
    */
-  private async opened<T extends ComponentScript | AssemblyScript>(open: Map<string, Promise<T>>, documentId: string, start: () => Promise<T>): Promise<T> {
+  private async opened<T extends ComponentScript | AssemblyScript | DrawingScript>(open: Map<string, Promise<T>>, documentId: string, start: () => Promise<T>): Promise<T> {
     const script = open.get(documentId);
     if (script) {
       const [current, saved] = await Promise.all([script.catch(() => undefined), this.projects.findDocument(documentId as DocumentId)]);
       if (current && current.state().document.modifiedAt === saved?.modifiedAt) return current;
-      if (current instanceof AssemblyScript) current.close();
+      if (current instanceof AssemblyScript || current instanceof DrawingScript) current.close();
       open.delete(documentId);
     }
     const started = start();
@@ -860,15 +976,17 @@ export class Cadence {
 
   /** Forgets the open components and assemblies (after documents changed elsewhere). */
   forget(documentId?: string): void {
+    const close = (script: Promise<AssemblyScript | DrawingScript> | undefined) => void script?.then((s) => s.close(), () => undefined);
     if (documentId) {
       this.components.delete(documentId);
-      void this.assemblies.get(documentId)?.then((a) => a.close(), () => undefined);
+      close(this.assemblies.get(documentId));
+      close(this.drawings.get(documentId));
       return;
     }
     this.components.clear();
-    for (const assembly of this.assemblies.values()) void assembly.then((a) => a.close(), () => undefined);
+    for (const script of [...this.assemblies.values(), ...this.drawings.values()]) close(script);
   }
 }
 
-export { unwrap };
+export { CadenceError, type ExportTarget, unwrap };
 export type { ScriptCommand };

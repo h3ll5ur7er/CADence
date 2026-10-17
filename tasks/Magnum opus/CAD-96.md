@@ -11,7 +11,7 @@ Model a nine-cylinder radial aircraft engine through the MCP server, as an AI ag
 
 Done means: every part is modelled, the assembly animates (crank driving all nine pistons, the cam ring and the propeller through the reduction gear) and comes apart in an exploded view, and the findings are filed.
 
-**Status (2026-10-17, round 3): unblocked again.** All round 3 findings ([[CAD-116]] to [[CAD-119]]) are done in phase 28; joint frames on round faces moved to the middle of the face ([[CAD-117]]), so the tappets' slider constants have to be measured again. Before: stopped at [[CAD-116]]. The MCP server's open assembly keeps the parts as they were before `edit_component` changed them, so its checks, pictures and joint frames describe old geometry. Every round-2 fix is checked on the engine (whole-engine pictures, exploded view across pattern copies with radial steps, blades turning together, tilted pushrod joints, brief answers); the collision check of the study ([[CAD-114]]) waits for [[CAD-116]], since it would check the old parts. My design mistakes are fixed in the parts (a new process finds only the unphased gears and one pushrod touching its head). The tappets' cam link offsets have to be measured again once [[CAD-116]] and [[CAD-117]] are fixed.
+**Status (2026-10-17, round 4): the engine is complete.** It has no overlaps standing still, no collisions over four engine cycles of the study, an animation and the exploded view. Round 3's fixes ([[CAD-116]] to [[CAD-119]]) work on the engine. The nine tappet guides now give one slider constant (67.0902 mm) in a new process and in the MCP server alike. The MCP server picked up a component edit and an assembly change made by another process. The cam link offsets are set from that constant, and all gears are phased. Round 4 found three new issues. [[CAD-120]]: one big jump of the crank with `set-joint-values` flipped the nine loops into their mirror pose and saved it; repaired from the project history. [[CAD-121]]: the shape cache evicts its own placed parts in long scripts on large assemblies. [[CAD-122]]: animations re-frame the camera on every frame. None blocks the engine. **Drawings (round 5): unblocked again.** Phase 29 gives agents drawings ([[CAD-123]]) and every other manager operation ([[CAD-124]]), and fixes [[CAD-120]] to [[CAD-122]]. Before: stopped at [[CAD-123]]; the app had drawings, but neither the MCP server nor the scripting API could create, edit, read, picture or export one.
 
 ## Parts (components, through `edit_component`)
 
@@ -35,16 +35,22 @@ Done means: every part is modelled, the assembly animates (crank driving all nin
 - [x] 66 joints, nine closed slider-crank loops through the master rod (cylindrical piston joints); solved at 0° and 90° of crank angle, values match the hand-computed kinematics
 - [x] Links: lay gear −48/60, cam ring −12/96 (cam at 1/10), carrier 2/7, planets −20/21, nine cam followers (roller tappets) with computed profiles ([[CAD-99]])
 - [x] Patterns: heads, exhaust, intake and two plugs ×9; blades ×3 on the turning hub (42 copies)
-- [x] Motion study *Running at 60 rpm* (constant crank speed, 16 s)
+- [x] Motion studies *Running at 60 rpm* (constant crank speed, 16 s) and *One cycle (720°)* (2 s)
 - [x] Mass, bill of materials, interference check
 - [x] Pictures of the whole engine, in motion and exploded ([[CAD-109]], [[CAD-115]])
 - [x] Exploded view *Taken apart*: 21 steps, every cylinder's parts outwards by radial steps ([[CAD-110]])
 - [x] Pushrods following the tappets (tilted rigid joints, [[CAD-113]])
 - [x] Fix my own design interferences (rear case recess and ports, blade shank and hub sockets, piston crown, tilted plugs, tappet guides, roller tappets, rocker box pockets)
-- [ ] Measure the tappets' slider constants again and set the cam link offsets — after [[CAD-116]], [[CAD-117]]
-- [ ] Phase the gears (link offsets of half a tooth); clear the last pushrod in its rocker box
-- [ ] Collision check of the study ([[CAD-114]]) — after [[CAD-116]]
-- [ ] Animation of the study
+- [x] Measure the tappets' slider constants again and set the cam link offsets: 67.0902 mm on all nine guides (in a new process and in the MCP server alike), offset −8.8961 mm
+- [x] Phase the gears: sun turned half a tooth (7.5°) and crank gear half a tooth (3.75°) on the crankshaft; the last pushrod clears its rocker box (it touched only with the wrong tappet heights)
+- [x] Phase the lay pinion against the cam gear: the study check found them touching at 0.9 s; a scan of the phase (on a copy) found them clear between 1.0° and 2.75° of cam offset, so the pinion turns half a tooth (15°) in the lay gear component, which keeps the valve timing
+- [x] Collision check of the study ([[CAD-114]]): no collisions in 82 moments (8.1 s, four engine cycles; the valve train repeats every two turns) in its ten-minute limit
+- [x] Animation: study *One cycle (720°)*, 2 s; GIFs of the whole engine and of the crank train
+
+## Drawings
+
+- [ ] A technical drawing of every component (views, sections where useful, main dimensions, hole callouts, title block), exported as PDF — after [[CAD-123]]
+- [ ] An assembly drawing of the engine with a parts list and balloons — after [[CAD-123]]
 
 ## Findings
 
@@ -67,3 +73,13 @@ Round 3:
 - [[CAD-117]] Joint frames on round faces depend on the face's axis-aligned box
 - [[CAD-118]] Unclear refusals and silent no-ops (edit-feature type, move-point on fixed points, revolve near its axis, one-plane tilt)
 - [[CAD-119]] One empty result file makes an assembly impossible to open
+
+Round 4:
+
+- [[CAD-120]] A big jump of a driving joint flips closed loops into their mirror pose, and the flip is saved
+- [[CAD-121]] Publishing a large assembly fails after a few moves (shape cache evicts its own parts; WebAssembly faults in long scripts)
+- [[CAD-122]] Animations re-frame the camera on every frame (and smaller animation issues)
+
+Round 5 (drawings):
+
+- [[CAD-123]] Agents cannot make technical drawings (missing, blocking the drawings)

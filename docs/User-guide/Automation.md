@@ -67,8 +67,10 @@ The API ([[src/automation/api.ts]]):
   - `run(...commands)` runs design commands in order and throws a `CadenceError` at the first refused one (with the ids involved, such as the constraints of a conflict);
   - `summary(filter?)` is the component as plain data: parameters, timeline with errors, sketches with their profiles (id, area, extent), bodies with their faces (and centres) and edges (and middles). A filter lists part of it: `only` some parts, one `sketch` or `body`, faces and edges whose names `match` a pattern (`f:pocket:*`) or lie `near` a point (`within` mm). `changes(before)` says what changed since an earlier summary;
   - `export(format, { to?, bodies?, quality? })`, `exportSketch(id, format)`, `exportFlatPattern(format)` return the written file's path;
-  - `properties()`, `validate()`, `measure(refs)`, `simulate()` (the strength check of the setup stored with `set-simulation`), `undo()`, `redo()`, `state()`.
-- `cadence.assembly(documentId)`: an assembly open for scripting: `run(...commands)`, `summary()` (instances where they are, joints with their errors, links, patterns, studies, exploded views), `changes(before)`, `undo()`, `interference()`, `collisions(study)`, `properties()`, `billOfMaterials()`, `picture(options)` (also exploded or at a moment of a study), `animation(study)` (a GIF and a sheet of moments), `export(format)`, `close()`.
+  - `properties()`, `validate()`, `measure(refs)`, `simulate()` (the strength check of the setup stored with `set-simulation`), `freedom(sketch)`, `suggestConstraints(sketch)`, `brokenReferences(item)`, `exportConfigurations()`, `exportViewer()`, `undo()`, `redo()`, `state()`;
+  - besides design commands, `run` takes `insert-drawing` (an imported DXF, SVG or picture into a sketch), `import-configurations` (the configuration table from CSV) and `add-suggested-constraints`.
+- `cadence.assembly(documentId)`: an assembly open for scripting: `run(...commands)`, `summary()` (instances where they are, joints with their errors, links, patterns, studies, exploded views), `changes(before)`, `undo()`, `redo()`, `interference()`, `collisions(study)`, `measure(refs)`, `properties()`, `billOfMaterials()`, `picture(options)` (also exploded, at a moment of a study, or cut by a `section`), `animation(study)` (a GIF and a sheet of moments), `export(format)`, `exportBillOfMaterials()`, `exportViewer()`, `exportInstructions(view)`, `close()`.
+- `cadence.drawing(documentId)`: a technical drawing open for scripting: `run(...commands)` (the drawing commands of [[src/core/managers/drawing/drawing-manager.ts]]), `summary(filter?)` (sheet, views with their boxes, annotations, anchors by view, kind or near a sheet point), `changes(before)`, `undo()`, `redo()`, `picture({ width, view })`, `export('pdf' | 'dxf')`, `close()`.
 - `cadence.settled()`: resolves once the work the script started is done (components rebuilt for assemblies, their results written). `cadence run` waits for it before it ends.
 
 **Open documents stay current.** Components and assemblies stay open between calls, and follow changes: an assembly uses a component's new shape as soon as `run` or `edit_component` changed it, and catches up with changes the desktop app or another script made in the same folder before each answer. A document changed by another process is opened again before the next edit, so the edit never overwrites the other change. While a component is still being rebuilt (more than two minutes), checks, pictures and exports of its assemblies refuse with `not-ready` and name it, rather than answer from its old shape; `edit_assembly` lists such components under `notReady`.
@@ -107,17 +109,28 @@ The server tells the agent how to model when it connects, and offers these tools
 
 | Tool | What it does |
 | --- | --- |
-| `list_projects`, `create_project`, `list_documents`, `create_document`, `rename_document`, `delete_document`, `import_file` | Projects and documents |
+| `list_projects`, `create_project`, `create_project_from_template`, `rename_project`, `delete_project`, `duplicate` | Projects (and copies of documents) |
+| `list_documents`, `create_document` (component, assembly or drawing), `rename_document`, `delete_document`, `import_file` (also in place of an imported document) | Documents |
+| `export_project`, `import_project` | `.cadence` archives, with the version history if asked |
+| `versions` | The version history: list (a project's or a document's), record, restore a document, name and unname versions |
+| `sync_project`, `open_git` | Git: a project synced with its repository (conflicts answered with `resolutions`), or opened from one; sign-in from `$CADENCE_GIT_USERNAME` and `$CADENCE_GIT_PASSWORD` |
 | `set_project_parameters` | Parameters for every component of a project |
 | `get_component` | The component as data (as `summary()` above), with the same filters; `near` measures to the face or edge itself |
 | `edit_component` | Runs commands in order and answers with what changed: timeline items, sketches and their profiles, the bodies' face counts and new face names; a refused command is reported with its number, reason and the ids involved |
-| `undo_component` | Undoes the last change; answers with what changed |
-| `component_properties`, `check_component` | Mass properties; the print or laser checks |
-| `export_component`, `export_imported` | Files for printing, cutting or other CAD programs; returns the path |
-| `get_assembly`, `edit_assembly`, `undo_assembly` | An assembly as data; runs assembly commands (instances, joints, links, patterns, motion studies, exploded views) and answers briefly: what the commands created, the joints whose values changed, where instances moved, and which joints fail |
-| `check_assembly`, `assembly_properties`, `export_assembly` | Overlaps now or collisions while a study plays (with progress notifications and `seconds` as a time limit); mass and the bill of materials; STEP, 3MF, STL or OBJ |
-| `render_picture` | A picture of a component or an assembly, returned as an image the agent can look at: from a view or a direction, zoomed onto bodies or instances, others hidden or see-through; assemblies also exploded or at a moment of a study |
-| `animate_study` | A motion study as an animated GIF (its path) and a sheet of moments to look at |
-| `command_reference` | The commands and contracts as TypeScript types with their documentation, by `topic`: `commands`, `sketch`, `features` (with the parts: gears, ring gears, screws, bearings …), `document`, `assembly`; each short enough for an agent to read whole |
+| `undo_component` | Undoes the last change (or redoes it); answers with what changed |
+| `component_properties`, `check_component`, `simulate_component` | Mass properties; the print or laser checks; the strength check of the stored setup |
+| `check_sketch`, `broken_references` | What a sketch leaves free and the relations the sketcher suggests (`add-suggested-constraints` adds them); references a feature lost, with candidates |
+| `measure` | Sizes, distances and angles of faces, edges and vertices, of a component or of instances of an assembly |
+| `export_component`, `export_imported` | Files for printing, cutting or other CAD programs, the HTML viewer and the configuration table (CSV); returns the path |
+| `get_assembly`, `edit_assembly`, `undo_assembly` (also redo) | An assembly as data; runs assembly commands (instances, joints, links, patterns, motion studies, exploded views) and answers briefly: what the commands created, the joints whose values changed, where instances moved, and which joints fail |
+| `check_assembly`, `assembly_properties`, `export_assembly` | Overlaps now or collisions while a study plays (with progress notifications and `seconds` as a time limit); mass and the bill of materials; STEP, 3MF, STL or OBJ, the bill of materials (CSV), the HTML viewer and build instructions (PDF) from an exploded view |
+| `get_drawing`, `edit_drawing`, `undo_drawing`, `export_drawing` | Technical drawings: the sheet, its views (where they are on the sheet) and annotations, and the anchors annotations attach to (each view's points, circles and lines by persistent name, where they lie on the sheet; filtered by view, kind or a sheet point); drawing commands with brief answers; PDF and DXF |
+| `render_picture` | A picture returned as an image the agent can look at: of a component or an assembly from a view or a direction, zoomed onto bodies or instances, others hidden or see-through, cut open by a section plane; assemblies also exploded or at a moment of a study; a drawing's sheet as the PDF prints it (or one view of it); an imported 3D file |
+| `animate_study` | A motion study as an animated GIF (its path) and a sheet of moments to look at: one camera for all frames, and moments that show different poses |
+| `command_reference` | The commands and contracts as TypeScript types with their documentation, by `topic`: `commands`, `sketch`, `features` (with the parts: gears, ring gears, screws, bearings …), `document`, `assembly`, `drawing`; each short enough for an agent to read whole |
+
+**Agents can do what people do.** Every operation of the Project, Design, Assembly and Drawing Managers is a tool or part of one ([[CAD-124]]). Left out are only what serves the app's own screen: thumbnails, previews while dragging, screen recordings (agents get `animate_study`) and the colours of surface analysis.
+
+The server writes files without a `path` to `CADence exports` in the documents folder (or `--exports <dir>`), and says so when it connects.
 
 Ask the agent for a part ("a wall bracket for a 25 mm pipe, 4 mm thick, with two screw holes, as a 3MF"), and open the result in the desktop app, or sync it to the web app through git.

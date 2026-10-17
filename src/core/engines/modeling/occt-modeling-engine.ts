@@ -116,21 +116,25 @@ export class OcctModelingEngine implements ModelingEngine {
     }
   }
 
-  async place(parts: readonly { readonly id: string; readonly body: BodyState; readonly transform: Matrix4 }[]): Promise<BodyState[]> {
-    await this.shapes.ready();
-    return parts.flatMap(({ id, body, transform }) => {
-      const named = this.shapes.get(body.key);
-      if (!named) return [];
-      const key = `placed:${body.key}:${transform.map((v) => Math.round(v * 1e6) / 1e6).join(',')}`;
-      // Names stay with the stored shape: placed copies are for pictures and drawings, not references.
-      if (!this.shapes.has(key)) this.shapes.put(key, { shape: place(named.shape, transform), faces: new Map(), edges: new Map() });
-      return [{ id, key }];
-    });
-  }
-
   async snapshot(bodies: readonly BodyState[]): Promise<Uint8Array> {
     await this.shapes.ready();
     return snapshotOf(this.load(bodies).map((b) => ({ id: b.state.id, named: b.named })));
+  }
+
+  async snapshotPlaced(parts: readonly { readonly id: string; readonly body: BodyState; readonly transform: Matrix4 }[]): Promise<Uint8Array> {
+    await this.shapes.ready();
+    const loaded = this.load(parts.map((p) => p.body));
+    // Names stay with the stored shape: placed copies are for drawings, not references.
+    const placed = parts.map(({ id, transform }, i) => ({ id, named: { shape: place((loaded[i] as LoadedBody).named.shape, transform), faces: new Map(), edges: new Map() } }));
+    try {
+      return snapshotOf(placed);
+    } finally {
+      for (const p of placed) p.named.shape.delete();
+    }
+  }
+
+  async keep(bodies: readonly BodyState[], kept: boolean): Promise<void> {
+    this.shapes.keep(bodies.map((b) => b.key), kept);
   }
 
   async restore(snapshot: Uint8Array, prefix: string): Promise<BodyState[]> {

@@ -131,7 +131,7 @@ interface AssemblySession {
   exportAssembly(format: 'step' | 'stl' | 'obj' | '3mf'): Promise<Result<void>>;
   saveRecording(bytes, studyName): Promise<void>;                  // recorded video, through External File Access
   catchUp(): Promise<void>;                                        // components changed by another process, read again
-  close(): void;
+  close(): void;                                                   // also lets go of the components' shapes
 }
 ```
 

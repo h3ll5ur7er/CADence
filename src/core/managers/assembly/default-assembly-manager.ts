@@ -185,6 +185,7 @@ class Session implements AssemblySession {
   }
 
   close(): void {
+    for (const loaded of this.components.values()) void this.deps.modeling.keep(loaded.bodies, false);
     for (const stop of this.unsubscribe) stop();
     this.listeners.clear();
   }
@@ -203,7 +204,7 @@ class Session implements AssemblySession {
 
   async previewJoint(jointId: string, values: readonly number[]): Promise<Result<ReadonlyMap<string, Matrix4>>> {
     const document = { ...this.document, joints: this.document.joints.map((j) => (j.id === jointId ? { ...j, values } : j)) };
-    const derived = await this.derive(document, new Set([jointId]));
+    const derived = await this.derive(document, new Set([jointId]), this.document);
     const error = derived.errors.get(jointId);
     return error ? fail({ code: 'joint-failed', message: error }) : ok(derived.poses);
   }
@@ -430,7 +431,7 @@ class Session implements AssemblySession {
       if (!this.components.has(source)) await this.load(source, 'open');
     }
     const target = applied.value.joint;
-    const derived = await this.derive(applied.value.document, target ? new Set([target]) : undefined);
+    const derived = await this.derive(applied.value.document, target ? new Set([target]) : undefined, this.document);
     const error = target && derived.errors.get(target);
     if (error) return fail({ code: 'joint-failed', message: error });
     // Loops and limits may have moved the other joints: the document keeps what was solved.
@@ -471,7 +472,7 @@ class Session implements AssemblySession {
     const key = JSON.stringify(parts.map((p) => [p.id, p.body.key, p.transform]));
     if (key === this.published) return;
     this.published = key;
-    const bytes = await this.deps.modeling.snapshot(await this.deps.modeling.place(parts));
+    const bytes = await this.deps.modeling.snapshotPlaced(parts);
     await this.deps.assets.publishResult({ documentId: this.document.id, projectId: this.document.projectId, stamp: this.document.modifiedAt, bytes });
     this.deps.events.publish('resultPublished', { documentId: this.document.id });
   }
@@ -495,6 +496,18 @@ class Session implements AssemblySession {
   private notify(): void {
     const state = this.state();
     for (const listener of this.listeners) listener(state);
+  }
+
+  /**
+   * Puts a loaded component in place of the one before. Its shapes are held in the shape store while
+   * the assembly shows it, so other work never evicts them (CAD-121).
+   */
+  private hold(source: string, next: LoadedComponent): void {
+    const before = this.components.get(source)?.bodies ?? [];
+    this.components.set(source, next);
+    if (before === next.bodies) return;
+    void this.deps.modeling.keep(next.bodies, true);
+    void this.deps.modeling.keep(before, false);
   }
 
   /** Re-reads a component after the Design Manager answered, or after it was renamed or deleted. */
@@ -526,7 +539,7 @@ class Session implements AssemblySession {
       return;
     }
     if (document?.kind !== 'component' || reason === 'failed') {
-      this.components.set(source, { view: view('missing', []), bodies: [], stamp: '', material: defaultMaterial });
+      this.hold(source, { view: view('missing', []), bodies: [], stamp: '', material: defaultMaterial });
       return;
     }
     const material = document.material ?? defaultMaterial;
@@ -535,23 +548,23 @@ class Session implements AssemblySession {
     if (result?.stamp !== stamp) {
       const requests = this.requests.get(source) ?? 0;
       if (reason === 'regenerated' && requests >= maxRequests) {
-        this.components.set(source, { view: view('missing', []), bodies: [], stamp: '', material });
+        this.hold(source, { view: view('missing', []), bodies: [], stamp: '', material });
         return;
       }
       this.requests.set(source, requests + 1);
-      this.components.set(source, { view: view('loading', previous?.view.bodies ?? []), bodies: previous?.bodies ?? [], stamp: previous?.stamp ?? '', material });
+      this.hold(source, { view: view('loading', previous?.view.bodies ?? []), bodies: previous?.bodies ?? [], stamp: previous?.stamp ?? '', material });
       this.deps.events.publish('regenerateComponent', { documentId: id, ...(configuration ? { configuration } : {}) });
       return;
     }
     this.requests.delete(source);
     const appearances = document.appearances ?? {};
     if (previous?.stamp === result.stamp && previous.view.status === 'ready') {
-      this.components.set(source, { ...previous, view: { ...view('ready', previous.view.bodies), appearances }, material });
+      this.hold(source, { ...previous, view: { ...view('ready', previous.view.bodies), appearances }, material });
       return;
     }
     const bodies = await this.deps.modeling.restore(result.bytes, `result:${source}:${result.stamp}`);
     const meshes = bodies.length ? await this.deps.modeling.tessellate(bodies) : [];
-    this.components.set(source, { view: { ...view('ready', meshes), appearances }, bodies, stamp: result.stamp, material });
+    this.hold(source, { view: { ...view('ready', meshes), appearances }, bodies, stamp: result.stamp, material });
   }
 
   /**
@@ -561,7 +574,7 @@ class Session implements AssemblySession {
   private async loadImported(document: Extract<CadDocument, { kind: 'imported' }>): Promise<void> {
     const { id, name, assetId, format } = document;
     const missing = () => {
-      this.components.set(id, { view: { id, name, status: 'missing', bodies: [] }, bodies: [], stamp: '', material: defaultMaterial });
+      this.hold(id, { view: { id, name, status: 'missing', bodies: [] }, bodies: [], stamp: '', material: defaultMaterial });
     };
     if (this.components.get(id)?.stamp === assetId) return;
     const original = isModelFormat(format) ? await this.deps.assets.fetch(assetId) : undefined;
@@ -571,7 +584,7 @@ class Session implements AssemblySession {
     const outcome = await this.deps.modeling.apply({ type: 'insert', feature: 'import', key: `imported:${assetId}`, bodies: [], sources: sources.value });
     if (outcome.error) return missing();
     const meshes = await this.deps.modeling.tessellate(outcome.bodies);
-    this.components.set(id, { view: { id, name, status: 'ready', bodies: meshes }, bodies: outcome.bodies, stamp: assetId, material: defaultMaterial });
+    this.hold(id, { view: { id, name, status: 'ready', bodies: meshes }, bodies: outcome.bodies, stamp: assetId, material: defaultMaterial });
   }
 
   /** The kinematic model: joints whose frames resolve, and the reasons of those that do not. */
@@ -590,9 +603,10 @@ class Session implements AssemblySession {
     return { model: { instances, joints, ...(document.links?.length ? { links: document.links } : {}) }, errors };
   }
 
-  private async derive(document: AssemblyDocument, driven?: ReadonlySet<string>): Promise<Derived> {
+  /** Positions from the joints; with `from` (the document before), driven joints move from where they were there (CAD-120). */
+  private async derive(document: AssemblyDocument, driven?: ReadonlySet<string>, from?: AssemblyDocument): Promise<Derived> {
     const { model, errors } = await this.model(document);
-    const solution = this.deps.kinematics.solve(model, driven);
+    const solution = this.deps.kinematics.solve(model, driven, from && new Map(from.joints.map((j) => [j.id, j.values])));
     if (solution.error) errors.set(solution.error.joint, solution.error.message);
     // Each joint's frame on A, where A is.
     const jointFrames = new Map<string, PlaneFrame>();

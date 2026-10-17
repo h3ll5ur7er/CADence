@@ -139,6 +139,7 @@ export function createCore(host: Host): Core {
   const events = new EventBus<DomainEvents>();
   if (host.channel) relayEvents(events, host.channel, relayed);
   const { projects, documents, assets, externalFiles } = host;
+  const fonts = fontSource(host.fontUrls);
   const geometry: Geometry = host.geometry
     ? {
         modeling: remote<ModelingEngine>(host.geometry, 'modeling'),
@@ -163,7 +164,7 @@ export function createCore(host: Host): Core {
       projects,
       documents,
       externalFiles,
-      sketches: createSketchEngine({ ...(host.solverWasmUrl ? { wasmUrl: host.solverWasmUrl } : {}), fonts: fontSource(host.fontUrls) }),
+      sketches: createSketchEngine({ ...(host.solverWasmUrl ? { wasmUrl: host.solverWasmUrl } : {}), fonts }),
       parameters: createParameterEngine(),
       modeling: geometry.modeling,
       interchange: geometry.interchange,
@@ -193,6 +194,7 @@ export function createCore(host: Host): Core {
       parameters: createParameterEngine(),
       events,
       clock: systemClock,
+      fonts,
     }),
     storage: host.kind,
     settled: async () => {

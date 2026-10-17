@@ -21,6 +21,8 @@ import { createModelingEngine } from '@core/engines/modeling';
 import { createParameterEngine } from '@core/engines/parameter';
 import { steppingClock } from '@core/utilities/clock';
 import { EventBus } from '@core/utilities/messaging';
+import { decodePicture } from '@core/utilities/picture';
+import { fontSource } from '@core/utilities/text';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { holeCallout } from './callouts';
 import { createDrawingManager, type DrawingSession } from './index';
@@ -68,13 +70,13 @@ describe('DrawingManager', () => {
     await assets.publishResult({ documentId: asDocumentId('plate'), projectId: project, stamp: resultStamp(stamp, []), bytes: await modeling.snapshot(bodies) });
     // An assembly of two plates, as its editor would publish it: placed side by side.
     const body = bodies[0] as NonNullable<(typeof bodies)[number]>;
-    const placed = await modeling.place([
+    const placed = await modeling.snapshotPlaced([
       { id: 'i1', body, transform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] },
       { id: 'i2', body, transform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 10, 1] },
     ]);
     const instance = (id: string) => ({ id, component: asDocumentId('plate'), name: id, transform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], grounded: false });
     await documents.store({ ...header('stack', 'Stack'), kind: 'assembly', instances: [instance('i1'), instance('i2')], joints: [], motionStudies: [] } satisfies AssemblyDocument);
-    await assets.publishResult({ documentId: asDocumentId('stack'), projectId: project, stamp, bytes: await modeling.snapshot(placed) });
+    await assets.publishResult({ documentId: asDocumentId('stack'), projectId: project, stamp, bytes: placed });
     await documents.store({
       ...header('sheet', 'Plate drawing'),
       kind: 'drawing',
@@ -92,6 +94,7 @@ describe('DrawingManager', () => {
       parameters: createParameterEngine(),
       events,
       clock: steppingClock('2026-10-16T11:00:00.000Z'),
+      fonts: fontSource(),
     });
     session = unwrap(await manager.open(asDocumentId('sheet')));
   });
@@ -144,6 +147,25 @@ describe('DrawingManager', () => {
     expect(session.state().document.annotations.map((a) => a.id)).toEqual(['n']);
     await session.undo();
     expect(session.state().document.annotations).toHaveLength(5);
+  });
+
+  it('pictures the sheet, or one view of it, as the PDF shows it (CAD-123)', async () => {
+    unwrap(await session.execute({ type: 'add-view', view: view('top', 'top', [120, 200]) }));
+    const dark = async (png: Uint8Array) => {
+      const picture = await decodePicture(png);
+      let count = 0;
+      for (let i = 0; i < picture.width * picture.height; i++) if ((picture.data[i * 4] as number) < 128) count++;
+      return { width: picture.width, height: picture.height, share: count / (picture.width * picture.height) };
+    };
+    // A3 landscape, 840 pixels wide: 2 pixels a millimetre.
+    const sheet = await dark(unwrap(await session.picture({ width: 840 })));
+    expect([sheet.width, sheet.height]).toEqual([840, 594]);
+    expect(sheet.share).toBeGreaterThan(0.005);
+    // The view zoomed: its 120 × 60 mm box with 15 mm around it.
+    const top = await dark(unwrap(await session.picture({ width: 600, view: 'top' })));
+    expect([top.width, top.height]).toEqual([600, 360]);
+    expect(top.share).toBeGreaterThan(0.005);
+    expect(await session.picture({ view: 'nope' })).toMatchObject({ ok: false, error: { message: 'There is no view "nope".' } });
   });
 
   it('draws sections, details and assemblies with their parts list and balloons', async () => {

@@ -2,7 +2,7 @@
 id: CAD-96
 title: "Magnum opus: a nine-cylinder radial engine as a stress test"
 type: chore
-status: review
+status: in-progress
 priority: high
 labels: [stress-test, mcp]
 ---
@@ -11,7 +11,7 @@ Model a nine-cylinder radial aircraft engine through the MCP server, as an AI ag
 
 Done means: every part is modelled, the assembly animates (crank driving all nine pistons, the cam ring and the propeller through the reduction gear) and comes apart in an exploded view, and the findings are filed.
 
-**Status (2026-10-17, round 4): the engine is complete.** It has no overlaps standing still, no collisions over four engine cycles of the study, an animation and the exploded view. Round 3's fixes ([[CAD-116]] to [[CAD-119]]) work on the engine. The nine tappet guides now give one slider constant (67.0902 mm) in a new process and in the MCP server alike. The MCP server picked up a component edit and an assembly change made by another process. The cam link offsets are set from that constant, and all gears are phased. Round 4 found three new issues. [[CAD-120]]: one big jump of the crank with `set-joint-values` flipped the nine loops into their mirror pose and saved it; repaired from the project history. [[CAD-121]]: the shape cache evicts its own placed parts in long scripts on large assemblies. [[CAD-122]]: animations re-frame the camera on every frame. None blocks the engine.
+**Status (2026-10-17, round 4): the engine is complete.** It has no overlaps standing still, no collisions over four engine cycles of the study, an animation and the exploded view. Round 3's fixes ([[CAD-116]] to [[CAD-119]]) work on the engine. The nine tappet guides now give one slider constant (67.0902 mm) in a new process and in the MCP server alike. The MCP server picked up a component edit and an assembly change made by another process. The cam link offsets are set from that constant, and all gears are phased. Round 4 found three new issues. [[CAD-120]]: one big jump of the crank with `set-joint-values` flipped the nine loops into their mirror pose and saved it; repaired from the project history. [[CAD-121]]: the shape cache evicts its own placed parts in long scripts on large assemblies. [[CAD-122]]: animations re-frame the camera on every frame. None blocks the engine. **Drawings (round 5): unblocked again.** Phase 29 gives agents drawings ([[CAD-123]]) and every other manager operation ([[CAD-124]]), and fixes [[CAD-120]] to [[CAD-122]]. Before: stopped at [[CAD-123]]; the app had drawings, but neither the MCP server nor the scripting API could create, edit, read, picture or export one.
 
 ## Parts (components, through `edit_component`)
 
@@ -47,6 +47,11 @@ Done means: every part is modelled, the assembly animates (crank driving all nin
 - [x] Collision check of the study ([[CAD-114]]): no collisions in 82 moments (8.1 s, four engine cycles; the valve train repeats every two turns) in its ten-minute limit
 - [x] Animation: study *One cycle (720°)*, 2 s; GIFs of the whole engine and of the crank train
 
+## Drawings
+
+- [ ] A technical drawing of every component (views, sections where useful, main dimensions, hole callouts, title block), exported as PDF — after [[CAD-123]]
+- [ ] An assembly drawing of the engine with a parts list and balloons — after [[CAD-123]]
+
 ## Findings
 
 Round 1 (all done in phase 26, [[CAD-104]] reopened for joins):
@@ -74,3 +79,7 @@ Round 4:
 - [[CAD-120]] A big jump of a driving joint flips closed loops into their mirror pose, and the flip is saved
 - [[CAD-121]] Publishing a large assembly fails after a few moves (shape cache evicts its own parts; WebAssembly faults in long scripts)
 - [[CAD-122]] Animations re-frame the camera on every frame (and smaller animation issues)
+
+Round 5 (drawings):
+
+- [[CAD-123]] Agents cannot make technical drawings (missing, blocking the drawings)

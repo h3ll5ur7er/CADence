@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, extname, join, resolve } from 'node:path';
@@ -15,8 +16,9 @@ Usage: cadence <command> [arguments] [options]
 Commands:
   projects                              List the projects
   documents <project>                   List a project's documents
-  export <project> <document> <format>  Export a component (step, stl, obj, 3mf; dxf or svg with --sketch <id> or --flat-pattern)
-  picture <project> <document> <file>  A PNG of a component or an assembly (--view iso|front|back|top|bottom|left|right or
+  export <project> <document> <format>  Export a component (step, stl, obj, 3mf; dxf or svg with --sketch <id> or --flat-pattern),
+                                        an assembly (step, stl, obj, 3mf) or a drawing (pdf, dxf)
+  picture <project> <document> <file>  A PNG of a component, an assembly or a drawing (--view iso|front|back|top|bottom|left|right or
                                         --direction x,y,z [--up x,y,z], --width, --height, --white, --focus/--hide/--ghost a,b;
                                         assemblies also --explode <view> [--steps n], --study <id> --time <s>)
   convert <input> <output>              Convert a file; formats from the extensions (step, stl, obj, 3mf, dxf, svg)
@@ -27,7 +29,7 @@ Commands:
 
 Options:
   --folder <dir>    The projects folder (default: $CADENCE_FOLDER, else the desktop app's folder)
-  --exports <dir>   Where exported files go (default: the current folder)
+  --exports <dir>   Where exported files go (default: the current folder; for mcp, "CADence exports" in the documents folder)
   -o <path>         The exported file's path
 
 Projects and documents are given by id or by name. Git sign-in: $CADENCE_GIT_USERNAME and $CADENCE_GIT_PASSWORD.
@@ -39,6 +41,12 @@ export function desktopFolder(env: NodeJS.ProcessEnv = process.env, platform: No
   if (platform === 'win32') return join(env['APPDATA'] ?? join(homedir(), 'AppData', 'Roaming'), id);
   if (platform === 'darwin') return join(homedir(), 'Library', 'Application Support', id);
   return join(env['XDG_DATA_HOME'] ?? join(homedir(), '.local', 'share'), id);
+}
+
+/** Where the MCP server's files go by default: `CADence exports` in the documents folder (or the home folder). */
+export function exportsDefault(): string {
+  const documents = join(homedir(), 'Documents');
+  return join(existsSync(documents) ? documents : homedir(), 'CADence exports');
 }
 
 interface Parsed {
@@ -80,7 +88,8 @@ export async function runCli(args: readonly string[], io: Io, reference: Readonl
     return command || options['help'] ? 0 : 1;
   }
   const folder = typeof options['folder'] === 'string' ? options['folder'] : (env['CADENCE_FOLDER'] ?? desktopFolder(env));
-  const exportsFolder = typeof options['exports'] === 'string' ? options['exports'] : process.cwd();
+  // The MCP server runs wherever its client starts it: its files go to the documents folder, not there (CAD-122).
+  const exportsFolder = typeof options['exports'] === 'string' ? options['exports'] : command === 'mcp' ? exportsDefault() : process.cwd();
   const to = typeof options['o'] === 'string' ? { to: options['o'] } : {};
   const credentials: RemoteCredentials | undefined =
     env['CADENCE_GIT_USERNAME'] || env['CADENCE_GIT_PASSWORD'] ? { username: env['CADENCE_GIT_USERNAME'] ?? '', password: env['CADENCE_GIT_PASSWORD'] ?? '' } : undefined;
@@ -108,9 +117,16 @@ export async function runCli(args: readonly string[], io: Io, reference: Readonl
         need(3);
         const cadence = open(folder);
         const document = await cadence.document(rest[1] as string, rest[0] as string);
-        if (document.kind !== 'component') throw new CadenceError('not-a-component', `${document.name} is not a component.`);
-        const script = await cadence.component(document.id);
         const format = (rest[2] as string).toLowerCase();
+        if (document.kind === 'drawing' || document.kind === 'assembly') {
+          const formats = document.kind === 'drawing' ? ['pdf', 'dxf'] : ['step', 'stl', 'obj', '3mf'];
+          if (!formats.includes(format)) throw new CadenceError('usage', `A${document.kind === 'assembly' ? 'n' : ''} ${document.kind} exports to ${formats.join(', ')}.`);
+          const script = document.kind === 'drawing' ? await cadence.drawing(document.id) : await cadence.assembly(document.id);
+          io.out(await script.export(format as never, to));
+          return 0;
+        }
+        if (document.kind !== 'component') throw new CadenceError('not-a-model', `${document.name} is not a component, an assembly or a drawing.`);
+        const script = await cadence.component(document.id);
         let path: string;
         if (format === 'dxf' || format === 'svg') {
           if (options['flat-pattern']) path = await script.exportFlatPattern(format as DrawingFormat, to);
@@ -189,7 +205,7 @@ export async function runCli(args: readonly string[], io: Io, reference: Readonl
         return 0;
       }
       case 'mcp': {
-        await serveStdio(new McpServer(open(folder), reference, version));
+        await serveStdio(new McpServer(open(folder), reference, version, exportsFolder));
         return 0;
       }
       default:

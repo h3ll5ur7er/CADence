@@ -1,4 +1,7 @@
+import type { Vec2 } from '@core/contracts';
 import { mmToPt, type PdfOp, pdfDocument } from '@core/utilities/pdf';
+import { type Point, rasterizeVector } from '@core/utilities/raster';
+import type { Contour, TextFont, TextWeight } from '@core/utilities/text';
 import type { LineStyle, SheetLayout } from './drawing-manager';
 
 /** Line widths (mm) and dash patterns (mm) by style, after ISO 128. */
@@ -31,6 +34,61 @@ export function sheetPdf(layout: SheetLayout, title: string): Uint8Array {
     ...layout.texts.map((t): PdfOp => ({ kind: 'text', x: mmToPt(t.at[0]), y: mmToPt(t.at[1]), size: mmToPt(t.size) / 0.72, text: t.text, align: t.align, ...(t.bold ? { bold: true } : {}) })),
   ];
   return pdfDocument([{ width: mmToPt(layout.width), height: mmToPt(layout.height), ops }], [], title);
+}
+
+/** A Bézier piece of a glyph in this many straight steps. */
+const curveSteps = 8;
+
+/** A glyph outline as points, its curves in short straight steps. */
+function outlinePoints(contour: Contour): Vec2[] {
+  const points: Vec2[] = [];
+  for (const edge of contour) {
+    if (edge.kind === 'line') {
+      points.push(edge.start);
+      continue;
+    }
+    for (let k = 0; k < curveSteps; k++) {
+      const t = k / curveSteps;
+      const s = 1 - t;
+      points.push([0, 1].map((i) => s * s * s * (edge.start[i] as number) + 3 * s * s * t * (edge.c1[i] as number) + 3 * s * t * t * (edge.c2[i] as number) + t * t * t * (edge.end[i] as number)) as unknown as Vec2);
+    }
+  }
+  return points;
+}
+
+/**
+ * The sheet (or a part of it: `region`, in sheet millimetres) as RGBA pixels `width` wide, drawn as
+ * the PDF shows it: line widths and dashes by style, filled arrowheads, texts in the bundled font.
+ */
+export async function sheetPixels(
+  layout: SheetLayout,
+  fonts: (weight: TextWeight) => Promise<TextFont>,
+  options: { readonly width: number; readonly region?: { readonly min: Vec2; readonly max: Vec2 } },
+): Promise<{ readonly width: number; readonly height: number; readonly data: Uint8Array }> {
+  const { min, max } = options.region ?? { min: [0, 0] as Vec2, max: [layout.width, layout.height] as Vec2 };
+  const scale = options.width / Math.max(max[0] - min[0], 1e-9);
+  const [width, height] = [Math.round(options.width), Math.max(1, Math.round((max[1] - min[1]) * scale))];
+  // Sheet y runs up, pixels down.
+  const px = (p: readonly [number, number]): Point => [(p[0] - min[0]) * scale, (max[1] - p[1]) * scale];
+  const [regular, bold] = await Promise.all([fonts('regular'), fonts('bold')]);
+  const glyphs = layout.texts.map((text) => {
+    const font = text.bold ? bold : regular;
+    // The bundled font has no diameter sign: Ø stands for it, as in the PDF.
+    const shown = text.text.replaceAll('⌀', 'Ø');
+    const advance = font.advance(shown, text.size);
+    const start = text.align === 'left' ? text.at[0] : text.align === 'center' ? text.at[0] - advance / 2 : text.at[0] - advance;
+    return { outlines: font.outline(shown, { at: [start, text.at[1]], height: text.size, angle: 0 }).map((c) => outlinePoints(c).map(px)) };
+  });
+  const data = rasterizeVector({
+    width,
+    height,
+    strokes: layout.paths.map((path) => {
+      const style = styles[path.style];
+      return { points: path.points.map(px), width: style.width * scale, ...(style.dash ? { dash: style.dash.map((d) => d * scale) } : {}), ...(path.closed ? { closed: true } : {}) };
+    }),
+    fills: [...layout.arrows.map((a) => ({ outlines: [arrowhead(a.tip, a.direction).map(px)] })), ...glyphs],
+  });
+  return { width, height, data };
 }
 
 const layers: Readonly<Record<LineStyle, string>> = { visible: 'VISIBLE', hidden: 'HIDDEN', thin: 'DIMENSIONS', center: 'CENTER', frame: 'FRAME', hatch: 'HATCH' };

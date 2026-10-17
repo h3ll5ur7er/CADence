@@ -10,13 +10,18 @@ export interface NamedShape {
 /**
  * Access to the geometry kernel's shape store (docs/Architecture/Components.md#resource-access).
  * The kernel (OpenCascade WebAssembly) loads on first use. Entries are evicted least recently used,
- * and evicted shapes free their WebAssembly memory.
+ * and evicted shapes free their WebAssembly memory; kept entries are never evicted.
  */
 export interface ShapeAccess {
   ready(): Promise<void>;
   put(key: string, shape: NamedShape): void;
   get(key: string): NamedShape | undefined;
   has(key: string): boolean;
+  /**
+   * Keeps entries from eviction while something holds them (an open assembly its components'
+   * shapes), or lets them go again; holds are counted, so two holders keep an entry until both let go.
+   */
+  keep(keys: readonly string[], kept: boolean): void;
 }
 
 export interface ShapeAccessOptions {
@@ -43,6 +48,8 @@ function loadKernel(wasmUrl: string | undefined): Promise<void> {
 
 class KernelShapeAccess implements ShapeAccess {
   private readonly entries = new Map<string, NamedShape>();
+  /** Holds on entries, by key. */
+  private readonly held = new Map<string, number>();
 
   constructor(private readonly options: ShapeAccessOptions) {}
 
@@ -55,11 +62,21 @@ class KernelShapeAccess implements ShapeAccess {
     if (previous && previous.shape !== shape.shape) previous.shape.delete();
     this.entries.delete(key);
     this.entries.set(key, shape);
-    const capacity = this.options.capacity ?? 400;
+    // Kept entries do not count: they stay, and the others share the capacity (CAD-121).
+    const capacity = (this.options.capacity ?? 400) + this.held.size;
     for (const [oldKey, old] of this.entries) {
       if (this.entries.size <= capacity) break;
+      if (this.held.has(oldKey)) continue;
       this.entries.delete(oldKey);
       if (![...this.entries.values()].some((e) => e.shape === old.shape)) old.shape.delete();
+    }
+  }
+
+  keep(keys: readonly string[], kept: boolean): void {
+    for (const key of keys) {
+      const holds = (this.held.get(key) ?? 0) + (kept ? 1 : -1);
+      if (holds > 0) this.held.set(key, holds);
+      else this.held.delete(key);
     }
   }
 

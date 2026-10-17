@@ -127,12 +127,11 @@ export interface BomLine {
   readonly instances: readonly string[];
 }
 
-/** A picture of the assembly for each state of an exploded view: assembled, then after each step. */
-export interface InstructionPicture {
-  readonly jpeg: Uint8Array;
-  readonly width: number;
-  readonly height: number;
-}
+/**
+ * A picture of the assembly for each state of an exploded view: assembled, then after each step. A
+ * JPEG (the app's viewport), or RGB pixels deflated (scripts, which have no JPEG encoder).
+ */
+export type InstructionPicture = { readonly width: number; readonly height: number } & ({ readonly jpeg: Uint8Array } | { readonly deflatedRgb: Uint8Array });
 
 /** Mass properties of the whole assembly, from each component's material. */
 export interface AssemblyProperties {

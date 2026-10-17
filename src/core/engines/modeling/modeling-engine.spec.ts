@@ -302,6 +302,23 @@ describe('component results and joint frames', () => {
   const holedPlate = () =>
     engine.apply({ type: 'extrude', feature: 'plate', key: 'joint-plate', bodies: [], frame: XY, profiles: [holed], distance: 6, direction: 'normal', operation: 'new-body' });
 
+  it('snapshots placed copies without pushing held shapes out of a small store (CAD-121)', async () => {
+    const small = createModelingEngine(createShapeAccess({ capacity: 3 }));
+    const extrude = (key: string) => small.apply({ type: 'extrude', feature: 'plate', key, bodies: [], frame: XY, profiles: [holed], distance: 6, direction: 'normal', operation: 'new-body' });
+    const held = ok(await extrude('held-plate'));
+    await small.keep(held, true);
+    for (const key of ['other-1', 'other-2', 'other-3', 'other-4']) await extrude(key);
+    // Ten copies, more than the store holds: one snapshot, and the held plate is still there.
+    const parts = Array.from({ length: 10 }, (_, k) => ({ id: `p${k}`, body: held[0] as BodyState, transform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 100 * k, 0, 0, 1] }));
+    const fresh = createShapeAccess();
+    const restored = await createModelingEngine(fresh).restore(await small.snapshotPlaced(parts), 'placed-plates');
+    expect(restored).toHaveLength(10);
+    expect(measureVolume((fresh.get('placed-plates:p9') as NamedShape).shape)).toBeCloseTo(80 * 40 * 6 - Math.PI * 25 * 6, 6);
+    expect(await small.snapshot(held)).toBeInstanceOf(Uint8Array);
+    // A body that is gone makes it fail by name, rather than drop out.
+    await expect(small.snapshotPlaced([{ id: 'x', body: { id: 'gone', key: 'nowhere' }, transform: parts[0]?.transform as number[] }])).rejects.toThrow('Body gone has to be rebuilt first.');
+  });
+
   it('restores a snapshot with the same solid and names', async () => {
     const bodies = ok(await holedPlate());
     const snapshot = await engine.snapshot(bodies);

@@ -211,10 +211,15 @@ export interface ModelingEngine {
    * (OCCT HLR), a section's cut, and the named points, circles and lines to dimension.
    */
   drawView(bodies: readonly BodyState[], request: ViewRequest): Promise<Result<ViewGeometry>>;
-  /** Copies of bodies where an assembly puts them (ids as given), for publishing an assembly's result. */
-  place(parts: readonly { readonly id: string; readonly body: BodyState; readonly transform: Matrix4 }[]): Promise<BodyState[]>;
   /** The bodies' solids and names, for publishing as a component result. */
   snapshot(bodies: readonly BodyState[]): Promise<Uint8Array>;
+  /**
+   * Copies of bodies where an assembly puts them (ids as given), as a snapshot: an assembly's result.
+   * The copies are not stored, so they never push other shapes out of the store (CAD-121).
+   */
+  snapshotPlaced(parts: readonly { readonly id: string; readonly body: BodyState; readonly transform: Matrix4 }[]): Promise<Uint8Array>;
   /** Loads a snapshot into the shape store (as `<prefix>:<body id>`, once) and returns its bodies. */
   restore(snapshot: Uint8Array, prefix: string): Promise<BodyState[]>;
+  /** Holds bodies in the shape store while an open document uses them, or lets them go (counted). */
+  keep(bodies: readonly BodyState[], kept: boolean): Promise<void>;
 }

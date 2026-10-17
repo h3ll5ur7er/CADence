@@ -18,8 +18,20 @@ export type ShapeCommand =
   /** A closed outline through the points, in order: points `<id>:p1`…, lines `<id>:l1`… (from p1 to p2, …, back to p1). */
   | { readonly type: 'add-polygon'; readonly sketchId: string; readonly id: string; readonly points: readonly (readonly [Length, Length])[] };
 
-/** What scripts and agents may run on a component: the design commands and the shorthands. */
-export type ScriptCommand = DesignCommand | ShapeCommand;
+/**
+ * What the app does through its dialogs rather than design commands, as commands for scripts and
+ * agents (CAD-124).
+ */
+export type SessionCommand =
+  /** An imported DXF, SVG or picture (a document of the project) into a sketch, as curves with ids starting `idPrefix`. */
+  | { readonly type: 'insert-drawing'; readonly sketchId: string; readonly document: string; readonly idPrefix: string; readonly onePiece?: boolean; readonly relations?: 'none' | 'infer' | 'fix' }
+  /** The configuration table from CSV (a column per parameter, a row per configuration, as `export_component` writes it). */
+  | { readonly type: 'import-configurations'; readonly csv: string }
+  /** Relations the sketcher would suggest for a sketch (horizontal, vertical, coincident …), added with ids starting `idPrefix`. */
+  | { readonly type: 'add-suggested-constraints'; readonly sketchId: string; readonly idPrefix: string };
+
+/** What scripts and agents may run on a component: the design commands, the shorthands and the session commands. */
+export type ScriptCommand = DesignCommand | ShapeCommand | SessionCommand;
 
 /** A rough value of an expression (mm), to start the solver near the answer; the dimension sets it exactly. */
 export type Guess = (expression: string) => number;
@@ -36,7 +48,7 @@ function hold(id: string, point: string, [x, y]: readonly [Length, Length]): Ske
 }
 
 /** A shorthand as the design command it stands for; design commands pass through. */
-export function expandShape(command: ScriptCommand, guess: Guess = roughValue()): DesignCommand {
+export function expandShape(command: DesignCommand | ShapeCommand, guess: Guess = roughValue()): DesignCommand {
   const at = (value: Length) => (typeof value === 'number' ? value : guess(value));
   switch (command.type) {
     case 'add-rectangle': {

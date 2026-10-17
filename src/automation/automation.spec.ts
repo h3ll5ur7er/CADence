@@ -26,6 +26,7 @@ function recorder(): Io & { readonly lines: string[]; readonly errors: string[] 
 }
 
 const text = (result: unknown) => ((result as { result: { content: { text: string }[] } }).result.content[0] as { text: string }).text;
+const result = (response: unknown) => (response as { result: { isError?: boolean; content: { type: string; text?: string; data?: string }[] } }).result;
 
 describe('the MCP server', () => {
   it('models, checks and exports the plate of its instructions', { timeout: 120_000 }, async () => {
@@ -131,7 +132,6 @@ describe('the MCP server', () => {
     const server = new McpServer(new Cadence(core, core.exports), { commands: '// the types' }, '1.2.3');
     let id = 0;
     const call = async (name: string, args: Record<string, unknown> = {}) => server.handle({ jsonrpc: '2.0', id: ++id, method: 'tools/call', params: { name, arguments: args } });
-    const result = (response: unknown) => (response as { result: { isError?: boolean; content: { type: string; text?: string; data?: string }[] } }).result;
 
     // A 40 × 10 × 4 bar with a hole at each end, to hinge two of them.
     const created = JSON.parse(text(await call('create_project', { name: 'Linkage' }))) as { project: { id: string }; component: { id: string } };
@@ -211,6 +211,11 @@ describe('the MCP server', () => {
 
     const animated = result(await call('animate_study', { document: linkage, study: 'swing', width: 120, height: 90, fps: 4, moments: 4 }));
     expect(animated.content.map((c) => c.type)).toEqual(['image', 'text']);
+    // Whole turns: a sheet of nine shows only the four poses a turn has at four frames a second (CAD-122).
+    await call('edit_assembly', { document: linkage, commands: [{ type: 'add-study', study: { id: 'turns', name: 'Turns', duration: 2, keys: [], drives: [{ joint: 'hinge', dof: 0, speed: 360 }] } }] });
+    const turns = result(await call('animate_study', { document: linkage, study: 'turns', width: 120, height: 90, fps: 4, moments: 9 }));
+    expect(turns.content[1]?.text).toContain('The sheet shows the moments 0, 0.25, 0.5, 0.75 s. The study repeats itself: only 4 moments show different poses.');
+    await call('undo_assembly', { document: linkage });
     const gif = /at (.+\.gif)\./.exec(animated.content[1]?.text ?? '')?.[1] as string;
     expect(new TextDecoder().decode(readFileSync(gif).subarray(0, 6))).toBe('GIF89a');
 
@@ -219,6 +224,176 @@ describe('the MCP server', () => {
     expect(text(await call('export_assembly', { document: linkage, format: 'step' }))).toMatch(/\.step$/);
     const undone = JSON.parse(text(await call('undo_assembly', { document: linkage }))) as { removed?: string[] };
     expect(undone.removed).toEqual(['apart']); // one command at a time
+  });
+});
+
+describe('everything the app does, for agents (CAD-124)', () => {
+  it('manages projects, versions and git', { timeout: 180_000 }, async () => {
+    const core = createNodeCore({ projects: folder(), exports: folder() });
+    const mcp = new McpServer(new Cadence(core, core.exports), { commands: '// the types' }, '1.2.3');
+    let id = 0;
+    const call = async (name: string, args: Record<string, unknown> = {}) => mcp.handle({ jsonrpc: '2.0', id: ++id, method: 'tools/call', params: { name, arguments: args } });
+    const json = async (name: string, args: Record<string, unknown>) => JSON.parse(text(await call(name, args))) as Record<string, unknown>;
+
+    const made = (await json('create_project_from_template', { template: 'wall-bracket', name: 'Bracket' })) as { project: { id: string }; documents: { id: string; kind: string }[] };
+    expect(made.documents.map((d) => d.kind)).toContain('component');
+    const project = made.project.id;
+    expect(text(await call('rename_project', { project, name: 'Pipe bracket' }))).toBe('Renamed to Pipe bracket.');
+    expect(await json('duplicate', { project: 'Pipe bracket' })).toMatchObject({ name: expect.stringContaining('Pipe bracket') });
+    const part = (made.documents.find((d) => d.kind === 'component') as { id: string }).id;
+    expect(await json('duplicate', { document: part })).toMatchObject({ kind: 'component' });
+
+    // Versions: recorded, named, listed, and a document restored.
+    const recorded = (await json('versions', { action: 'record', project, message: 'First fit' })) as { id: string; message: string };
+    expect(recorded.message).toBe('First fit');
+    expect(text(await call('versions', { action: 'name', project, name: 'v1' }))).toBe('Named v1.');
+    await call('rename_document', { document: part, name: 'Renamed part' });
+    expect((await json('versions', { action: 'list', project })) as unknown).toEqual(expect.arrayContaining([expect.objectContaining({ names: ['v1'] })]));
+    expect(text(await call('versions', { action: 'restore', document: part, version: recorded.id }))).toBe(`Restored as of ${recorded.id}.`);
+    expect((await core.projectManager.findDocument(part as never))?.name).not.toBe('Renamed part');
+
+    // An archive with its history, back in as a new project.
+    const archive = text(await call('export_project', { project, history: true }));
+    expect(archive).toMatch(/\.cadence$/);
+    expect(await json('import_project', { path: archive })).toMatchObject({ name: 'Pipe bracket' });
+
+    // Git (synced for real in the Project Manager's tests): the tools reach it, and say when a repository is not there.
+    const url = 'http://127.0.0.1:9/bracket.git';
+    expect(text(await call('sync_project', { project, url }))).toContain('(remote-unreachable)');
+    expect(text(await call('open_git', { url }))).toContain('(remote-unreachable)');
+
+    expect(text(await call('delete_project', { project }))).toBe('Deleted Pipe bracket.');
+    // The archive brought back in is left (the copy has a name of its own).
+    expect((await core.projectManager.listProjects()).filter((p) => p.name === 'Pipe bracket')).toHaveLength(1);
+  });
+
+  it('measures, checks sketches, imports into sketches, exports viewers, tables and instructions', { timeout: 240_000 }, async () => {
+    const core = createNodeCore({ exports: folder() });
+    const mcp = new McpServer(new Cadence(core, core.exports), { commands: '// the types' }, '1.2.3');
+    let id = 0;
+    const call = async (name: string, args: Record<string, unknown> = {}) => mcp.handle({ jsonrpc: '2.0', id: ++id, method: 'tools/call', params: { name, arguments: args } });
+    const json = async (name: string, args: Record<string, unknown>) => JSON.parse(text(await call(name, args))) as Record<string, unknown>;
+    const created = (await json('create_project', { name: 'Parity' })) as { project: { id: string }; component: { id: string } };
+    const block = created.component.id;
+
+    // A free sketch: its points still move, and the sketcher suggests relations.
+    const line = [{ id: 'a', kind: 'point', x: 0, y: 0 }, { id: 'b', kind: 'point', x: 20, y: 0.001 }, { id: 'ab', kind: 'line', start: 'a', end: 'b', construction: false }];
+    await call('edit_component', { document: block, commands: [{ type: 'create-sketch', id: 'free', plane: 'XY' }, { type: 'add-sketch-geometry', sketchId: 'free', entities: line, constraints: [] }] });
+    const free = (await json('check_sketch', { document: block, sketch: 'free' })) as { fullyConstrained: boolean; points: unknown[]; suggestions: { kind: string }[] };
+    expect(free.fullyConstrained).toBe(false);
+    expect(free.points.length).toBeGreaterThan(0);
+    expect(free.suggestions.map((s) => s.kind)).toContain('horizontal');
+    expect(result(await call('edit_component', { document: block, commands: [{ type: 'add-suggested-constraints', sketchId: 'free', idPrefix: 'hint' }] })).isError).toBeUndefined();
+
+    // A 20 mm cube: measured, exported as a viewer; a configuration table read from CSV.
+    await call('edit_component', { document: block, commands: [{ type: 'add-parameter', parameter: { id: 'p', name: 'size', expression: '20 mm' } }, { type: 'create-sketch', id: 's', plane: 'XY' }, { type: 'add-rectangle', sketchId: 's', id: 'r', x: 0, y: 0, width: 'size', height: 'size' }] });
+    const profile = (JSON.parse(text(await call('get_component', { document: block, only: ['sketches'], sketch: 's' }))) as ComponentSummary).sketches[0]?.profiles[0]?.id;
+    await call('edit_component', { document: block, commands: [{ type: 'add-feature', feature: { type: 'extrude', id: 'e', name: '', suppressed: false, sketch: 's', profiles: [profile], distance: 'size', direction: 'normal', operation: 'new-body' } }] });
+    const top = { kind: 'face', body: 'e', name: 'f:e:end' };
+    expect(await json('measure', { document: block, refs: [top] })).toMatchObject({ area: expect.closeTo(400, 6) });
+    expect(text(await call('export_component', { document: block, format: 'html' }))).toMatch(/\.html$/);
+    const table = result(await call('edit_component', { document: block, commands: [{ type: 'import-configurations', csv: 'Configuration,size\nSmall,10 mm\nLarge,40 mm\n' }] }));
+    expect(table.isError, table.content[0]?.text).toBeUndefined();
+    expect(readFileSync(text(await call('export_component', { document: block, format: 'csv' })), 'utf8')).toContain('Large');
+    // Undone and redone.
+    expect(result(await call('undo_component', { document: block })).isError).toBeUndefined();
+    expect(result(await call('undo_component', { document: block, redo: true })).isError).toBeUndefined();
+
+    // An SVG into a sketch; an STL pictured as it was read.
+    const svg = (await json('import_file', { project: created.project.id, path: join(repository, 'e2e', 'fixtures', 'plate.svg') })) as { id: string };
+    const inserted = result(await call('edit_component', { document: block, commands: [{ type: 'create-sketch', id: 'traced', plane: 'XY' }, { type: 'insert-drawing', sketchId: 'traced', document: svg.id, idPrefix: 'svg' }] }));
+    expect(inserted.isError, inserted.content[0]?.text).toBeUndefined();
+    const stl = (await json('import_file', { project: created.project.id, path: join(repository, 'e2e', 'fixtures', 'wedge.stl') })) as { id: string };
+    expect(result(await call('render_picture', { document: stl.id, width: 120, height: 90 })).content[0]?.type).toBe('image');
+    expect(result(await call('render_picture', { document: svg.id })).content[0]?.text).toContain('not a 3D file');
+
+    // A section through the cube's middle shows less of it than the whole cube.
+    const ink = async (args: Record<string, unknown>) => {
+      const picture = await decodePicture(new Uint8Array(Buffer.from(result(await call('render_picture', { document: block, width: 120, height: 120, view: 'front', ...args })).content[0]?.data ?? '', 'base64')));
+      return Array.from({ length: picture.width * picture.height }, (_, i) => picture.data[i * 4] as number).filter((r) => r < 250).length;
+    };
+    expect(await ink({ section: { point: [0, 0, 10], normal: [0, 0, 1] } })).toBeLessThan((await ink({})) * 0.75);
+
+    // An assembly of two cubes: measured between instances, its parts list, viewer and build instructions.
+    const assembly = ((await json('create_document', { project: created.project.id, kind: 'assembly' })) as { id: string }).id;
+    const at = (x: number) => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, 0, 1];
+    await call('edit_assembly', {
+      document: assembly,
+      commands: [
+        { type: 'insert-instance', instance: { id: 'a', component: block, name: '', transform: at(0), grounded: true } },
+        { type: 'insert-instance', instance: { id: 'b', component: block, name: '', transform: at(50), grounded: true } },
+        { type: 'set-exploded-view', view: { id: 'apart', name: 'Apart', steps: [{ id: 'up', instances: ['b'], direction: [0, 0, 1], distance: 30 }] } },
+      ],
+    });
+    const between = result(await call('measure', { document: assembly, refs: [{ ...top, instance: 'a' }, { ...top, instance: 'b' }] }));
+    expect(between.isError, between.content[0]?.text).toBeUndefined();
+    expect(readFileSync(text(await call('export_assembly', { document: assembly, format: 'csv' })), 'utf8')).toContain('Component 1');
+    expect(text(await call('export_assembly', { document: assembly, format: 'html' }))).toMatch(/\.html$/);
+    const instructions = text(await call('export_assembly', { document: assembly, format: 'pdf', explode: 'apart' }));
+    expect(readFileSync(instructions, 'latin1')).toContain('/FlateDecode');
+    expect(result(await call('export_assembly', { document: assembly, format: 'pdf' })).content[0]?.text).toContain('exploded view');
+    expect(result(await call('undo_assembly', { document: assembly, redo: true })).isError).toBeUndefined();
+  });
+});
+
+describe('drawings for agents (CAD-123)', () => {
+  it('draws a component with views, a section, dimensions and a callout, and exports the sheet', { timeout: 180_000 }, async () => {
+    const core = createNodeCore({ exports: folder() });
+    const server = new McpServer(new Cadence(core, core.exports), { drawing: '// the types' }, '1.2.3');
+    let id = 0;
+    const call = async (name: string, args: Record<string, unknown> = {}) => server.handle({ jsonrpc: '2.0', id: ++id, method: 'tools/call', params: { name, arguments: args } });
+    const json = async (name: string, args: Record<string, unknown>) => JSON.parse(text(await call(name, args))) as Record<string, unknown>;
+    const created = (await json('create_project', { name: 'Drawn' })) as { project: { id: string }; component: { id: string } };
+    const plate = created.component.id;
+    await call('edit_component', { document: plate, commands: [{ type: 'create-sketch', id: 's', plane: 'XY' }, { type: 'add-rectangle', sketchId: 's', id: 'r', x: 0, y: 0, width: 60, height: 30 }, { type: 'add-circle', sketchId: 's', id: 'c', x: 20, y: 15, diameter: 8 }] });
+    const profile = (JSON.parse(text(await call('get_component', { document: plate, only: ['sketches'] }))) as ComponentSummary).sketches[0]?.profiles.find((p) => p.holes === 1)?.id;
+    await call('edit_component', { document: plate, commands: [{ type: 'add-feature', feature: { type: 'extrude', id: 'e', name: '', suppressed: false, sketch: 's', profiles: [profile], distance: '6 mm', direction: 'normal', operation: 'new-body' } }] });
+
+    const sheet = (await json('create_document', { project: created.project.id, kind: 'drawing', name: 'Plate drawing' })) as { id: string; kind: string };
+    expect(sheet.kind).toBe('drawing');
+    const placed = await json('edit_drawing', {
+      document: sheet.id,
+      commands: [
+        { type: 'set-sheet', sheet: { size: 'A3', orientation: 'landscape', scale: 2 } },
+        { type: 'add-view', view: { id: 'top', source: plate, direction: 'top', at: [120, 200] } },
+        { type: 'add-view', view: { id: 'front', source: plate, direction: 'front', at: [120, 90] } },
+        { type: 'add-view', view: { id: 'right', source: plate, direction: 'right', at: [260, 90] } },
+        { type: 'add-view', view: { id: 'cut', source: plate, direction: 'front', at: [330, 200], section: { offset: 0 }, label: 'Section A-A' } },
+      ],
+    });
+    expect(placed).toMatchObject({ created: { views: ['top', 'front', 'right', 'cut'] }, changed: { sheet: true }, placed: { top: { min: [60, 170], max: [180, 230] } } });
+    expect(placed).not.toHaveProperty('viewErrors');
+
+    // What the top view offers to dimension: its corners and the hole.
+    const anchors = (await json('get_drawing', { document: sheet.id, view: 'top' })) as { anchors: { view: string; kind: string; name: string; at: number[]; radius?: number }[]; anchorCounts: Record<string, number> };
+    expect(anchors.anchorCounts['front']).toBeGreaterThan(0);
+    const points = anchors.anchors.filter((a) => a.kind === 'point').sort((a, b) => (a.at[0] as number) - (b.at[0] as number));
+    const circle = anchors.anchors.find((a) => a.kind === 'circle' && a.radius === 8); // ⌀8 at 2:1
+    const ref = (a: { view: string; kind: string; name: string } | undefined) => ({ view: a?.view, kind: a?.kind, name: a?.name });
+    expect(circle).toBeDefined();
+    expect((await json('get_drawing', { document: sheet.id, near: circle?.at, within: 1 }))['anchors']).toEqual(expect.arrayContaining([expect.objectContaining({ name: circle?.name })]));
+    const annotated = await json('edit_drawing', {
+      document: sheet.id,
+      commands: [
+        { type: 'add-annotation', annotation: { kind: 'dimension', id: 'width', type: 'horizontal', anchors: [ref(points[0]), ref(points.at(-1))], offset: 12 } },
+        { type: 'add-annotation', annotation: { kind: 'dimension', id: 'hole', type: 'diameter', anchors: [ref(circle)], offset: 8 } },
+        { type: 'add-annotation', annotation: { kind: 'callout', id: 'call', circle: ref(circle), at: [200, 255] } },
+      ],
+    });
+    expect(annotated).toMatchObject({ created: { annotations: ['width', 'hole', 'call'] } });
+    expect(annotated).not.toHaveProperty('lost');
+
+    const picture = result(await call('render_picture', { document: sheet.id, width: 840 }));
+    expect(picture.content[0]?.type).toBe('image');
+    const zoomed = await decodePicture(new Uint8Array(Buffer.from(result(await call('render_picture', { document: sheet.id, width: 300, focus: ['top'] })).content[0]?.data ?? '', 'base64')));
+    expect(zoomed.width).toBe(300);
+    const pdf = text(await call('export_drawing', { document: sheet.id, format: 'pdf' }));
+    expect(new TextDecoder().decode(readFileSync(pdf).subarray(0, 8))).toBe('%PDF-1.4');
+    expect(text(await call('export_drawing', { document: sheet.id, format: 'dxf' }))).toMatch(/Plate drawing\.dxf$/);
+    // Undone and redone, one command at a time.
+    expect(await json('undo_drawing', { document: sheet.id })).toMatchObject({ removed: ['call'] });
+    expect(await json('undo_drawing', { document: sheet.id, redo: true })).toMatchObject({ created: { annotations: ['call'] } });
+    expect(text(await call('command_reference', {}))).toContain('drawing');
   });
 });
 
@@ -334,7 +509,7 @@ describe('the command line', () => {
     writeFileSync(
       script,
       `export default async function (cadence, [name]) {
-        const { firstDocument } = (await cadence.projects.createProject(name)).value;
+        const { project, firstDocument } = (await cadence.projects.createProject(name)).value;
         const washer = await cadence.component(firstDocument.id);
         await washer.run(
           { type: 'create-sketch', id: 's', plane: 'XY' },
@@ -343,19 +518,29 @@ describe('the command line', () => {
         );
         const ring = washer.summary().sketches[0].profiles.find((p) => p.holes === 1);
         await washer.run({ type: 'add-feature', feature: { type: 'extrude', id: 'e', name: 'Washer', suppressed: false, sketch: 's', profiles: [ring.id], distance: '1.6 mm', direction: 'normal', operation: 'new-body' } });
+        const sheet = (await cadence.projects.createDocument(project.id, 'drawing', 'Washer drawing')).value;
+        await (await cadence.drawing(sheet.id)).run({ type: 'add-view', view: { id: 'top', source: firstDocument.id, direction: 'top', at: [100, 150], hidden: false } });
       }`,
     );
     const io = recorder();
     const options = ['--folder', projects, '--exports', exports];
     expect(await runCli(['run', script, 'M8 washer', ...options], io)).toBe(0);
     expect(await runCli(['projects', ...options], io)).toBe(0);
-    expect(io.lines.at(-1)).toMatch(/M8 washer {2}\(1 documents\)$/);
+    expect(io.lines.at(-1)).toMatch(/M8 washer {2}\(2 documents\)$/);
     expect(await runCli(['documents', 'M8 washer', ...options], io)).toBe(0);
-    expect(io.lines.at(-1)).toMatch(/component +Component 1$/);
+    expect(io.lines.slice(-2)).toEqual(expect.arrayContaining([expect.stringMatching(/component +Component 1$/), expect.stringMatching(/drawing +Washer drawing$/)]));
     expect(await runCli(['export', 'M8 washer', 'Component 1', 'step', '-o', join(exports, 'washer.step'), ...options], io)).toBe(0);
     expect(readFileSync(join(exports, 'washer.step'), 'utf8')).toMatch(/^ISO-10303-21;/);
     expect(await runCli(['export', 'M8 washer', 'Component 1', 'svg', '--sketch', 's', ...options], io)).toBe(0);
     expect(readFileSync(io.lines.at(-1) as string, 'utf8')).toContain('<svg');
+    // Drawings export as PDF and DXF, and picture as the PDF shows them (CAD-123).
+    expect(await runCli(['export', 'M8 washer', 'Washer drawing', 'pdf', ...options], io)).toBe(0);
+    expect(readFileSync(io.lines.at(-1) as string, 'latin1').startsWith('%PDF-1.4')).toBe(true);
+    const png = join(exports, 'sheet.png');
+    expect(await runCli(['picture', 'M8 washer', 'Washer drawing', png, '--width', '420', ...options], io)).toBe(0);
+    expect((await decodePicture(new Uint8Array(readFileSync(png)))).width).toBe(420);
+    expect(await runCli(['export', 'M8 washer', 'Washer drawing', 'step', ...options], io)).toBe(1);
+    expect(io.errors.at(-1)).toBe('A drawing exports to pdf, dxf.');
 
     // Mistakes are explained, with a non-zero exit code.
     expect(await runCli(['export', 'Nothing', 'Component 1', 'stl', ...options], io)).toBe(1);

@@ -59,6 +59,13 @@ export interface DrawingSession {
   exportPdf(): Promise<Result<void>>;
   /** The sheet as DXF (mm), lines and texts on layers by style. */
   exportDxf(): Promise<Result<void>>;
+  /**
+   * The sheet as a PNG `width` pixels wide (1600 by default) as the PDF shows it, or only one view
+   * of it, zoomed: for agents and scripts to look at (CAD-123).
+   */
+  picture(options?: { readonly width?: number; readonly view?: string }): Promise<Result<Uint8Array>>;
+  /** Reads again the views' sources whose documents another process changed (CAD-116). */
+  catchUp(): Promise<void>;
   /** Stops listening for changes of the views' sources. */
   close(): void;
 }

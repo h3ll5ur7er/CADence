@@ -6,6 +6,10 @@ import type { AssemblyCommand, AssemblyFormat } from '@core/managers/assembly';
 import type { DrawingFormat, SolidFormat } from '@core/managers/design';
 import { type AssemblyPictureOptions, type Cadence, CadenceError, type SummaryFilter, unwrap } from './api';
 import type { ScriptCommand } from './shapes';
+import { drawingTools } from './tools/drawings';
+import { modelTools } from './tools/models';
+import { projectTools } from './tools/projects';
+import { type Captioned, documentArg, runAll, number, object, point, type Progress, projectArg, string, strings, type Tool } from './tools/schema';
 
 /** A JSON-RPC 2.0 message as MCP clients send it (newline-delimited JSON over stdio). */
 export interface JsonRpcMessage {
@@ -15,34 +19,10 @@ export interface JsonRpcMessage {
   readonly params?: Record<string, unknown>;
 }
 
-/** Reports how far a long tool call has got (MCP progress notifications, when the client asked for them). */
-type Progress = (done: number, total: number, message: string) => void;
-
-interface Tool {
-  readonly name: string;
-  readonly description: string;
-  readonly inputSchema: Record<string, unknown>;
-  run(args: Record<string, unknown>, progress: Progress): Promise<unknown>;
-}
-
-/** A picture to look at with a line about it. */
-interface Captioned {
-  readonly picture: Uint8Array;
-  readonly caption: string;
-}
-
 const protocolVersions = ['2025-06-18', '2025-03-26', '2024-11-05'];
 
-const string = (description: string) => ({ type: 'string', description });
-const number = (description: string) => ({ type: 'number', description });
-const strings = (description: string) => ({ type: 'array', items: { type: 'string' }, description });
-const point = (description: string) => ({ type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3, description });
-const object = (properties: Record<string, unknown>, required: readonly string[] = []) => ({ type: 'object', properties, required, additionalProperties: false });
-const projectArg = string('Project id or name (list_projects).');
-const documentArg = string('Document id (list_documents).');
-
 /** How an agent models with CADence; sent to the client when it connects. */
-export const instructions = `CADence is a parametric CAD application. Projects hold components (parts), assemblies and imported files.
+export const instructions = `CADence is a parametric CAD application. Projects hold components (parts), assemblies, technical drawings and imported files.
 Model a part:
 1. create_project, or list_projects and list_documents; a new project has an empty component ("Component 1"; rename_document renames it).
 2. edit_component with commands, applied in order. Ids are yours to choose. Example, a 60 x 30 x 6 mm plate with a hole:
@@ -60,7 +40,11 @@ Assemble:
    A side's frame: without ref, the component's origin (its XY plane, z up); on a flat face, its centre and outward normal; on a round face or a circular edge, its axis. "offset":{"translate":[x,y,z],"lean":degrees,"tilt":degrees,"angle":degrees} moves a frame along its own axes, turns it about its z (lean), tilts it about its new x (lean and tilt point a joint along any direction no face has), then turns it about its new z. flip turns b over (its z against a's). values move b along or about the frame's z, in mm or degrees, in the order of jointDofs (revolute: angle; slider: distance; cylindrical: angle, distance).
 3. get_assembly lists instances (where they are), joints (with why they fail), links, patterns, motion studies and exploded views. set-link makes one joint drive another (gears, planetary sets; a cam with a profile of [angle, lift] pairs moves its follower), set-pattern copies instances, add-study keys or drives joints over time, set-exploded-view takes the assembly apart (steps may name pattern copies, "<pattern>/<instance>/<n>", and "radial": true moves each part away from the axis along the direction).
 4. render_picture with explode (and steps) or study and time shows it apart or moving; animate_study writes a GIF and shows a sheet of moments; check_assembly finds overlaps and collisions (with "seconds" to limit a long study check); assembly_properties gives the mass and the bill of materials.
-Lengths are expressions ("6 mm", "2 * wall", "1 in"); plain numbers are millimetres. command_reference has every command, feature, part and assembly type as TypeScript, by topic (commands, sketch, features, document, assembly).`;
+Draw:
+1. create_document with kind "drawing" (an A3 sheet at 1:1), then edit_drawing: set-sheet (size, orientation, scale), set-title-block, add-view {"id":"front","source":"<component or assembly id>","direction":"front","at":[x,y]} (front, back, top, bottom, left, right, iso; section, detail, scale, label). Sheet coordinates are mm from the bottom left.
+2. get_drawing lists the views' boxes on the sheet and their anchors: points, circles and lines by persistent name, where they are on the sheet. Annotations attach to anchors: dimensions (linear, horizontal, vertical, radius, diameter, angle), center marks and lines, hole callouts; notes, balloons and parts lists sit at sheet points.
+3. render_picture of a drawing shows the sheet as the PDF prints it (focus [view id] zooms onto a view); export_drawing writes PDF or DXF.
+Lengths are expressions ("6 mm", "2 * wall", "1 in"); plain numbers are millimetres. command_reference has every command, feature, part, assembly and drawing type as TypeScript, by topic (commands, sketch, features, document, assembly, drawing).`;
 
 /** The MCP server: CADence's scripting API as tools (docs/User-guide/Automation.md). */
 export class McpServer {
@@ -71,6 +55,8 @@ export class McpServer {
     /** The command and feature types by topic, for `command_reference`. */
     private readonly reference: Readonly<Record<string, string>>,
     private readonly version: string,
+    /** Where files go when a tool is given no path, for the agent to know. */
+    private readonly exportsFolder?: string,
   ) {
     this.tools = this.createTools();
   }
@@ -87,7 +73,8 @@ export class McpServer {
           protocolVersion: protocolVersions.includes(requested) ? requested : protocolVersions[0],
           capabilities: { tools: {} },
           serverInfo: { name: 'cadence', version: this.version },
-          instructions,
+          instructions: this.exportsFolder ? `${instructions}
+Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a path.` : instructions,
         });
       }
       case 'ping':
@@ -134,17 +121,6 @@ export class McpServer {
       if (document.kind !== 'assembly') throw new CadenceError('not-an-assembly', `${document.name} is not an assembly.`);
       return cadence.assembly(document.id);
     };
-    /** Runs commands one by one; a refusal says which command and why (the ones before stay). */
-    const runAll = async <T extends { type: string }>(commands: readonly T[], run: (command: T) => Promise<void>) => {
-      for (const [index, command] of commands.entries()) {
-        try {
-          await run(command);
-        } catch (error) {
-          if (!(error instanceof CadenceError)) throw error;
-          throw new CadenceError(error.code, `Command ${index + 1} (${command.type}) was refused: ${error.message}${index > 0 ? ` Commands 1 to ${index} were applied.` : ''}`);
-        }
-      }
-    };
     const pictureArgs = {
       view: { type: 'string', enum: ['iso', 'front', 'back', 'top', 'bottom', 'left', 'right'] },
       direction: point('A free camera instead of a view: from the model towards the camera, e.g. [1, -2, 1].'),
@@ -154,6 +130,7 @@ export class McpServer {
       focus: strings('Body ids (of a component) or instance ids (of an assembly) to zoom onto.'),
       hide: strings('Body or instance ids to leave out.'),
       ghost: strings('Body or instance ids to show see-through.'),
+      section: object({ point: point('A point of the plane.'), normal: point('Its normal: what lies on this side is taken away.') }, ['point', 'normal']),
     };
     const pictureOptions = (args: Record<string, unknown>): AssemblyPictureOptions => {
       const list = (key: string) => (Array.isArray(args[key]) ? { [key]: (args[key] as unknown[]).map(String) } : {});
@@ -167,6 +144,7 @@ export class McpServer {
         ...list('focus'),
         ...list('hide'),
         ...list('ghost'),
+        ...(args['section'] ? { section: args['section'] as { point: Vec3; normal: Vec3 } } : {}),
         ...(args['explode'] !== undefined ? { explode: String(args['explode']) } : {}),
         ...(args['steps'] !== undefined ? { steps: Number(args['steps']) } : {}),
         ...(args['study'] !== undefined ? { study: String(args['study']) } : {}),
@@ -198,8 +176,8 @@ export class McpServer {
       },
       {
         name: 'create_document',
-        description: 'Adds an empty component or assembly to a project.',
-        inputSchema: object({ project: projectArg, kind: { type: 'string', enum: ['component', 'assembly'] }, name: string('Optional name.') }, ['project', 'kind']),
+        description: 'Adds an empty component, assembly or drawing to a project.',
+        inputSchema: object({ project: projectArg, kind: { type: 'string', enum: ['component', 'assembly', 'drawing'] }, name: string('Optional name.') }, ['project', 'kind']),
         run: async (args) => {
           const name = args['name'] === undefined ? undefined : String(args['name']);
           const created = unwrap(await cadence.projects.createDocument(await projectId(args), args['kind'] as CreatableDocumentKind, name));
@@ -230,10 +208,16 @@ export class McpServer {
       },
       {
         name: 'import_file',
-        description: 'Imports a file (STEP, STL, OBJ, 3MF, DXF, SVG) from disk into a project.',
-        inputSchema: object({ project: projectArg, path: string('Path of the file on this computer.') }, ['project', 'path']),
+        description: 'Imports a file (STEP, STL, OBJ, 3MF, DXF, SVG, PNG, JPEG) from disk into a project; with replace, puts it in place of an imported document (instances and sketches that use it follow).',
+        inputSchema: object({ project: projectArg, path: string('Path of the file on this computer.'), replace: string('An imported document to replace (id).') }, ['project', 'path']),
         run: async (args) => {
           const path = String(args['path']);
+          if (args['replace'] !== undefined) {
+            const document = await cadence.document(String(args['replace']));
+            unwrap(await cadence.projects.replaceImported(document.id, { name: basename(path), bytes: new Uint8Array(await readFile(path)) }));
+            cadence.forget();
+            return `Replaced ${document.name}.`;
+          }
           const imported = unwrap(await cadence.projects.importFile(await projectId(args), { name: basename(path), bytes: new Uint8Array(await readFile(path)) }));
           return { id: imported.id, name: imported.name, kind: imported.kind };
         },
@@ -286,12 +270,12 @@ export class McpServer {
       },
       {
         name: 'undo_component',
-        description: 'Undoes the last change of a component; answers with what changed.',
-        inputSchema: object({ document: documentArg }, ['document']),
+        description: 'Undoes the last change of a component (or redoes it, with redo); answers with what changed.',
+        inputSchema: object({ document: documentArg, redo: { type: 'boolean', description: 'Redo instead.' } }, ['document']),
         run: async (args) => {
           const script = await component(args);
           const before = script.summary({ only: ['parameters', 'timeline', 'sketches', 'faces'] });
-          await script.undo();
+          await (args['redo'] ? script.redo() : script.undo());
           return script.changes(before);
         },
       },
@@ -309,11 +293,12 @@ export class McpServer {
       },
       {
         name: 'export_component',
-        description: 'Writes a component to a file: its bodies as STEP, STL, OBJ or 3MF; a sketch, or the flat pattern of a sheet metal part, as DXF or SVG. Returns the path.',
+        description:
+          'Writes a component to a file: its bodies as STEP, STL, OBJ or 3MF; a sketch, or the flat pattern of a sheet metal part, as DXF or SVG; html: a viewer for people without CADence; csv: the configuration table. Returns the path.',
         inputSchema: object(
           {
             document: documentArg,
-            format: { type: 'string', enum: ['step', 'stl', 'obj', '3mf', 'dxf', 'svg'] },
+            format: { type: 'string', enum: ['step', 'stl', 'obj', '3mf', 'dxf', 'svg', 'html', 'csv'] },
             sketch: string('For DXF and SVG: the sketch id.'),
             flatPattern: { type: 'boolean', description: 'For DXF and SVG: the flat pattern instead of a sketch.' },
             path: string('Where to write the file (default: the exports folder).'),
@@ -324,6 +309,8 @@ export class McpServer {
           const script = await component(args);
           const format = String(args['format']);
           const to = args['path'] === undefined ? {} : { to: String(args['path']) };
+          if (format === 'html') return script.exportViewer(to);
+          if (format === 'csv') return script.exportConfigurations(to);
           if (format !== 'dxf' && format !== 'svg') return script.export(format as SolidFormat, to);
           if (args['flatPattern']) return script.exportFlatPattern(format as DrawingFormat, to);
           if (!args['sketch']) throw new CadenceError('no-sketch', 'DXF and SVG need a sketch id or flatPattern.');
@@ -356,12 +343,12 @@ export class McpServer {
       },
       {
         name: 'undo_assembly',
-        description: 'Undoes the last change of an assembly; answers with what changed.',
-        inputSchema: object({ document: documentArg }, ['document']),
+        description: 'Undoes the last change of an assembly (or redoes it, with redo); answers with what changed.',
+        inputSchema: object({ document: documentArg, redo: { type: 'boolean', description: 'Redo instead.' } }, ['document']),
         run: async (args) => {
           const script = await assembly(args);
           const before = await script.summary();
-          await script.undo();
+          await (args['redo'] ? script.redo() : script.undo());
           return script.changes(before);
         },
       },
@@ -398,17 +385,37 @@ export class McpServer {
       },
       {
         name: 'export_assembly',
-        description: 'Writes an assembly to a file: STEP (one named solid per instance), 3MF, STL or OBJ. Returns the path.',
-        inputSchema: object({ document: documentArg, format: { type: 'string', enum: ['step', '3mf', 'stl', 'obj'] }, path: string('Where to write the file (default: the exports folder).') }, ['document', 'format']),
-        run: async (args) => (await assembly(args)).export(args['format'] as AssemblyFormat, args['path'] === undefined ? {} : { to: String(args['path']) }),
+        description:
+          'Writes an assembly to a file: STEP (one named solid per instance), 3MF, STL or OBJ; csv: the bill of materials; html: a viewer for people without CADence (turn, measure, hide, explode); pdf: build instructions from an exploded view (explode), the parts list and a page per step. Returns the path.',
+        inputSchema: object(
+          {
+            document: documentArg,
+            format: { type: 'string', enum: ['step', '3mf', 'stl', 'obj', 'csv', 'html', 'pdf'] },
+            explode: string('For pdf: the exploded view whose steps the instructions follow.'),
+            path: string('Where to write the file (default: the exports folder).'),
+          },
+          ['document', 'format'],
+        ),
+        run: async (args) => {
+          const script = await assembly(args);
+          const to = args['path'] === undefined ? {} : { to: String(args['path']) };
+          const format = String(args['format']);
+          if (format === 'csv') return script.exportBillOfMaterials(to);
+          if (format === 'html') return script.exportViewer(to);
+          if (format === 'pdf') {
+            if (args['explode'] === undefined) throw new CadenceError('usage', 'Build instructions follow an exploded view: give its id as explode.');
+            return script.exportInstructions(String(args['explode']), to);
+          }
+          return script.export(format as AssemblyFormat, to);
+        },
       },
       {
         name: 'render_picture',
         description:
-          'A picture (PNG) of a component or an assembly, to look at what was made: from a view (isometric by default) or a free direction, zoomed onto bodies or instances, with others hidden or see-through. Assemblies also exploded (an exploded view, all or the first steps) or at a moment of a motion study.',
+          'A picture (PNG) of a component or an assembly, to look at what was made: from a view (isometric by default) or a free direction, zoomed onto bodies or instances, with others hidden or see-through. Assemblies also exploded (an exploded view, all or the first steps) or at a moment of a motion study. A section plane cuts the model open, as the section view of the app does. A drawing shows its sheet as the PDF prints it (width only; focus one view id to zoom onto it); an imported 3D file shows as it was read.',
         inputSchema: object(
           {
-            document: string('Component or assembly id (from list_documents).'),
+            document: string('Component, assembly, drawing or imported file id (from list_documents).'),
             ...pictureArgs,
             explode: string('Assemblies: an exploded view id, shown apart.'),
             steps: number('With explode: how many of its steps (all by default).'),
@@ -435,13 +442,15 @@ export class McpServer {
             ...(args['moments'] !== undefined ? { moments: Number(args['moments']) } : {}),
             ...(args['path'] !== undefined ? { to: String(args['path']) } : {}),
           });
-          return { picture: result.sheet, caption: `The animation is at ${result.path}. The sheet shows the moments ${result.times.join(', ')} s.` } satisfies Captioned;
+          const asked = Math.max(1, Math.min(16, args['moments'] === undefined ? 9 : Number(args['moments'])));
+          const repeats = result.times.length < asked ? ` The study repeats itself: only ${result.times.length} moments show different poses.` : '';
+          return { picture: result.sheet, caption: `The animation is at ${result.path}. The sheet shows the moments ${result.times.join(', ')} s.${repeats}` } satisfies Captioned;
         },
       },
       {
         name: 'command_reference',
         description:
-          'The TypeScript types of the commands and contracts, with their documentation, by topic: commands (design commands and shorthands), sketch (entities and constraints), features (features and parts: gears, ring gears, screws, bearings …), document (components, materials, checks, appearance), assembly (assembly commands, instances, joints, links, studies, exploded views). Without a topic, the list of topics.',
+          'The TypeScript types of the commands and contracts, with their documentation, by topic: commands (design commands and shorthands), sketch (entities and constraints), features (features and parts: gears, ring gears, screws, bearings …), document (components, materials, checks, appearance), assembly (assembly commands, instances, joints, links, studies, exploded views), drawing (drawing commands, sheets, views, annotations). Without a topic, the list of topics.',
         inputSchema: object({ topic: { type: 'string', enum: Object.keys(this.reference) } }),
         run: async (args) => {
           const topic = args['topic'] === undefined ? undefined : String(args['topic']);
@@ -451,6 +460,9 @@ export class McpServer {
           return text;
         },
       },
+      ...drawingTools(cadence),
+      ...modelTools(cadence),
+      ...projectTools(cadence),
     ];
   }
 }

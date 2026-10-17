@@ -18,6 +18,7 @@ import {
   type Result,
   resultStamp,
   sourceKey,
+  type Vec2,
   type Vec3,
   type ViewDirection,
 } from '@core/contracts';
@@ -25,10 +26,12 @@ import type { ModelingEngine, ViewGeometry } from '@core/engines/modeling';
 import type { ParameterEngine } from '@core/engines/parameter';
 import type { Clock } from '@core/utilities/clock';
 import type { EventBus } from '@core/utilities/messaging';
+import { encodePng } from '@core/utilities/picture';
+import type { TextFont, TextWeight } from '@core/utilities/text';
 import { holeCallout } from './callouts';
 import { applyCommand } from './commands';
 import type { DrawingCommand, DrawingManager, DrawingSession, DrawingState, SheetLayout } from './drawing-manager';
-import { sheetDxf, sheetPdf } from './exports';
+import { sheetDxf, sheetPdf, sheetPixels } from './exports';
 import { layoutSheet, type PartsList } from './layout';
 
 export interface DrawingManagerDependencies {
@@ -40,6 +43,8 @@ export interface DrawingManagerDependencies {
   readonly parameters: ParameterEngine;
   readonly events: EventBus<DomainEvents>;
   readonly clock: Clock;
+  /** The bundled fonts, for pictures of the sheet. */
+  readonly fonts: (weight: TextWeight) => Promise<TextFont>;
 }
 
 /** A view's right and up: the viewer is on the side of right × up (third-angle names). */
@@ -118,8 +123,18 @@ class Session implements DrawingSession {
   }
 
   close(): void {
+    for (const source of this.sources.values()) void this.deps.modeling.keep(source.bodies, false);
     for (const stop of this.unsubscribe) stop();
     this.listeners.clear();
+  }
+
+  /** Puts a loaded source in place of the one before, holding its shapes in the shape store while views show it (CAD-121). */
+  private hold(id: DocumentId, next: Source): void {
+    const before = this.sources.get(id)?.bodies ?? [];
+    this.sources.set(id, next);
+    if (before === next.bodies) return;
+    void this.deps.modeling.keep(next.bodies, true);
+    void this.deps.modeling.keep(before, false);
   }
 
   execute(command: DrawingCommand): Promise<Result<void>> {
@@ -146,6 +161,32 @@ class Session implements DrawingSession {
     const bytes = new TextEncoder().encode(sheetDxf(this.layout));
     await this.deps.externalFiles.deliver({ name: `${this.document.name}.dxf`, mediaType: 'image/vnd.dxf', bytes });
     return ok(undefined);
+  }
+
+  async picture(options: { readonly width?: number; readonly view?: string } = {}): Promise<Result<Uint8Array>> {
+    await this.queue;
+    const width = Math.round(options.width ?? 1600);
+    if (!(width > 0 && width <= 8000)) return fail({ code: 'invalid-picture', message: 'A picture is 1 to 8000 pixels wide.' });
+    const view = options.view === undefined ? undefined : this.layout.views.find((v) => v.id === options.view);
+    if (options.view !== undefined && !view) return fail({ code: 'invalid-picture', message: `There is no view "${options.view}".` });
+    // A view with room around it for its dimensions and label.
+    const region = view && { min: [view.min[0] - 15, view.min[1] - 15] as Vec2, max: [view.max[0] + 15, view.max[1] + 15] as Vec2 };
+    return ok(await encodePng(await sheetPixels(this.layout, this.deps.fonts, { width, ...(region ? { region } : {}) })));
+  }
+
+  catchUp(): Promise<void> {
+    return this.serialized(async () => {
+      let changed = false;
+      for (const [id, source] of [...this.sources]) {
+        if (source.status !== 'ready') continue;
+        // Changed since it was read (an assembly's result can lag behind its document: not the stamp).
+        const document = await this.deps.documents.load(id);
+        if (document?.modifiedAt === source.document?.modifiedAt) continue;
+        await this.load(id, 'changed');
+        changed = true;
+      }
+      if (changed) await this.relayout();
+    });
   }
 
   private async apply(command: DrawingCommand): Promise<Result<void>> {
@@ -195,7 +236,7 @@ class Session implements DrawingSession {
   private async load(id: DocumentId, reason: 'open' | 'regenerated' | 'failed' | 'changed'): Promise<void> {
     const document = await this.deps.documents.load(id);
     const previous = this.sources.get(id);
-    const missing = (message: string) => this.sources.set(id, { status: 'missing', message, bodies: [], stamp: '', ...(document ? { document } : {}) });
+    const missing = (message: string) => this.hold(id, { status: 'missing', message, bodies: [], stamp: '', ...(document ? { document } : {}) });
     if (!document || (document.kind !== 'component' && document.kind !== 'assembly')) return void missing('The document of this view is gone.');
     if (reason === 'failed') return void missing(`${document.name} cannot be built.`);
     const result = await this.deps.assets.latestResult(id);
@@ -205,14 +246,14 @@ class Session implements DrawingSession {
       const requests = this.requests.get(id) ?? 0;
       if (reason === 'regenerated' && requests >= maxRequests) return void missing(`${document.name} cannot be built.`);
       this.requests.set(id, requests + 1);
-      this.sources.set(id, { status: 'loading', bodies: previous?.bodies ?? [], stamp: previous?.stamp ?? '', document });
+      this.hold(id, { status: 'loading', bodies: previous?.bodies ?? [], stamp: previous?.stamp ?? '', document });
       this.deps.events.publish('regenerateComponent', { documentId: id });
       return;
     }
     if (!result) return void missing(`${document.name} has no result yet.`);
     this.requests.delete(id);
     const bodies = previous?.stamp === result.stamp && previous.status === 'ready' ? previous.bodies : await this.deps.modeling.restore(result.bytes, `result:${sourceKey(id)}:${result.stamp}`);
-    this.sources.set(id, { status: 'ready', bodies, stamp: result.stamp, document });
+    this.hold(id, { status: 'ready', bodies, stamp: result.stamp, document });
   }
 
   /** Draws every view (from cache where nothing changed) and lays out the sheet. */

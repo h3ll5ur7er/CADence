@@ -8,7 +8,7 @@ A nine-cylinder radial aircraft engine, modelled entirely by an AI agent through
 
 All parts are modelled, including the internal ring gear. The assembly **Radial engine** is built through `edit_assembly`: 79 instances and 42 pattern copies, 66 joints with nine closed slider-crank loops that solve, gear, carrier and planet links, nine roller tappets driven by cam links, nine pushrods riding on the tappets at their tilt ([[CAD-113]]), two motion studies, an animation and an exploded view *Taken apart* with radial steps ([[CAD-110]]).
 
-**Round 4 (2026-10-17): the engine is complete.** Standing still nothing overlaps, the study runs four engine cycles without a collision, and there is an animation and the exploded view. The round-3 fixes ([[CAD-116]] to [[CAD-119]]) work on the engine. All nine tappet guides give one slider constant (67.0902 mm), in a new process and in the MCP server alike. The MCP server follows component and assembly changes made by another process. Three new findings, none blocking: [[CAD-120]] (one big jump of the crank flipped the nine loops into their mirror pose and saved it), [[CAD-121]] (the shape cache evicts its own placed parts in long scripts) and [[CAD-122]] (animations re-frame the camera every frame).
+**Round 4 (2026-10-17): the engine is complete.** Standing still nothing overlaps, the study runs four engine cycles without a collision, and there is an animation and the exploded view. The round-3 fixes ([[CAD-116]] to [[CAD-119]]) work on the engine. All nine tappet guides give one slider constant (67.0902 mm), in a new process and in the MCP server alike. The MCP server follows component and assembly changes made by another process. Three new findings, none blocking: [[CAD-120]] (one big jump of the crank flipped the nine loops into their mirror pose and saved it), [[CAD-121]] (the shape cache evicts its own placed parts in long scripts) and [[CAD-122]] (animations re-frame the camera every frame). **Drawings (round 5) were stopped at [[CAD-123]]:** phase 29 gives agents drawings and everything else the app does ([[CAD-124]]), and fixes the three round-4 findings.
 
 > [!NOTE]
 > Fixed in my own design in round 4: the cam link offsets come from the new slider constant (−8.8961 mm). The sun is turned half a tooth (7.5°) and the crank gear half a tooth (3.75°) on the crankshaft, and the lay pinion half a tooth (15°) in its component, which keeps the valve timing. The pushrod that touched its rocker box was only too high because of the old tappet heights. Fixed in round 3: a recess in the rear case for the crankcase's rear boss; intake ports as sockets for the 16 mm pipes; a cylindrical blade shank in larger hub sockets; a deeper piston crown for the master rod's eye; plugs tilted 45° outwards so neighbours clear; longer, narrower tappet guides; roller tappets (a flat foot offset from the cam's centre is hit side-on by the small lobes: the lift jumps 4 mm in a quarter of a degree); a pocket in each rocker box for the pushrod's travel.
@@ -171,11 +171,18 @@ After phase 28 the joint frames on the nose case's guides (and on any round face
 
 Round 4 (checking phase 28, phasing the gears, collision check and animation):
 
-| Task | What | Kind | Status |
+| Task | What | Kind | Fixed by (phase 29) |
 | --- | --- | --- | --- |
-| [[CAD-120]] | `set-joint-values` crank 180° → 0° in one step leaves the master rod at −180° with the pistons slid through the crankcase (a valid mirror pose of cylindrical joints), and saves it; with slide limits the jump fails instead | bug | todo |
-| [[CAD-121]] | "Body crank has to be rebuilt first" when a large assembly publishes after a few moves; WebAssembly faults after 73 interference checks: the shape cache's `has()` is no use, so `place()` evicts its own parts | bug | todo |
-| [[CAD-122]] | Animations fit the camera per frame (the view jumps); the sheet shows one pose for whole-turn studies; GIFs land in the server's working directory | improvement | todo |
+| [[CAD-120]] | `set-joint-values` crank 180° → 0° in one step leaves the master rod at −180° with the pistons slid through the crankcase (a valid mirror pose of cylindrical joints), and saves it; with slide limits the jump fails instead | bug | values reached in steps, as a study does ✅ |
+| [[CAD-121]] | "Body crank has to be rebuilt first" when a large assembly publishes after a few moves; WebAssembly faults after 73 interference checks: the shape cache's `has()` is no use, so `place()` evicts its own parts | bug | open documents hold their shapes; placed copies never stored ✅ |
+| [[CAD-122]] | Animations fit the camera per frame (the view jumps); the sheet shows one pose for whole-turn studies; GIFs land in the server's working directory | improvement | one camera; distinct moments; `CADence exports` ✅ |
+
+Round 5 (technical drawings of every component): stopped at once.
+
+| Task | What | Kind | Fixed by (phase 29) |
+| --- | --- | --- | --- |
+| [[CAD-123]] | Agents cannot make technical drawings: the app has them, but `create_document` takes only components and assemblies, and no tool or scripting call edits, reads, pictures or exports a drawing | missing, blocking | drawing tools, sheet pictures, PDF and DXF ✅ |
+| [[CAD-124]] | And what else agents could not do: projects, versions, git, measuring, sketch checks, viewers, tables, build instructions, section pictures | missing | every manager operation as a tool ✅ |
 
 What worked well: revolves of long outlines, sweeps along line-arc-line paths, lofts through spline sections (from a round root since phase 26), circular patterns of cuts and of new bodies, mirrors, configurations (two crankcase halves from one component), the gear generator (spur and ring gears), modelled threads, fillets and chamfers, and `render_picture` for every part. In the assembly: nine closed loops solved from good starting values, links chained crank → lay gear → cam ring → nine cam followers, planetary links, patterns of turning instances, mass and bill of materials with configurations and copies. Since phase 27: pictures of the whole engine (79 instances, 42 copies) in seconds, the exploded view with radial steps across pattern copies, cam links with 186-point profiles, tilted joint offsets, and brief `edit_assembly` answers (a link change answers with the joints it moved, not the profiles).
 

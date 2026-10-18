@@ -3,7 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, extname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { createNodeCore } from '@core/composition/node';
+import { createNodeCore, type NodeResources } from '@core/composition/node';
 import type { ImportFormat, RemoteCredentials, Vec3 } from '@core/contracts';
 import type { DrawingFormat, SolidFormat } from '@core/managers/design';
 import type { StoppablePort } from '@core/utilities/messaging';
@@ -89,6 +89,8 @@ export async function runCli(
   env: NodeJS.ProcessEnv = process.env,
   /** Starts the worker that draws drawing views exactly, within a time limit (CAD-125); absent: views are drawn in this thread. */
   views?: () => StoppablePort,
+  /** The kernels' WebAssembly and the fonts, when not in their packages (the self-contained binary, CAD-131). */
+  resources?: NodeResources,
 ): Promise<number> {
   const { positional, options } = parseArguments(args);
   const [command, ...rest] = positional;
@@ -103,7 +105,7 @@ export async function runCli(
   const credentials: RemoteCredentials | undefined =
     env['CADENCE_GIT_USERNAME'] || env['CADENCE_GIT_PASSWORD'] ? { username: env['CADENCE_GIT_USERNAME'] ?? '', password: env['CADENCE_GIT_PASSWORD'] ?? '' } : undefined;
   const open = (projects?: string) => {
-    const core = createNodeCore({ ...(projects ? { projects } : {}), exports: exportsFolder, ...(views ? { views } : {}) });
+    const core = createNodeCore({ ...(projects ? { projects } : {}), exports: exportsFolder, ...(views ? { views } : {}), ...(resources ? { resources } : {}) });
     return new Cadence(core, core.exports);
   };
   const need = (count: number) => {

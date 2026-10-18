@@ -215,6 +215,8 @@ describe('DrawingManager', () => {
     const top = slow.state().layout.views.find((v) => v.id === 'top');
     expect(top?.note).toBe('Drawn from the triangles: the exact projection took too long.');
     expect(top?.min.map(Math.round)).toEqual([60, 170]);
+    // A handful of paths, as drawn exactly: the outline and the hole (CAD-130).
+    expect(slow.state().layout.paths.filter((p) => p.owner === 'top').length).toBeLessThan(10);
     slow.close();
 
     // Another process opens the drawing: the drawn view comes from the drawing's result, not drawn again.

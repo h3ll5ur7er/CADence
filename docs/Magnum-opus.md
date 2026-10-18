@@ -202,8 +202,8 @@ Round 6 (checking phase 30 on the drawings):
 
 | Task | What | Kind | Status |
 | --- | --- | --- | --- |
-| [[CAD-129]] | One ⌀12 pin circle under the carrier's top plate, nearly tangent to a ⌀8 bolt hole above it, is still offered as visible | bug | todo |
-| [[CAD-130]] | Views drawn from triangles are loose two-point segments (231,000 on the assembly sheet, its PDF 6.3 → 12.2 MB) | improvement | todo |
+| [[CAD-129]] | One ⌀12 pin circle under the carrier's top plate, nearly tangent to a ⌀8 bolt hole above it, is still offered as visible | bug | seen only where a stretch of it is drawn ✅ (phase 30) |
+| [[CAD-130]] | Views drawn from triangles are loose two-point segments (231,000 on the assembly sheet, its PDF 6.3 → 12.2 MB) | improvement | lines between corners, chained outlines, joined paths ✅ (phase 30) |
 
 What worked well: revolves of long outlines, sweeps along line-arc-line paths, lofts through spline sections (from a round root since phase 26), circular patterns of cuts and of new bodies, mirrors, configurations (two crankcase halves from one component), the gear generator (spur and ring gears), modelled threads, fillets and chamfers, and `render_picture` for every part. In the assembly: nine closed loops solved from good starting values, links chained crank → lay gear → cam ring → nine cam followers, planetary links, patterns of turning instances, mass and bill of materials with configurations and copies. Since phase 27: pictures of the whole engine (79 instances, 42 copies) in seconds, the exploded view with radial steps across pattern copies, cam links with 186-point profiles, tilted joint offsets, and brief `edit_assembly` answers (a link change answers with the joints it moved, not the profiles).
 

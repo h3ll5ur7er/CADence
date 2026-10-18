@@ -19,8 +19,8 @@ test('draws a part: views with hidden lines, a section and a detail, dimensions,
     await page.locator('#view-direction').selectOption({ label: direction });
     await page.getByRole('button', { name: 'Add view' }).click();
   }
-  // The outlines of both views and the hole.
-  await expect.poll(() => page.locator('svg.sheet polyline.visible').count()).toBeGreaterThan(7);
+  // The outlines of both views and the hole (lines that go on are one path, CAD-130).
+  await expect.poll(() => page.locator('svg.sheet polyline.visible').count()).toBeGreaterThan(4);
 
   // The plate's width, from corner to corner of the top view.
   await page.getByRole('button', { name: 'Dimension', exact: true }).click();

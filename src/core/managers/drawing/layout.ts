@@ -66,6 +66,23 @@ function pointsOf(curve: ProjectedCurve): Vec2[] {
   return Array.from({ length: steps + 1 }, (_, k) => [curve.center[0] + radius * Math.cos(from + (sweep * k) / steps), curve.center[1] + radius * Math.sin(from + (sweep * k) / steps)] as Vec2);
 }
 
+/** Curves as paths: lines that go on where the one before ends are one path (CAD-130), circles and arcs each their own. */
+function joined(curves: readonly ProjectedCurve[]): Vec2[][] {
+  const paths: Vec2[][] = [];
+  let open: Vec2[] | undefined;
+  for (const curve of curves) {
+    if (curve.kind !== 'line') {
+      paths.push(pointsOf(curve));
+      open = undefined;
+      continue;
+    }
+    const last = open?.at(-1);
+    if (open && last && Math.abs(last[0] - curve.start[0]) < 1e-9 && Math.abs(last[1] - curve.start[1]) < 1e-9) open.push(curve.end);
+    else paths.push((open = [curve.start, curve.end]));
+  }
+  return paths;
+}
+
 /** The part of segment ab inside the circle (centre c, radius r), or none. */
 function clipToCircle(a: Vec2, b: Vec2, c: Vec2, r: number): [Vec2, Vec2] | undefined {
   const d = sub(b, a);
@@ -128,8 +145,8 @@ export function layoutSheet(input: LayoutInput): SheetLayout {
     const center = mid(geometry.box.min, geometry.box.max);
     const toSheet = (p: Vec2): Vec2 => add(view.at, mul(sub(p, center), scale));
     placements.set(view.id, { toSheet, scale });
-    for (const curve of geometry.visible) line(pointsOf(curve).map(toSheet), 'visible', view.id);
-    if (view.hidden) for (const curve of geometry.hidden) line(pointsOf(curve).map(toSheet), 'hidden', view.id);
+    for (const points of joined(geometry.visible)) line(points.map(toSheet), 'visible', view.id);
+    if (view.hidden) for (const points of joined(geometry.hidden)) line(points.map(toSheet), 'hidden', view.id);
     for (const [a, b] of hatch(geometry.cut.map(([a, b]) => [toSheet(a), toSheet(b)] as const), 3)) line([a, b], 'hatch', view.id);
     for (const p of geometry.points) anchors.push({ view: view.id, kind: 'point', name: p.name, at: toSheet(p.at), ...extra(p) });
     for (const c of geometry.circles) anchors.push({ view: view.id, kind: 'circle', name: c.name, at: toSheet(c.center), radius: c.radius * scale, ...extra(c) });

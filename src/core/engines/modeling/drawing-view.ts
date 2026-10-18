@@ -126,12 +126,18 @@ export function drawingView(bodies: readonly { readonly id: string; readonly nam
     const points: { name: string; at: Vec2; model?: Vec3; hidden?: true }[] = [];
     const circles: { name: string; center: Vec2; radius: number; model?: Vec3; hidden?: true }[] = [];
     const lines: { name: string; start: Vec2; end: Vec2; model?: Vec3; hidden?: true }[] = [];
-    const shown = (samples: readonly Vec2[]) => (samples.some(seen) ? {} : { hidden: true as const });
-    const along = (a: Vec2, b: Vec2) => [0.1, 0.3, 0.5, 0.7, 0.9].map((t): Vec2 => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+    // A point is seen where it is drawn; a line or circle where a stretch of it is (two neighbouring
+    // samples), not where it only touches something drawn (CAD-129).
+    const shown = (samples: readonly Vec2[]) => {
+      const drawn = samples.map(seen);
+      return drawn.length === 1 ? drawn[0] : drawn.some((s, i) => s && drawn[i + 1]);
+    };
+    const flag = (samples: readonly Vec2[]) => (shown(samples) ? {} : { hidden: true as const });
+    const along = (a: Vec2, b: Vec2) => Array.from({ length: 21 }, (_, i): Vec2 => [a[0] + ((b[0] - a[0]) * (i + 0.5)) / 21, a[1] + ((b[1] - a[1]) * (i + 0.5)) / 21]);
     for (const { named } of bodies) {
       for (const vertex of verticesOf(named)) {
         const at = flat(vertex.point);
-        points.push({ name: vertex.name, at, model: vertex.point, ...shown([at]) });
+        points.push({ name: vertex.name, at, model: vertex.point, ...flag([at]) });
       }
       for (const edge of edgesOf(named.shape)) {
         const name = named.edges.get(edge.hashCode);
@@ -139,13 +145,13 @@ export function drawingView(bodies: readonly { readonly id: string; readonly nam
         for (const curve of projectEdge(edge, flat, n)) {
           if (curve.kind === 'line' && (edge.geomType as string) === 'LINE') {
             const [s, e] = [edge.startPoint, edge.endPoint];
-            lines.push({ name, start: curve.start, end: curve.end, model: scale3(add3(s.toTuple() as Vec3, e.toTuple() as Vec3), 0.5), ...shown(along(curve.start, curve.end)) });
+            lines.push({ name, start: curve.start, end: curve.end, model: scale3(add3(s.toTuple() as Vec3, e.toTuple() as Vec3), 0.5), ...flag(along(curve.start, curve.end)) });
             s.delete();
             e.delete();
           } else if (curve.kind !== 'line') {
             const radius = curve.kind === 'circle' ? curve.radius : Math.hypot(curve.start[0] - curve.center[0], curve.start[1] - curve.center[1]);
             const center = centerOf(edge);
-            circles.push({ name, center: curve.center, radius, ...(center ? { model: center } : {}), ...shown(around(curve)) });
+            circles.push({ name, center: curve.center, radius, ...(center ? { model: center } : {}), ...flag(around(curve)) });
           }
         }
       }
@@ -156,8 +162,8 @@ export function drawingView(bodies: readonly { readonly id: string; readonly nam
         outlinesOf(face, n).forEach(([a, b], k) => {
           const id = `s:${name}:${k + 1}`;
           const [start, end] = [flat(a), flat(b)];
-          lines.push({ name: id, start, end, model: scale3(add3(a, b), 0.5), ...shown(along(start, end)) });
-          points.push({ name: `${id}:a`, at: start, model: a, ...shown([start]) }, { name: `${id}:b`, at: end, model: b, ...shown([end]) });
+          lines.push({ name: id, start, end, model: scale3(add3(a, b), 0.5), ...flag(along(start, end)) });
+          points.push({ name: `${id}:a`, at: start, model: a, ...flag([start]) }, { name: `${id}:b`, at: end, model: b, ...flag([end]) });
         });
       }
     }
@@ -234,11 +240,10 @@ function centerOf(edge: Edge): Vec3 | undefined {
   }
 }
 
-/** Points round a circle (or along an arc), to tell whether any of it is seen. */
+/** Points round a circle (or along an arc, end to end), 48 a turn, to tell whether a stretch of it is seen. */
 function around(curve: Exclude<ProjectedCurve, { kind: 'line' }>): Vec2[] {
-  return segmentsOf(curve)
-    .filter((_, i) => i % 3 === 1)
-    .map(([a]) => a);
+  const segments = segmentsOf(curve);
+  return [...segments.map(([a]) => a), (segments.at(-1) as readonly [Vec2, Vec2])[1]];
 }
 
 /** The outermost points seen, for overall dimensions, also of assemblies, whose placed parts have no names (CAD-127). */

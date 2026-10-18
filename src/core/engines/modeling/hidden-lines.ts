@@ -50,12 +50,24 @@ export function meshHiddenLines(
   /** Splits a curve, given as points along it (in the model), into seen and hidden runs. */
   const sort = (points: readonly Vec3[], exact?: readonly ProjectedCurve[]) => {
     const seen = points.map((p) => depth.sees(view(p)));
-    if (exact && seen.every((s) => s === seen[0])) return void (seen[0] ? visible : hidden).push(...exact);
-    for (let i = 1; i < points.length; i++) {
-      const [a, b] = [view(points[i - 1] as Vec3), view(points[i] as Vec3)];
-      if (Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-9) continue;
-      (seen[i - 1] && seen[i] ? visible : hidden).push({ kind: 'line', start: [a[0], a[1]], end: [b[0], b[1]] });
+    if (exact && seen.every((s) => s === seen[0])) return void (seen[0] ? visible : hidden).push(...straightLines(exact, depth.pixel / 2));
+    // Runs of pieces seen alike, each as lines between its corners: as few as an exact view has (CAD-130).
+    const flat = points.map((p): Vec2 => view(p).slice(0, 2) as unknown as Vec2);
+    let run: Vec2[] = [];
+    let shown = false;
+    const end = () => {
+      const corners = straightened(run, depth.pixel / 2);
+      for (let i = 1; i < corners.length; i++) (shown ? visible : hidden).push({ kind: 'line', start: corners[i - 1] as Vec2, end: corners[i] as Vec2 });
+      run = [];
+    };
+    for (let i = 1; i < flat.length; i++) {
+      const piece = !!(seen[i - 1] && seen[i]);
+      if (run.length && piece !== shown) end();
+      if (!run.length) run.push(flat[i - 1] as Vec2);
+      shown = piece;
+      run.push(flat[i] as Vec2);
     }
+    end();
   };
   /** How many pieces to test a curve of this length in: about two pixels each. */
   const steps = (length: number) => Math.min(400, Math.max(8, Math.ceil(length / (2 * depth.pixel))));
@@ -104,14 +116,65 @@ export function meshHiddenLines(
         }
       }
       const at = (i: number): Vec3 => [mesh.vertices[3 * i] as number, mesh.vertices[3 * i + 1] as number, mesh.vertices[3 * i + 2] as number];
-      for (const [key, list] of sides) {
-        if (list.length !== 2 || list[0] === list[1]) continue;
-        const [a, b] = key.split(',').map(Number) as [number, number];
-        sort([at(a), at(b)]);
-      }
+      const outline = [...sides].filter(([, list]) => list.length === 2 && list[0] !== list[1]).map(([key]) => key.split(',').map(Number) as [number, number]);
+      for (const chain of chains(outline)) sort(chain.map(at));
     }
   });
   return { visible, hidden, tolerance: 2 * depth.pixel };
+}
+
+/** Curves with runs of lines (a circle seen edge on comes as 24) as few lines as keep their shape. */
+function straightLines(curves: readonly ProjectedCurve[], tolerance: number): ProjectedCurve[] {
+  if (!curves.every((c, i) => c.kind === 'line' && (i === 0 || samePoint((curves[i - 1] as { end: Vec2 }).end, c.start)))) return [...curves];
+  const corners = straightened([(curves[0] as { start: Vec2 }).start, ...curves.map((c) => (c as { end: Vec2 }).end)], tolerance);
+  return corners.slice(1).map((end, i) => ({ kind: 'line', start: corners[i] as Vec2, end }));
+}
+
+const samePoint = (a: Vec2, b: Vec2) => Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9;
+
+/** Triangle sides joined end to end where they share a corner, so an outline is drawn in one go. */
+function chains(sides: readonly (readonly [number, number])[]): number[][] {
+  const at = new Map<number, number[]>();
+  sides.forEach(([a, b], i) => {
+    for (const v of [a, b]) at.set(v, [...(at.get(v) ?? []), i]);
+  });
+  const used = new Set<number>();
+  const next = (vertex: number) => (at.get(vertex) ?? []).find((i) => !used.has(i));
+  const result: number[][] = [];
+  sides.forEach(([a, b], first) => {
+    if (used.has(first)) return;
+    used.add(first);
+    const chain = [a, b];
+    // Onwards from each end while another side goes on from there.
+    for (const forward of [true, false]) {
+      for (let side = next(forward ? (chain.at(-1) as number) : (chain[0] as number)); side !== undefined; side = next(forward ? (chain.at(-1) as number) : (chain[0] as number))) {
+        used.add(side);
+        const [p, q] = sides[side] as readonly [number, number];
+        const from = forward ? chain.at(-1) : chain[0];
+        const to = p === from ? q : p;
+        if (forward) chain.push(to);
+        else chain.unshift(to);
+      }
+    }
+    result.push(chain);
+  });
+  return result;
+}
+
+/** The points of a polyline that matter: those further than `tolerance` from the straight line past them (Douglas–Peucker). */
+export function straightened(points: readonly Vec2[], tolerance: number): Vec2[] {
+  if (points.length < 3) return [...points];
+  const [a, b] = [points[0] as Vec2, points.at(-1) as Vec2];
+  const [dx, dy] = [b[0] - a[0], b[1] - a[1]];
+  const length = Math.hypot(dx, dy);
+  let [far, farthest] = [0, -1];
+  for (let i = 1; i < points.length - 1; i++) {
+    const p = points[i] as Vec2;
+    const off = length < 1e-12 ? Math.hypot(p[0] - a[0], p[1] - a[1]) : Math.abs((p[0] - a[0]) * dy - (p[1] - a[1]) * dx) / length;
+    if (off > far) [far, farthest] = [off, i];
+  }
+  if (far <= tolerance) return [a, b];
+  return [...straightened(points.slice(0, farthest + 1), tolerance).slice(0, -1), ...straightened(points.slice(farthest), tolerance)];
 }
 
 function point(edge: Edge, t: number): Vec3 {

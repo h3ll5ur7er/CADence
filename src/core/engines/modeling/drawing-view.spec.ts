@@ -90,6 +90,28 @@ describe('drawing views', () => {
     expect(extreme('top')?.[1]).toBeCloseTo(30, 6);
   });
 
+  it('hides a circle that only touches what is seen at one point (CAD-129)', async () => {
+    // A ⌀12 pocket from below, 1 mm off the ⌀10 hole's centre: from above its rim touches the hole's at one point, 30° round.
+    const off = [20 - Math.cos(Math.PI / 6), 15 - Math.sin(Math.PI / 6)] as const;
+    const pocketed = await engine.apply({
+      type: 'extrude',
+      feature: 'e3',
+      key: 'drawing-tangent-pocket',
+      bodies: await plate(),
+      frame: originFrames.XY,
+      profiles: [profile(circleLoop(off[0], off[1], 6, 'under'))],
+      distance: 5,
+      direction: 'normal',
+      operation: 'cut',
+    });
+    const view = await engine.drawView(pocketed.bodies, { ...top, hidden: false });
+    if (!view.ok) throw new Error(view.error.message);
+    const under = view.value.circles.filter((c) => Math.abs(c.radius - 6) < 1e-6);
+    expect(under.length).toBeGreaterThan(0);
+    expect(under.filter((c) => !c.hidden)).toEqual([]);
+    expect(view.value.circles.filter((c) => Math.abs(c.radius - 5) < 1e-6).some((c) => !c.hidden)).toBe(true);
+  });
+
   it('outlines a cylinder seen from its side with lines to dimension its diameter (CAD-127)', async () => {
     const rod = await engine.apply({ type: 'extrude', feature: 'rod', key: 'drawing-rod', bodies: [], frame: originFrames.XY, profiles: [profile(circleLoop(0, 0, 10, 'rod'))], distance: 40, direction: 'normal', operation: 'new-body' });
     // From the right: the rod's two half cylinders (split at x = ±10) each show one outline.
@@ -112,6 +134,8 @@ describe('drawing views', () => {
     const mesh = await engine.drawView(bodies, { ...front, method: 'mesh' });
     if (!exact.ok || !mesh.ok) throw new Error('not drawn');
     expect(mesh.value.approximate).toBe(true);
+    // Straight edges as one line each, not one per sample (CAD-130): a handful, though edges right behind others are kept too.
+    expect(mesh.value.visible.length).toBeLessThanOrEqual(16);
     expect(mesh.value.box.min.map(Math.round)).toEqual(exact.value.box.min.map(Math.round));
     expect(mesh.value.box.max.map(Math.round)).toEqual(exact.value.box.max.map(Math.round));
     // The hole's walls are hidden from the front, its outline is seen from above.

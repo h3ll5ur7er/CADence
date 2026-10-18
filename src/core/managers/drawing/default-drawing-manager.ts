@@ -71,7 +71,7 @@ const defaultMaterial = materials[0] as Material;
  * Drawn views are kept as the drawing's result (CAD-125), so other processes need not draw them
  * again. The stamp changes when what a drawn view holds changes.
  */
-const drawnStamp = 'views:2';
+const drawnStamp = 'views:3';
 const drawing = 'Drawing…';
 
 class Session implements DrawingSession {

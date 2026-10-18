@@ -1,4 +1,4 @@
-import type { DocumentId, DrawingAnnotation, DrawingDocument, DrawingView, Result, Sheet, TitleBlock, Vec2, ViewAnchor } from '@core/contracts';
+import type { DocumentId, DrawingAnnotation, DrawingDocument, DrawingView, Result, Sheet, TitleBlock, Vec2, Vec3, ViewAnchor } from '@core/contracts';
 
 /** Every change to a drawing is one of these commands; ids come from the caller. */
 export type DrawingCommand =
@@ -30,22 +30,30 @@ export interface SheetLayout {
   readonly anchors: readonly SheetAnchor[];
   /**
    * Where each view is (its box on the sheet), and why one cannot be drawn; `center` and `scale` map
-   * the sheet back to the view's model millimetres: model = center + (sheet − at) / scale.
+   * the sheet back to the view's model millimetres: model = center + (sheet − at) / scale. A `note`
+   * says how a view was drawn when not exactly (CAD-125).
    */
-  readonly views: readonly { readonly id: string; readonly min: Vec2; readonly max: Vec2; readonly center?: Vec2; readonly scale?: number; readonly error?: string }[];
+  readonly views: readonly { readonly id: string; readonly min: Vec2; readonly max: Vec2; readonly center?: Vec2; readonly scale?: number; readonly error?: string; readonly note?: string }[];
   /** Assembly instances in views (for balloons), where they are on the sheet. */
   readonly instances: readonly { readonly view: string; readonly instance: string; readonly at: Vec2 }[];
   /** Annotations whose geometry is gone (the model changed). */
   readonly lost: readonly string[];
 }
 
-export type SheetAnchor = ViewAnchor & { readonly at: Vec2; readonly radius?: number; readonly start?: Vec2; readonly end?: Vec2 };
+/**
+ * An anchor where it is on the sheet; `model` is where it is in the model (a point, a circle's centre,
+ * a line's middle), and `hidden` marks geometry the view does not show unless it draws hidden lines
+ * (CAD-127, CAD-128).
+ */
+export type SheetAnchor = ViewAnchor & { readonly at: Vec2; readonly radius?: number; readonly start?: Vec2; readonly end?: Vec2; readonly model?: Vec3; readonly hidden?: true };
 
 export interface DrawingState {
   readonly document: DrawingDocument;
   readonly layout: SheetLayout;
   readonly canUndo: boolean;
   readonly canRedo: boolean;
+  /** The material of the first component the views show: the title block's unless it names its own (CAD-127). */
+  readonly material?: string;
 }
 
 /** An editing session on one drawing. */
@@ -66,6 +74,8 @@ export interface DrawingSession {
   picture(options?: { readonly width?: number; readonly view?: string }): Promise<Result<Uint8Array>>;
   /** Reads again the views' sources whose documents another process changed (CAD-116). */
   catchUp(): Promise<void>;
+  /** The configurations of a component, which its views may show (CAD-126); none for other documents. */
+  configurationsOf(source: DocumentId): Promise<readonly { readonly id: string; readonly name: string }[]>;
   /** Stops listening for changes of the views' sources. */
   close(): void;
 }

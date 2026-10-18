@@ -70,6 +70,43 @@ export function remote<T extends object>(port: Port, service: string): Remote<T>
   });
 }
 
+/** A worker that can be stopped: a port with `terminate`. */
+export interface StoppablePort extends Port {
+  terminate(): void;
+}
+
+/**
+ * A proxy whose method calls run in a worker of their own and may take at most `limit` ms (CAD-125):
+ * a call that takes longer stops the worker (WebAssembly cannot be interrupted otherwise) and fails
+ * with a `TimeoutError`, as do the calls waiting with it; the next call starts a new worker.
+ */
+export function stoppable<T extends object>(start: () => StoppablePort, service: string, limit: number): Remote<T> {
+  let worker: StoppablePort | undefined;
+  return new Proxy({} as Remote<T>, {
+    get: (_target, method) => {
+      if (typeof method !== 'string' || method === 'then') return undefined;
+      return async (...args: unknown[]) => {
+        const port = (worker ??= start());
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const late = new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            const error = Object.assign(new Error(`${service}.${method} took longer than ${limit / 1000} s.`), { name: 'TimeoutError' });
+            if (worker === port) worker = undefined;
+            port.terminate();
+            for (const waiting of pending.get(port)?.values() ?? []) waiting.reject(error);
+            reject(error);
+          }, limit);
+        });
+        try {
+          return await Promise.race([call(port, service, method, args), late]);
+        } finally {
+          clearTimeout(timer);
+        }
+      };
+    },
+  });
+}
+
 const pending = new WeakMap<Port, Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>>();
 let nextId = 0;
 

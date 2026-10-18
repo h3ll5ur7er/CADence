@@ -241,3 +241,37 @@ export async function hinge(page: Page, stays: number, instance: number): Promis
   await page.mouse.click(bottom.x, bottom.y);
   await page.getByRole('button', { name: 'OK' }).click();
 }
+
+/** Where an anchor of a drawing's layout is on screen: the first matching `kind` in the view (by index), by `pick`. */
+export async function anchorOnScreen(page: Page, viewIndex: number, kind: 'point' | 'circle' | 'line', pick: 'left' | 'right' | 'first' | 'rim'): Promise<{ x: number; y: number }> {
+  return page.evaluate(
+    ({ viewIndex, kind, pick }) => {
+      // Test-only introspection of Angular's dev-mode debug API.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ng = (window as unknown as { ng: { getComponent(e: Element): any } }).ng;
+      const mode = ng.getComponent(document.querySelector('cad-drawing-mode') as Element);
+      const layout = mode.store.layout();
+      const view = mode.store.document().views[viewIndex].id;
+      const anchors = layout.anchors.filter((a: { view: string; kind: string; hidden?: boolean }) => a.view === view && a.kind === kind && !a.hidden);
+      const sorted = [...anchors].sort((a: { at: number[] }, b: { at: number[] }) => a.at[0] - b.at[0] || a.at[1] - b.at[1]);
+      const anchor = pick === 'right' ? sorted.at(-1) : sorted[0];
+      const at = pick === 'rim' ? [anchor.at[0] + anchor.radius, anchor.at[1]] : anchor.at;
+      const svg = document.querySelector('svg.sheet') as SVGSVGElement;
+      const p = new DOMPoint(at[0], layout.height - at[1]).matrixTransform(svg.getScreenCTM() as DOMMatrix);
+      return { x: p.x, y: p.y };
+    },
+    { viewIndex, kind, pick },
+  );
+}
+
+/** A point on screen at a drawing's sheet millimetres. */
+export async function sheetPoint(page: Page, at: [number, number]): Promise<{ x: number; y: number }> {
+  return page.evaluate((at) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ng = (window as unknown as { ng: { getComponent(e: Element): any } }).ng;
+    const layout = ng.getComponent(document.querySelector('cad-drawing-mode') as Element).store.layout();
+    const svg = document.querySelector('svg.sheet') as SVGSVGElement;
+    const p = new DOMPoint(at[0], layout.height - at[1]).matrixTransform(svg.getScreenCTM() as DOMMatrix);
+    return { x: p.x, y: p.y };
+  }, at);
+}

@@ -6,6 +6,7 @@ import {
   type AssemblyDocument,
   type BodyState,
   type CadDocument,
+  type ComponentDocument,
   type DocumentId,
   type DomainEvents,
   type DrawingDocument,
@@ -19,10 +20,8 @@ import {
   resultStamp,
   sourceKey,
   type Vec2,
-  type Vec3,
-  type ViewDirection,
 } from '@core/contracts';
-import type { ModelingEngine, ViewGeometry } from '@core/engines/modeling';
+import type { ModelingEngine, ViewGeometry, ViewRequest } from '@core/engines/modeling';
 import type { ParameterEngine } from '@core/engines/parameter';
 import type { Clock } from '@core/utilities/clock';
 import type { EventBus } from '@core/utilities/messaging';
@@ -32,7 +31,7 @@ import { holeCallout } from './callouts';
 import { applyCommand } from './commands';
 import type { DrawingCommand, DrawingManager, DrawingSession, DrawingState, SheetLayout } from './drawing-manager';
 import { sheetDxf, sheetPdf, sheetPixels } from './exports';
-import { layoutSheet, type PartsList } from './layout';
+import { layoutSheet, type PartsList, viewAxes } from './layout';
 
 export interface DrawingManagerDependencies {
   readonly projects: ProjectAccess;
@@ -45,38 +44,43 @@ export interface DrawingManagerDependencies {
   readonly clock: Clock;
   /** The bundled fonts, for pictures of the sheet. */
   readonly fonts: (weight: TextWeight) => Promise<TextFont>;
+  /**
+   * A kernel of its own that draws views exactly and is stopped when a view takes too long
+   * (`stoppable`, CAD-125); such a view is drawn from the triangles by `modeling` instead. Absent:
+   * `modeling` draws views exactly, however long they take.
+   */
+  readonly views?: Pick<ModelingEngine, 'restore' | 'drawView'>;
 }
-
-/** A view's right and up: the viewer is on the side of right × up (third-angle names). */
-const s2 = Math.SQRT1_2;
-const s6 = 1 / Math.sqrt(6);
-const directions: Readonly<Record<ViewDirection, { readonly u: Vec3; readonly v: Vec3 }>> = {
-  front: { u: [1, 0, 0], v: [0, 0, 1] },
-  back: { u: [-1, 0, 0], v: [0, 0, 1] },
-  top: { u: [1, 0, 0], v: [0, 1, 0] },
-  bottom: { u: [1, 0, 0], v: [0, -1, 0] },
-  right: { u: [0, 1, 0], v: [0, 0, 1] },
-  left: { u: [0, -1, 0], v: [0, 0, 1] },
-  iso: { u: [s2, s2, 0], v: [-s6, s6, 2 * s6] },
-};
 
 interface Source {
   readonly status: 'loading' | 'ready' | 'missing';
   readonly message?: string;
   readonly bodies: readonly BodyState[];
+  /** The published result the bodies are read from, for the views kernel. */
+  readonly bytes?: Uint8Array;
   readonly stamp: string;
   readonly document?: CadDocument;
 }
 
+type Drawn = ViewGeometry | { readonly error: string };
+
 const historyLimit = 200;
 const maxRequests = 3;
 const defaultMaterial = materials[0] as Material;
+/**
+ * Drawn views are kept as the drawing's result (CAD-125), so other processes need not draw them
+ * again. The stamp changes when what a drawn view holds changes.
+ */
+const drawnStamp = 'views:2';
+const drawing = 'Drawing…';
 
 class Session implements DrawingSession {
   private layout: SheetLayout;
-  private readonly sources = new Map<DocumentId, Source>();
-  private readonly geometry = new Map<string, ViewGeometry | { readonly error: string }>();
-  private readonly requests = new Map<DocumentId, number>();
+  /** By `sourceKey`: a component (or a configuration of it) or an assembly. */
+  private readonly sources = new Map<string, Source>();
+  /** Drawn views by what they show (`viewKey`), also those read from the drawing's result. */
+  private readonly geometry = new Map<string, Drawn>();
+  private readonly requests = new Map<string, number>();
   private readonly undoStack: DrawingDocument[] = [];
   private readonly redoStack: DrawingDocument[] = [];
   private readonly listeners = new Set<(state: DrawingState) => void>();
@@ -90,11 +94,14 @@ class Session implements DrawingSession {
   ) {
     this.layout = layoutSheet({ document, geometry: new Map(), callouts: new Map(), parts: new Map() });
     const { events } = deps;
-    const reload = (id: DocumentId, reason: 'regenerated' | 'failed' | 'changed') =>
-      this.sources.has(id) || this.partsOf(id) ? this.serialized(() => this.refresh(id, reason)) : undefined;
+    // A configuration's events reach the views of it; a document's reach all views of it, and assemblies using it.
+    const reload = (id: DocumentId, reason: 'regenerated' | 'failed' | 'changed', configuration?: string | null) => {
+      const keys = [...this.sources.keys()].filter((key) => (configuration === undefined ? key.split('@')[0] === id : key === sourceKey(id, configuration ?? undefined)));
+      return keys.length || this.partsOf(id) ? this.serialized(() => this.refresh(id, keys, reason)) : undefined;
+    };
     this.unsubscribe = [
-      events.subscribe('componentRegenerated', ({ documentId, configuration, ok: done }) => (configuration ? undefined : reload(documentId, done ? 'regenerated' : 'failed'))),
-      events.subscribe('resultPublished', ({ documentId, configuration }) => (configuration ? undefined : reload(documentId, 'changed'))),
+      events.subscribe('componentRegenerated', ({ documentId, configuration, ok: done }) => reload(documentId, done ? 'regenerated' : 'failed', configuration ?? null)),
+      events.subscribe('resultPublished', ({ documentId, configuration }) => reload(documentId, 'changed', configuration ?? null)),
       events.subscribe('documentChanged', ({ documentId }) => reload(documentId, 'changed')),
       events.subscribe('documentRenamed', ({ documentId }) => reload(documentId, 'changed')),
       events.subscribe('documentRestored', ({ documentId }) => reload(documentId, 'changed')),
@@ -107,14 +114,37 @@ class Session implements DrawingSession {
     return [...this.sources.values()].some((s) => s.document?.kind === 'assembly' && s.document.instances.some((i) => i.component === id));
   }
 
+  /** The sources the views show: components (or configurations of them) and assemblies, by `sourceKey`. */
+  private keysOf(document: DrawingDocument): Set<string> {
+    return new Set(document.views.filter((v) => !v.detail).map((v) => sourceKey(v.source, v.configuration)));
+  }
+
   async start(): Promise<void> {
     this.projectParameters = (await this.deps.projects.find(this.document.projectId))?.parameters ?? [];
-    for (const id of new Set(this.document.views.map((v) => v.source))) await this.load(id, 'open');
+    const kept = await this.deps.assets.latestResult(this.document.id);
+    if (kept?.stamp === drawnStamp) {
+      try {
+        for (const [key, geometry] of Object.entries(JSON.parse(new TextDecoder().decode(kept.bytes)) as Record<string, ViewGeometry>)) this.geometry.set(key, geometry);
+      } catch {
+        // A damaged cache is drawn again.
+      }
+    }
+    for (const key of this.keysOf(this.document)) await this.load(key, 'open');
     await this.relayout();
   }
 
   state(): DrawingState {
-    return { document: this.document, layout: this.layout, canUndo: this.undoStack.length > 0, canRedo: this.redoStack.length > 0 };
+    const material = this.material();
+    return { document: this.document, layout: this.layout, canUndo: this.undoStack.length > 0, canRedo: this.redoStack.length > 0, ...(material ? { material } : {}) };
+  }
+
+  /** The material of the first component the views show, which the title block shows unless it names its own (CAD-127). */
+  private material(): string | undefined {
+    for (const view of this.document.views) {
+      const source = this.sources.get(sourceKey(view.source, view.configuration))?.document;
+      if (source?.kind === 'component') return (source.material ?? defaultMaterial).name;
+    }
+    return undefined;
   }
 
   subscribe(listener: (state: DrawingState) => void): () => void {
@@ -129,9 +159,9 @@ class Session implements DrawingSession {
   }
 
   /** Puts a loaded source in place of the one before, holding its shapes in the shape store while views show it (CAD-121). */
-  private hold(id: DocumentId, next: Source): void {
-    const before = this.sources.get(id)?.bodies ?? [];
-    this.sources.set(id, next);
+  private hold(key: string, next: Source): void {
+    const before = this.sources.get(key)?.bodies ?? [];
+    this.sources.set(key, next);
     if (before === next.bodies) return;
     void this.deps.modeling.keep(next.bodies, true);
     void this.deps.modeling.keep(before, false);
@@ -177,23 +207,34 @@ class Session implements DrawingSession {
   catchUp(): Promise<void> {
     return this.serialized(async () => {
       let changed = false;
-      for (const [id, source] of [...this.sources]) {
+      for (const [key, source] of [...this.sources]) {
         if (source.status !== 'ready') continue;
         // Changed since it was read (an assembly's result can lag behind its document: not the stamp).
-        const document = await this.deps.documents.load(id);
+        const document = await this.deps.documents.load(key.split('@')[0] as DocumentId);
         if (document?.modifiedAt === source.document?.modifiedAt) continue;
-        await this.load(id, 'changed');
+        await this.load(key, 'changed');
         changed = true;
       }
       if (changed) await this.relayout();
     });
   }
 
+  async configurationsOf(source: DocumentId): Promise<readonly { readonly id: string; readonly name: string }[]> {
+    const document = await this.deps.documents.load(source);
+    return document?.kind === 'component' ? (document.configurations ?? []).map(({ id, name }) => ({ id, name })) : [];
+  }
+
   private async apply(command: DrawingCommand): Promise<Result<void>> {
-    if (command.type === 'add-view' || command.type === 'edit-view') {
-      const source = await this.deps.documents.load(command.view.source);
-      if (!command.view.detail && (!source || source.projectId !== this.document.projectId || (source.kind !== 'component' && source.kind !== 'assembly'))) {
+    if ((command.type === 'add-view' || command.type === 'edit-view') && !command.view.detail) {
+      const { view } = command;
+      const source = await this.deps.documents.load(view.source);
+      if (!source || source.projectId !== this.document.projectId || (source.kind !== 'component' && source.kind !== 'assembly')) {
         return fail({ code: 'invalid-command', message: 'A view shows a component or an assembly of this project.' });
+      }
+      const configurations = source.kind === 'component' ? (source.configurations ?? []) : [];
+      if (view.configuration !== undefined && !configurations.some((c) => c.id === view.configuration)) {
+        const known = configurations.map((c) => `${c.id} (${c.name})`).join(', ');
+        return fail({ code: 'invalid-command', message: `${source.name} has no configuration ${view.configuration}${known ? `; its configurations are ${known}` : ''}.` });
       }
     }
     const applied = applyCommand(this.document, command);
@@ -214,18 +255,16 @@ class Session implements DrawingSession {
 
   private async commit(document: DrawingDocument): Promise<void> {
     this.document = document;
-    for (const id of new Set(document.views.map((v) => v.source))) if (!this.sources.has(id)) await this.load(id, 'open');
+    for (const key of this.keysOf(document)) if (!this.sources.has(key)) await this.load(key, 'open');
     await this.deps.documents.store(document);
     this.deps.events.publish('documentSaved', { projectId: document.projectId, documentId: document.id });
     await this.relayout();
   }
 
-  private async refresh(id: DocumentId, reason: 'regenerated' | 'failed' | 'changed'): Promise<void> {
-    if (this.sources.has(id)) await this.load(id, reason);
-    else {
-      // A component of a shown assembly: its name or material in the parts list.
-      for (const [source, loaded] of this.sources) if (loaded.document?.kind === 'assembly') await this.load(source, 'changed');
-    }
+  private async refresh(id: DocumentId, keys: readonly string[], reason: 'regenerated' | 'failed' | 'changed'): Promise<void> {
+    for (const key of keys) await this.load(key, reason);
+    // A component of a shown assembly: its name or material in the parts list.
+    if (!keys.length) for (const [key, loaded] of this.sources) if (loaded.document?.kind === 'assembly') await this.load(key, 'changed');
     await this.relayout();
   }
 
@@ -233,66 +272,107 @@ class Session implements DrawingSession {
    * Reads a view's source from its published result: a component's (asked for again when stale,
    * like the Assembly Manager does) or an assembly's (published by its editor).
    */
-  private async load(id: DocumentId, reason: 'open' | 'regenerated' | 'failed' | 'changed'): Promise<void> {
+  private async load(key: string, reason: 'open' | 'regenerated' | 'failed' | 'changed'): Promise<void> {
+    const [id, configuration] = key.split('@') as [DocumentId, string | undefined];
     const document = await this.deps.documents.load(id);
-    const previous = this.sources.get(id);
-    const missing = (message: string) => this.hold(id, { status: 'missing', message, bodies: [], stamp: '', ...(document ? { document } : {}) });
+    const previous = this.sources.get(key);
+    const missing = (message: string) => this.hold(key, { status: 'missing', message, bodies: [], stamp: '', ...(document ? { document } : {}) });
     if (!document || (document.kind !== 'component' && document.kind !== 'assembly')) return void missing('The document of this view is gone.');
+    if (configuration && (document.kind !== 'component' || !document.configurations?.some((c) => c.id === configuration))) return void missing(`${document.name} no longer has this configuration.`);
     if (reason === 'failed') return void missing(`${document.name} cannot be built.`);
-    const result = await this.deps.assets.latestResult(id);
+    const result = await this.deps.assets.latestResult(id, configuration);
     if (document.kind === 'assembly') {
       if (!result) return void missing(`Open ${document.name} once, so its parts are placed for drawings.`);
     } else if (result?.stamp !== resultStamp(document.modifiedAt, this.projectParameters)) {
-      const requests = this.requests.get(id) ?? 0;
+      const requests = this.requests.get(key) ?? 0;
       if (reason === 'regenerated' && requests >= maxRequests) return void missing(`${document.name} cannot be built.`);
-      this.requests.set(id, requests + 1);
-      this.hold(id, { status: 'loading', bodies: previous?.bodies ?? [], stamp: previous?.stamp ?? '', document });
-      this.deps.events.publish('regenerateComponent', { documentId: id });
+      this.requests.set(key, requests + 1);
+      this.hold(key, { status: 'loading', bodies: previous?.bodies ?? [], stamp: previous?.stamp ?? '', document });
+      this.deps.events.publish('regenerateComponent', { documentId: id, ...(configuration ? { configuration } : {}) });
       return;
     }
     if (!result) return void missing(`${document.name} has no result yet.`);
-    this.requests.delete(id);
-    const bodies = previous?.stamp === result.stamp && previous.status === 'ready' ? previous.bodies : await this.deps.modeling.restore(result.bytes, `result:${sourceKey(id)}:${result.stamp}`);
-    this.hold(id, { status: 'ready', bodies, stamp: result.stamp, document });
+    this.requests.delete(key);
+    const bodies = previous?.stamp === result.stamp && previous.status === 'ready' ? previous.bodies : await this.deps.modeling.restore(result.bytes, `result:${key}:${result.stamp}`);
+    this.hold(key, { status: 'ready', bodies, ...(this.deps.views ? { bytes: result.bytes } : {}), stamp: result.stamp, document });
   }
 
-  /** Draws every view (from cache where nothing changed) and lays out the sheet. */
+  /**
+   * Draws every view (from cache where nothing changed) and lays out the sheet. Views still to be
+   * drawn show *Drawing…* on a sheet laid out first, so the others are seen meanwhile (CAD-125).
+   */
   private async relayout(): Promise<void> {
-    const geometry = new Map<string, ViewGeometry | { readonly error: string }>();
+    const shown = new Map<string, { view: DrawingView; source: Source; key: string }>();
+    const geometry = new Map<string, Drawn>();
     for (const view of this.document.views.filter((v) => !v.detail)) {
-      const source = this.sources.get(view.source);
+      const source = this.sources.get(sourceKey(view.source, view.configuration));
       if (!source || source.status !== 'ready') {
         geometry.set(view.id, { error: source?.status === 'missing' ? (source.message ?? 'Missing.') : 'Loading…' });
         continue;
       }
-      geometry.set(view.id, await this.draw(view, source));
+      const key = viewKey(view, source.stamp);
+      shown.set(view.id, { view, source, key });
+      geometry.set(view.id, this.geometry.get(key) ?? { error: drawing });
     }
-    this.layout = layoutSheet({ document: this.document, geometry, callouts: this.callouts(geometry), parts: await this.partsLists() });
+    const missing = [...shown.values()].filter(({ key }) => !this.geometry.has(key));
+    if (missing.length) {
+      await this.publishLayout(geometry);
+      for (const { view, source, key } of missing) {
+        // Two views of the same: drawn once.
+        if (!this.geometry.has(key)) this.geometry.set(key, await this.draw(view, source));
+        geometry.set(view.id, this.geometry.get(key) as Drawn);
+      }
+      await this.keepDrawn([...shown.values()].map((s) => s.key));
+    }
+    await this.publishLayout(geometry);
+  }
+
+  private async publishLayout(geometry: ReadonlyMap<string, Drawn>): Promise<void> {
+    const material = this.material();
+    this.layout = layoutSheet({ document: this.document, geometry, callouts: this.callouts(geometry), parts: await this.partsLists(), ...(material ? { material } : {}) });
     const state = this.state();
     for (const listener of this.listeners) listener(state);
   }
 
-  private async draw(view: DrawingView, source: Source): Promise<ViewGeometry | { readonly error: string }> {
-    const key = `${view.source}:${source.stamp}|${view.direction}|${view.hidden}|${view.section?.offset ?? ''}`;
-    const cached = this.geometry.get(key);
-    if (cached) return cached;
-    const { u, v } = directions[view.direction];
-    const drawn = await this.deps.modeling.drawView(source.bodies, { frame: { origin: [0, 0, 0], u, v }, hidden: view.hidden, ...(view.section ? { cut: { offset: view.section.offset } } : {}) });
-    const geometry = drawn.ok ? drawn.value : { error: drawn.error.message };
-    this.geometry.set(key, geometry);
-    return geometry;
+  /** Draws a view exactly, in the views kernel when there is one; one that takes too long there is drawn from the triangles. */
+  private async draw(view: DrawingView, source: Source): Promise<Drawn> {
+    const { u, v } = viewAxes[view.direction];
+    const request: ViewRequest = { frame: { origin: [0, 0, 0], u, v }, hidden: view.hidden, ...(view.section ? { cut: { offset: view.section.offset } } : {}) };
+    const { views, modeling } = this.deps;
+    let drawn: Result<ViewGeometry> | undefined;
+    if (views && source.bytes) {
+      try {
+        // A copy: the bytes go over to the kernel's worker, and later views need them again.
+        drawn = await views.drawView(await views.restore(source.bytes.slice(), `result:${sourceKey(view.source, view.configuration)}:${source.stamp}`), request);
+      } catch (error) {
+        if ((error as Error).name === 'TimeoutError') drawn = await modeling.drawView(source.bodies, { ...request, method: 'mesh' });
+      }
+    }
+    drawn ??= await modeling.drawView(source.bodies, request);
+    return drawn.ok ? drawn.value : { error: drawn.error.message };
+  }
+
+  /** Keeps the drawn views in use with the drawing, for other processes (CAD-125). */
+  private async keepDrawn(keys: readonly string[]): Promise<void> {
+    const kept = Object.fromEntries(keys.flatMap((key) => {
+      const geometry = this.geometry.get(key);
+      return geometry && !('error' in geometry) ? [[key, geometry]] : [];
+    }));
+    const bytes = new TextEncoder().encode(JSON.stringify(kept));
+    await this.deps.assets.publishResult({ documentId: this.document.id, projectId: this.document.projectId, stamp: drawnStamp, bytes });
   }
 
   /** The text of each hole callout, from the hole feature of the circle it points at. */
-  private callouts(geometry: ReadonlyMap<string, ViewGeometry | { readonly error: string }>): Map<string, readonly string[]> {
+  private callouts(geometry: ReadonlyMap<string, Drawn>): Map<string, readonly string[]> {
     const texts = new Map<string, readonly string[]>();
     for (const annotation of this.document.annotations) {
       if (annotation.kind !== 'callout') continue;
       const view = this.document.views.find((v) => v.id === annotation.circle.view);
       const drawn = view && geometry.get(view.detail?.of ?? view.id);
       const circle = drawn && !('error' in drawn) ? drawn.circles.find((c) => c.name === annotation.circle.name) : undefined;
-      const component = view && this.sources.get(view.source)?.document;
-      if (circle) texts.set(annotation.id, holeCallout(component?.kind === 'component' ? component : undefined, this.projectParameters, circle.name, circle.radius, this.deps.parameters));
+      const shown = view && this.document.views.find((v) => v.id === (view.detail?.of ?? view.id));
+      const component = shown && this.sources.get(sourceKey(shown.source, shown.configuration))?.document;
+      if (circle) texts.set(annotation.id, holeCallout(component?.kind === 'component' ? configured(component, shown?.configuration) : undefined, this.projectParameters, circle.name, circle.radius, this.deps.parameters));
     }
     return texts;
   }
@@ -301,7 +381,7 @@ class Session implements DrawingSession {
   private async partsLists(): Promise<Map<string, PartsList>> {
     const lists = new Map<string, PartsList>();
     for (const view of this.document.views) {
-      const assembly = this.sources.get(view.source)?.document;
+      const assembly = this.sources.get(sourceKey(view.source, view.configuration))?.document;
       if (assembly?.kind !== 'assembly') continue;
       lists.set(view.id, await this.partsList(assembly));
     }
@@ -344,6 +424,17 @@ class Session implements DrawingSession {
     this.queue = run.catch(() => undefined);
     return run;
   }
+}
+
+/** What a drawn view shows: its source's result, direction, hidden lines and section. */
+function viewKey(view: DrawingView, stamp: string): string {
+  return `${sourceKey(view.source, view.configuration)}:${stamp}|${view.direction}|${view.hidden}|${view.section?.offset ?? ''}`;
+}
+
+/** The component with a configuration's parameter values, for texts computed from its features (callouts). */
+function configured(component: ComponentDocument, configuration: string | undefined): ComponentDocument {
+  const values = component.configurations?.find((c) => c.id === configuration)?.values;
+  return values ? { ...component, parameters: component.parameters.map((p) => (p.name in values ? { ...p, expression: values[p.name] as string } : p)) } : component;
 }
 
 export class DefaultDrawingManager implements DrawingManager {

@@ -4,17 +4,20 @@ import {
   type DocumentSummary,
   type DrawingAnnotation,
   type DrawingView,
+  fitsDimension,
+  nextDimensionAnchor,
   type Sheet,
   type SheetSize,
   sheetSizes,
   type TitleBlock,
   type Vec2,
+  type ViewAnchor,
   type ViewDirection,
 } from '@core/contracts';
 import { newId } from '@core/utilities/identity';
 import { Icon } from '../../shared/icon';
 import { Shortcuts } from '../../shared/shortcuts';
-import { dimensionAnchors, DrawingStore, type DrawingTool } from '../drawing/drawing-store';
+import { DrawingStore, type DrawingTool } from '../drawing/drawing-store';
 
 const directionLabels: Readonly<Record<ViewDirection, string>> = { front: 'Front', top: 'Top', right: 'Right', left: 'Left', back: 'Back', bottom: 'Bottom', iso: 'Isometric' };
 const dimensionLabels: Readonly<Record<DimensionType, string>> = { linear: 'Aligned', horizontal: 'Horizontal', vertical: 'Vertical', radius: 'Radius', diameter: 'Diameter', angle: 'Angle' };
@@ -28,6 +31,8 @@ const scales: readonly { readonly value: number; readonly label: string }[] = [
   { value: 0.1, label: '1:10' },
   { value: 0.05, label: '1:20' },
 ];
+/** What to click for each kind of anchor. */
+const anchorWords: Readonly<Record<ViewAnchor['kind'], string>> = { point: 'a corner', circle: 'a circle', line: 'a straight edge or outline' };
 /** Arrowheads 3 mm long, as in the PDF and DXF. */
 const arrowPoints = (tip: Vec2, d: Vec2): Vec2[] => [tip, [tip[0] - d[0] * 3 - d[1] * 0.6, tip[1] - d[1] * 3 + d[0] * 0.6], [tip[0] - d[0] * 3 + d[1] * 0.6, tip[1] - d[1] * 3 - d[0] * 0.6]];
 
@@ -51,7 +56,7 @@ export class DrawingMode {
   protected readonly scales = scales;
   protected readonly sizes = Object.keys(sheetSizes) as SheetSize[];
   /** The view being added: its source and direction. */
-  protected readonly newView = signal<{ source: string; direction: ViewDirection; hidden: boolean }>({ source: '', direction: 'front', hidden: true });
+  protected readonly newView = signal<{ source: string; configuration: string; direction: ViewDirection; hidden: boolean }>({ source: '', configuration: '', direction: 'front', hidden: true });
   /** The visible part of the sheet (SVG coordinates: x right, y down, in mm). */
   protected readonly viewBox = signal({ x: -10, y: -10, w: 440, h: 317 });
   /** The anchor under the pointer that the tool would pick. */
@@ -81,8 +86,8 @@ export class DrawingMode {
     const picked = this.store.picked().length;
     switch (tool.kind) {
       case 'dimension': {
-        const needed = dimensionAnchors[tool.type];
-        return `${dimensionLabels[tool.type]} dimension: click ${needed[picked] === 'circle' ? 'a circle' : needed[picked] === 'line' ? 'a straight edge' : 'a corner'} (${picked + 1} of ${needed.length}).`;
+        const next = nextDimensionAnchor(tool.type, this.store.picked().map((a) => a.kind));
+        return `${dimensionLabels[tool.type]} dimension: click ${picked ? 'then ' : ''}${next.map((kind) => anchorWords[kind]).join(' or ')}.`;
       }
       case 'note':
         return 'Click where the note goes.';
@@ -303,8 +308,9 @@ export class DrawingMode {
         this.store.picked.set(picked);
         if (tool.kind === 'center-mark') return add({ kind: 'center-mark', id, circle: anchorRef(anchor) });
         if (tool.kind === 'center-line' && picked.length === 2) return add({ kind: 'center-line', id, a: anchorRef(picked[0] as typeof anchor), b: anchorRef(anchor) });
-        if (tool.kind === 'dimension' && picked.length === dimensionAnchors[tool.type].length) {
-          await add({ kind: 'dimension', id, type: tool.type, anchors: picked.map(anchorRef), offset: tool.type === 'angle' ? 15 : tool.type === 'radius' || tool.type === 'diameter' ? 8 : 10 });
+        if (tool.kind === 'dimension' && fitsDimension(tool.type, picked.map((a) => a.kind))) {
+          const round = picked[0]?.kind === 'circle' && (tool.type === 'radius' || tool.type === 'diameter');
+          await add({ kind: 'dimension', id, type: tool.type, anchors: picked.map(anchorRef), offset: tool.type === 'angle' ? 15 : round ? 8 : 10 });
           this.hover.set(undefined);
         }
       }
@@ -336,13 +342,23 @@ export class DrawingMode {
     if (!choice.source || !layout) return;
     const last = layout.views.at(-1);
     const at: Vec2 = !last ? [layout.width * 0.3, layout.height * 0.62] : last.max[0] + 90 < layout.width - 20 ? [last.max[0] + 70, (last.min[1] + last.max[1]) / 2] : [layout.width * 0.3, last.min[1] - 60];
-    const view: DrawingView = { id: newId(), source: choice.source as DrawingView['source'], direction: choice.direction, at, hidden: choice.direction !== 'iso' && choice.hidden };
+    const view: DrawingView = {
+      id: newId(),
+      source: choice.source as DrawingView['source'],
+      ...(choice.configuration && this.store.configurations()[choice.source] ? { configuration: choice.configuration } : {}),
+      direction: choice.direction,
+      at,
+      hidden: choice.direction !== 'iso' && choice.hidden,
+    };
     this.menu.set(undefined);
     if (await this.store.run({ type: 'add-view', view })) this.store.selection.set({ kind: 'view', id: view.id });
   }
 
   /** Changes a view; `null` takes a setting away (the sheet's scale, no section, no label). */
-  protected setView(view: DrawingView, change: Omit<Partial<DrawingView>, 'scale' | 'section' | 'label'> & { scale?: number | null; section?: DrawingView['section'] | null; label?: string | null }): void {
+  protected setView(
+    view: DrawingView,
+    change: Omit<Partial<DrawingView>, 'scale' | 'section' | 'label' | 'configuration'> & { scale?: number | null; section?: DrawingView['section'] | null; label?: string | null; configuration?: string | null },
+  ): void {
     const merged: Record<string, unknown> = { ...view, ...change };
     const next = Object.fromEntries(Object.entries(merged).filter(([, value]) => value !== null && value !== ''));
     void this.store.run({ type: 'edit-view', view: next as unknown as DrawingView });
@@ -350,8 +366,8 @@ export class DrawingMode {
 
   protected setAnnotation(annotation: DrawingAnnotation, change: Record<string, unknown>): void {
     const merged: Record<string, unknown> = { ...annotation, ...change };
-    // An empty dimension text shows the measured value again.
-    const next = annotation.kind === 'dimension' ? Object.fromEntries(Object.entries(merged).filter(([key, value]) => !(key === 'text' && value === ''))) : merged;
+    // An empty dimension text shows the measured value again; an empty angle places the leader itself.
+    const next = annotation.kind === 'dimension' ? Object.fromEntries(Object.entries(merged).filter(([key, value]) => !((key === 'text' && value === '') || (key === 'angle' && (value === null || Number.isNaN(value)))))) : merged;
     void this.store.run({ type: 'edit-annotation', annotation: next as unknown as DrawingAnnotation });
   }
 
@@ -377,7 +393,13 @@ export class DrawingMode {
   }
 
   protected viewName(view: DrawingView): string {
-    return view.label ?? `${directionLabels[view.direction]} of ${this.sourceName(view.source)}`;
+    const configuration = view.configuration && this.store.configurations()[view.source]?.find((c) => c.id === view.configuration)?.name;
+    return view.label ?? `${directionLabels[view.direction]} of ${this.sourceName(view.source)}${configuration ? ` (${configuration})` : ''}`;
+  }
+
+  /** How a view was drawn when not exactly (CAD-125). */
+  protected noteOf(id: string): string | undefined {
+    return this.layout()?.views.find((v) => v.id === id)?.note;
   }
 
   protected annotationName(annotation: DrawingAnnotation): string {

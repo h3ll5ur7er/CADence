@@ -1,4 +1,4 @@
-import { type DrawingAnnotation, type DrawingDocument, type DrawingView, sheetSizes, type Vec2, type ViewAnchor } from '@core/contracts';
+import { type DrawingAnnotation, type DrawingDocument, type DrawingView, sheetSizes, type Vec2, type Vec3, type ViewAnchor, type ViewDirection } from '@core/contracts';
 import type { ProjectedCurve, ViewGeometry } from '@core/engines/modeling';
 import type { LineStyle, SheetAnchor, SheetLayout } from './drawing-manager';
 
@@ -16,7 +16,29 @@ export interface LayoutInput {
   readonly callouts: ReadonlyMap<string, readonly string[]>;
   /** The parts list of each assembly view, by view id. */
   readonly parts: ReadonlyMap<string, PartsList>;
+  /** The drawn component's material, which the title block shows when it names none (CAD-127). */
+  readonly material?: string;
 }
+
+/** A view's right and up: the viewer is on the side of right × up (third-angle names). */
+const s2 = Math.SQRT1_2;
+const s6 = 1 / Math.sqrt(6);
+export const viewAxes: Readonly<Record<ViewDirection, { readonly u: Vec3; readonly v: Vec3 }>> = {
+  front: { u: [1, 0, 0], v: [0, 0, 1] },
+  back: { u: [-1, 0, 0], v: [0, 0, 1] },
+  top: { u: [1, 0, 0], v: [0, 1, 0] },
+  bottom: { u: [1, 0, 0], v: [0, -1, 0] },
+  right: { u: [0, 1, 0], v: [0, 0, 1] },
+  left: { u: [0, -1, 0], v: [0, 0, 1] },
+  iso: { u: [s2, s2, 0], v: [-s6, s6, 2 * s6] },
+};
+const towardsViewer = (direction: ViewDirection): Vec3 => {
+  const { u, v } = viewAxes[direction];
+  return [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+};
+const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+/** What an anchor carries over from the view's geometry: its model point, and whether the view shows it. */
+const extra = (a: { readonly model?: Vec3; readonly hidden?: true }) => ({ ...(a.model ? { model: a.model } : {}), ...(a.hidden ? { hidden: true as const } : {}) });
 
 type Path = SheetLayout['paths'][number];
 type Text = SheetLayout['texts'][number];
@@ -82,7 +104,7 @@ export function layoutSheet(input: LayoutInput): SheetLayout {
   const texts: Text[] = [];
   const arrows: Arrow[] = [];
   const anchors: SheetAnchor[] = [];
-  const views: { id: string; min: Vec2; max: Vec2; center?: Vec2; scale?: number; error?: string }[] = [];
+  const views: { id: string; min: Vec2; max: Vec2; center?: Vec2; scale?: number; error?: string; note?: string }[] = [];
   const instances: { view: string; instance: string; at: Vec2 }[] = [];
   const lost: string[] = [];
   const line = (points: readonly Vec2[], style: LineStyle, owner?: string, closed?: boolean) => paths.push({ points, style, ...(owner ? { owner } : {}), ...(closed ? { closed } : {}) });
@@ -90,7 +112,7 @@ export function layoutSheet(input: LayoutInput): SheetLayout {
 
   // The frame and the title block, in the bottom right corner.
   line([[margin, margin], [width - margin, margin], [width - margin, height - margin], [margin, height - margin]], 'frame', undefined, true);
-  frameTitle(document, width, line, text);
+  frameTitle(document, width, line, text, input.material);
 
   // Views: each maps its model millimetres to the sheet.
   const scaleOf = (view: DrawingView) => view.scale ?? document.sheet.scale;
@@ -109,12 +131,12 @@ export function layoutSheet(input: LayoutInput): SheetLayout {
     for (const curve of geometry.visible) line(pointsOf(curve).map(toSheet), 'visible', view.id);
     if (view.hidden) for (const curve of geometry.hidden) line(pointsOf(curve).map(toSheet), 'hidden', view.id);
     for (const [a, b] of hatch(geometry.cut.map(([a, b]) => [toSheet(a), toSheet(b)] as const), 3)) line([a, b], 'hatch', view.id);
-    for (const p of geometry.points) anchors.push({ view: view.id, kind: 'point', name: p.name, at: toSheet(p.at) });
-    for (const c of geometry.circles) anchors.push({ view: view.id, kind: 'circle', name: c.name, at: toSheet(c.center), radius: c.radius * scale });
-    for (const l of geometry.lines) anchors.push({ view: view.id, kind: 'line', name: l.name, at: toSheet(mid(l.start, l.end)), start: toSheet(l.start), end: toSheet(l.end) });
+    for (const p of geometry.points) anchors.push({ view: view.id, kind: 'point', name: p.name, at: toSheet(p.at), ...extra(p) });
+    for (const c of geometry.circles) anchors.push({ view: view.id, kind: 'circle', name: c.name, at: toSheet(c.center), radius: c.radius * scale, ...extra(c) });
+    for (const l of geometry.lines) anchors.push({ view: view.id, kind: 'line', name: l.name, at: toSheet(mid(l.start, l.end)), start: toSheet(l.start), end: toSheet(l.end), ...extra(l) });
     for (const body of geometry.bodies) instances.push({ view: view.id, instance: body.id.split('#')[0] as string, at: toSheet(body.at) });
     const [min, max] = [toSheet(geometry.box.min), toSheet(geometry.box.max)];
-    views.push({ id: view.id, min, max, center, scale });
+    views.push({ id: view.id, min, max, center, scale, ...(geometry.approximate ? { note: 'Drawn from the triangles: the exact projection took too long.' } : {}) });
     if (view.label) text([view.at[0], min[1] - 7], view.label, 4, 'center', view.id);
   }
 
@@ -146,24 +168,77 @@ export function layoutSheet(input: LayoutInput): SheetLayout {
       text([view.at[0], view.at[1] - detail.radius * scale - 7], view.label, 4, 'center', view.id);
       text(add(onParent, [detail.radius * placement.scale + 2, detail.radius * placement.scale]), view.label.replace(/^Detail\s*/i, ''), 4, 'left', parent.id);
     }
-    for (const p of geometry.points) if (length(sub(p.at, detail.center)) <= detail.radius) anchors.push({ view: view.id, kind: 'point', name: p.name, at: toSheet(p.at) });
-    for (const c of geometry.circles) if (length(sub(c.center, detail.center)) <= detail.radius) anchors.push({ view: view.id, kind: 'circle', name: c.name, at: toSheet(c.center), radius: c.radius * scale });
+    for (const p of geometry.points) if (length(sub(p.at, detail.center)) <= detail.radius) anchors.push({ view: view.id, kind: 'point', name: p.name, at: toSheet(p.at), ...extra(p) });
+    for (const c of geometry.circles) if (length(sub(c.center, detail.center)) <= detail.radius) anchors.push({ view: view.id, kind: 'circle', name: c.name, at: toSheet(c.center), radius: c.radius * scale, ...extra(c) });
     placements.set(view.id, { toSheet, scale });
     views.push({ id: view.id, min: sub(view.at, [detail.radius * scale, detail.radius * scale]), max: add(view.at, [detail.radius * scale, detail.radius * scale]), center: detail.center, scale });
   }
 
+  sectionLines(document, input.geometry, placements, views, line, text, arrows);
+
   const anchorOf = (ref: ViewAnchor) => anchors.find((a) => a.view === ref.view && a.kind === ref.kind && a.name === ref.name);
   const scaleOfView = (id: string) => placements.get(id)?.scale ?? 1;
+  // Where texts may go: inside the frame, off the title block.
+  const free = (p: Vec2) => p[0] >= margin && p[0] <= width - margin && p[1] >= margin && p[1] <= height - margin && !(p[0] >= width - margin - 180 && p[1] <= margin + 30);
   for (const annotation of document.annotations) {
-    const drawn = annotate(annotation, { anchorOf, scaleOfView, line, text, arrows, instances, callouts: input.callouts, parts: input.parts });
+    const drawn = annotate(annotation, { anchorOf, scaleOfView, free, line, text, arrows, instances, callouts: input.callouts, parts: input.parts });
     if (!drawn) lost.push(annotation.id);
   }
   return { width, height, paths, texts, arrows, anchors, views, instances, lost };
 }
 
+/**
+ * Marks each section's cutting plane on a view it is taken from (CAD-127): a view of the same
+ * source that sees the plane edge on. A chain line across that view, thick at its ends, with arrows
+ * the way the section looks and its letter ("Section A-A": A) beside them.
+ */
+function sectionLines(
+  document: DrawingDocument,
+  geometry: LayoutInput['geometry'],
+  placements: ReadonlyMap<string, { toSheet: (p: Vec2) => Vec2; scale: number }>,
+  views: readonly { readonly id: string; readonly min: Vec2; readonly max: Vec2 }[],
+  line: Tools['line'],
+  text: Tools['text'],
+  arrows: Arrow[],
+): void {
+  for (const section of document.views) {
+    const drawn = geometry.get(section.id);
+    if (!section.section || section.detail || !drawn || 'error' in drawn || !drawn.cutAt) continue;
+    const cutAt = drawn.cutAt;
+    const normal = towardsViewer(section.direction);
+    const from = document.views.find(
+      (v) => v.id !== section.id && !v.section && !v.detail && v.direction !== 'iso' && v.source === section.source && v.configuration === section.configuration && placements.has(v.id) && Math.abs(dot(towardsViewer(v.direction), normal)) < 1e-9,
+    );
+    const placed = from && views.find((v) => v.id === from.id);
+    if (!from || !placed) continue;
+    const { u, v } = viewAxes[from.direction];
+    const { toSheet } = placements.get(from.id) as { toSheet: (p: Vec2) => Vec2 };
+    // The plane's normal seen in that view, and the plane's trace across it.
+    const across = unit([dot(normal, u), dot(normal, v)]);
+    const along: Vec2 = [-across[1], across[0]];
+    const at = toSheet([dot(cutAt, u), dot(cutAt, v)]);
+    const corners: Vec2[] = [placed.min, placed.max, [placed.min[0], placed.max[1]], [placed.max[0], placed.min[1]]];
+    const reach = Math.max(...corners.map((c) => Math.abs((c[0] - at[0]) * along[0] + (c[1] - at[1]) * along[1]))) + 4;
+    const ends = [add(at, mul(along, -reach)), add(at, mul(along, reach))] as const;
+    line([ends[0], ends[1]], 'center', section.id);
+    const letter = /^section\s+([^\s-]+)/i.exec(section.label ?? '')?.[1];
+    ends.forEach((end, i) => {
+      const outwards = mul(along, i ? 1 : -1);
+      line([end, sub(end, mul(outwards, 6))], 'visible', section.id);
+      // The arrow points the way the section looks: away from the viewer.
+      const tip = sub(end, mul(across, 7));
+      line([end, tip], 'thin', section.id);
+      arrows.push({ tip, direction: mul(across, -1), owner: section.id });
+      if (letter) text(add(tip, add(mul(outwards, 3), [0, -1.5])), letter, 5, 'center', section.id, true);
+    });
+  }
+}
+
 interface Tools {
   readonly anchorOf: (ref: ViewAnchor) => SheetAnchor | undefined;
   readonly scaleOfView: (view: string) => number;
+  /** Whether a sheet point is free for text: inside the frame, off the title block. */
+  readonly free: (p: Vec2) => boolean;
   readonly line: (points: readonly Vec2[], style: LineStyle, owner?: string, closed?: boolean) => void;
   readonly text: (at: Vec2, value: string, size?: number, align?: Text['align'], owner?: string, bold?: boolean) => void;
   readonly arrows: Arrow[];
@@ -186,25 +261,27 @@ function annotate(a: DrawingAnnotation, t: Tools): boolean {
       const [p, q] = found as SheetAnchor[];
       const scale = t.scaleOfView(a.anchors[0]?.view ?? '');
       const label = (value: string) => a.text ?? value;
+      if (a.type === 'diameter' && p?.kind === 'line' && q?.kind === 'line') return diameterBetween(a, p, q, scale, t);
       if (a.type === 'radius' || a.type === 'diameter') {
         const circle = p as SheetAnchor;
         const r = circle.radius ?? 0;
-        const dir: Vec2 = [Math.SQRT1_2, Math.SQRT1_2];
+        const value = label(a.type === 'radius' ? `R${formatValue(r / scale)}` : `⌀${formatValue((2 * r) / scale)}`);
         const reach = Math.max(6, a.offset);
-        if (a.type === 'radius') {
-          const on = add(circle.at, mul(dir, r));
-          const elbow = add(on, mul(dir, reach));
-          line([on, elbow, add(elbow, [6, 0])], 'thin', a.id);
-          arrow(on, mul(dir, -1));
-          text(add(elbow, [1, 1.2]), label(`R${formatValue(r / scale)}`), textSize, 'left', a.id);
-        } else {
-          const [from, to] = [add(circle.at, mul(dir, -r)), add(circle.at, mul(dir, r))];
-          const elbow = add(to, mul(dir, reach));
-          line([from, elbow, add(elbow, [6, 0])], 'thin', a.id);
-          arrow(from, mul(dir, -1));
-          arrow(to, dir);
-          text(add(elbow, [1, 1.2]), label(`⌀${formatValue((2 * r) / scale)}`), textSize, 'left', a.id);
-        }
+        // The leader leaves the circle at the angle asked for, else at the first of four that keeps its text on the sheet (CAD-127).
+        const leader = (degrees: number) => {
+          const dir: Vec2 = [Math.cos((degrees * Math.PI) / 180), Math.sin((degrees * Math.PI) / 180)];
+          const elbow = add(circle.at, mul(dir, r + reach));
+          const side = dir[0] < -1e-9 ? -1 : 1;
+          const shelf = Math.max(6, value.length * textSize * 0.62 + 2);
+          return { dir, elbow, side, shelf };
+        };
+        const fits = ({ elbow, side, shelf }: ReturnType<typeof leader>) => [elbow, add(elbow, [side * shelf, 0]), add(elbow, [side * shelf, textSize + 1.5]), add(elbow, [0, textSize + 1.5])].every(t.free);
+        const { dir, elbow, side, shelf } = a.angle !== undefined ? leader(a.angle) : ([45, 135, 315, 225].map(leader).find(fits) ?? leader(45));
+        const to = add(circle.at, mul(dir, r));
+        line([a.type === 'radius' ? to : add(circle.at, mul(dir, -r)), elbow, add(elbow, [side * shelf, 0])], 'thin', a.id);
+        if (a.type === 'diameter') arrow(add(circle.at, mul(dir, -r)), mul(dir, -1));
+        arrow(to, a.type === 'radius' ? mul(dir, -1) : dir);
+        text(add(elbow, [side, 1.2]), value, textSize, side > 0 ? 'left' : 'right', a.id);
         return true;
       }
       if (a.type === 'angle') {
@@ -338,8 +415,32 @@ function annotate(a: DrawingAnnotation, t: Tools): boolean {
   }
 }
 
+/**
+ * A diameter between two outlines of a cylinder seen from its side (CAD-127): the distance between
+ * the two parallel lines, measured across them past the end of the first by `offset`.
+ */
+function diameterBetween(a: Extract<DrawingAnnotation, { kind: 'dimension' }>, p: SheetAnchor, q: SheetAnchor, scale: number, t: Tools): boolean {
+  const [a1, b1, a2, b2] = [p.start, p.end, q.start, q.end];
+  if (!a1 || !b1 || !a2 || !b2) return false;
+  const along = unit(sub(b1, a1));
+  const other = unit(sub(b2, a2));
+  if (Math.abs(along[0] * other[1] - along[1] * other[0]) > 0.01) return false;
+  const normal: Vec2 = [-along[1], along[0]];
+  const gap = (a2[0] - a1[0]) * normal[0] + (a2[1] - a1[1]) * normal[1];
+  // Across both lines, beyond the end of the first that reaches further.
+  const end = (b1[0] - a1[0]) * along[0] + (b1[1] - a1[1]) * along[1] > 0 ? b1 : a1;
+  const q1 = add(end, mul(along, a.offset));
+  const q2 = add(q1, mul(normal, gap));
+  const foot = add(end, mul(normal, gap));
+  for (const [base, tip] of [[end, q1], [foot, q2]] as const) if (length(sub(tip, base)) > 1) t.line([add(base, mul(unit(sub(tip, base)), 1)), add(tip, mul(unit(sub(tip, base)), 2))], 'thin', a.id);
+  t.line([q1, q2], 'thin', a.id);
+  t.arrows.push({ tip: q1, direction: unit(sub(q1, q2)), owner: a.id }, { tip: q2, direction: unit(sub(q2, q1)), owner: a.id });
+  t.text(add(mid(q1, q2), mul(along, 2)), a.text ?? `⌀${formatValue(Math.abs(gap) / scale)}`, textSize, 'center', a.id);
+  return true;
+}
+
 /** The title block: 180 × 30 mm in the frame's bottom right corner. */
-function frameTitle(document: DrawingDocument, width: number, line: Tools['line'], text: Tools['text']): void {
+function frameTitle(document: DrawingDocument, width: number, line: Tools['line'], text: Tools['text'], material = ''): void {
   const [right, bottom] = [width - margin, margin];
   const [left, top] = [right - 180, bottom + 30];
   line([[left, bottom], [left, top], [right, top]], 'frame');
@@ -352,7 +453,7 @@ function frameTitle(document: DrawingDocument, width: number, line: Tools['line'
   const cells: [string, string][] = [
     ['No.', block.number],
     ['Scale', scale],
-    ['Material', block.material],
+    ['Material', block.material || material],
     ['Drawn', block.drawnBy],
     ['Revision', block.revision],
     ['Sheet', `${document.sheet.size}, ${document.modifiedAt.slice(0, 10)}`],

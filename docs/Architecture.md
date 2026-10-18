@@ -128,12 +128,16 @@ flowchart LR
     PROXY <-->|Messaging RPC<br/>transferables| GE[Modeling, Analysis,<br/>Interchange engines]
     GE --> SA2[Shape Access] --> OCCT[(OCCT WASM<br/>shape cache)]
   end
+  subgraph VW[Views worker]
+    PROXY <-->|stoppable RPC| VE[Modeling Engine<br/>exact drawing views]
+  end
   RA --> IDB[(IndexedDB)]
   RA --> TAURI[(Tauri IPC → native FS)]
 ```
 
 - **Managers and storage Resource Access stay on the main thread.** Tauri IPC is not available inside Web Workers, and IndexedDB works on both. Keeping them here keeps one code path for both hosts.
 - **Kernel-bound engines share one geometry worker.** OCCT shapes cannot cross thread boundaries cheaply, so Modeling, Analysis (geometric checks) and Interchange share the in-worker shape cache through Shape Access. Engines exchange shapes by key rather than by calling each other.
+- **Drawing views are drawn exactly in a views worker of their own**, a second kernel that is stopped when a view takes longer than 20 s (`stoppable` in Messaging), since WebAssembly cannot be interrupted; the Drawing Manager then draws that view from the triangles in the geometry worker ([[Architecture/Decisions#ADR-49]]). Scripts and the MCP server start it as a Node worker of the same module.
 - **The viewport owns how the model is seen** (camera, projection, section); documents own how bodies look; the user's preferences (control scheme) are kept per install ([[Architecture/Decisions#ADR-24]]).
 - **The web app's files and kernels are cached by a service worker** (web only), so it runs offline; the desktop app bundles them ([[Architecture/Decisions#ADR-23]]).
 - **Light engines run on the main thread.** Parameter and Kinematics are pure and synchronous (a solve takes well under a millisecond for home-sized assemblies); Sketch (planegcs, about 1 MB of WASM) is async. Any of them can move to a worker behind an async proxy once profiling shows a need.

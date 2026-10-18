@@ -32,7 +32,7 @@ import { createProjectManager, type ProjectManager } from '@core/managers/projec
 import { systemClock } from '@core/utilities/clock';
 import { type FileSystem, IndexedDbFileSystem, MemoryFileSystem } from '@core/utilities/file-system';
 import { newId } from '@core/utilities/identity';
-import { EventBus, type MessageChannelLike, type Port, relayEvents, remote } from '@core/utilities/messaging';
+import { EventBus, type MessageChannelLike, type Port, relayEvents, remote, stoppable, type StoppablePort } from '@core/utilities/messaging';
 
 /** Everything a client may use: the managers, plus where projects are kept. */
 export interface Core {
@@ -65,9 +65,17 @@ export interface Host {
   readonly fontUrls?: Readonly<Record<TextWeight, string>>;
   /** Port to the geometry worker; without it the geometry kernel runs in this thread (Node, tests). */
   readonly geometry?: Port;
+  /**
+   * Starts a worker with a kernel of its own for drawing views, stopped when a view takes longer than
+   * `viewTimeLimit` (CAD-125); without it views are drawn by the geometry kernel, however long they take.
+   */
+  readonly views?: () => StoppablePort;
   /** Where events are shared with the app's other tabs and windows (a `BroadcastChannel`). */
   readonly channel?: MessageChannelLike;
 }
+
+/** How long a drawing view may take to draw exactly before it is drawn from the triangles (CAD-125). */
+export const viewTimeLimit = 20_000;
 
 /**
  * Events other tabs and windows hear about (CAD-82), by the name they hear them by: a saved document
@@ -87,6 +95,7 @@ export interface HostOptions {
   readonly solverWasmUrl?: string;
   readonly fontUrls?: Readonly<Record<TextWeight, string>>;
   readonly geometry?: Port;
+  readonly views?: () => StoppablePort;
   readonly channel?: MessageChannelLike;
 }
 
@@ -195,6 +204,7 @@ export function createCore(host: Host): Core {
       events,
       clock: systemClock,
       fonts,
+      ...(host.views ? { views: stoppable<ModelingEngine>(host.views, 'modeling', viewTimeLimit) } : {}),
     }),
     storage: host.kind,
     settled: async () => {

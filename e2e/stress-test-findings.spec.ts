@@ -1,7 +1,11 @@
-import { expect, test } from '@playwright/test';
-import { cutHole, evidence, fromModelMenu, hinge, plateProject, setThickness, standardView, topPoints } from './support';
+import { expect, type Page, test } from '@playwright/test';
+import { anchorOnScreen, cutHole, evidence, fromModelMenu, hinge, plateProject, setThickness, sheetPoint, standardView, topPoints } from './support';
 
-/** Phases 26 to 28 (stress-test findings, CAD-96) user journeys: ring gears with planets, cams, radial exploded views of pattern copies, and leaned joint offsets. */
+/**
+ * Phases 26 to 30 (stress-test findings, CAD-96) user journeys: ring gears with planets, cams, radial
+ * exploded views of pattern copies, leaned joint offsets, and drawings of configurations with
+ * cutting-plane lines and dimensions to circle centres.
+ */
 test.setTimeout(240_000);
 
 test('makes a ring gear with smooth teeth and says where a planet goes (CAD-98, CAD-107)', async ({ page }) => {
@@ -91,6 +95,80 @@ test('leans a joint offset before tilting it, to point the joint any way (CAD-11
   await standardView(page, 'Front');
   await evidence(page, '97-joint-lean');
 });
+
+test('draws a configuration of a part, marks where a section cuts and dimensions to a hole centre (CAD-126, CAD-127)', async ({ page }) => {
+  const click = async (at: Promise<{ x: number; y: number }>) => {
+    const p = await at;
+    await page.mouse.click(p.x, p.y);
+  };
+  const sheetText = (text: string | RegExp) => page.locator('svg.sheet text').filter({ hasText: text });
+  await plateProject(page, 'Drawing findings');
+  await cutHole(page);
+  await page.getByRole('button', { name: /Parameters/ }).click();
+  await page.getByRole('textbox', { name: 'New configuration name' }).fill('Thick');
+  await page.getByRole('button', { name: 'Add configuration' }).click();
+  await page.getByRole('textbox', { name: 'thickness in Thick' }).fill('12 mm');
+  await page.getByRole('textbox', { name: 'thickness in Thick' }).press('Enter');
+  await page.getByRole('button', { name: 'Close parameters' }).click();
+
+  await page.getByRole('button', { name: 'Drawing', exact: true }).click();
+  await expect(page.getByRole('application', { name: 'Drawing sheet' })).toBeVisible();
+  await page.locator('#sheet-scale').selectOption({ label: '2:1' });
+  const addView = async (direction: string, configuration?: string) => {
+    await page.getByRole('button', { name: 'View', exact: true }).click();
+    if (configuration) await page.locator('#view-configuration').selectOption({ label: configuration });
+    await page.locator('#view-direction').selectOption({ label: direction });
+    await page.getByRole('button', { name: 'Add view' }).click();
+  };
+  await addView('Top');
+  await addView('Front');
+  await addView('Right', 'Thick');
+  await expect(page.getByRole('heading', { name: 'Right of Component 1 (Thick)' })).toBeVisible();
+
+  // The front view as a section: the top view shows where it cuts, with its letters.
+  await page.keyboard.press('Escape');
+  await click(anchorOnScreen(page, 1, 'point', 'left'));
+  await page.getByLabel('Section (cut through the middle)').check();
+  await expect(page.locator('svg.sheet text[data-owner]').filter({ hasText: /^A$/ })).toHaveCount(2);
+
+  // From the plate's left end to the hole's centre, and the hole's diameter down and to the left.
+  await page.getByRole('button', { name: 'Dimension', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Horizontal' }).click();
+  await click(anchorOnScreen(page, 0, 'point', 'left'));
+  await click(anchorOnScreen(page, 0, 'circle', 'rim'));
+  // To the circle itself (its centre), not to a corner on its rim.
+  const anchored = () =>
+    page.evaluate(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ng = (window as unknown as { ng: { getComponent(e: Element): any } }).ng;
+      const annotations = ng.getComponent(document.querySelector('cad-drawing-mode') as Element).store.document().annotations as { anchors?: { kind: string }[] }[];
+      return annotations.map((a) => a.anchors?.map((anchor) => anchor.kind));
+    });
+  await expect.poll(anchored).toEqual([['point', 'circle']]);
+  await page.getByRole('button', { name: 'Dimension', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Diameter' }).click();
+  await click(anchorOnScreen(page, 0, 'circle', 'rim'));
+  await expect(sheetText(/^⌀8$/)).toHaveCount(1);
+  await page.keyboard.press('Escape');
+  await click(textOnScreen(page, '⌀8'));
+  await page.locator('#dimension-angle').fill('225');
+  await page.locator('#dimension-angle').press('Tab');
+  await expect(sheetText(/^⌀8$/)).toHaveAttribute('text-anchor', 'end');
+
+  // The title block names the part's material by itself.
+  await page.keyboard.press('Escape');
+  await click(sheetPoint(page, [20, 280]));
+  await expect(page.locator('#title-material')).toHaveAttribute('placeholder', 'PLA');
+  await expect(sheetText(/^PLA$/)).toHaveCount(1);
+  await page.getByRole('button', { name: 'Fit the sheet' }).click();
+  await evidence(page, '99-drawing-findings');
+});
+
+/** Where a text of the sheet is on screen. */
+async function textOnScreen(page: Page, text: string): Promise<{ x: number; y: number }> {
+  const box = await page.locator('svg.sheet text').filter({ hasText: text }).first().boundingBox();
+  return { x: (box?.x ?? 0) + (box?.width ?? 0) / 2, y: (box?.y ?? 0) + (box?.height ?? 0) / 2 };
+}
 
 test('takes a circular pattern apart in one radial step (CAD-110)', async ({ page }) => {
   await plateProject(page, 'Radial');

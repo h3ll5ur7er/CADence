@@ -58,6 +58,71 @@ describe('drawing views', () => {
     expect(section.value.cut.length).toBeGreaterThanOrEqual(8);
     // The hole's walls are now seen, not hidden.
     expect(section.value.hidden.filter((c) => c.kind === 'line' && [15, 25].includes(Math.round(c.start[0])) && Math.abs(c.start[0] - c.end[0]) < 1e-6)).toHaveLength(0);
+    // Where the plane cuts, for the cutting-plane line on other views: the plate's middle.
+    expect(section.value.cutAt?.map((c) => Math.round(c * 1000) / 1000)).toEqual([30, 15, 5]);
+  });
+
+  it('says which named geometry the view cannot see, and offers the outermost points seen (CAD-127)', async () => {
+    // A blind ⌀8 pocket from below, 5 deep: from above, its circles lie behind the plate's top.
+    const pocketed = await engine.apply({
+      type: 'extrude',
+      feature: 'e2',
+      key: 'drawing-pocket',
+      bodies: await plate(),
+      frame: originFrames.XY,
+      profiles: [profile(circleLoop(45, 15, 4, 'pocket'))],
+      distance: 5,
+      direction: 'normal',
+      operation: 'cut',
+    });
+    const view = await engine.drawView(pocketed.bodies, { ...top, hidden: false });
+    if (!view.ok) throw new Error(view.error.message);
+    const { circles, points } = view.value;
+    const pocket = circles.filter((c) => Math.abs(c.radius - 4) < 1e-6);
+    expect(pocket.length).toBeGreaterThan(0);
+    expect(pocket.every((c) => c.hidden)).toBe(true);
+    expect(circles.filter((c) => Math.abs(c.radius - 5) < 1e-6).some((c) => !c.hidden)).toBe(true);
+    // Each circle knows its centre in the model.
+    expect(pocket[0]?.model?.map(Math.round).slice(0, 2)).toEqual([45, 15]);
+    const extreme = (side: string) => points.find((p) => p.name === `extreme:${side}`)?.at;
+    expect(extreme('left')?.[0]).toBeCloseTo(0, 6);
+    expect(extreme('right')?.[0]).toBeCloseTo(60, 6);
+    expect(extreme('top')?.[1]).toBeCloseTo(30, 6);
+  });
+
+  it('outlines a cylinder seen from its side with lines to dimension its diameter (CAD-127)', async () => {
+    const rod = await engine.apply({ type: 'extrude', feature: 'rod', key: 'drawing-rod', bodies: [], frame: originFrames.XY, profiles: [profile(circleLoop(0, 0, 10, 'rod'))], distance: 40, direction: 'normal', operation: 'new-body' });
+    // From the right: the rod's two half cylinders (split at x = ±10) each show one outline.
+    const side = await engine.drawView(rod.bodies, { frame: { origin: [0, 0, 0], u: [0, 1, 0], v: [0, 0, 1] }, hidden: true });
+    if (!side.ok) throw new Error(side.error.message);
+    const outlines = side.value.lines.filter((l) => l.name.startsWith('s:'));
+    expect(outlines.map((l) => Math.round(l.start[0])).sort((a, b) => a - b)).toEqual([-10, 10]);
+    expect(outlines.every((l) => Math.abs(Math.abs(l.end[1] - l.start[1]) - 40) < 1e-6 && !l.hidden)).toBe(true);
+    // Their ends are points: a length along the rod or across it.
+    expect(side.value.points.filter((p) => p.name.startsWith(`${outlines[0]?.name}:`))).toHaveLength(2);
+    // Along its axis, a cylinder shows circles, no outlines.
+    const end = await engine.drawView(rod.bodies, top);
+    if (!end.ok) throw new Error(end.error.message);
+    expect(end.value.lines.filter((l) => l.name.startsWith('s:'))).toHaveLength(0);
+  });
+
+  it('draws from the triangles when asked, for shapes the exact projection takes too long on (CAD-125)', async () => {
+    const bodies = await plate();
+    const exact = await engine.drawView(bodies, front);
+    const mesh = await engine.drawView(bodies, { ...front, method: 'mesh' });
+    if (!exact.ok || !mesh.ok) throw new Error('not drawn');
+    expect(mesh.value.approximate).toBe(true);
+    expect(mesh.value.box.min.map(Math.round)).toEqual(exact.value.box.min.map(Math.round));
+    expect(mesh.value.box.max.map(Math.round)).toEqual(exact.value.box.max.map(Math.round));
+    // The hole's walls are hidden from the front, its outline is seen from above.
+    const xs = mesh.value.hidden.flatMap((c) => (c.kind === 'line' && Math.abs(c.start[0] - c.end[0]) < 1e-6 ? [Math.round(c.start[0])] : []));
+    expect(xs).toContain(15);
+    expect(xs).toContain(25);
+    expect(mesh.value.visible.some((c) => c.kind === 'line' && [15, 25].includes(Math.round(c.start[0])) && Math.abs(c.start[0] - c.end[0]) < 1e-6)).toBe(false);
+    const above = await engine.drawView(bodies, { ...top, method: 'mesh' });
+    if (!above.ok) throw new Error(above.error.message);
+    expect(round(above.value.visible)).toContainEqual([20, 15, 5]);
+    expect(above.value.circles.filter((c) => Math.abs(c.radius - 5) < 1e-6).some((c) => !c.hidden)).toBe(true);
   });
 
   it('places copies of bodies for an assembly result', async () => {

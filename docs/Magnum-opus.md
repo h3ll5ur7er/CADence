@@ -8,7 +8,7 @@ A nine-cylinder radial aircraft engine, modelled entirely by an AI agent through
 
 All parts are modelled, including the internal ring gear. The assembly **Radial engine** is built through `edit_assembly`: 79 instances and 42 pattern copies, 66 joints with nine closed slider-crank loops that solve, gear, carrier and planet links, nine roller tappets driven by cam links, nine pushrods riding on the tappets at their tilt ([[CAD-113]]), two motion studies, an animation and an exploded view *Taken apart* with radial steps ([[CAD-110]]).
 
-**Round 4 (2026-10-17): the engine is complete.** Standing still nothing overlaps, the study runs four engine cycles without a collision, and there is an animation and the exploded view. The round-3 fixes ([[CAD-116]] to [[CAD-119]]) work on the engine. All nine tappet guides give one slider constant (67.0902 mm), in a new process and in the MCP server alike. The MCP server follows component and assembly changes made by another process. Three new findings, none blocking: [[CAD-120]] (one big jump of the crank flipped the nine loops into their mirror pose and saved it), [[CAD-121]] (the shape cache evicts its own placed parts in long scripts) and [[CAD-122]] (animations re-frame the camera every frame). **Drawings (round 5) were stopped at [[CAD-123]]:** phase 29 gives agents drawings and everything else the app does ([[CAD-124]]), and fixes the three round-4 findings.
+**Round 4 (2026-10-17): the engine is complete.** Standing still nothing overlaps, the study runs four engine cycles without a collision, and there is an animation and the exploded view. The round-3 fixes ([[CAD-116]] to [[CAD-119]]) work on the engine. All nine tappet guides give one slider constant (67.0902 mm), in a new process and in the MCP server alike. The MCP server follows component and assembly changes made by another process. Three new findings, none blocking: [[CAD-120]] (one big jump of the crank flipped the nine loops into their mirror pose and saved it), [[CAD-121]] (the shape cache evicts its own placed parts in long scripts) and [[CAD-122]] (animations re-frame the camera every frame). **Round 5: drawings.** Phase 29 gives agents drawings and everything else the app does ([[CAD-124]]) and fixes the three round-4 findings. There are 27 part drawings (R9-01 to R9-27) and an assembly drawing (R9-00) with a parts list and balloons, all exported as PDF. Four findings: [[CAD-125]] (the spark plug's modelled thread takes minutes to draw in a new process), [[CAD-126]] (views have no configuration), [[CAD-127]] (dimensioning gaps) and [[CAD-128]] (`get_drawing` answers too long).
 
 > [!NOTE]
 > Fixed in my own design in round 4: the cam link offsets come from the new slider constant (−8.8961 mm). The sun is turned half a tooth (7.5°) and the crank gear half a tooth (3.75°) on the crankshaft, and the lay pinion half a tooth (15°) in its component, which keeps the valve timing. The pushrod that touched its rocker box was only too high because of the old tappet heights. Fixed in round 3: a recess in the rear case for the crankcase's rear boss; intake ports as sockets for the 16 mm pipes; a cylindrical blade shank in larger hub sockets; a deeper piston crown for the master rod's eye; plugs tilted 45° outwards so neighbours clear; longer, narrower tappet guides; roller tappets (a flat foot offset from the cam's centre is hit side-on by the small lobes: the lift jumps 4 mm in a quarter of a degree); a pocket in each rocker box for the pushrod's travel.
@@ -126,6 +126,16 @@ flowchart LR
 - **Gear phases:** the sun is turned 7.5° and the crank gear 3.75° on the crankshaft (half a tooth each, in the rigid joints' `angle`), and the lay pinion 15° in its component (half a tooth; turning the cam ring instead would shift the valve timing by up to 19° of crank angle). The mesh positions are checked over four engine cycles.
 - **Exploded view** *Taken apart*: 21 steps. Spinner, propeller, nose case (with the tappets), carrier and planets, ring, sun and gears forward along the axis; crankcase rear half, rear case and magnetos backward; stand down. Then radial steps ([[CAD-110]]) take every cylinder apart at once: blades, tappets, pushrods, heads with pipes and plugs, plugs further, barrels and pistons with their wrist pins move away from the crank axis.
 
+## Drawings
+
+Every component has a drawing *Drawing – <part>*, numbered R9-01 to R9-27 in the order of the parts table (crankcase, cases, cylinder, crank train, valve train, reduction gear, propeller, accessories, stand). The engine is R9-00 *Drawing – Radial engine*.
+
+- **Sheets:** A4 or A3 landscape (the engine A2), at 5:1 down to 1:5, chosen so the views fit with room for dimensions. Title block: part name, number, material, drawn by Claude, revision A.
+- **Views:** discs and gears show the axial view, a full section through the axis (*Section A-A*) and an iso view. Shafts, rods and pipes are in third-angle projection: front, top above it, right beside it, iso above the right view.
+- **Dimensions:** overall lengths and heights, the diameters that matter, centre marks and centre lines. Gear data (teeth, module, pressure angle, pitch), centre distances and counts per engine go in a note, since these cannot be dimensioned ([[CAD-127]]).
+- **Assembly drawing:** front, side and iso views at 1:5, a parts list of 28 rows (configurations and pattern copies counted) and 14 balloons on the side view.
+- Only the crankcase's front half is drawn: views have no configuration ([[CAD-126]]).
+
 ## Findings
 
 | Task | What | Kind | Fixed by |
@@ -177,12 +187,16 @@ Round 4 (checking phase 28, phasing the gears, collision check and animation):
 | [[CAD-121]] | "Body crank has to be rebuilt first" when a large assembly publishes after a few moves; WebAssembly faults after 73 interference checks: the shape cache's `has()` is no use, so `place()` evicts its own parts | bug | open documents hold their shapes; placed copies never stored ✅ |
 | [[CAD-122]] | Animations fit the camera per frame (the view jumps); the sheet shows one pose for whole-turn studies; GIFs land in the server's working directory | improvement | one camera; distinct moments; `CADence exports` ✅ |
 
-Round 5 (technical drawings of every component): stopped at once.
+Round 5 (technical drawings of every component): stopped at once, then done after phase 29.
 
 | Task | What | Kind | Fixed by (phase 29) |
 | --- | --- | --- | --- |
 | [[CAD-123]] | Agents cannot make technical drawings: the app has them, but `create_document` takes only components and assemblies, and no tool or scripting call edits, reads, pictures or exports a drawing | missing, blocking | drawing tools, sheet pictures, PDF and DXF ✅ |
 | [[CAD-124]] | And what else agents could not do: projects, versions, git, measuring, sketch checks, viewers, tables, build instructions, section pictures | missing | every manager operation as a tool ✅ |
+| [[CAD-125]] | Drawing the spark plug (modelled thread) blocks a new process in hidden-line removal: 452.6 s for one view, the same views drew in seconds earlier | bug | todo |
+| [[CAD-126]] | Drawing views have no configuration: the crankcase's rear half cannot be drawn | missing | todo |
+| [[CAD-127]] | Dimensioning gaps: cylinder outlines are no anchors, no centre-to-centre dimensions, diameters always at 45°, hidden geometry offered, no section line, no anchors on assembly views | improvement | todo |
+| [[CAD-128]] | `get_drawing` repeats the whole sheet, anchor names of up to 150 characters, one vertex under several names | improvement | todo |
 
 What worked well: revolves of long outlines, sweeps along line-arc-line paths, lofts through spline sections (from a round root since phase 26), circular patterns of cuts and of new bodies, mirrors, configurations (two crankcase halves from one component), the gear generator (spur and ring gears), modelled threads, fillets and chamfers, and `render_picture` for every part. In the assembly: nine closed loops solved from good starting values, links chained crank → lay gear → cam ring → nine cam followers, planetary links, patterns of turning instances, mass and bill of materials with configurations and copies. Since phase 27: pictures of the whole engine (79 instances, 42 copies) in seconds, the exploded view with radial steps across pattern copies, cam links with 186-point profiles, tilted joint offsets, and brief `edit_assembly` answers (a link change answers with the joints it moved, not the profiles).
 
@@ -197,3 +211,7 @@ What worked well: revolves of long outlines, sweeps along line-arc-line paths, l
 - Move a driving joint of closed loops in small steps (or play a study); one big step can land the loops in their mirror pose, and the values are saved ([[CAD-120]]). Slide limits on cylindrical piston joints turn the mirror pose into an error instead.
 - To phase two gears, scan a link offset across one tooth on a copy of the project (imported from a backup into an empty `--folder`) and check several mesh positions. Then set the middle of the clear range as a part angle (half a tooth is common), so other timing stays.
 - A pushrod or strut along a direction no face has: a rigid joint on the moving part's origin with `offset.lean` (which way to tip) and `offset.tilt` (how far), from any frame ([[CAD-113]], [[CAD-118]]).
+- Drawings: lay out views with room for dimensions (about 30 mm between views), then list anchors per view. On revolved parts, dimension lengths between the seam vertices on the axis and diameters on the circles of an end view ([[CAD-127]]).
+- Diameter texts sit 45° up and right of the circle at its radius plus the offset: give concentric diameters offsets whose sums differ by about 8 mm, and keep such views away from the top and right edges of the sheet.
+- Check that a circle you dimension is visible in that view: anchors include hidden geometry ([[CAD-127]]).
+- A part with a modelled thread can take minutes to draw in a new process ([[CAD-125]]): edit its drawing where it is already open (the MCP server) rather than from a new script.

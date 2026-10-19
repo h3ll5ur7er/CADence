@@ -50,3 +50,6 @@ Thumbs.db
 # Files exported into the repository root by scripts or agents run there
 /*.pdf
 /*.dxf
+
+# The command line for agents, copied here for the desktop installers (npm run build:binary -- --sidecar)
+/src-tauri/binaries/

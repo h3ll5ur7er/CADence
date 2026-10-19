@@ -448,9 +448,19 @@ Imported SVG `<text>` and DXF `TEXT`/`MTEXT` become editable sketch texts in thi
 ## ADR-50
 
 **The command line and MCP server as one self-contained executable (CAD-131).**
-- *A Node single executable application:* `npm run build:binary` bundles `src/automation/main.ts` with every package into one CommonJS script (the main script of a single executable can load only Node's own modules), and injects it with `postject` into a copy of the Node that builds it, as `dist/binary/cadence(.exe)`.
+- *A Node single executable application:* `npm run build:binary` bundles `src/automation/main.ts` with every package into one CommonJS script (the main script of a single executable can load only Node's own modules), and injects it with `postject` into a copy of the Node that builds it, as `dist/binary/cadence-cli(.exe)`.
 - *Files inside:* the geometry kernel's and the constraint solver's WebAssembly, the two fonts and the script itself are assets of the executable. On first start they are unpacked into `cadence-<hash>` in the temporary directory (the hash of the script, so builds never mix; written whole, then renamed), and `NodeResources` passes their paths to the kernels, the fonts and the views worker, which runs the unpacked script.
 - *Fonts by package, not by folder:* Node reads the bundled fonts from wherever the font package is installed (`createRequire`), not below the working folder.
 
 *Why:* agents of other projects use CADence's MCP server; the built module needed this repository's `node_modules`, and found the fonts only when started in its folder.
 *Trade-off:* the executable is about 120 MB, built per platform, and its copied signature no longer fits; Bun or Deno would compile smaller binaries but run another JavaScript engine than the tests do.
+
+## ADR-51
+
+**Releases for Windows, macOS and Linux, each installer with the command line for agents (CAD-132).**
+- *Two executables in one installer:* the desktop app is a Rust program around a web view, the command line a Node single executable ([[Architecture/Decisions#ADR-50]]); one executable for both would mean putting Node into the Rust program. So the command line is a Tauri sidecar (`bundle.externalBin`, as `cadence-cli`) that every installer puts next to the app, and the About dialog asks the Rust shell where it is (`agent_cli`) and shows the `claude mcp add` command for it. Each release also has the command line on its own per platform.
+- *Built where it runs:* a matrix of runners (Windows x64, macOS on Apple silicon, Linux x64) builds the command line with that runner's Node, copies it to `src-tauri/binaries/cadence-cli-<target triple>`, and runs tauri-action, which adds each platform's installers and update files to one release.
+- *Tried before tagging:* pull requests that change how releases are built, and runs by hand, build everything without publishing and keep it as workflow artifacts.
+
+*Why:* agents of other projects should get CADence's MCP server with the app, on every major system.
+*Trade-off:* every installer is about 120 MB larger; nothing is code signed or notarized yet, so Windows and macOS warn; no installers for Intel Macs or Linux on ARM.

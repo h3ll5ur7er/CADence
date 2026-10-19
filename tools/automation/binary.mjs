@@ -1,7 +1,9 @@
 // Builds CADence's command line and MCP server as one self-contained executable for this platform
-// (CAD-131): dist/binary/cadence (cadence.exe on Windows). It is a Node single executable application:
-// a copy of this Node with the program, the kernels' WebAssembly and the fonts inside, so it runs
-// anywhere without Node, node_modules or this repository.
+// (CAD-131): dist/binary/cadence-cli (cadence-cli.exe on Windows). It is a Node single executable
+// application: a copy of this Node with the program, the kernels' WebAssembly and the fonts inside,
+// so it runs anywhere without Node, node_modules or this repository.
+// With --sidecar it is also copied to src-tauri/binaries/ under the name Tauri bundles it by
+// (cadence-cli-<target triple>), for the desktop installers (CAD-132).
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -12,7 +14,7 @@ const require = createRequire(import.meta.url);
 const out = pathOf('dist/binary/');
 const work = join(out, 'build');
 const windows = process.platform === 'win32';
-const executable = join(out, windows ? 'cadence.exe' : 'cadence');
+const executable = join(out, windows ? 'cadence-cli.exe' : 'cadence-cli');
 rmSync(work, { recursive: true, force: true });
 mkdirSync(work, { recursive: true });
 
@@ -58,3 +60,12 @@ execFileSync(process.execPath, [
 if (process.platform === 'darwin') execFileSync('codesign', ['--sign', '-', executable]);
 rmSync(work, { recursive: true, force: true });
 console.log(`${executable} (${Math.round(statSync(executable).size / 1e6)} MB)`);
+
+if (process.argv.includes('--sidecar')) {
+  const triple = /^host: (\S+)$/m.exec(execFileSync('rustc', ['-vV'], { encoding: 'utf8' }))?.[1];
+  if (!triple) throw new Error('rustc does not say which platform it builds for.');
+  mkdirSync(pathOf('src-tauri/binaries/'), { recursive: true });
+  const sidecar = pathOf(`src-tauri/binaries/cadence-cli-${triple}${windows ? '.exe' : ''}`);
+  copyFileSync(executable, sidecar);
+  console.log(sidecar);
+}

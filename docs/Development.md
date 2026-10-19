@@ -17,7 +17,7 @@ How to run, test and build CADence. The rules for code and the definition of don
 | `npm start` | Web app at http://localhost:4200, with projects in this browser's IndexedDB |
 | `npm run desktop` | Desktop app (Tauri) in development mode; starts `npm start` itself, so stop any running dev server first |
 | `npm run desktop:build` | Release build of the desktop app with installers in `src-tauri/target/release/bundle/` (`npx tauri build --no-bundle` builds only the executable) |
-| `npm run build:binary` | The command line and MCP server as one self-contained executable, `dist/binary/cadence.exe` (Node single executable application with the kernels and fonts inside, [[Architecture/Decisions#ADR-50]]) |
+| `npm run build:binary` | The command line and MCP server as one self-contained executable, `dist/binary/cadence-cli.exe` (Node single executable application with the kernels and fonts inside, [[Architecture/Decisions#ADR-50]]); with `-- --sidecar` also copied to `src-tauri/binaries/` for the installers |
 | `npm run build:automation` | The command line and MCP server, `dist/automation/cadence.mjs` (esbuild; packages load from `node_modules`); run it with `npm run cadence -- --help` ([[User-guide/Automation]]) |
 
 Add `?webgl` to the URL to force the WebGL 2 renderer instead of WebGPU. The status bar shows which backend runs.
@@ -71,12 +71,14 @@ To publish the desktop app:
 
 1. Set the version, commit, merge into `master`.
 2. Tag the commit and push the tag: `git tag v0.16.0 && git push origin v0.16.0`.
-3. [[.github/workflows/release.yml]] builds the installers on Windows (NSIS `.exe` for the current user, `.msi`), signs the update files and publishes a GitHub release with them and `latest.json`. Installed apps find it at their next start.
+3. [[.github/workflows/release.yml]] builds the installers on Windows (NSIS `.exe` for the current user, `.msi`), macOS on Apple silicon (`.dmg`, `.app`) and Linux (`.deb`, `.rpm`, AppImage), each with the command line for agents next to the app (`cadence-cli`, a Tauri sidecar: `bundle.externalBin` in [[src-tauri/tauri.release.conf.json]]). It signs the update files and publishes a GitHub release with them, `latest.json` and the command line on its own for each platform. Installed apps find it at their next start.
+
+The same workflow runs for pull requests that change how releases are built (the workflow, `src-tauri/`, `tools/automation/`), and by hand: it then builds everything and keeps it as workflow artifacts, without publishing. To try the installers locally, build the sidecar first (`npm run build:binary -- --sidecar`), then `npx tauri build --config src-tauri/tauri.release.conf.json`.
 
 > [!IMPORTANT]
 > Releases need two repository secrets, set once under *Settings → Secrets and variables → Actions*: `TAURI_SIGNING_PRIVATE_KEY`, the contents of the private key whose public key is `plugins.updater.pubkey` in [[src-tauri/tauri.conf.json]], and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (empty when the key has none). Make a new pair with `npx tauri signer generate -w ~/.tauri/cadence-updater.key` and put its public key into the configuration; installed apps then only accept updates signed with the new key after one more update signed with the old one.
 
-The installers are not code signed yet: Windows SmartScreen warns about them until they are. With a code signing certificate, set `bundle.windows.certificateThumbprint` (or a `signCommand` for cloud signing) in the release configuration [[src-tauri/tauri.release.conf.json]].
+The installers are not code signed yet: Windows SmartScreen warns about them, and macOS asks to confirm opening an app from an unidentified developer (right-click → *Open*), until they are. With a code signing certificate, set `bundle.windows.certificateThumbprint` (or a `signCommand` for cloud signing) in the release configuration [[src-tauri/tauri.release.conf.json]]; for macOS, an Apple Developer ID and notarization (`APPLE_CERTIFICATE`, `APPLE_ID` and the other secrets tauri-action reads). Intel Macs and Linux on ARM get no installers yet: they would need their own runners.
 
 Templates: the projects in `public/templates` are made by [[src/automation/templates.ts]]. After changing a template (or what it is made with), write them again with `UPDATE_TEMPLATES=1 npx vitest run -c vitest.core.config.ts src/automation/templates.spec.ts`; the test fails while they differ.
 

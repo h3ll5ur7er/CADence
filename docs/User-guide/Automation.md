@@ -91,7 +91,7 @@ Ids are yours to choose; they make later commands readable (`profiles`, `sketch`
 
 `cadence mcp` is an MCP server over stdio. Add it to an MCP client with the full path to the self-contained binary (below) or the built file, for example:
 
-- **Claude Code, from any project:** `claude mcp add cadence -- <path>/cadence.exe mcp` (add `-s user` for all projects)
+- **Claude Code, from any project:** `claude mcp add cadence -- <path>/cadence-cli mcp` (add `-s user` for all projects). The desktop app's About dialog shows the command for the one installed with it.
 - **Claude Code:** `claude mcp add cadence -- node <repository>/dist/automation/cadence.mjs mcp`
 - **Claude Desktop** and other clients with a JSON configuration:
 
@@ -108,7 +108,7 @@ Ids are yours to choose; they make later commands readable (`profiles`, `sketch`
 
 ### The self-contained binary
 
-`npm run build:binary` builds `dist/binary/cadence.exe` (`cadence` on Linux and macOS) for the platform it runs on: one file of about 120 MB with Node, CADence, the geometry kernel, the sketch solver and the fonts inside ([[Architecture/Decisions#ADR-50]]). Copy it anywhere (say `C:\Tools\cadence.exe`); it needs neither Node nor this repository. It takes the same commands and options as `npm run cadence`, so `cadence.exe mcp` serves the projects of the desktop app (or `--folder`) and writes files to *CADence exports* in the documents folder (or `--exports`). On first start it unpacks its kernels and fonts into a `cadence-…` folder of the temporary directory. Windows may warn that its signature is broken: the Node it is made from was signed, the binary is not.
+Every [release](https://github.com/h3ll5ur7er/CADence/releases/latest) has it for Windows, macOS (Apple silicon) and Linux, on its own (`cadence-cli-windows-x64.exe`, `cadence-cli-macos-arm64`, `cadence-cli-linux-x64`) and in the desktop installers, next to the app: in the installation folder on Windows, in `CADence.app/Contents/MacOS/` on macOS, in `/usr/bin/` from the Linux `.deb` (the AppImage's changes folder on every start: use the file on its own there). `npm run build:binary` builds `dist/binary/cadence-cli.exe` (`cadence-cli` on Linux and macOS) for the platform it runs on: one file of about 120 MB with Node, CADence, the geometry kernel, the sketch solver and the fonts inside ([[Architecture/Decisions#ADR-50]]). Copy it anywhere (say `C:\Tools\cadence-cli.exe`); it needs neither Node nor this repository. It takes the same commands and options as `npm run cadence`, so `cadence-cli mcp` serves the projects of the desktop app (or `--folder`) and writes files to *CADence exports* in the documents folder (or `--exports`). On first start it unpacks its kernels and fonts into a `cadence-…` folder of the temporary directory. Windows may warn that its signature is broken: the Node it is made from was signed, the binary is not. On macOS, a downloaded `cadence-cli-macos-arm64` needs `chmod +x` and, since it is not notarized, `xattr -d com.apple.quarantine` once. The kernels it unpacks can be replaced by modified builds (as the LGPL allows): put them in its `cadence-…` folder under the same names.
 
 The server tells the agent how to model when it connects, and offers these tools:
 

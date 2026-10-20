@@ -444,3 +444,13 @@ Imported SVG `<text>` and DXF `TEXT`/`MTEXT` become editable sketch texts in thi
 
 *Why:* drawing the radial engine ([[CAD-96]]): one view blocked every new process for minutes, the crankcase's rear half could not be drawn, shafts and centre distances could not be dimensioned, and reading anchors cost most of the agent's tokens.
 *Trade-off:* the views worker is a second kernel (its own memory), and the bytes of a source are copied to it for each view not yet drawn. A view drawn from the triangles is approximate (outlines of free-form faces are polygons), and stays so until its source changes. Refs change when a name changes, as names do.
+
+## ADR-50
+
+**The command line and MCP server as one self-contained executable (CAD-131).**
+- *A Node single executable application:* `npm run build:binary` bundles `src/automation/main.ts` with every package into one CommonJS script (the main script of a single executable can load only Node's own modules), and injects it with `postject` into a copy of the Node that builds it, as `dist/binary/cadence(.exe)`.
+- *Files inside:* the geometry kernel's and the constraint solver's WebAssembly, the two fonts and the script itself are assets of the executable. On first start they are unpacked into `cadence-<hash>` in the temporary directory (the hash of the script, so builds never mix; written whole, then renamed), and `NodeResources` passes their paths to the kernels, the fonts and the views worker, which runs the unpacked script.
+- *Fonts by package, not by folder:* Node reads the bundled fonts from wherever the font package is installed (`createRequire`), not below the working folder.
+
+*Why:* agents of other projects use CADence's MCP server; the built module needed this repository's `node_modules`, and found the fonts only when started in its folder.
+*Trade-off:* the executable is about 120 MB, built per platform, and its copied signature no longer fits; Bun or Deno would compile smaller binaries but run another JavaScript engine than the tests do.

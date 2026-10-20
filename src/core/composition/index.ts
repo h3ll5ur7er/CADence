@@ -24,7 +24,7 @@ import { createKinematicsEngine } from '@core/engines/kinematics';
 import type { ModelingEngine } from '@core/engines/modeling';
 import { createParameterEngine } from '@core/engines/parameter';
 import { createSketchEngine } from '@core/engines/sketch';
-import { fontSource } from '@core/utilities/text';
+import { fontSource, type TextFont } from '@core/utilities/text';
 import { type AssemblyManager, createAssemblyManager } from '@core/managers/assembly';
 import { createDesignManager, type DesignManager } from '@core/managers/design';
 import type { DrawingManager, DrawingManagerDependencies } from '@core/managers/drawing';
@@ -59,6 +59,8 @@ export interface Host {
   readonly externalFiles: ExternalFileAccess;
   /** Each project's version history. */
   readonly versions: VersionAccess;
+  /** Where the geometry kernel's WebAssembly is, for a kernel in this thread (Node: a path); it is found next to its package otherwise. */
+  readonly kernelWasmUrl?: string;
   /** Where the browser loads the constraint solver from; Node finds it on its own. */
   readonly solverWasmUrl?: string;
   /** Where the browser loads the bundled fonts from; Node reads them from the font package. */
@@ -92,6 +94,7 @@ const relayed: Partial<Record<keyof DomainEvents, keyof DomainEvents>> = {
 };
 
 export interface HostOptions {
+  readonly kernelWasmUrl?: string;
   readonly solverWasmUrl?: string;
   readonly fontUrls?: Readonly<Record<TextWeight, string>>;
   readonly geometry?: Port;
@@ -109,7 +112,7 @@ interface Geometry {
  * The kernel-bound engines in this thread (Node, tests), sharing one shape store. Loaded on first use,
  * so browser bundles, which use the worker, never include the kernel.
  */
-function localGeometry(): Geometry {
+function localGeometry(kernelWasmUrl: string | undefined, fonts: (weight: TextWeight) => Promise<TextFont>): Geometry {
   const engines = (async (): Promise<Geometry> => {
     const [{ createShapeAccess }, { createModelingEngine }, { createInterchangeEngine }, { createAnalysisEngine }] = await Promise.all([
       import('@core/access/shape'),
@@ -117,8 +120,8 @@ function localGeometry(): Geometry {
       import('@core/engines/interchange'),
       import('@core/engines/analysis'),
     ]);
-    const shapes = createShapeAccess();
-    return { modeling: createModelingEngine(shapes), interchange: createInterchangeEngine(shapes), analysis: createAnalysisEngine(shapes) };
+    const shapes = createShapeAccess(kernelWasmUrl ? { wasmUrl: kernelWasmUrl } : {});
+    return { modeling: createModelingEngine(shapes), interchange: createInterchangeEngine(shapes, fonts), analysis: createAnalysisEngine(shapes) };
   })();
   return { modeling: deferred(engines, 'modeling'), interchange: deferred(engines, 'interchange'), analysis: deferred(engines, 'analysis') };
 }
@@ -155,7 +158,7 @@ export function createCore(host: Host): Core {
         interchange: remote<InterchangeEngine>(host.geometry, 'interchange'),
         analysis: remote<AnalysisEngine>(host.geometry, 'analysis'),
       }
-    : localGeometry();
+    : localGeometry(host.kernelWasmUrl, fonts);
   return {
     projectManager: createProjectManager({
       projects,

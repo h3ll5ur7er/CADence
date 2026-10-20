@@ -46,3 +46,7 @@ Thumbs.db
 # Playwright
 /playwright-report
 /test-results
+
+# Files exported into the repository root by scripts or agents run there
+/*.pdf
+/*.dxf

@@ -149,25 +149,30 @@ export const fontFiles: Readonly<Record<TextWeight, string>> = {
 };
 
 /**
- * Loads the bundled fonts once each: from the given URLs in browsers and workers, or from the font
- * package in Node (tests, the command line).
+ * Loads the bundled fonts once each: from the given URLs in browsers and workers, or from files in
+ * Node (the font package's, or the given paths: the self-contained binary's, CAD-131).
  */
 export function fontSource(urls?: Readonly<Record<TextWeight, string>>): (weight: TextWeight) => Promise<TextFont> {
   const loaded = new Map<TextWeight, Promise<TextFont>>();
   return (weight) => {
     let font = loaded.get(weight);
     if (!font) {
-      font = (urls ? fetch(urls[weight]).then((r) => r.arrayBuffer()) : readPackageFont(fontFiles[weight])).then(loadFont);
+      const url = urls?.[weight];
+      // Browsers and the desktop app fetch (http, tauri:); Node reads files unless given a web address.
+      const node = typeof (globalThis as { process?: { versions?: { node?: string } } }).process?.versions?.node === 'string';
+      font = (url && (!node || /^https?:/.test(url)) ? fetch(url).then((r) => r.arrayBuffer()) : readFont(url, fontFiles[weight])).then(loadFont);
       loaded.set(weight, font);
     }
     return font;
   };
 }
 
-async function readPackageFont(file: string): Promise<ArrayBuffer> {
-  // A variable module name keeps bundlers from pulling Node's file system into browser builds.
-  const fs = 'node:fs/promises';
+/** A font file in Node: at `path`, or in the font package wherever it is installed (not only below the working folder). */
+async function readFont(path: string | undefined, file: string): Promise<ArrayBuffer> {
+  // Variable module names keep bundlers from pulling Node's modules into browser builds.
+  const [fs, module] = ['node:fs/promises', 'node:module'];
   const { readFile } = (await import(/* @vite-ignore */ fs)) as { readFile(path: string): Promise<Uint8Array> };
-  const bytes = await readFile(`node_modules/@fontsource/inter/files/${file}`);
+  const { createRequire } = (await import(/* @vite-ignore */ module)) as { createRequire(from: string): { resolve(id: string): string } };
+  const bytes = await readFile(path ?? createRequire(import.meta.url).resolve(`@fontsource/inter/files/${file}`));
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }

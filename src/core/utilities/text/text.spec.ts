@@ -1,7 +1,9 @@
-import { readFileSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { signedArea, type Vec2 } from '../math';
-import { type Contour, loadFont, type TextFont } from './index';
+import { type Contour, fontFiles, fontSource, loadFont, type TextFont } from './index';
 
 let font: TextFont;
 beforeAll(async () => {
@@ -14,6 +16,24 @@ const extent = (contours: readonly Contour[]) => {
   const ps = points(contours);
   return { minX: Math.min(...ps.map((p) => p[0])), maxX: Math.max(...ps.map((p) => p[0])), minY: Math.min(...ps.map((p) => p[1])), maxY: Math.max(...ps.map((p) => p[1])) };
 };
+
+describe('the bundled fonts in Node (CAD-131)', () => {
+  it('come from the font package whatever the working folder, or from the files given', async () => {
+    const elsewhere = mkdtempSync(join(tmpdir(), 'cadence-fonts-'));
+    const here = process.cwd();
+    try {
+      // Run from another folder (an MCP server started by another project's agent).
+      process.chdir(elsewhere);
+      expect((await fontSource()('regular')).capRatio).toBeGreaterThan(0.5);
+      // The self-contained binary's unpacked copies.
+      const copy = join(elsewhere, 'bold.woff');
+      copyFileSync(join(here, 'node_modules/@fontsource/inter/files', fontFiles.bold), copy);
+      expect((await fontSource({ regular: copy, bold: copy })('bold')).capRatio).toBeGreaterThan(0.5);
+    } finally {
+      process.chdir(here);
+    }
+  });
+});
 
 describe('text outlines', () => {
   it('draws capital letters as tall as asked, on the baseline, closed', () => {

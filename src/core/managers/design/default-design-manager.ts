@@ -112,9 +112,12 @@ class Session implements DesignSession {
 
   /**
    * Follows the project's parameters where no event told: changed by another tool or process while
-   * nothing listened to this session (CAD-146). Regenerates only when they differ.
+   * nothing listened to this session (CAD-146). Regenerates only when they differ. A session that is
+   * listened to hears the changes (`projectParametersChanged`), and reads nothing more per command:
+   * on the desktop, that read took long enough for quick input to miss what it had drawn.
    */
   private async followProject(): Promise<void> {
+    if (this.projectWatch) return;
     const now = await projectParametersOf(this.deps, this.current.document);
     if (JSON.stringify(now) !== JSON.stringify(this.context.projectParameters ?? [])) await this.projectChanged();
   }

@@ -63,7 +63,8 @@ jobs:
         shell: bash
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        run: test -n "$TAURI_SIGNING_PRIVATE_KEY" || { echo "::error::The repository secret TAURI_SIGNING_PRIVATE_KEY is not set: installed apps could not trust the update files."; exit 1; }
+        run: |
+          test -n "$TAURI_SIGNING_PRIVATE_KEY" || { echo "::error::The repository secret TAURI_SIGNING_PRIVATE_KEY is not set, so installed apps could not trust the update files."; exit 1; }
       - run: npm ci
       - name: The command line for agents, for the installer and on its own
         shell: bash

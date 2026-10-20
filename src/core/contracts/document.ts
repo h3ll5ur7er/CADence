@@ -143,8 +143,12 @@ export interface ImportedDocument extends DocumentBase {
 
 export type CadDocument = ComponentDocument | AssemblyDocument | DrawingDocument | ImportedDocument;
 
-/** 2: assemblies got motion studies. */
-export const currentSchemaVersion = 2;
+/**
+ * 2: assemblies got motion studies. 3: the fields added by phases 21 to 33 (joint leans, view
+ * configurations, …), so that older apps refuse documents they would show wrongly (CAD-145). Raise it
+ * whenever a field is added that an older app must not ignore.
+ */
+export const currentSchemaVersion = 3;
 
 export function summarize(document: CadDocument): DocumentSummary {
   const { id, projectId, kind, name, createdAt, modifiedAt } = document;

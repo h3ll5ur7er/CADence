@@ -63,8 +63,12 @@ export type PartSpec =
   | { readonly kind: 'magnet'; readonly diameter: string; readonly height: string }
   /** A deep groove ball bearing. */
   | { readonly kind: 'bearing'; readonly size: BearingSize }
-  /** A spur gear (helical with a helix angle), involute teeth, centred on the point with a tooth along the plane's u axis. */
-  | { readonly kind: 'gear'; readonly module: string; readonly teeth: string; readonly width: string; readonly bore: string; readonly pressureAngle: string; readonly helixAngle: string }
+  /**
+   * A spur gear (helical with a helix angle), involute teeth, centred on the point with a tooth along the
+   * plane's u axis. `chamfer` bevels the teeth at both ends by that much at the tip (45°), so a helical
+   * tooth ends in no knife edge (CAD-140); none when left out.
+   */
+  | { readonly kind: 'gear'; readonly module: string; readonly teeth: string; readonly width: string; readonly bore: string; readonly pressureAngle: string; readonly helixAngle: string; readonly chamfer?: string }
   /**
    * A ring gear: internal involute teeth in a ring of `outside` diameter, centred on the point, a tooth
    * space along the plane's u axis. Planets mesh inside it ({@link ringGearMesh}).

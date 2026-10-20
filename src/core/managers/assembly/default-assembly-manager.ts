@@ -359,8 +359,16 @@ class Session implements AssemblySession {
     return ok(undefined);
   }
 
-  interference(): Promise<Interference[]> {
-    return this.deps.analysis.interference(this.placedParts());
+  async interference(options: { readonly onProgress?: (done: number, total: number) => void } = {}): Promise<Interference[]> {
+    const parts = this.placedParts();
+    if (!options.onProgress) return this.deps.analysis.interference(parts);
+    const found: Interference[] = [];
+    for (let i = 0; i < parts.length - 1; i++) {
+      const pairs = parts.slice(i + 1).map((other) => [parts[i]?.instance as string, other.instance] as const);
+      found.push(...(await this.deps.analysis.interference(parts, pairs)));
+      options.onProgress(i + 1, parts.length - 1);
+    }
+    return found;
   }
 
   private placedParts() {
@@ -453,6 +461,13 @@ class Session implements AssemblySession {
   private async commit(document: AssemblyDocument, derived: Derived): Promise<void> {
     this.document = document;
     this.derived = derived;
+    // Components no instance uses any more are let go, with their shapes (CAD-135).
+    const used = new Set(document.instances.map((i) => sourceKey(i.component, i.configuration)));
+    for (const [source, loaded] of [...this.components]) {
+      if (used.has(source)) continue;
+      this.components.delete(source);
+      void this.deps.modeling.keep(loaded.bodies, false);
+    }
     await this.deps.documents.store(document);
     this.deps.events.publish('documentSaved', { projectId: document.projectId, documentId: document.id });
     this.notify();

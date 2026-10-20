@@ -46,6 +46,17 @@ export interface Core {
    * results written. A script waits for it before its process ends (CAD-119).
    */
   settled(): Promise<void>;
+  /**
+   * The geometry kernel's generation: it changes when the kernel was started again after a failure
+   * or a cancelled computation (CAD-133, CAD-134), so what holds shapes (open documents) opens anew.
+   */
+  kernelGeneration(): Promise<string>;
+  /**
+   * Stops what the geometry kernel computes (a cancelled request, CAD-134): its worker is stopped,
+   * the calls waiting on it fail, and a new one starts with the next call. Only hosts whose kernel
+   * runs in a worker they can start again.
+   */
+  stopGeometry?(): void;
 }
 
 export type StorageKind = 'browser' | 'project-folders' | 'memory';
@@ -67,6 +78,13 @@ export interface Host {
   readonly fontUrls?: Readonly<Record<TextWeight, string>>;
   /** Port to the geometry worker; without it the geometry kernel runs in this thread (Node, tests). */
   readonly geometry?: Port;
+  /**
+   * How many times the geometry worker started again or its kernel failed (CAD-134): known here, so
+   * asking never waits for a busy worker.
+   */
+  readonly restarts?: () => number;
+  /** Stops the geometry worker's computation (`Core.stopGeometry`). */
+  readonly stopGeometry?: () => void;
   /**
    * Starts a worker with a kernel of its own for drawing views, stopped when a view takes longer than
    * `viewTimeLimit` (CAD-125); without it views are drawn by the geometry kernel, however long they take.
@@ -98,6 +116,8 @@ export interface HostOptions {
   readonly solverWasmUrl?: string;
   readonly fontUrls?: Readonly<Record<TextWeight, string>>;
   readonly geometry?: Port;
+  readonly restarts?: () => number;
+  readonly stopGeometry?: () => void;
   readonly views?: () => StoppablePort;
   readonly channel?: MessageChannelLike;
 }
@@ -210,6 +230,9 @@ export function createCore(host: Host): Core {
       ...(host.views ? { views: stoppable<ModelingEngine>(host.views, 'modeling', viewTimeLimit) } : {}),
     }),
     storage: host.kind,
+    // A worker that counts its own restarts and failures is not asked: it may be busy.
+    kernelGeneration: async () => (host.restarts ? String(host.restarts()) : String(await geometry.modeling.kernelGeneration())),
+    ...(host.stopGeometry ? { stopGeometry: host.stopGeometry } : {}),
     settled: async () => {
       // Handlers publish further events (a request, then its answer): until none is left.
       for (let pending = events.drained(); ; ) {

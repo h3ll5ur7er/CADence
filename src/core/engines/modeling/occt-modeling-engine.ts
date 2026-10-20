@@ -1,4 +1,4 @@
-import { find, type NamedShape, piecesOf, place, type ShapeAccess } from '@core/access/shape';
+import { find, kernelFailure, type NamedShape, piecesOf, place, type ShapeAccess } from '@core/access/shape';
 import { type BodyMesh, fail, type Matrix4, ok, type PlaneFrame, type Result, type TopologyRef, type Vec2, type Vec3 } from '@core/contracts';
 import { type Edge, type Face, getOC, makeCompound, makeVertex, measureVolume, type Shape3D, Vertex } from 'replicad';
 import { combine, type LoadedBody, renameCopy } from './bodies';
@@ -35,7 +35,15 @@ export class OcctModelingEngine implements ModelingEngine {
     try {
       outcome = this.compute(request);
     } catch (error) {
-      const message = error instanceof FeatureError || error instanceof BooleanError || error instanceof GearError || error instanceof BodyOperationError || error instanceof HoleError || error instanceof PartError || error instanceof DraftRibError || error instanceof FlangeError || error instanceof RevolveError ? error.message : `The geometry kernel could not build this feature (${describe(error)}).`;
+      const known = error instanceof FeatureError || error instanceof BooleanError || error instanceof GearError || error instanceof BodyOperationError || error instanceof HoleError || error instanceof PartError || error instanceof DraftRibError || error instanceof FlangeError || error instanceof RevolveError;
+      // A kernel that ran out of memory starts again before the next feature (CAD-133).
+      const failure = known ? undefined : kernelFailure(describe(error));
+      if (failure) this.shapes.report(describe(error));
+      const message = known
+        ? error.message
+        : failure
+          ? `The geometry kernel could not build this feature: ${failure} (${describe(error)}). It starts again with the next request; everything open is built again.`
+          : `The geometry kernel could not build this feature (${describe(error)}).`;
       outcome = { bodies: request.bodies, error: message };
     }
     this.remember(request.key, outcome);
@@ -114,6 +122,11 @@ export class OcctModelingEngine implements ModelingEngine {
     } catch (error) {
       return fail({ code: 'view-failed', message: describe(error) });
     }
+  }
+
+  async kernelGeneration(): Promise<number> {
+    await this.shapes.ready();
+    return this.shapes.generation();
   }
 
   async snapshot(bodies: readonly BodyState[]): Promise<Uint8Array> {

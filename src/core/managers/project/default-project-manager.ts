@@ -42,7 +42,7 @@ import { loadFont } from '@core/utilities/text';
 import type { ParameterEngine } from '@core/engines/parameter';
 import type { Clock } from '@core/utilities/clock';
 import type { EventBus } from '@core/utilities/messaging';
-import { archiveFiles, type ProjectBundle, readArchive, templateBundle, withNewIds } from './project-bundles';
+import { archiveFiles, copyOf, type ProjectBundle, readArchive, remapIds, templateBundle, withNewIds } from './project-bundles';
 import type { CreatedProject, ExternalFile, ImportedContent, ImportedView, ProjectManager } from './project-manager';
 
 export interface ProjectManagerDependencies {
@@ -223,13 +223,17 @@ export class DefaultProjectManager implements ProjectManager {
 
   async documentHistory(id: DocumentId): Promise<Version[]> {
     const document = await this.deps.documents.load(id);
-    return document ? this.deps.versions.versions(document.projectId, documentPath(id)) : [];
+    if (!document) return [];
+    // A copy's document also appears under the ids it had before it was copied (CAD-147).
+    const earlier = (await this.deps.projects.find(document.projectId))?.copiedFrom?.[id] ?? [];
+    const all = (await Promise.all([id, ...earlier].map((at) => this.deps.versions.versions(document.projectId, documentPath(at as DocumentId))))).flat();
+    return [...new Map(all.map((v) => [v.id, v])).values()].sort((a, b) => (a.time < b.time ? 1 : a.time > b.time ? -1 : 0));
   }
 
   async restoreDocument(id: DocumentId, version: string): Promise<Result<void>> {
     const current = await this.deps.documents.load(id);
     if (!current) return fail({ code: 'unknown-document', message: `Document ${id} does not exist.` });
-    const text = await this.deps.versions.read(current.projectId, version, documentPath(id));
+    const text = (await this.deps.versions.read(current.projectId, version, documentPath(id))) ?? (await this.fromBeforeTheCopy(current.projectId, id, version));
     if (text === undefined) return fail({ code: 'unknown-version', message: 'The document did not exist in that version.' });
     const restored = { ...(JSON.parse(text) as CadDocument), id, projectId: current.projectId, modifiedAt: this.now() } as CadDocument;
     await this.deps.documents.store(restored);
@@ -237,6 +241,18 @@ export class DefaultProjectManager implements ProjectManager {
     await this.recordVersion(current.projectId, `Restored ${restored.name} from ${from?.names[0] ?? from?.time ?? version.slice(0, 7)}`);
     this.deps.events.publish('documentRestored', { documentId: id });
     return ok(undefined);
+  }
+
+  /** A copy's document as it was before the copy, under one of its earlier ids, with all earlier ids made the copy's (CAD-147). */
+  private async fromBeforeTheCopy(projectId: ProjectId, id: DocumentId, version: string): Promise<string | undefined> {
+    const copiedFrom = (await this.deps.projects.find(projectId))?.copiedFrom ?? {};
+    for (const earlier of copiedFrom[id] ?? []) {
+      const text = await this.deps.versions.read(projectId, version, documentPath(earlier as DocumentId));
+      if (text === undefined) continue;
+      const ids = new Map(Object.entries(copiedFrom).flatMap(([now, before]) => before.map((old) => [old, now] as const)));
+      return remapIds(text, ids);
+    }
+    return undefined;
   }
 
   async nameVersion(id: ProjectId, name: string, version?: string): Promise<Result<void>> {
@@ -563,8 +579,11 @@ export class DefaultProjectManager implements ProjectManager {
   async duplicateProject(id: ProjectId): Promise<Result<ProjectSummary>> {
     const project = await this.deps.projects.find(id);
     if (!project) return unknownProject(id);
-    const bundle = withNewIds(await this.bundleOf(project), this.deps.newId);
-    const copy = await this.createFromBundle({ ...bundle, name: copyName(project.name) });
+    // The copy takes the history with it (CAD-147).
+    const { bundle, ids } = copyOf(await this.bundleOf(project), this.deps.newId);
+    const history = await this.deps.versions.exportHistory(id);
+    const copy = await this.createFromBundle({ ...bundle, name: copyName(project.name) }, history.length ? copiedFrom(ids, project.copiedFrom) : undefined);
+    if (history.length) await this.deps.versions.importHistory(copy.id, history);
     await this.recordVersion(copy.id, `Duplicated from ${project.name}`);
     return ok(await this.summarizeProject(copy));
   }
@@ -604,12 +623,13 @@ export class DefaultProjectManager implements ProjectManager {
       return notArchive;
     }
     if (!archive) return notArchive;
-    // Documents keep their ids (and so their history) unless this device has them already.
+    // Documents keep their ids unless this device has them already: then the project is a copy,
+    // which keeps the history too, knowing the ids its documents had there (CAD-147).
     const taken = (await Promise.all(archive.bundle.documents.map((d) => this.deps.documents.load(d.id)))).some(Boolean);
-    const bundle = taken ? withNewIds(archive.bundle, this.deps.newId) : archive.bundle;
-    const project = await this.createFromBundle(bundle);
-    if (!taken && archive.history.length) await this.deps.versions.importHistory(project.id, archive.history);
-    else await this.recordVersion(project.id, `Imported from ${file.name}`);
+    const copied = taken ? copyOf(archive.bundle, this.deps.newId) : undefined;
+    const project = await this.createFromBundle(copied?.bundle ?? archive.bundle, copied && archive.history.length ? copiedFrom(copied.ids, archive.bundle.copiedFrom) : archive.bundle.copiedFrom);
+    if (archive.history.length) await this.deps.versions.importHistory(project.id, archive.history);
+    if (copied || !archive.history.length) await this.recordVersion(project.id, copied ? `Imported from ${file.name} as a copy` : `Imported from ${file.name}`);
     return ok(await this.summarizeProject(project));
   }
 
@@ -633,13 +653,20 @@ export class DefaultProjectManager implements ProjectManager {
       const asset = await this.deps.assets.fetch(document.assetId);
       if (asset) originals.set(document.assetId, asset.bytes);
     }
-    return { name: project.name, parameters: project.parameters ?? [], documents, originals };
+    return { name: project.name, parameters: project.parameters ?? [], documents, originals, ...(project.copiedFrom ? { copiedFrom: project.copiedFrom } : {}) };
   }
 
   /** A new project holding the bundle's documents and originals as they are (ids included). */
-  private async createFromBundle(bundle: ProjectBundle): Promise<Project> {
+  private async createFromBundle(bundle: ProjectBundle, copied?: Project['copiedFrom']): Promise<Project> {
     const now = this.now();
-    const project: Project = { id: asProjectId(this.deps.newId()), name: validName(bundle.name).ok ? bundle.name.trim() : 'Untitled project', createdAt: now, modifiedAt: now, parameters: bundle.parameters };
+    const project: Project = {
+      id: asProjectId(this.deps.newId()),
+      name: validName(bundle.name).ok ? bundle.name.trim() : 'Untitled project',
+      createdAt: now,
+      modifiedAt: now,
+      parameters: bundle.parameters,
+      ...(copied ? { copiedFrom: copied } : {}),
+    };
     await this.deps.projects.establish(project);
     const documents = bundle.documents.map((d) => ({ ...d, projectId: project.id }) as CadDocument);
     await this.keepOriginals(project.id, documents, bundle.originals);
@@ -798,4 +825,9 @@ export class DefaultProjectManager implements ProjectManager {
   private now(): string {
     return this.deps.clock().toISOString();
   }
+}
+
+/** A new copy's earlier ids: each document's id in the original, and the ids it had before that (CAD-147). */
+function copiedFrom(ids: ReadonlyMap<string, string>, earlier: Project['copiedFrom']): NonNullable<Project['copiedFrom']> {
+  return Object.fromEntries([...ids].map(([old, now]) => [now, [old, ...(earlier?.[old] ?? [])]]));
 }

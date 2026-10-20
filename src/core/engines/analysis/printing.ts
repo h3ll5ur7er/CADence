@@ -145,7 +145,13 @@ function overhangCheck(bodies: readonly MeshedBody[], profile: PrintProfile): Ch
 /**
  * Wall thickness: from every triangle a ray goes into the material; where it leaves again is the
  * thickness there. Thinner than the nozzle does not print; thinner than two lines prints weakly.
+ * A ray leaves only through a face it meets within 40° of square. Where two faces meet at more than
+ * 40°, the edge is a wedge that loses about a line at most (the end of a 45° helical tooth, whose flank
+ * meets the end face at about 47°, CAD-140), not a thin wall. And sliver triangles of a gear's end faces
+ * next to an edge would find its flanks, which they graze, a hundredth away (CAD-143).
  */
+const facing = Math.cos((40 * Math.PI) / 180);
+
 function wallCheck(bodies: readonly MeshedBody[], profile: PrintProfile): Check {
   const weak = 2 * profile.nozzle;
   const thin: { ref: TopologyRef; thickness: number }[] = [];
@@ -154,7 +160,7 @@ function wallCheck(bodies: readonly MeshedBody[], profile: PrintProfile): Check 
     const thinnest = new Map<string, { thickness: number; at: Vec3 }>();
     eachTriangle(mesh, (face, _corners, normal, center) => {
       const inward: Vec3 = [-normal[0], -normal[1], -normal[2]];
-      const thickness = caster.cast(center, inward, 1e-4);
+      const thickness = caster.cast(center, inward, 1e-4, facing);
       if (thickness === undefined || thickness >= weak - 1e-3) return;
       const known = thinnest.get(face.name);
       if (!known || thickness < known.thickness) thinnest.set(face.name, { thickness, at: center });

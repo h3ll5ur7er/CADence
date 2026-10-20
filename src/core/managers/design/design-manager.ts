@@ -194,6 +194,8 @@ export interface DesignSession {
   /** Called after every change; returns the unsubscribe function. */
   subscribe(listener: (state: DesignState) => void): () => void;
   execute(command: DesignCommand): Promise<Result<void>>;
+  /** Reads the project's parameters again where they changed unheard (another process or tool, CAD-146); commands do so first. */
+  catchUp(): Promise<void>;
   undo(): Promise<void>;
   redo(): Promise<void>;
   /** The points (and circle sizes) of a sketch that its relations and dimensions leave free. */

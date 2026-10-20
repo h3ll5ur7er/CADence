@@ -47,6 +47,13 @@ export function describeDocumentAccessContract(name: string, create: () => Docum
       ]);
     });
 
+    it('lists a document saved by a newer CADence, and refuses to open it (CAD-145)', async () => {
+      const newer = { ...component('d9', 'p'), schemaVersion: currentSchemaVersion + 1 } as ComponentDocument;
+      await access.store(newer);
+      expect(await access.enumerate(asProjectId('p'))).toEqual([summarize(newer)]);
+      await expect(access.load(asDocumentId('d9'))).rejects.toThrow(/saved by a newer CADence/);
+    });
+
     it('replaces a document stored again', async () => {
       await access.store(component('d1', 'p'));
       await access.store(component('d1', 'p', 'Renamed'));

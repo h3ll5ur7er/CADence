@@ -1,4 +1,4 @@
-import type { ShapeAccess } from '@core/access/shape';
+import { guarded, type ShapeAccess } from '@core/access/shape';
 import type { ModelingEngine } from './modeling-engine';
 import { OcctModelingEngine } from './occt-modeling-engine';
 
@@ -19,5 +19,5 @@ export type { ProjectedCurve } from './modeling-engine';
 
 /** The OpenCascade engine; call it where the shapes live (the geometry worker, or in-process in tests). */
 export function createModelingEngine(shapes: ShapeAccess): ModelingEngine {
-  return new OcctModelingEngine(shapes);
+  return guarded(new OcctModelingEngine(shapes), shapes);
 }

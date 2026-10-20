@@ -268,6 +268,18 @@ describe('DesignManager', () => {
     expect(pointAt('c')).toEqual([30, 16]);
   });
 
+  it('moves a circle placed by numbers, and its fix with it (CAD-144)', async () => {
+    await drawRectangle();
+    const circle = [
+      { id: 'h:center', kind: 'point', x: 10, y: 8 },
+      { id: 'h', kind: 'circle', center: 'h:center', radius: 2, construction: false },
+    ] as const;
+    unwrap(await session.execute({ type: 'add-sketch-geometry', sketchId: 's1', entities: [...circle], constraints: [{ id: 'h:fix', kind: 'fix', point: 'h:center', x: 10, y: 8 }] }));
+    unwrap(await session.execute({ type: 'move-point', sketchId: 's1', pointId: 'h:center', x: 20, y: 12 }));
+    expect(pointAt('h:center')).toEqual([expect.closeTo(20), expect.closeTo(12)]);
+    expect(sketch()?.sketch.constraints.find((c) => c.id === 'h:fix')).toMatchObject({ x: 20, y: 12 });
+  });
+
   it('deletes curves with their relations and orphaned points', async () => {
     await drawRectangle();
     unwrap(await session.execute({ type: 'delete-sketch-elements', sketchId: 's1', ids: ['ab'] }));
@@ -541,6 +553,28 @@ describe('DesignManager', () => {
         expect(session.state().bodies[0]?.faces.length).toBeLessThanOrEqual(40 * 6 + 3);
         // Twisting the teeth of a helical gear is slow on a CI runner.
       }, 60_000);
+
+      it('finds no thin walls on gears that print, and bevels the ends of their teeth (CAD-140, CAD-143)', async () => {
+        const gear = { kind: 'gear', module: '1 mm', teeth: '16', width: '6 mm', bore: '5.1 mm', pressureAngle: '20 deg', helixAngle: '0 deg' } as const;
+        const walls = async () => (await session.validate()).checks.find((c) => c.id === 'walls');
+        const plain = await part(gear);
+        expect(await walls()).toMatchObject({ status: 'pass' });
+        const edit = async (changes: Partial<PartSpec & { kind: 'gear' }>) =>
+          unwrap(await session.execute({ type: 'edit-feature', feature: { ...(session.state().document.timeline.find((i) => i.id === 'part') as PartFeature), part: { ...gear, ...changes } } }));
+        // A 45° helix: its flanks meet the end faces at about 47°, a wedge that prints.
+        await edit({ helixAngle: '45 deg' });
+        expect((await walls())?.status).not.toBe('fail');
+        // Bevelled at both ends, 0.5 mm at the tip: two rings of about 2π · 9 · 0.5² / 2 less.
+        await edit({ chamfer: '0.5 mm' });
+        expect(session.state().items.get('part')).toEqual({ state: 'ok' });
+        const bevelled = await volume();
+        expect(bevelled).toBeLessThan(plain - 1);
+        expect(bevelled).toBeGreaterThan(plain - 2 * Math.PI * 9 * 0.5 ** 2);
+        expect(await session.execute({ type: 'edit-feature', feature: { ...(session.state().document.timeline.find((i) => i.id === 'part') as PartFeature), part: { ...gear, chamfer: '4 mm' } } })).toMatchObject({
+          ok: false,
+          error: { message: expect.stringContaining('chamfer must be less than 2 mm') },
+        });
+      }, 120_000);
 
       it('meshes a planet inside a ring gear at the centre distance (CAD-98)', async () => {
         const ringGear: PartSpec = { kind: 'ring-gear', module: '2 mm', teeth: '60', width: '6 mm', outside: '140 mm', pressureAngle: '20 deg', helixAngle: '0 deg' };

@@ -1,13 +1,13 @@
 import { adopt, type NamedShape } from '@core/access/shape';
 import type { PlaneFrame, Profile, ProfileEdge, Vec2, Vec3 } from '@core/contracts';
 import { curveAt, ellipseParameter } from '@core/utilities/math';
-import { assembleWire, type Edge, type Face, getOC, makeBezierCurve, makeLine, makeThreePointArc, makeVertex, type Shape3D, type Sketch, type Wire } from 'replicad';
+import { assembleWire, type Drawing, type Edge, type Face, getOC, measureArea, Sketches, makeBezierCurve, makeLine, makeThreePointArc, makeVertex, type Shape3D, type Sketch, type Wire } from 'replicad';
 import { cross3, dot3, length3, normalize3, normalOf, scale3, sub3, toPlane, toWorld, add3 } from './geometry';
 import { nameShape, namedSurfaces } from './naming';
 import { type Line, sameLine, samePlaneIgnoringSide, type Surface } from './surfaces';
 import { loopDrawing, profilesDrawing } from './geometry';
 import type { PathPiece } from './modeling-engine';
-import { cut, fuse } from './booleans';
+import { cut, fuse, valid } from './booleans';
 import { alignSections } from './sections';
 
 /** A revolve the kernel cannot build, in words for the user. */
@@ -86,6 +86,38 @@ function nameTool(
   );
 }
 
+/** The area a drawing covers. */
+function drawnArea(drawing: Drawing): number {
+  const sketch = drawing.clone().sketchOnPlane('XY');
+  const faces = (sketch instanceof Sketches ? sketch.faces() : sketch.face()) as Face;
+  try {
+    return measureArea(faces);
+  } finally {
+    faces.delete();
+  }
+}
+
+/**
+ * The profiles made solid by `make`, from one drawing of them all. Fusing the outlines in the plane
+ * can lose pieces, or give something invalid, where shapes overlap (their profiles share edges, and
+ * slivers lie between them, CAD-138): then each profile is made solid on its own and the solids are
+ * fused. The profiles do not overlap, so their drawing covers their areas together.
+ */
+function solidOf(profiles: readonly Profile[], make: (drawing: Drawing) => Shape3D): Shape3D {
+  if (profiles.length < 2) return make(profilesDrawing(profiles));
+  const drawing = profilesDrawing(profiles);
+  const area = profiles.reduce((sum, profile) => sum + profile.area, 0);
+  if (Math.abs(drawnArea(drawing) - area) <= 1e-4 * area + 1e-6) {
+    const shape = make(drawing);
+    if (valid(shape)) return shape;
+    shape.delete();
+  }
+  const [first, ...rest] = profiles.map((profile) => make(profilesDrawing([profile]))) as [Shape3D, ...Shape3D[]];
+  const fused = fuse(first, ...rest);
+  for (const solid of [first, ...rest]) solid.delete();
+  return fused;
+}
+
 export function extrudeTool(
   feature: string,
   frame: PlaneFrame,
@@ -94,12 +126,11 @@ export function extrudeTool(
   direction: 'normal' | 'reverse' | 'symmetric',
 ): NamedShape {
   const n = normalOf(frame);
-  const drawing = profilesDrawing(profiles);
-  const shape =
+  const shape3d = solidOf(profiles, (drawing) =>
     direction === 'symmetric'
-      ? drawing.sketchOnPlane(toPlane(frame, -distance / 2)).extrude(distance)
-      : drawing.sketchOnPlane(toPlane(frame)).extrude(distance, direction === 'reverse' ? { extrusionDirection: [...scale3(n, -1)] } : {});
-  const shape3d = shape as Shape3D;
+      ? (drawing.sketchOnPlane(toPlane(frame, -distance / 2)).extrude(distance) as Shape3D)
+      : (drawing.sketchOnPlane(toPlane(frame)).extrude(distance, direction === 'reverse' ? { extrusionDirection: [...scale3(n, -1)] } : {}) as Shape3D),
+  );
   // Caps: planes normal to the extrusion; the one nearer the sketch's side of travel is "start".
   const [low, high] = direction === 'normal' ? [0, distance] : direction === 'reverse' ? [-distance, 0] : [-distance / 2, distance / 2];
   const along = (offset: number) => offset - dot3(n, frame.origin);
@@ -139,9 +170,7 @@ export function revolveTool(
   if (across > 1e-7) {
     throw new RevolveError(`The outline crosses the axis (by ${Number(across.toPrecision(3))} mm). A revolve needs the whole outline on one side of its axis: move it, or put its edge on the axis exactly.`);
   }
-  const shape = profilesDrawing(profiles)
-    .sketchOnPlane(toPlane(frame))
-    .revolve([...direction], { origin: [...axis.origin], angle: (angle * 180) / Math.PI }) as Shape3D;
+  const shape = solidOf(profiles, (drawing) => drawing.sketchOnPlane(toPlane(frame)).revolve([...direction], { origin: [...axis.origin], angle: (angle * 180) / Math.PI }) as Shape3D);
   // Caps are planes through the axis; the start cap is on the profile's side of the axis.
   const radial = (p: Vec3) => {
     const w = sub3(p, axis.origin);

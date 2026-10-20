@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { expose, remote, stoppable, type StoppablePort, transferables } from './index';
+import { expose, remote, restartable, stoppable, type StoppablePort, transferables } from './index';
 
 interface Calculator {
   add(a: number, b: number): number;
@@ -52,6 +52,30 @@ describe('rpc', () => {
     expect(await client.add(2, 2)).toBe(4);
     expect(started.map((w) => w.stopped)).toEqual([true, false]);
     started[1]?.port.close();
+  });
+
+  it('starts a worker on first use, stops it on demand and starts a new one, counting failures too (CAD-134)', async () => {
+    const started: MessagePort[] = [];
+    const start = (): StoppablePort => {
+      const channel = new MessageChannel();
+      expose(channel.port1, { calculator: { ...calculator, hang: () => new Promise(() => undefined), fail: () => (channel.port1.postMessage({ cadence: 'kernel-failed' }), 1) } });
+      started.push(channel.port2);
+      return Object.assign(channel.port2, { terminate: () => (channel.port1.close(), channel.port2.close()) });
+    };
+    const worker = restartable(start);
+    expect(started).toHaveLength(0);
+    const client = remote<Calculator & { hang(): Promise<void> }>(worker.port, 'calculator');
+    expect(await client.add(1, 2)).toBe(3);
+    const hanging = client.hang();
+    worker.restart(Object.assign(new Error('Cancelled.'), { name: 'CancelledError' }));
+    await expect(hanging).rejects.toMatchObject({ name: 'CancelledError' });
+    expect(worker.restarts()).toBe(1);
+    expect(await client.add(2, 2)).toBe(4);
+    expect(started).toHaveLength(2);
+    // A worker that tells of its kernel's failure counts as started again.
+    await client.fail();
+    expect(worker.restarts()).toBe(2);
+    started[1]?.close();
   });
 
   it('finds the buffers to transfer', () => {

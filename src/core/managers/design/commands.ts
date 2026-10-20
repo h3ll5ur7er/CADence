@@ -363,7 +363,13 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
         if (!s.entities.some((e) => e.id === command.pointId && e.kind === 'point')) return invalid(`Point ${command.pointId} does not exist.`);
         // A fix holds the point against any drag: say so, rather than leave it where it is (CAD-118).
         const fix = s.constraints.find((c) => c.kind === 'fix' && c.point === command.pointId);
-        return fix ? fail({ code: 'invalid-command', message: `Point ${command.pointId} is fixed (${fix.id}); remove the fix to move it.`, related: [fix.id] }) : ok(s);
+        if (!fix) return ok(s);
+        // The fix a shape placed by numbers made for its own point (c:fix for c:center) moves with it (CAD-144).
+        const shape = command.pointId.slice(0, command.pointId.lastIndexOf(':'));
+        if (shape && fix.id.startsWith(`${shape}:fix`)) {
+          return ok({ ...s, constraints: s.constraints.map((c) => (c === fix ? { ...fix, x: command.x, y: command.y } : c)) });
+        }
+        return fail({ code: 'invalid-command', message: `Point ${command.pointId} is fixed (${fix.id}); remove the fix to move it.`, related: [fix.id] });
       });
       return applied.ok
         ? ok({ ...applied.value, drag: { sketch: command.sketchId, point: command.pointId, x: command.x, y: command.y } })

@@ -87,10 +87,13 @@ export async function runCli(
   reference: Readonly<Record<string, string>> = {},
   version = '0.0.0',
   env: NodeJS.ProcessEnv = process.env,
-  /** Starts the worker that draws drawing views exactly, within a time limit (CAD-125); absent: views are drawn in this thread. */
-  views?: () => StoppablePort,
-  /** The kernels' WebAssembly and the fonts, when not in their packages (the self-contained binary, CAD-131). */
-  resources?: NodeResources,
+  /**
+   * Workers and files of the program: `views` draws drawing views exactly within a time limit
+   * (CAD-125), `geometry` runs the kernel off this thread (CAD-134), `resources` are the kernels'
+   * WebAssembly and the fonts when not in their packages (the self-contained binary, CAD-131).
+   * Absent: all in this thread, from the packages.
+   */
+  host: { readonly views?: () => StoppablePort; readonly geometry?: () => StoppablePort; readonly resources?: NodeResources } = {},
 ): Promise<number> {
   const { positional, options } = parseArguments(args);
   const [command, ...rest] = positional;
@@ -105,7 +108,7 @@ export async function runCli(
   const credentials: RemoteCredentials | undefined =
     env['CADENCE_GIT_USERNAME'] || env['CADENCE_GIT_PASSWORD'] ? { username: env['CADENCE_GIT_USERNAME'] ?? '', password: env['CADENCE_GIT_PASSWORD'] ?? '' } : undefined;
   const open = (projects?: string) => {
-    const core = createNodeCore({ ...(projects ? { projects } : {}), exports: exportsFolder, ...(views ? { views } : {}), ...(resources ? { resources } : {}) });
+    const core = createNodeCore({ ...(projects ? { projects } : {}), exports: exportsFolder, ...host });
     return new Cadence(core, core.exports);
   };
   const need = (count: number) => {

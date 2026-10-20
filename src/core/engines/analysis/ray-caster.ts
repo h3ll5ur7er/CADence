@@ -30,8 +30,11 @@ export class RayCaster {
     if (count > 0) this.build(centers, 0, count);
   }
 
-  /** Distance to the nearest triangle along the (unit) direction, beyond `min`; undefined when nothing is hit. */
-  cast(origin: Vec3, direction: Vec3, min = 0): number | undefined {
+  /**
+   * Distance to the nearest triangle along the (unit) direction, beyond `min`; undefined when nothing is
+   * hit. With `facing`, triangles the ray meets more steeply than that cosine only (grazing) are passed.
+   */
+  cast(origin: Vec3, direction: Vec3, min = 0, facing = 0): number | undefined {
     if (this.nodeCount === 0) return undefined;
     const inverse = [1 / direction[0], 1 / direction[1], 1 / direction[2]];
     let best = Infinity;
@@ -46,7 +49,7 @@ export class RayCaster {
         continue;
       }
       for (let i = first; i < first + count; i++) {
-        const t = this.hitTriangle(this.order[i] as number, origin, direction);
+        const t = this.hitTriangle(this.order[i] as number, origin, direction, facing);
         if (t !== undefined && t > min && t < best) best = t;
       }
     }
@@ -186,13 +189,15 @@ export class RayCaster {
   }
 
   /** Möller–Trumbore, both sides. */
-  private hitTriangle(t: number, origin: Vec3, d: Vec3): number | undefined {
+  private hitTriangle(t: number, origin: Vec3, d: Vec3, facing = 0): number | undefined {
     const ax = this.vertex(t, 0, 0), ay = this.vertex(t, 0, 1), az = this.vertex(t, 0, 2);
     const e1x = this.vertex(t, 1, 0) - ax, e1y = this.vertex(t, 1, 1) - ay, e1z = this.vertex(t, 1, 2) - az;
     const e2x = this.vertex(t, 2, 0) - ax, e2y = this.vertex(t, 2, 1) - ay, e2z = this.vertex(t, 2, 2) - az;
     const px = d[1] * e2z - d[2] * e2y, py = d[2] * e2x - d[0] * e2z, pz = d[0] * e2y - d[1] * e2x;
     const det = e1x * px + e1y * py + e1z * pz;
     if (Math.abs(det) < 1e-12) return undefined;
+    // det is the ray's direction on the triangle's normal, times twice its area.
+    if (facing > 0 && Math.abs(det) < facing * Math.hypot(e1y * e2z - e1z * e2y, e1z * e2x - e1x * e2z, e1x * e2y - e1y * e2x)) return undefined;
     const inv = 1 / det;
     const sx = origin[0] - ax, sy = origin[1] - ay, sz = origin[2] - az;
     const u = (sx * px + sy * py + sz * pz) * inv;

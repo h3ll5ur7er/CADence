@@ -74,7 +74,8 @@ export function liesOn(face: Face, points: readonly Vec3[]): boolean {
   try {
     return points.every((p) => {
       const point = new oc.gp_Pnt(p[0], p[1], p[2]);
-      const projection = new oc.GeomAPI_ProjectPointOnSurf(point, surface, oc.Extrema_ExtAlgo.Extrema_ExtAlgo_Grad);
+      // The tree search: the gradient one made the kernel trap on a helical gear's flanks (CAD-137).
+      const projection = new oc.GeomAPI_ProjectPointOnSurf(point, surface, oc.Extrema_ExtAlgo.Extrema_ExtAlgo_Tree);
       try {
         return projection.NbPoints() > 0 && projection.LowerDistance() <= tolerance * Math.max(1, length3(p));
       } finally {

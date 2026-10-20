@@ -13,6 +13,11 @@ export interface Project {
   readonly parameters?: readonly Parameter[];
   /** Where the project's versions are shared, when they are. */
   readonly remote?: ProjectRemote;
+  /**
+   * A copy (imported beside its original, or duplicated) keeps the original's history: the ids its
+   * documents and originals had there, by their ids here (oldest last), so restoring finds them (CAD-147).
+   */
+  readonly copiedFrom?: Readonly<Record<string, readonly string[]>>;
 }
 
 /** A starting point for new projects: settings and documents, made with CADence (public/templates). */

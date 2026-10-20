@@ -60,17 +60,29 @@ describe('ProjectManager copies, archives and templates', () => {
   it('duplicates a project with new ids, its references following', async () => {
     const d = device();
     const { project } = await sample(d);
+    await d.manager.recordVersion(project.id, 'First');
     const copy = unwrap(await d.manager.duplicateProject(project.id));
     expect(copy).toMatchObject({ name: 'Bracket (copy)', documentCount: 3, parameters: [{ name: 'wall', expression: '3 mm' }] });
     const documents = await Promise.all((await d.manager.listDocuments(copy.id)).map((s) => d.documents.load(s.id)));
     const [component, assembly, imported] = documents as [CadDocument, CadDocument, ImportedDocument];
+    void imported;
     expect([component.kind, assembly.kind, imported.kind]).toEqual(['component', 'assembly', 'imported']);
     expect(instanceOf(assembly)).toBe(component.id);
     expect(insertOf(component)).toBe(imported.id);
     expect([...((await d.assets.fetch(imported.assetId))?.bytes ?? [])]).toEqual([1, 2, 3]);
-    // The original is untouched, and the copy has a history of its own.
+    // The original is untouched, and the copy takes its history along (CAD-147).
     expect((await d.manager.listDocuments(project.id)).length).toBe(3);
-    expect((await d.manager.projectHistory(copy.id)).map((v) => v.message)).toEqual(['Duplicated from Bracket']);
+    const history = await d.manager.projectHistory(copy.id);
+    expect(history.map((v) => v.message)).toEqual(expect.arrayContaining(['Duplicated from Bracket', 'First']));
+    expect(history[0]?.message).toBe('Duplicated from Bracket');
+    // A version from before the copy restores into the copy, with the copy's ids.
+    const first = history.find((v) => v.message === 'First') as NonNullable<(typeof history)[number]>;
+    expect((await d.manager.documentHistory(assembly.id)).map((v) => v.message)).toContain('First');
+    await d.documents.store({ ...(assembly as CadDocument), name: 'Renamed' } as CadDocument);
+    unwrap(await d.manager.restoreDocument(assembly.id, first.id));
+    const restored = await d.documents.load(assembly.id);
+    expect(restored).toMatchObject({ name: 'Frame', projectId: copy.id });
+    expect(instanceOf(restored)).toBe(component.id);
   });
 
   it('duplicates a document in its project, its original too', async () => {
@@ -117,12 +129,14 @@ describe('ProjectManager copies, archives and templates', () => {
     expect((await b.manager.listDocuments(there.id)).map((x) => x.id).sort()).toEqual((await a.manager.listDocuments(project.id)).map((x) => x.id).sort());
     expect((await b.manager.projectHistory(there.id)).map((v) => v.message)).toContain('First');
 
-    // This device has the documents already: new ids, a new history.
+    // This device has the documents already: a copy with new ids, which keeps the history (CAD-147).
     const here = unwrap(await a.manager.importProject({ name: 'Bracket.cadence', bytes: archive?.bytes as Uint8Array }));
     const ids = (await a.manager.listDocuments(here.id)).map((x) => x.id);
     expect(ids.some((id) => id.startsWith('a-'))).toBe(true);
     expect(ids).not.toContain((await a.manager.listDocuments(project.id))[0]?.id);
-    expect((await a.manager.projectHistory(here.id)).map((v) => v.message)).toEqual(['Imported from Bracket.cadence']);
+    const messages = (await a.manager.projectHistory(here.id)).map((v) => v.message);
+    expect(messages[0]).toBe('Imported from Bracket.cadence as a copy');
+    expect(messages).toContain('First');
 
     expect(await a.manager.importProject({ name: 'clip.stl', bytes: new Uint8Array([1, 2, 3]) })).toMatchObject({ ok: false, error: { code: 'not-an-archive' } });
   });

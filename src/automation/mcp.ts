@@ -61,9 +61,24 @@ export class McpServer {
     this.tools = this.createTools();
   }
 
-  /** The response to a message; undefined for notifications. `notify` sends notifications (progress) meanwhile. */
+  /** Tool calls in progress, by request id: whether they were cancelled. */
+  private readonly running = new Map<string | number, { cancelled: boolean }>();
+
+  /**
+   * The response to a message; undefined for notifications, and for a request cancelled meanwhile.
+   * `notify` sends notifications (progress) meanwhile. Requests may be handled side by side.
+   */
   async handle(message: JsonRpcMessage, notify: (notification: Record<string, unknown>) => void = () => undefined): Promise<Record<string, unknown> | undefined> {
     const { id, method, params = {} } = message;
+    // A cancelled tool call stops the geometry kernel's computation, where it can be stopped (CAD-134).
+    if (method === 'notifications/cancelled') {
+      const call = this.running.get(params['requestId'] as string | number);
+      if (call && !call.cancelled) {
+        call.cancelled = true;
+        this.cadence.stop();
+      }
+      return undefined;
+    }
     if (id === undefined || id === null) return undefined;
     const reply = (result: unknown) => ({ jsonrpc: '2.0', id, result });
     switch (method) {
@@ -86,7 +101,14 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
         const progress: Progress = (done, total, text) => {
           if (token !== undefined) notify({ jsonrpc: '2.0', method: 'notifications/progress', params: { progressToken: token, progress: done, total, message: text } });
         };
-        return reply(await this.call(String(params['name']), (params['arguments'] ?? {}) as Record<string, unknown>, progress));
+        const call = { cancelled: false };
+        this.running.set(id, call);
+        try {
+          const answer = await this.call(String(params['name']), (params['arguments'] ?? {}) as Record<string, unknown>, progress);
+          return call.cancelled ? undefined : reply(answer);
+        } finally {
+          this.running.delete(id);
+        }
       }
       default:
         return { jsonrpc: '2.0', id, error: { code: -32601, message: `Unknown method ${method}` } };
@@ -96,6 +118,15 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
   private async call(name: string, args: Record<string, unknown>, progress: Progress): Promise<Record<string, unknown>> {
     const tool = this.tools.find((t) => t.name === name);
     if (!tool) return { content: [{ type: 'text', text: `Unknown tool ${name}.` }], isError: true };
+    await this.cadence.kernelRestarted();
+    const answer = await this.answer(tool, args, progress);
+    // A kernel that failed during the call (out of memory) has started again: say so (CAD-133).
+    if (!(await this.cadence.kernelRestarted())) return answer;
+    const note = 'The geometry kernel failed during this call and started again; documents open here are read again from their files. Unsaved results are lost; saved documents are not.';
+    return { ...answer, content: [...(answer['content'] as unknown[]), { type: 'text', text: note }] };
+  }
+
+  private async answer(tool: Tool, args: Record<string, unknown>, progress: Progress): Promise<Record<string, unknown>> {
     const image = (bytes: Uint8Array) => ({ type: 'image', data: Buffer.from(bytes).toString('base64'), mimeType: 'image/png' });
     try {
       const result = await tool.run(args, progress);
@@ -367,7 +398,7 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
         ),
         run: async (args, progress) => {
           const script = await assembly(args);
-          if (args['study'] === undefined) return script.interference();
+          if (args['study'] === undefined) return script.interference({ onProgress: (done, total) => progress(done, total, `Part ${done} of ${total} checked`) });
           return script.collisions(String(args['study']), args['fps'] === undefined ? undefined : Number(args['fps']), {
             onProgress: (done, total) => progress(done, total, `Moment ${done} of ${total} checked`),
             ...(args['seconds'] !== undefined ? { seconds: Number(args['seconds']) } : {}),
@@ -470,10 +501,11 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
 /** Serves MCP over stdio: one JSON-RPC message per line in, one per line out; nothing else goes to stdout. */
 export function serveStdio(server: McpServer, input: NodeJS.ReadableStream = process.stdin, output: NodeJS.WritableStream = process.stdout): Promise<void> {
   const lines = createInterface({ input, crlfDelay: Infinity });
-  let queue: Promise<unknown> = Promise.resolve();
+  // Side by side, not one after another: a long computation holds up no other request (CAD-134).
+  const handling = new Set<Promise<void>>();
   lines.on('line', (line) => {
     if (!line.trim()) return;
-    queue = queue.then(async () => {
+    const work = (async () => {
       let message: JsonRpcMessage;
       try {
         message = JSON.parse(line) as JsonRpcMessage;
@@ -484,7 +516,9 @@ export function serveStdio(server: McpServer, input: NodeJS.ReadableStream = pro
       const notify = (notification: Record<string, unknown>) => output.write(`${JSON.stringify(notification)}\n`);
       const response = await server.handle(message, notify).catch((error: Error) => ({ jsonrpc: '2.0', id: message.id ?? null, error: { code: -32603, message: error.message } }));
       if (response) output.write(`${JSON.stringify(response)}\n`);
-    });
+    })();
+    handling.add(work);
+    void work.finally(() => handling.delete(work));
   });
-  return new Promise((resolve) => lines.on('close', () => void queue.then(() => resolve())));
+  return new Promise((resolve) => lines.on('close', () => void Promise.all(handling).then(() => resolve())));
 }

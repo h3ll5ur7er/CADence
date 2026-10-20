@@ -165,6 +165,8 @@ interface TimelineEntry {
 
 interface SketchEntry {
   readonly id: string;
+  /** Where the sketch lies: its origin, and its x (u) and y (v) axes in the model (CAD-136). */
+  readonly frame?: { readonly origin: Point; readonly u: Point; readonly v: Point };
   readonly status: string;
   readonly degreesOfFreedom: number;
   readonly error?: string;
@@ -208,7 +210,19 @@ export interface ComponentChanges {
   /** Sketches added or changed, with their profiles. */
   readonly sketches: readonly SketchEntry[];
   /** Every body with its face and edge counts, and the names of faces it gained or lost. */
-  readonly bodies: readonly { readonly id: string; readonly faceCount: number; readonly edgeCount: number; readonly newFaces?: readonly string[]; readonly goneFaces?: readonly string[]; readonly more?: string }[];
+  /**
+   * Every body with its face and edge counts, the names of faces it gained or lost, and faces only
+   * renumbered (the same face where it was, its piece number `~n` changed: old name → new, CAD-139).
+   */
+  readonly bodies: readonly {
+    readonly id: string;
+    readonly faceCount: number;
+    readonly edgeCount: number;
+    readonly newFaces?: readonly string[];
+    readonly goneFaces?: readonly string[];
+    readonly renumbered?: Readonly<Record<string, string>>;
+    readonly more?: string;
+  }[];
   readonly goneBodies?: readonly string[];
   readonly parameters?: ComponentSummary['parameters'];
   readonly hint: string;
@@ -217,6 +231,42 @@ export interface ComponentChanges {
 type Point = readonly [number, number, number];
 const minus = (a: Point, b: Point): Point => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const dotted = (a: Point, b: Point) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+
+/**
+ * Which faces a body gained and lost between two listings, and which only changed their piece
+ * number (`~n`) where they were: the same face renumbered, old name → new (CAD-139).
+ */
+export function faceChanges(
+  before: readonly { readonly name: string; readonly center: readonly number[] }[],
+  after: readonly { readonly name: string; readonly center: readonly number[] }[],
+): { added: string[]; gone: string[]; renumbered: Record<string, string> } {
+  const numbered = (name: string) => /~\d+$/.test(name);
+  const base = (name: string) => name.replace(/~\d+$/, '');
+  // Faces without a piece number, by name.
+  const [was, is] = [new Set(before.filter((f) => !numbered(f.name)).map((f) => f.name)), new Set(after.filter((f) => !numbered(f.name)).map((f) => f.name))];
+  const added = [...is].filter((n) => !was.has(n));
+  const gone = [...was].filter((n) => !is.has(n));
+  // Pieces, by what they are a piece of and where they are: numbers follow the kernel's order, not the face.
+  const [earlier, later] = [before.filter((f) => numbered(f.name)), after.filter((f) => numbered(f.name))];
+  const near = (a: readonly number[], b: readonly number[]) => a.every((c, i) => Math.abs(c - (b[i] as number)) < 1e-3);
+  const renumbered: Record<string, string> = {};
+  const [used, matched] = [new Set<string>(), new Set<string>()];
+  for (const piece of later) {
+    const was = earlier.find((f) => !used.has(f.name) && base(f.name) === base(piece.name) && near(f.center, piece.center));
+    if (!was) continue;
+    used.add(was.name);
+    matched.add(piece.name);
+    if (was.name !== piece.name) renumbered[was.name] = piece.name;
+  }
+  // A piece that changed its shape where it kept its name is no new face either.
+  const [left, unmatched] = [earlier.filter((f) => !used.has(f.name)), later.filter((f) => !matched.has(f.name))];
+  const kept = new Set(unmatched.filter((f) => left.some((l) => l.name === f.name)).map((f) => f.name));
+  return {
+    added: [...added, ...unmatched.filter((f) => !kept.has(f.name)).map((f) => f.name)],
+    gone: [...gone, ...left.filter((f) => !kept.has(f.name)).map((f) => f.name)],
+    renumbered,
+  };
+}
 
 /** How far a point is from a segment. */
 function segmentDistance(p: Point, a: Point, b: Point): number {
@@ -286,6 +336,11 @@ export class ComponentScript {
 
   state(): DesignState {
     return this.session.state();
+  }
+
+  /** Reads the project's parameters again, where they changed (CAD-146). */
+  catchUp(): Promise<void> {
+    return this.session.catchUp();
   }
 
   /** Runs the commands in order; stops at the first refusal with a CadenceError (the ones before stay). */
@@ -392,6 +447,7 @@ export class ComponentScript {
               .filter((view) => filter.sketch === undefined || view.sketch.id === filter.sketch)
               .map((view) => ({
                 id: view.sketch.id,
+                ...(view.frame ? { frame: { origin: roundAll(view.frame.origin) as unknown as Point, u: roundAll(view.frame.u) as unknown as Point, v: roundAll(view.frame.v) as unknown as Point } } : {}),
                 status: view.status,
                 degreesOfFreedom: view.degreesOfFreedom,
                 ...(view.error ? { error: view.error } : {}),
@@ -454,16 +510,16 @@ export class ComponentScript {
     const cap = 40;
     const bodies = (after.bodies ?? []).map((body) => {
       const previous = earlier(before.bodies, body.id);
-      const [was, is] = [new Set(previous?.faces?.map((f) => f.name)), new Set(body.faces?.map((f) => f.name))];
-      const added = previous ? [...is].filter((n) => !was.has(n)) : [];
-      const gone = previous ? [...was].filter((n) => !is.has(n)) : [];
+      const { added, gone, renumbered } = previous ? faceChanges(previous.faces ?? [], body.faces ?? []) : { added: [], gone: [], renumbered: {} };
       const more = added.length + gone.length > 2 * cap ? `${Math.max(0, added.length - cap)} more new and ${Math.max(0, gone.length - cap)} more gone faces: get_component lists them` : undefined;
+      const renamed = Object.entries(renumbered);
       return {
         id: body.id,
         faceCount: body.faceCount,
         edgeCount: body.edgeCount,
         ...(added.length ? { newFaces: added.slice(0, cap) } : {}),
         ...(gone.length ? { goneFaces: gone.slice(0, cap) } : {}),
+        ...(renamed.length ? { renumbered: Object.fromEntries(renamed.slice(0, cap)) } : {}),
         ...(more ? { more } : {}),
       };
     });
@@ -704,9 +760,10 @@ export class AssemblyScript {
     };
   }
 
-  async interference() {
+  /** Overlapping instances; `onProgress` is told as each part is checked against the others. */
+  async interference(options: { readonly onProgress?: (done: number, total: number) => void } = {}) {
     await this.loaded();
-    return this.session.interference();
+    return this.session.interference(options);
   }
 
   /** Where instances hit while a motion study plays: the first moment for each pair, and how many moments were checked. */
@@ -878,6 +935,8 @@ export class Cadence {
   private readonly components = new Map<string, Promise<ComponentScript>>();
   private readonly assemblies = new Map<string, Promise<AssemblyScript>>();
   private readonly drawings = new Map<string, Promise<DrawingScript>>();
+  /** The kernel generation the open documents' shapes belong to. */
+  private generation: string | undefined;
 
   constructor(
     private readonly core: Core,
@@ -961,10 +1020,14 @@ export class Cadence {
    * another process saved it), which an edit here would overwrite (CAD-116).
    */
   private async opened<T extends ComponentScript | AssemblyScript | DrawingScript>(open: Map<string, Promise<T>>, documentId: string, start: () => Promise<T>): Promise<T> {
+    await this.kernelRestarted();
     const script = open.get(documentId);
     if (script) {
       const [current, saved] = await Promise.all([script.catch(() => undefined), this.projects.findDocument(documentId as DocumentId)]);
-      if (current && current.state().document.modifiedAt === saved?.modifiedAt) return current;
+      if (current && current.state().document.modifiedAt === saved?.modifiedAt) {
+        if (current instanceof ComponentScript) await current.catchUp();
+        return current;
+      }
       if (current instanceof AssemblyScript || current instanceof DrawingScript) current.close();
       open.delete(documentId);
     }
@@ -974,6 +1037,26 @@ export class Cadence {
     return started;
   }
 
+  /** Stops what the geometry kernel computes, where its host can (a worker, CAD-134); false where it cannot. */
+  stop(): boolean {
+    if (!this.core.stopGeometry) return false;
+    this.core.stopGeometry();
+    return true;
+  }
+
+  /**
+   * Whether the geometry kernel started again since this was last asked (after a failure or a
+   * cancelled computation: CAD-133, CAD-134). The open documents' shapes went with the old kernel,
+   * so they are all forgotten, and open anew when used.
+   */
+  async kernelRestarted(): Promise<boolean> {
+    const now = await this.core.kernelGeneration();
+    const restarted = this.generation !== undefined && now !== this.generation;
+    this.generation = now;
+    if (restarted) this.forget();
+    return restarted;
+  }
+
   /** Forgets the open components and assemblies (after documents changed elsewhere). */
   forget(documentId?: string): void {
     const close = (script: Promise<AssemblyScript | DrawingScript> | undefined) => void script?.then((s) => s.close(), () => undefined);
@@ -981,10 +1064,14 @@ export class Cadence {
       this.components.delete(documentId);
       close(this.assemblies.get(documentId));
       close(this.drawings.get(documentId));
+      this.assemblies.delete(documentId);
+      this.drawings.delete(documentId);
       return;
     }
     this.components.clear();
     for (const script of [...this.assemblies.values(), ...this.drawings.values()]) close(script);
+    this.assemblies.clear();
+    this.drawings.clear();
   }
 }
 

@@ -62,7 +62,9 @@ Each project has a version history: a git repository with one commit per version
 | --- | --- |
 | `documents/<documentId>.json` | the document as stored, without `projectId` (a project has its own id on each device) |
 | `originals/<assetId>` | an imported document's original file, unchanged |
-| `project.json` | `{ name, parameters }` |
+| `project.json` | `{ name, parameters, copiedFrom? }` |
+
+`Project.copiedFrom` maps a document's id to the ids it had before the project was copied (duplicated, or imported once more as a copy), newest first: a copy keeps the versions of its documents, and restores an older version with the copy's ids ([[CAD-147]]).
 
 `Project.remote` (`{ url, corsProxy? }`) is where the versions are synced; it is a setting of this device and not part of the versions. Sign-ins are never stored.
 
@@ -148,7 +150,7 @@ Each feature type is its own interface in [[src/core/contracts/feature.ts]]. All
 | `sweep` | sketch, profile ids, path (a sketch whose curves form one chain) | operation |
 | `path-pattern` | features to repeat, path (a sketch) | count; align (turn with the path) |
 | `hole` | sketch and its points (centres) | kind (simple, counterbore, countersink); diameter; through or a depth; counterbore diameter and depth; countersink diameter and angle; teardrop; bridge; fit (`press`, `snug`, `loose`: widened by `fitAllowance` plus the print profile's hole compensation) |
-| `part` | sketch and its points | `part`: a `PartSpec` ([[src/core/contracts/parts.ts]]): screw, nut, washer, insert, bearing by catalogue size; magnet; gear, rack; snap-fit, peg, dovetail, living hinge, with expressions; angle; flip; operation |
+| `part` | sketch and its points | `part`: a `PartSpec` ([[src/core/contracts/parts.ts]]): screw, nut, washer, insert, bearing by catalogue size; magnet; gear (helical with a helix angle, its teeth bevelled at both ends by `chamfer`), ring gear, rack; snap-fit, peg, dovetail, living hinge, with expressions; angle; flip; operation |
 | `thread` | a round face | ISO metric size (`metricThreads`); length (empty: the whole face); modelled; flip |
 | `draft` | faces, neutral plane | angle |
 | `rib` | sketch (open curves) | thickness; depth; direction |
@@ -167,7 +169,7 @@ The **operation** of extrude and revolve is `new-body`, `join` (into the bodies 
 
 **Patterns and mirrors repeat a feature's tool**, the solid an extrude or revolve made, with that feature's operation. So a pattern of a cut repeats the hole, and a pattern of a boss repeats the boss.
 
-Sketches lie on a `PlaneRef`: `'XY' | 'XZ' | 'YZ'`, `{ face: TopologyRef }` (a flat face, which moves with it) or `{ plane: featureId }` (a construction plane). Planes on faces orient like the origin planes: on horizontal faces u follows world X, on other faces v points up.
+Sketches lie on a `PlaneRef`: `'XY' | 'XZ' | 'YZ'`, `{ face: TopologyRef, anchor? }` (a flat face, which moves with it) or `{ plane: featureId }` (a construction plane). Planes on faces orient like the origin planes: on horizontal faces u follows world X, on other faces v points up. A sketch made on a face keeps the frame the face gave it then as `anchor` (`{ origin, u }`): when the face grows or shrinks, the sketch moves only with the face's plane, not with its middle ([[CAD-136]]).
 
 ## Persistent references
 
@@ -280,3 +282,6 @@ Every document carries `schemaVersion`. Document Access runs pure migration func
 | --- | --- |
 | 1 | First schema |
 | 2 | Assemblies get `motionStudies` (empty for older assemblies) |
+| 3 | Nothing to migrate: marks documents an older CADence must not open, since it would ignore their newer fields (`lean`, `anchor`, a gear's `chamfer`) and show them wrongly ([[CAD-145]]) |
+
+A document of a newer schema than the app reads is listed in its project (from its name and kind) but not opened: the app says to update CADence. The version goes up with every field an older app must not ignore.

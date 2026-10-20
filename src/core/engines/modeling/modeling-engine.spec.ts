@@ -1,9 +1,10 @@
 import { createShapeAccess, type NamedShape } from '@core/access/shape';
-import { measureVolume } from 'replicad';
+import { makeBaseBox, makeCompound, measureVolume, type Shape3D } from 'replicad';
 import { originFrames, type PlaneFrame, type TopologyRef } from '@core/contracts';
 import { curveArea, curveAt, splineBeziers } from '@core/utilities/math';
 import { circleLoop, profile, rectangleLoop } from '@core/contracts/testing/profiles';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { withoutSlivers } from './booleans';
 import { type BodyState, createModelingEngine, type ModelingEngine, type ModelingOutcome } from './index';
 
 let engine: ModelingEngine;
@@ -139,6 +140,17 @@ describe('ModelingEngine', () => {
     expect((await revolve(-5)).error).toContain('crosses the axis (by 5 mm)');
     // Near the axis but not across it is fine.
     expect(await volume(ok(await revolve(0.0005)))).toBeCloseTo(Math.PI * (10.0005 ** 2 - 0.0005 ** 2) * 20, 3);
+  });
+
+  it('drops the solids of no volume a boolean leaves beside its result (CAD-141)', async () => {
+    await shapes.ready();
+    const part = () => makeBaseBox(10, 10, 10);
+    // A sliver of a twentieth of a millimetre: nothing anyone makes.
+    const left = withoutSlivers(makeCompound([part(), makeBaseBox(0.05, 0.05, 0.01).translate(20, 0, 0)]) as unknown as Shape3D);
+    expect(left && measureVolume(left)).toBeCloseTo(1000, 6);
+    expect(left?.wrapped.ShapeType()).toBe(part().wrapped.ShapeType());
+    expect(withoutSlivers(makeCompound([part(), makeBaseBox(1, 1, 1).translate(20, 0, 0)]) as unknown as Shape3D)).toBeUndefined();
+    expect(withoutSlivers(part())).toBeUndefined();
   });
 
   it('joins pads whose end touches a revolved body, alone and patterned (CAD-103)', { timeout: 60_000 }, async () => {

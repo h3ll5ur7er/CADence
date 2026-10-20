@@ -1,15 +1,14 @@
-import { type CadDocument, type DocumentId, type DocumentSummary, type ProjectId, summarize } from '@core/contracts';
+import type { CadDocument, DocumentId, DocumentSummary, ProjectId } from '@core/contracts';
 import type { DocumentAccess } from './document-access';
-import { migrate } from './migrations';
+import { migrate, summaryOf } from './migrations';
 
 export class InMemoryDocumentAccess implements DocumentAccess {
   private readonly documents = new Map<DocumentId, string>();
 
   async enumerate(projectId: ProjectId): Promise<DocumentSummary[]> {
     return [...this.documents.values()]
-      .map((json) => migrate(JSON.parse(json)))
-      .filter((d) => d.projectId === projectId)
-      .map(summarize);
+      .map((json) => summaryOf(JSON.parse(json)))
+      .filter((d) => d.projectId === projectId);
   }
 
   async load(id: DocumentId): Promise<CadDocument | undefined> {

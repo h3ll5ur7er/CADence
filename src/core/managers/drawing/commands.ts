@@ -1,4 +1,4 @@
-import { type DrawingAnnotation, type DrawingDocument, type DrawingView, fail, ok, type Result, sheetSizes } from '@core/contracts';
+import { dimensionAnchors, type DrawingAnnotation, type DrawingDocument, type DrawingView, fail, fitsDimension, ok, type Result, sheetSizes } from '@core/contracts';
 import type { DrawingCommand } from './drawing-manager';
 
 const invalid = (message: string) => fail({ code: 'invalid-command', message });
@@ -34,11 +34,9 @@ function checkView(document: DrawingDocument, view: DrawingView): string | undef
 function checkAnnotation(document: DrawingDocument, annotation: DrawingAnnotation): string | undefined {
   const views = new Set(document.views.map((v) => v.id));
   if (viewsOf(annotation).some((v) => !views.has(v))) return 'Annotations attach to views of this drawing.';
-  if (annotation.kind === 'dimension') {
-    const needed = { linear: ['point', 'point'], horizontal: ['point', 'point'], vertical: ['point', 'point'], radius: ['circle'], diameter: ['circle'], angle: ['line', 'line'] }[annotation.type];
-    if (annotation.anchors.length !== needed.length || annotation.anchors.some((a, i) => a.kind !== needed[i])) {
-      return `A ${annotation.type} dimension attaches to ${needed.length === 1 ? 'a circle' : `two ${needed[0]}s`}.`;
-    }
+  if (annotation.kind === 'dimension' && !fitsDimension(annotation.type, annotation.anchors.map((a) => a.kind))) {
+    const forms = dimensionAnchors[annotation.type].map((form) => (form.length === 1 ? `a ${form[0]?.join(' or ')}` : `two ${form[0]?.map((k) => `${k}s`).join(' or ')}`));
+    return `A ${annotation.type} dimension attaches to ${forms.join(', or ')}.`;
   }
   if (annotation.kind === 'note' && !annotation.text.trim()) return 'A note needs a text.';
   return undefined;

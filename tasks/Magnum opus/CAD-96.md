@@ -2,7 +2,7 @@
 id: CAD-96
 title: "Magnum opus: a nine-cylinder radial engine as a stress test"
 type: chore
-status: in-progress
+status: review
 priority: high
 labels: [stress-test, mcp]
 ---
@@ -11,7 +11,7 @@ Model a nine-cylinder radial aircraft engine through the MCP server, as an AI ag
 
 Done means: every part is modelled, the assembly animates (crank driving all nine pistons, the cam ring and the propeller through the reduction gear) and comes apart in an exploded view, and the findings are filed.
 
-**Status (2026-10-17, round 4): the engine is complete.** It has no overlaps standing still, no collisions over four engine cycles of the study, an animation and the exploded view. Round 3's fixes ([[CAD-116]] to [[CAD-119]]) work on the engine. The nine tappet guides now give one slider constant (67.0902 mm) in a new process and in the MCP server alike. The MCP server picked up a component edit and an assembly change made by another process. The cam link offsets are set from that constant, and all gears are phased. Round 4 found three new issues. [[CAD-120]]: one big jump of the crank with `set-joint-values` flipped the nine loops into their mirror pose and saved it; repaired from the project history. [[CAD-121]]: the shape cache evicts its own placed parts in long scripts on large assemblies. [[CAD-122]]: animations re-frame the camera on every frame. None blocks the engine. **Drawings (round 5): unblocked again.** Phase 29 gives agents drawings ([[CAD-123]]) and every other manager operation ([[CAD-124]]), and fixes [[CAD-120]] to [[CAD-122]]. Before: stopped at [[CAD-123]]; the app had drawings, but neither the MCP server nor the scripting API could create, edit, read, picture or export one.
+**Status (2026-10-18, round 6): the engine and its drawings are complete; the phase-30 fixes are checked.** It has no overlaps standing still, no collisions over four engine cycles of the study, an animation and the exploded view. Round 3's fixes ([[CAD-116]] to [[CAD-119]]) work on the engine. The nine tappet guides now give one slider constant (67.0902 mm) in a new process and in the MCP server alike. The MCP server picked up a component edit and an assembly change made by another process. The cam link offsets are set from that constant, and all gears are phased. Round 4 found three new issues. [[CAD-120]]: one big jump of the crank with `set-joint-values` flipped the nine loops into their mirror pose and saved it; repaired from the project history. [[CAD-121]]: the shape cache evicts its own placed parts in long scripts on large assemblies. [[CAD-122]]: animations re-frame the camera on every frame. None blocks the engine. **Drawings (round 5): done.** Phase 29 gives agents drawings ([[CAD-123]]) and every other manager operation ([[CAD-124]]), and fixes [[CAD-120]] to [[CAD-122]] (checked on a copy: eleven big crank jumps land right, no cache errors). There are 27 part drawings, R9-01 to R9-27, with views, sections, dimensions, centre marks and notes, and an assembly drawing R9-00 with a parts list and balloons, all exported as PDF. Four findings: [[CAD-125]] (drawing the spark plug's modelled thread blocks a new process for minutes, 452.6 s for one view), [[CAD-126]] (views cannot show a configuration: no rear-half crankcase drawing), [[CAD-127]] (dimensioning gaps: silhouettes, circle centres, diameter placement, hidden anchors, section lines, assembly anchors) and [[CAD-128]] (`get_drawing` answers too long). Phase 30 fixes all four: views draw within a time limit and are kept with the drawing, views show configurations (the rear half can be drawn now), outlines, centres, leader angles, extremes and section lines can be dimensioned, and `get_drawing` answers briefly with short refs.
 
 ## Parts (components, through `edit_component`)
 
@@ -49,8 +49,8 @@ Done means: every part is modelled, the assembly animates (crank driving all nin
 
 ## Drawings
 
-- [ ] A technical drawing of every component (views, sections where useful, main dimensions, hole callouts, title block), exported as PDF — after [[CAD-123]]
-- [ ] An assembly drawing of the engine with a parts list and balloons — after [[CAD-123]]
+- [x] A technical drawing of every component: R9-01 to R9-27 (*Drawing – <part>*), A4 to A3 at 5:1 to 1:5, with views (third angle), sections, dimensions, centre marks and notes (gear data, centre distances), exported as PDF. The crankcase's rear half has its own drawing R9-01B (views of its configuration, [[CAD-126]])
+- [x] An assembly drawing of the engine with a parts list and balloons: R9-00 *Drawing – Radial engine*, A2 1:5, three views, a 28-row parts list with configurations and copy counts, 14 balloons
 
 ## Findings
 
@@ -83,3 +83,12 @@ Round 4:
 Round 5 (drawings):
 
 - [[CAD-123]] Agents cannot make technical drawings (missing, blocking the drawings)
+- [[CAD-125]] Drawing a part with a modelled thread blocks the process for minutes
+- [[CAD-126]] Drawing views cannot show a configuration of a component
+- [[CAD-127]] Dimensioning gaps in drawings
+- [[CAD-128]] `get_drawing` answers are too long for agents
+
+Round 6 (checking phase 30): [[CAD-125]] to [[CAD-128]] work on the engine's drawings (spark plug in 44.8 s then 0.1 s with the process responsive, R9-01B, centre distances, outline diameters, leader angles, section lines, assembly overall dimensions, short refs). Follow-ups:
+
+- [[CAD-129]] A hidden circle right under a hole is offered as visible
+- [[CAD-130]] Views drawn from triangles are hundreds of thousands of loose segments

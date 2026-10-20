@@ -254,6 +254,7 @@ interface DrawingDocument {
 }
 interface DrawingView {
   id; source: DocumentId;                       // a component or an assembly
+  configuration?: string;                       // of the component (CAD-126)
   direction: 'front' | 'back' | 'top' | 'bottom' | 'left' | 'right' | 'iso';
   at: Vec2;                                     // the view's middle on the sheet (mm from the bottom left)
   scale?: number; hidden: boolean; label?: string;
@@ -261,11 +262,13 @@ interface DrawingView {
   detail?: { of: viewId; center: Vec2; radius };  // a circle of another view, in its model mm
 }
 type DrawingAnnotation =
-  | { kind: 'dimension'; type: 'linear' | 'horizontal' | 'vertical' | 'radius' | 'diameter' | 'angle'; anchors: ViewAnchor[]; offset; text? }
+  | { kind: 'dimension'; type: 'linear' | 'horizontal' | 'vertical' | 'radius' | 'diameter' | 'angle'; anchors: ViewAnchor[]; offset; angle?; text? }  // anchors: `dimensionAnchors`
   | { kind: 'note'; at; text; leader? } | { kind: 'center-mark'; circle } | { kind: 'center-line'; a; b }
   | { kind: 'callout'; circle; at } | { kind: 'balloon'; view; instance; at } | { kind: 'parts-list'; view; at };
 interface ViewAnchor { view; kind: 'point' | 'circle' | 'line'; name }   // a persistent name of the view's source
 ```
+
+Besides the source's vertices and edges, a view offers the outlines of cylinders seen from the side (lines `s:<face>:1` and `:2`, points `:a` and `:b` at their ends) and its outermost points seen (`extreme:left`, `right`, `top`, `bottom`). Lengths go between points or circle centres, a diameter of a circle or between two outlines, an angle between two lines. A radius or diameter `angle` is the direction its leader leaves the circle in (degrees; absent: where its text fits on the sheet). The title block's `material` may be empty: the sheet then shows the drawn component's. Drawn views are a cache kept as the drawing's result.
 
 Directions are third-angle names: *front* looks along +Y with Z up, *top* down the Z axis, *right* along −X. Removing a view removes its details and every annotation attached to them.
 

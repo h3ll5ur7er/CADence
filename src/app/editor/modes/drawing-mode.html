@@ -23,7 +23,7 @@
           [attr.width]="view.max[0] - view.min[0] + 6"
           [attr.height]="view.max[1] - view.min[1] + 6"
         >
-          <title>{{ view.error ?? 'View' }}</title>
+          <title>{{ view.error ?? view.note ?? 'View' }}</title>
         </rect>
       }
       @for (path of layout.paths; track $index) {
@@ -64,7 +64,7 @@
           <div class="menu-list add-view" role="dialog" aria-label="Add a view">
             <label class="field">
               Of
-              <select id="view-source" (change)="newView.set({ ...newView(), source: value($event) })">
+              <select id="view-source" (change)="newView.set({ ...newView(), source: value($event), configuration: '' })">
                 @for (s of store.sources(); track s.id) {
                   <option [value]="s.id" [selected]="s.id === newView().source">{{ s.name }}</option>
                 } @empty {
@@ -72,6 +72,17 @@
                 }
               </select>
             </label>
+            @if (store.configurations()[newView().source]; as configurations) {
+              <label class="field">
+                Configuration
+                <select id="view-configuration" (change)="newView.set({ ...newView(), configuration: value($event) })">
+                  <option value="" [selected]="!newView().configuration">The parameters' own values</option>
+                  @for (c of configurations; track c.id) {
+                    <option [value]="c.id" [selected]="c.id === newView().configuration">{{ c.name }}</option>
+                  }
+                </select>
+              </label>
+            }
             <label class="field">
               From
               <select id="view-direction" (change)="newView.set({ ...newView(), direction: $any(value($event)) })">
@@ -137,6 +148,20 @@
       <h2>{{ viewName(view) }}</h2>
       <button type="button" class="icon-btn" aria-label="Delete view" title="Delete" (click)="remove()"><cad-icon name="trash" [size]="14" /></button>
     </div>
+    @if (noteOf(view.id); as note) {
+      <p class="hint" data-testid="view-note">{{ note }}</p>
+    }
+    @if (!view.detail && store.configurations()[view.source]; as configurations) {
+      <label class="field">
+        Configuration
+        <select id="view-edit-configuration" (change)="setView(view, { configuration: value($event) || null })">
+          <option value="" [selected]="!view.configuration">The parameters' own values</option>
+          @for (c of configurations; track c.id) {
+            <option [value]="c.id" [selected]="c.id === view.configuration">{{ c.name }}</option>
+          }
+        </select>
+      </label>
+    }
     @if (!view.detail) {
       <label class="field">
         From
@@ -181,6 +206,12 @@
         Distance from the geometry (mm)
         <input id="dimension-offset" type="number" step="any" [value]="annotation.offset" (change)="setAnnotation(annotation, { offset: +value($event) })" />
       </label>
+      @if ((annotation.type === 'radius' || annotation.type === 'diameter') && annotation.anchors[0]?.kind === 'circle') {
+        <label class="field">
+          Leader angle (°, empty: where it fits)
+          <input id="dimension-angle" type="number" step="15" [value]="annotation.angle ?? ''" (change)="setAnnotation(annotation, { angle: value($event) === '' ? null : +value($event) })" />
+        </label>
+      }
       <label class="field">
         Text (empty: the measured value)
         <input id="dimension-text" type="text" [value]="annotation.text ?? ''" (change)="setAnnotation(annotation, { text: value($event) })" />
@@ -229,7 +260,7 @@
     <div class="grid two">
       <label class="field">Number<input id="title-number" type="text" [value]="document.titleBlock.number" (change)="setTitle({ number: value($event) })" /></label>
       <label class="field">Revision<input id="title-revision" type="text" [value]="document.titleBlock.revision" (change)="setTitle({ revision: value($event) })" /></label>
-      <label class="field">Material<input id="title-material" type="text" [value]="document.titleBlock.material" (change)="setTitle({ material: value($event) })" /></label>
+      <label class="field">Material<input id="title-material" type="text" [placeholder]="store.state()?.material ?? ''" [value]="document.titleBlock.material" (change)="setTitle({ material: value($event) })" /></label>
       <label class="field">Drawn by<input id="title-drawn" type="text" [value]="document.titleBlock.drawnBy" (change)="setTitle({ drawnBy: value($event) })" /></label>
     </div>
     <p class="hint">Add views of components and assemblies, then dimension them. Drag views and notes to move them; scroll to zoom, drag the sheet to pan.</p>

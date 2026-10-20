@@ -2,7 +2,7 @@ import type { DrawingCommand } from '@core/managers/drawing';
 import type { Cadence } from '../api';
 import type { DrawingFilter } from '../drawing';
 import { CadenceError } from '../results';
-import { documentArg, number, object, point2, runAll, string, type Tool } from './schema';
+import { documentArg, number, object, point2, runAll, string, strings, type Tool } from './schema';
 
 /** A drawing command as an agent may write it: a view without `hidden` shows no hidden edges. */
 function completed(command: DrawingCommand): DrawingCommand {
@@ -21,20 +21,27 @@ export function drawingTools(cadence: Cadence): Tool[] {
     {
       name: 'get_drawing',
       description:
-        "A drawing as data: the sheet (size in mm), title block, views with their boxes on the sheet (and why one cannot be drawn), annotations, and the anchors annotations attach to: each view's points, circles (centre and radius) and lines (ends), by persistent name, where they are on the sheet. Filter the anchors by view, kind or a sheet point.",
+        "A drawing as data: the sheet (size in mm), title block, views with their boxes on the sheet (why one cannot be drawn, how it was drawn when not exactly), annotations, and how many anchors each view offers. Anchors (what annotations attach to: points, circles, lines, one per place, with where they are on the sheet and in the model) are listed when asked for: by view, kind, a sheet point, a circle diameter, or the views' outermost points (extremes); only those the view shows unless hidden. Each has a short `ref`: attach annotations with {\"view\":\"front\",\"ref\":\"p1k9zq\"}.",
       inputSchema: object(
         {
           document: documentArg,
-          view: string('Only the anchors of this view.'),
-          kind: { type: 'string', enum: ['point', 'circle', 'line'], description: 'Only anchors of this kind.' },
-          near: point2('Only anchors within `within` mm of this sheet point [x, y].'),
+          only: strings('Only these parts: sheet (and title block), views, annotations, anchors.'),
+          view: string('Anchors of this view.'),
+          kind: { type: 'string', enum: ['point', 'circle', 'line'], description: 'Anchors of this kind (circles largest first).' },
+          near: point2('Anchors within `within` mm of this sheet point [x, y].'),
           within: number('Distance for near, sheet mm (5 by default).'),
+          diameter: number('Circles of this diameter, model mm.'),
+          extremes: { type: 'boolean', description: "The views' outermost points seen (left, right, top, bottom), for overall dimensions." },
+          hidden: { type: 'boolean', description: 'Also anchors the view does not show (hidden, with hidden lines off).' },
+          names: { type: 'boolean', description: 'Persistent names too (long), in anchors and annotations.' },
         },
         ['document'],
       ),
       run: async (args) => {
-        const { document: _, ...filter } = args;
-        return (await drawing(args)).summary(filter as DrawingFilter);
+        const { document: _, ...filter } = args as Record<string, unknown> & DrawingFilter;
+        // Anchors only when asked for: views can offer thousands (CAD-128).
+        const asked = ['only', 'view', 'kind', 'near', 'diameter', 'extremes'].some((key) => key in filter);
+        return (await drawing(args)).summary(asked ? filter : { ...filter, only: ['sheet', 'views', 'annotations'] });
       },
     },
     {
@@ -48,14 +55,14 @@ export function drawingTools(cadence: Cadence): Tool[] {
             type: 'array',
             items: { type: 'object' },
             description:
-              'E.g. {"type":"add-view","view":{"id":"front","source":"<component id>","direction":"front","at":[120,100]}}, then a dimension between two anchors from get_drawing: {"type":"add-annotation","annotation":{"kind":"dimension","id":"w","type":"horizontal","anchors":[{"view":"front","kind":"point","name":"…"},{"view":"front","kind":"point","name":"…"}],"offset":10}}.',
+              'E.g. {"type":"add-view","view":{"id":"front","source":"<component id>","direction":"front","at":[120,100]}} (with "configuration":"<id>" for a configuration of a component), then a dimension between two anchors from get_drawing, by ref: {"type":"add-annotation","annotation":{"kind":"dimension","id":"w","type":"horizontal","anchors":[{"view":"front","ref":"p…"},{"view":"front","ref":"c…"}],"offset":10}}. Lengths go between points or circle centres; a diameter takes a circle or two outlines of a cylinder (lines s:…); radius and diameter take an "angle" (degrees) for their leader.',
           },
         },
         ['document', 'commands'],
       ),
       run: async (args) => {
         const script = await drawing(args);
-        const before = await script.summary();
+        const before = await script.summary({ names: true, only: ['sheet', 'views', 'annotations'] });
         await runAll(args['commands'] as DrawingCommand[], (command) => script.run(completed(command)));
         return script.changes(before);
       },
@@ -66,7 +73,7 @@ export function drawingTools(cadence: Cadence): Tool[] {
       inputSchema: object({ document: documentArg, redo: { type: 'boolean', description: 'Redo instead.' } }, ['document']),
       run: async (args) => {
         const script = await drawing(args);
-        const before = await script.summary();
+        const before = await script.summary({ names: true, only: ['sheet', 'views', 'annotations'] });
         await (args['redo'] ? script.redo() : script.undo());
         return script.changes(before);
       },

@@ -59,6 +59,8 @@ describe('DrawingManager', () => {
   let files: InMemoryExternalFileAccess;
   let events: EventBus<DomainEvents>;
   let session: DrawingSession;
+  /** A Drawing Manager over this test's documents, with other dependencies swapped in. */
+  let managerWith: (deps?: Partial<Parameters<typeof createDrawingManager>[0]>) => ReturnType<typeof createDrawingManager>;
 
   beforeEach(async () => {
     documents = new InMemoryDocumentAccess();
@@ -85,18 +87,20 @@ describe('DrawingManager', () => {
       views: [],
       annotations: [],
     } satisfies DrawingDocument);
-    const manager = createDrawingManager({
-      projects: new InMemoryProjectAccess(),
-      documents,
-      assets,
-      externalFiles: files,
-      modeling,
-      parameters: createParameterEngine(),
-      events,
-      clock: steppingClock('2026-10-16T11:00:00.000Z'),
-      fonts: fontSource(),
-    });
-    session = unwrap(await manager.open(asDocumentId('sheet')));
+    managerWith = (deps = {}) =>
+      createDrawingManager({
+        projects: new InMemoryProjectAccess(),
+        documents,
+        assets,
+        externalFiles: files,
+        modeling,
+        parameters: createParameterEngine(),
+        events,
+        clock: steppingClock('2026-10-16T11:00:00.000Z'),
+        fonts: fontSource(),
+        ...deps,
+      });
+    session = unwrap(await managerWith().open(asDocumentId('sheet')));
   });
 
   const view = (id: string, direction: 'front' | 'top', at: [number, number], extra = {}) => ({ id, source: asDocumentId('plate'), direction, at, hidden: true, ...extra });
@@ -181,6 +185,82 @@ describe('DrawingManager', () => {
     expect(texts()).toEqual(expect.arrayContaining(['Item', 'Plate', '2', 'PLA']));
     expect(session.state().layout.texts.filter((t) => t.owner === 'b1').map((t) => t.text)).toEqual(['1']);
     expect(session.state().layout.lost).toEqual([]);
+  });
+
+  it('shows a configuration of a component (CAD-126)', async () => {
+    // A thin configuration of the plate, 4 mm instead of 10, with its own result.
+    const thin = await modeling.apply({ type: 'extrude', feature: 'e1', key: 'drawing-manager-thin', bodies: [], frame: originFrames.XY, profiles: [profile(rectangleLoop(0, 0, 60, 30, 'plate'))], distance: 4, direction: 'normal', operation: 'new-body' });
+    const plateDocument = (await documents.load(asDocumentId('plate'))) as ComponentDocument;
+    await documents.store({ ...plateDocument, configurations: [{ id: 'thin', name: 'Thin', values: {} }] });
+    await assets.publishResult({ documentId: asDocumentId('plate'), projectId: project, configuration: 'thin', stamp: resultStamp(stamp, []), bytes: await modeling.snapshot(thin.bodies) });
+    unwrap(await session.execute({ type: 'add-view', view: view('whole', 'front', [120, 200]) }));
+    unwrap(await session.execute({ type: 'add-view', view: view('thin', 'front', [120, 90], { configuration: 'thin' }) }));
+    const height = (id: string) => {
+      const placed = session.state().layout.views.find((v) => v.id === id);
+      return Math.round(((placed?.max[1] ?? 0) - (placed?.min[1] ?? 0)) / 2);
+    };
+    expect([height('whole'), height('thin')]).toEqual([10, 4]);
+    expect(await session.execute({ type: 'add-view', view: view('x', 'top', [300, 90], { configuration: 'nope' }) })).toMatchObject({ ok: false, error: { message: 'Plate has no configuration nope; its configurations are thin (Thin).' } });
+  });
+
+  it('draws a view from the triangles when the exact projection takes too long, and keeps drawn views with the drawing (CAD-125)', async () => {
+    // A views kernel that runs out of time on every view.
+    const late = { restore: modeling.restore.bind(modeling), drawView: () => Promise.reject(Object.assign(new Error('Too long.'), { name: 'TimeoutError' })) };
+    const slow = unwrap(await managerWith({ views: late }).open(asDocumentId('sheet')));
+    const seen: string[] = [];
+    slow.subscribe((state) => seen.push(state.layout.views.find((v) => v.id === 'top')?.error ?? 'drawn'));
+    unwrap(await slow.execute({ type: 'add-view', view: view('top', 'top', [120, 200]) }));
+    // The sheet is laid out with the view still being drawn, then again once it is.
+    expect(seen).toEqual(['Drawing…', 'drawn']);
+    const top = slow.state().layout.views.find((v) => v.id === 'top');
+    expect(top?.note).toBe('Drawn from the triangles: the exact projection took too long.');
+    expect(top?.min.map(Math.round)).toEqual([60, 170]);
+    // A handful of paths, as drawn exactly: the outline and the hole (CAD-130).
+    expect(slow.state().layout.paths.filter((p) => p.owner === 'top').length).toBeLessThan(10);
+    slow.close();
+
+    // Another process opens the drawing: the drawn view comes from the drawing's result, not drawn again.
+    let drawn = 0;
+    const counting: typeof modeling = Object.assign(Object.create(modeling) as typeof modeling, { drawView: (...args: Parameters<typeof modeling.drawView>) => (drawn++, modeling.drawView(...args)) });
+    const again = unwrap(await managerWith({ modeling: counting }).open(asDocumentId('sheet')));
+    expect(drawn).toBe(0);
+    expect(again.state().layout.views.find((v) => v.id === 'top')?.note).toBe('Drawn from the triangles: the exact projection took too long.');
+  });
+
+  it('marks where a section cuts, and fills in the material (CAD-127)', async () => {
+    unwrap(await session.execute({ type: 'set-title-block', titleBlock: { ...session.state().document.titleBlock, material: '' } }));
+    unwrap(await session.execute({ type: 'add-view', view: view('top', 'top', [120, 200]) }));
+    unwrap(await session.execute({ type: 'add-view', view: view('cut', 'front', [120, 90], { section: { offset: 0 }, label: 'Section A-A' }) }));
+    const { layout } = session.state();
+    // The cutting plane (y = 15, the plate's middle) runs across the top view, with the letter at each end.
+    const chain = layout.paths.find((p) => p.owner === 'cut' && p.style === 'center');
+    expect(chain?.points.map((p) => Math.round(p[1]))).toEqual([200, 200]);
+    expect(Math.min(...(chain?.points.map((p) => p[0]) ?? []))).toBeLessThan(60);
+    expect(layout.texts.filter((t) => t.owner === 'cut' && t.text === 'A')).toHaveLength(2);
+    expect(layout.arrows.filter((a) => a.owner === 'cut').every((a) => Math.round(a.direction[1]) === 1)).toBe(true);
+    expect(session.state().material).toBe('PLA');
+    expect(texts()).toContain('PLA');
+  });
+
+  it('dimensions from circle centres, across cylinder outlines and at an angle (CAD-127)', async () => {
+    unwrap(await session.execute({ type: 'add-view', view: view('top', 'top', [120, 200]) }));
+    unwrap(await session.execute({ type: 'add-view', view: { ...view('side', 'top', [300, 90]), direction: 'right' } }));
+    const anchors = session.state().layout.anchors;
+    const ref = (a: (typeof anchors)[number]) => ({ view: a.view, kind: a.kind, name: a.name });
+    const hole = anchors.find((a) => a.view === 'top' && a.kind === 'circle') as (typeof anchors)[number];
+    const left = anchors.filter((a) => a.view === 'top' && a.kind === 'point').sort((a, b) => a.at[0] - b.at[0])[0] as (typeof anchors)[number];
+    unwrap(await session.execute({ type: 'add-annotation', annotation: { kind: 'dimension', id: 'x', type: 'horizontal', anchors: [ref(left), ref(hole)], offset: 10 } }));
+    expect(session.state().layout.texts.filter((t) => t.owner === 'x').map((t) => t.text)).toEqual(['20']);
+    // From the right, the hole's wall shows two outlines inside the plate: hidden, 10 apart.
+    const outlines = anchors.filter((a) => a.view === 'side' && a.kind === 'line' && a.name.startsWith('s:'));
+    expect(outlines).toHaveLength(2);
+    expect(outlines.every((a) => a.hidden)).toBe(true);
+    unwrap(await session.execute({ type: 'add-annotation', annotation: { kind: 'dimension', id: 'd', type: 'diameter', anchors: outlines.map(ref), offset: 6 } }));
+    expect(session.state().layout.texts.filter((t) => t.owner === 'd').map((t) => t.text)).toEqual(['⌀10']);
+    // A diameter leaving its circle up and to the left: its text ends at the leader.
+    unwrap(await session.execute({ type: 'add-annotation', annotation: { kind: 'dimension', id: 'a', type: 'diameter', anchors: [ref(hole)], offset: 8, angle: 135 } }));
+    expect(session.state().layout.texts.find((t) => t.owner === 'a')).toMatchObject({ align: 'right' });
+    expect(session.state().layout.texts.find((t) => t.owner === 'a')?.at[0]).toBeLessThan(hole.at[0]);
   });
 
   it('says what a hole is from its feature', () => {

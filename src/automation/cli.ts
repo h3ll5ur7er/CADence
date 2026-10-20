@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { createNodeCore } from '@core/composition/node';
 import type { ImportFormat, RemoteCredentials, Vec3 } from '@core/contracts';
 import type { DrawingFormat, SolidFormat } from '@core/managers/design';
+import type { StoppablePort } from '@core/utilities/messaging';
 import { Cadence, CadenceError, unwrap } from './api';
 import { McpServer, serveStdio } from './mcp';
 
@@ -80,7 +81,15 @@ export interface Io {
 }
 
 /** Runs one command line; returns the exit code. */
-export async function runCli(args: readonly string[], io: Io, reference: Readonly<Record<string, string>> = {}, version = '0.0.0', env: NodeJS.ProcessEnv = process.env): Promise<number> {
+export async function runCli(
+  args: readonly string[],
+  io: Io,
+  reference: Readonly<Record<string, string>> = {},
+  version = '0.0.0',
+  env: NodeJS.ProcessEnv = process.env,
+  /** Starts the worker that draws drawing views exactly, within a time limit (CAD-125); absent: views are drawn in this thread. */
+  views?: () => StoppablePort,
+): Promise<number> {
   const { positional, options } = parseArguments(args);
   const [command, ...rest] = positional;
   if (!command || options['help']) {
@@ -94,7 +103,7 @@ export async function runCli(args: readonly string[], io: Io, reference: Readonl
   const credentials: RemoteCredentials | undefined =
     env['CADENCE_GIT_USERNAME'] || env['CADENCE_GIT_PASSWORD'] ? { username: env['CADENCE_GIT_USERNAME'] ?? '', password: env['CADENCE_GIT_PASSWORD'] ?? '' } : undefined;
   const open = (projects?: string) => {
-    const core = createNodeCore({ ...(projects ? { projects } : {}), exports: exportsFolder });
+    const core = createNodeCore({ ...(projects ? { projects } : {}), exports: exportsFolder, ...(views ? { views } : {}) });
     return new Cadence(core, core.exports);
   };
   const need = (count: number) => {

@@ -365,13 +365,14 @@ describe('drawings for agents (CAD-123)', () => {
     expect(placed).not.toHaveProperty('viewErrors');
 
     // What the top view offers to dimension: its corners and the hole.
-    const anchors = (await json('get_drawing', { document: sheet.id, view: 'top' })) as { anchors: { view: string; kind: string; name: string; at: number[]; radius?: number }[]; anchorCounts: Record<string, number> };
+    const anchors = (await json('get_drawing', { document: sheet.id, view: 'top' })) as { anchors: { view: string; kind: string; ref: string; at: number[]; radius?: number }[]; anchorCounts: Record<string, number> };
     expect(anchors.anchorCounts['front']).toBeGreaterThan(0);
     const points = anchors.anchors.filter((a) => a.kind === 'point').sort((a, b) => (a.at[0] as number) - (b.at[0] as number));
     const circle = anchors.anchors.find((a) => a.kind === 'circle' && a.radius === 8); // ⌀8 at 2:1
-    const ref = (a: { view: string; kind: string; name: string } | undefined) => ({ view: a?.view, kind: a?.kind, name: a?.name });
+    // Annotations attach by the anchors' short handles (CAD-128).
+    const ref = (a: { view: string; ref: string } | undefined) => ({ view: a?.view, ref: a?.ref });
     expect(circle).toBeDefined();
-    expect((await json('get_drawing', { document: sheet.id, near: circle?.at, within: 1 }))['anchors']).toEqual(expect.arrayContaining([expect.objectContaining({ name: circle?.name })]));
+    expect((await json('get_drawing', { document: sheet.id, near: circle?.at, within: 1 }))['anchors']).toEqual(expect.arrayContaining([expect.objectContaining({ ref: circle?.ref })]));
     const annotated = await json('edit_drawing', {
       document: sheet.id,
       commands: [
@@ -382,6 +383,9 @@ describe('drawings for agents (CAD-123)', () => {
     });
     expect(annotated).toMatchObject({ created: { annotations: ['width', 'hole', 'call'] } });
     expect(annotated).not.toHaveProperty('lost');
+    expect(await call('edit_drawing', { document: sheet.id, commands: [{ type: 'add-annotation', annotation: { kind: 'center-mark', id: 'm', circle: { view: 'top', ref: 'cnope' } } }] })).toMatchObject({
+      result: { isError: true, content: [{ text: expect.stringContaining('View top has no anchor cnope') }] },
+    });
 
     const picture = result(await call('render_picture', { document: sheet.id, width: 840 }));
     expect(picture.content[0]?.type).toBe('image');
@@ -394,6 +398,87 @@ describe('drawings for agents (CAD-123)', () => {
     expect(await json('undo_drawing', { document: sheet.id })).toMatchObject({ removed: ['call'] });
     expect(await json('undo_drawing', { document: sheet.id, redo: true })).toMatchObject({ created: { annotations: ['call'] } });
     expect(text(await call('command_reference', {}))).toContain('drawing');
+  });
+});
+
+describe('short drawing answers (CAD-128) and configurations in views (CAD-126)', () => {
+  it('lists the anchors asked for, once per place, with short handles and model points', { timeout: 180_000 }, async () => {
+    const core = createNodeCore({ exports: folder() });
+    const server = new McpServer(new Cadence(core, core.exports), { drawing: '// the types' }, '1.2.3');
+    let id = 0;
+    const call = async (name: string, args: Record<string, unknown> = {}) => server.handle({ jsonrpc: '2.0', id: ++id, method: 'tools/call', params: { name, arguments: args } });
+    const json = async (name: string, args: Record<string, unknown>) => JSON.parse(text(await call(name, args))) as Record<string, unknown>;
+    const created = (await json('create_project', { name: 'Short' })) as { project: { id: string }; component: { id: string } };
+    const plate = created.component.id;
+    // A 60 × 30 × 6 plate with ⌀8 and ⌀4 holes, and a configuration 12 thick.
+    await call('edit_component', {
+      document: plate,
+      commands: [
+        { type: 'add-parameter', parameter: { id: 't', name: 'thickness', expression: '6 mm' } },
+        { type: 'create-sketch', id: 's', plane: 'XY' },
+        { type: 'add-rectangle', sketchId: 's', id: 'r', x: 0, y: 0, width: 60, height: 30 },
+        { type: 'add-circle', sketchId: 's', id: 'c', x: 20, y: 15, diameter: 8 },
+        { type: 'add-circle', sketchId: 's', id: 'd', x: 45, y: 15, diameter: 4 },
+        { type: 'set-configurations', configurations: [{ id: 'thick', name: 'Thick', values: { thickness: '12 mm' } }] },
+      ],
+    });
+    const profile = (JSON.parse(text(await call('get_component', { document: plate, only: ['sketches'] }))) as ComponentSummary).sketches[0]?.profiles.find((p) => p.holes === 2)?.id;
+    await call('edit_component', { document: plate, commands: [{ type: 'add-feature', feature: { type: 'extrude', id: 'e', name: '', suppressed: false, sketch: 's', profiles: [profile], distance: 'thickness', direction: 'normal', operation: 'new-body' } }] });
+    const sheet = (await json('create_document', { project: created.project.id, kind: 'drawing', name: 'Plate drawing' })) as { id: string };
+    const placed = await json('edit_drawing', {
+      document: sheet.id,
+      commands: [
+        { type: 'add-view', view: { id: 'top', source: plate, direction: 'top', at: [120, 200] } },
+        { type: 'add-view', view: { id: 'front', source: plate, direction: 'front', at: [120, 90] } },
+        { type: 'add-view', view: { id: 'thick', source: plate, configuration: 'thick', direction: 'front', at: [300, 90] } },
+      ],
+    });
+    // The thick configuration's view is twice as tall (12 instead of 6, at 1:1).
+    const height = (box: { min: number[]; max: number[] }) => Math.round((box.max[1] as number) - (box.min[1] as number));
+    const boxes = (placed as { placed: Record<string, { min: number[]; max: number[] }> }).placed;
+    expect([height(boxes['front'] as never), height(boxes['thick'] as never)]).toEqual([6, 12]);
+
+    // Without a filter: no anchors, only how many each view offers.
+    const plain = await json('get_drawing', { document: sheet.id });
+    expect(plain).not.toHaveProperty('anchors');
+    expect((plain['anchorCounts'] as Record<string, number>)['top']).toBeGreaterThan(0);
+    expect(Object.keys(await json('get_drawing', { document: sheet.id, only: ['views'] }))).toEqual(['id', 'name', 'views', 'lost', 'anchorCounts']);
+
+    interface Anchor {
+      view: string;
+      ref: string;
+      kind: string;
+      at: number[];
+      diameter?: number;
+      model?: number[];
+      hidden?: true;
+      name?: string;
+    }
+    const listed = async (args: Record<string, unknown>) => (await json('get_drawing', { document: sheet.id, ...args }))['anchors'] as Anchor[];
+    // From the front, the plate's back corners lie on its front ones: one point per place.
+    const front = (await listed({ view: 'front', kind: 'point', hidden: true, names: true })).filter((a) => !a.name?.startsWith('extreme:'));
+    const places = new Set(front.map((a) => a.at.join(',')));
+    expect(places.size).toBeGreaterThan(4);
+    expect(front).toHaveLength(places.size);
+    // Circles by diameter (model mm), with their centres in the model.
+    const holes = await listed({ view: 'top', diameter: 4 });
+    expect(holes.map((h) => [h.kind, h.diameter, h.model?.slice(0, 2)])).toEqual([['circle', 4, [45, 15]]]);
+    expect(holes[0]?.ref).toMatch(/^c[0-9a-z.]+$/);
+    // The outermost points, for an overall width.
+    const extremes = await listed({ view: 'top', extremes: true, names: true });
+    expect(extremes.map((a) => a.name)).toEqual(['extreme:left', 'extreme:right', 'extreme:bottom', 'extreme:top']);
+    const [left, right] = extremes as Anchor[];
+    expect([left?.at[0], right?.at[0]]).toEqual([90, 150]);
+    const answer = await json('edit_drawing', {
+      document: sheet.id,
+      commands: [{ type: 'add-annotation', annotation: { kind: 'dimension', id: 'width', type: 'horizontal', anchors: [{ view: 'top', ref: left?.ref }, { view: 'top', ref: right?.ref }], offset: 10 } }],
+    });
+    expect(answer).toMatchObject({ created: { annotations: ['width'] } });
+    // Annotations answer with the handles; with names, as stored.
+    const annotations = (await json('get_drawing', { document: sheet.id, only: ['annotations'] }))['annotations'] as { anchors: { ref?: string; name?: string }[] }[];
+    expect(annotations[0]?.anchors).toEqual([{ view: 'top', kind: 'point', ref: left?.ref }, { view: 'top', kind: 'point', ref: right?.ref }]);
+    const named = (await json('get_drawing', { document: sheet.id, only: ['annotations'], names: true }))['annotations'] as { anchors: { name?: string }[] }[];
+    expect(named[0]?.anchors.map((a) => a.name)).toEqual(['extreme:left', 'extreme:right']);
   });
 });
 

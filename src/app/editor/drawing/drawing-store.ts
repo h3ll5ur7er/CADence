@@ -1,5 +1,5 @@
 import { computed, DestroyRef, inject, Injectable, signal } from '@angular/core';
-import { type DimensionType, type DocumentId, type DocumentSummary, type ProjectId, type Vec2, type ViewAnchor } from '@core/contracts';
+import { type DimensionType, type DocumentId, type DocumentSummary, nextDimensionAnchor, type ProjectId, type Vec2, type ViewAnchor } from '@core/contracts';
 import type { DrawingCommand, DrawingSession, DrawingState, SheetAnchor } from '@core/managers/drawing';
 import { DRAWING_MANAGER, PROJECT_MANAGER } from '../../core.providers';
 
@@ -17,16 +17,6 @@ export type DrawingTool =
 
 export type DrawingSelection = { readonly kind: 'view' | 'annotation'; readonly id: string } | undefined;
 
-/** The anchors each dimension type needs, in order. */
-export const dimensionAnchors: Readonly<Record<DimensionType, readonly ViewAnchor['kind'][]>> = {
-  linear: ['point', 'point'],
-  horizontal: ['point', 'point'],
-  vertical: ['point', 'point'],
-  radius: ['circle'],
-  diameter: ['circle'],
-  angle: ['line', 'line'],
-};
-
 /** Client-side state of the drawing editor: the Drawing session as signals, plus the tool, selection and picks. */
 @Injectable()
 export class DrawingStore {
@@ -43,6 +33,8 @@ export class DrawingStore {
   readonly picked = signal<readonly SheetAnchor[]>([]);
   /** Components and assemblies of the project, for views. */
   readonly sources = signal<readonly DocumentSummary[]>([]);
+  /** The configurations of each component that has any, which its views may show (CAD-126). */
+  readonly configurations = signal<Readonly<Record<string, readonly { readonly id: string; readonly name: string }[]>>>({});
   readonly layout = computed(() => this.state()?.layout);
   readonly document = computed(() => this.state()?.document);
 
@@ -62,7 +54,15 @@ export class DrawingStore {
     this.session = opened.value;
     this.state.set(this.session.state());
     this.unsubscribe = this.session.subscribe((state) => this.state.set(state));
-    this.sources.set((await this.projects.listDocuments(projectId)).filter((d) => d.kind === 'component' || d.kind === 'assembly'));
+    const sources = (await this.projects.listDocuments(projectId)).filter((d) => d.kind === 'component' || d.kind === 'assembly');
+    this.sources.set(sources);
+    const session = this.session;
+    const configurations: Record<string, readonly { readonly id: string; readonly name: string }[]> = {};
+    for (const source of sources.filter((s) => s.kind === 'component')) {
+      const list = await session.configurationsOf(source.id);
+      if (list.length) configurations[source.id] = list;
+    }
+    this.configurations.set(configurations);
   }
 
   async run(command: DrawingCommand): Promise<boolean> {
@@ -84,15 +84,17 @@ export class DrawingStore {
     const tool = this.tool();
     const kinds: readonly ViewAnchor['kind'][] =
       tool.kind === 'dimension'
-        ? [dimensionAnchors[tool.type][this.picked().length] ?? 'point']
+        ? nextDimensionAnchor(tool.type, this.picked().map((a) => a.kind))
         : tool.kind === 'center-mark' || tool.kind === 'callout'
           ? ['circle']
           : tool.kind === 'center-line'
             ? ['point', 'circle']
             : [];
+    // Geometry a view does not show is not offered, unless the view draws hidden lines (CAD-127).
+    const drawsHidden = new Set((this.document()?.views ?? []).filter((v) => v.hidden).map((v) => v.id));
     let best: { anchor: SheetAnchor; distance: number } | undefined;
     for (const anchor of layout?.anchors ?? []) {
-      if (!kinds.includes(anchor.kind)) continue;
+      if (!kinds.includes(anchor.kind) || (anchor.hidden && !drawsHidden.has(anchor.view))) continue;
       // Circles are picked on their rim, lines anywhere along them, points at themselves.
       const distance =
         anchor.kind === 'circle'

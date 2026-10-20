@@ -12,4 +12,5 @@ export type * from './project';
 export { resultStamp } from './project';
 export * from './result';
 export * from './revision';
+export type * from './sharing';
 export * from './sketch';

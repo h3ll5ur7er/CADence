@@ -1,6 +1,7 @@
 import type { CadDocument, Parameter } from './document';
 import type { ProjectId } from './ids';
 import type { ItemConflict } from './revision';
+import type { ProjectRole } from './sharing';
 
 /** ISO 8601 timestamp, e.g. `2026-10-14T18:00:00.000Z`. */
 export type Timestamp = string;
@@ -35,6 +36,14 @@ export interface ProjectRemote {
   readonly url: string;
   /** A CORS proxy for hosts a browser cannot reach directly (e.g. https://cors.isomorphic-git.org). */
   readonly corsProxy?: string;
+  /** When the repository is a project on a CADence server (CAD-177): which, and what this device may do with it. */
+  readonly server?: {
+    readonly url: string;
+    readonly project: string;
+    readonly role: ProjectRole;
+    /** Opened through a link to view: the link, which is also its sign-in. */
+    readonly link?: string;
+  };
 }
 
 /** Sign-in for a remote, asked for when syncing and never stored; an access token goes in `password`. */

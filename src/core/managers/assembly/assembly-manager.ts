@@ -175,7 +175,8 @@ export interface AssemblySession {
    */
   exportInstructions(viewId: string, pictures: readonly InstructionPicture[]): Promise<Result<void>>;
   /** Instances whose solids overlap in the current positions. */
-  interference(): Promise<Interference[]>;
+  /** With `onProgress`, the parts are checked one at a time against the others, and told after each (CAD-134). */
+  interference(options?: { readonly onProgress?: (done: number, total: number) => void }): Promise<Interference[]>;
   /** STEP keeps one named solid per instance; mesh formats get one object per instance. */
   exportAssembly(format: AssemblyFormat): Promise<Result<void>>;
   /** The assembly as one HTML file with a viewer (turn, measure, hide, explode), for people without CADence. */

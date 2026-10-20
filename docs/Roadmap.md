@@ -37,6 +37,7 @@ The work is planned in phases. Each phase ends with a running demo and visible e
 | 30. Drawings of the engine ✅ | The radial engine's drawings ([[CAD-96]], round 5): views within a time limit, drawn from the triangles when the exact projection takes too long, and kept with the drawing; views of configurations; outlines, centres, leader angles, extremes and section lines to dimension; short anchor answers for agents | [[CAD-125]] [[CAD-126]] [[CAD-127]] [[CAD-128]] [[CAD-129]] [[CAD-130]] |
 | 31. A binary for agents ✅ | The command line and MCP server as one self-contained executable with the kernels and fonts inside, for agents of other projects | [[CAD-131]] |
 | 32. Releases for every system ✅ | Installers for Windows, macOS and Linux from each version tag, each with the command line for agents next to the app; the command line on its own per system; the About dialog says how to add it to Claude Code | [[CAD-132]] |
+| 33. The keyboard enclosure's findings ✅ | Fixes for what an agent found modelling a keyboard enclosure: a kernel that recovers, an MCP server that answers side by side and can be cancelled, a schema an older app refuses, project parameters and version histories that carry over, sturdier booleans and extrudes, sketches that stay on their faces, gears that print | [[CAD-133]] … [[CAD-147]] |
 
 The order follows the dependencies: the Sketcher needs the editor shell, Part modeling needs profiles, and Assemblies need regenerated components. Within a phase, tasks are listed in the order they will be done.
 

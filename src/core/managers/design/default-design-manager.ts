@@ -110,6 +110,29 @@ class Session implements DesignSession {
     await this.commit({ document: this.current.document, derived, meshes: await this.meshes(derived) });
   }
 
+  /**
+   * Follows the project's parameters where no event told: changed by another tool or process while
+   * nothing listened to this session (CAD-146). Regenerates only when they differ.
+   */
+  private async followProject(): Promise<void> {
+    const now = await projectParametersOf(this.deps, this.current.document);
+    if (JSON.stringify(now) !== JSON.stringify(this.context.projectParameters ?? [])) await this.projectChanged();
+  }
+
+  /**
+   * A new sketch on a face keeps the frame the face gives it now: its origin and u axis stay put when
+   * the face grows or shrinks later (CAD-136).
+   */
+  private async anchored(command: DesignCommand): Promise<DesignCommand> {
+    if (command.type !== 'create-sketch' || typeof command.plane === 'string' || !('face' in command.plane) || command.plane.anchor) return command;
+    const frame = await this.deps.modeling.planeOf(this.current.derived.bodies, command.plane.face);
+    return frame.ok ? { ...command, plane: { ...command.plane, anchor: { origin: frame.value.origin, u: frame.value.u } } } : command;
+  }
+
+  catchUp(): Promise<void> {
+    return this.serialized(() => this.followProject());
+  }
+
   state(): DesignState {
     const { document, derived, meshes } = this.current;
     return {
@@ -143,7 +166,10 @@ class Session implements DesignSession {
 
   /** Commands run one after another, so fast input (drags, typing) can never interleave. */
   execute(command: DesignCommand): Promise<Result<void>> {
-    return this.serialized(() => this.apply(command));
+    return this.serialized(async () => {
+      await this.followProject();
+      return this.apply(command);
+    });
   }
 
   undo(): Promise<void> {
@@ -331,7 +357,8 @@ class Session implements DesignSession {
     return derived.bodies.map((b) => ({ ...b, name: document.timeline.find((item) => item.id === b.id)?.name ?? b.id }));
   }
 
-  private async apply(command: DesignCommand): Promise<Result<void>> {
+  private async apply(given: DesignCommand): Promise<Result<void>> {
+    const command = await this.anchored(given);
     if (command.type === 'set-appearance' && !this.current.derived.bodies.some((b) => b.id === command.body)) {
       return fail({ code: 'invalid-command', message: `There is no body ${command.body}.` });
     }

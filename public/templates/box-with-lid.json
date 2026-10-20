@@ -36,7 +36,7 @@
       "name": "Box",
       "createdAt": "2026-01-01T00:00:00.000Z",
       "modifiedAt": "2026-01-01T00:00:00.000Z",
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "kind": "component",
       "units": "mm",
       "parameters": [],
@@ -185,7 +185,7 @@
       "name": "Lid",
       "createdAt": "2026-01-01T00:00:00.000Z",
       "modifiedAt": "2026-01-01T00:00:00.000Z",
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "kind": "component",
       "units": "mm",
       "parameters": [],
@@ -441,7 +441,7 @@
       "name": "Box with lid",
       "createdAt": "2026-01-01T00:00:00.000Z",
       "modifiedAt": "2026-01-01T00:00:00.000Z",
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "kind": "assembly",
       "instances": [
         {

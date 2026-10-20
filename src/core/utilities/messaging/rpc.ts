@@ -107,6 +107,47 @@ export function stoppable<T extends object>(start: () => StoppablePort, service:
   });
 }
 
+/**
+ * A port to a worker that starts on first use and can be stopped and started again (CAD-134): a
+ * cancelled computation stops it, and the calls waiting on it fail with `error`. The worker may tell
+ * of its kernel's failures with `{ cadence: 'kernel-failed' }`; both count as `restarts`.
+ */
+export function restartable(start: () => StoppablePort): { readonly port: Port; restart(error: Error): void; restarts(): number } {
+  let worker: StoppablePort | undefined;
+  let count = 0;
+  const listeners: ((event: MessageEvent) => void)[] = [];
+  const failures = (event: MessageEvent) => {
+    if ((event.data as { cadence?: string } | undefined)?.cadence === 'kernel-failed') count += 1;
+  };
+  const current = () => {
+    if (!worker) {
+      worker = start();
+      for (const listener of [failures, ...listeners]) worker.addEventListener('message', listener);
+    }
+    return worker;
+  };
+  const port: Port = {
+    postMessage: (message, transfer) => current().postMessage(message, transfer),
+    addEventListener: (_type, listener) => {
+      listeners.push(listener);
+      worker?.addEventListener('message', listener);
+    },
+  };
+  return {
+    port,
+    restarts: () => count,
+    restart(error) {
+      if (!worker) return;
+      worker.terminate();
+      worker = undefined;
+      count += 1;
+      const waiting = pending.get(port);
+      for (const call of waiting?.values() ?? []) call.reject(error);
+      waiting?.clear();
+    },
+  };
+}
+
 const pending = new WeakMap<Port, Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>>();
 let nextId = 0;
 

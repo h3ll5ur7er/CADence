@@ -37,7 +37,7 @@ export class EventBus<Events extends object> {
     return this.pending;
   }
 }
-export { expose, type Port, remote, type Remote, stoppable, type StoppablePort, transferables } from './rpc';
+export { expose, type Port, remote, type Remote, restartable, stoppable, type StoppablePort, transferables } from './rpc';
 
 /** What relays messages between the app's tabs and windows: a `BroadcastChannel`. */
 export interface MessageChannelLike {

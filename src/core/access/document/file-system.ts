@@ -3,11 +3,10 @@ import {
   type DocumentId,
   type DocumentSummary,
   type ProjectId,
-  summarize,
 } from '@core/contracts';
 import { type FileSystem, joinPath } from '@core/utilities/file-system';
 import type { DocumentAccess } from './document-access';
-import { migrate } from './migrations';
+import { migrate, summaryOf } from './migrations';
 
 /** Desktop store: human-readable `projects/<projectId>/documents/<documentId>.json`. */
 export class FileSystemDocumentAccess implements DocumentAccess {
@@ -18,8 +17,7 @@ export class FileSystemDocumentAccess implements DocumentAccess {
 
   async enumerate(projectId: ProjectId): Promise<DocumentSummary[]> {
     const files = (await this.fs.list(folder(projectId))).filter((name) => name.endsWith('.json'));
-    const documents = await Promise.all(files.map((name) => this.read(joinPath(folder(projectId), name))));
-    return documents.map(summarize);
+    return Promise.all(files.map(async (name) => summaryOf(JSON.parse(await this.fs.readText(joinPath(folder(projectId), name))) as Record<string, unknown>)));
   }
 
   async load(id: DocumentId): Promise<CadDocument | undefined> {

@@ -27,6 +27,14 @@ describe('RayCaster', () => {
     expect(caster.cast([0.5, 0.25, 0], [0, 0, 1], 1e-4)).toBeCloseTo(2);
   });
 
+  it('passes triangles it meets more steeply than it should face them (CAD-143)', () => {
+    // 60° from the squares' normal: hit at 0.4, unless only triangles within 50° count.
+    const slanted: [number, number, number] = [Math.sin(Math.PI / 3), 0, Math.cos(Math.PI / 3)];
+    expect(caster.cast([0.1, 0.5, 1.8], slanted)).toBeCloseTo(0.4);
+    expect(caster.cast([0.1, 0.5, 1.8], slanted, 0, Math.cos((50 * Math.PI) / 180))).toBeUndefined();
+    expect(caster.cast([0.1, 0.5, 1.8], [0, 0, 1], 0, Math.cos((50 * Math.PI) / 180))).toBeCloseTo(0.2);
+  });
+
   it('counts every crossing beyond the origin', () => {
     expect(caster.crossings([0.25, 0.5, -1], [0, 0, 1])).toBe(2);
     expect(caster.crossings([0.25, 0.5, 1], [0, 0, 1])).toBe(1);

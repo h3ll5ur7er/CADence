@@ -142,7 +142,8 @@ export class GitVersionAccess implements VersionAccess {
       const oid = await git.resolveRef({ fs, gitdir, ref: `refs/tags/${tag}` });
       names.set(oid, [...(names.get(oid) ?? []), tag]);
     }
-    const log = await git.log({ fs, gitdir, ref: 'main', ...(path ? { filepath: path } : {}) });
+    // force: a path the latest version no longer has (a copy's earlier ids, CAD-147) lists the versions that had it.
+    const log = await git.log({ fs, gitdir, ref: 'main', ...(path ? { filepath: path, force: true } : {}) });
     // What the remote had at the last fetch.
     const remoteHead = await git.resolveRef({ fs, gitdir, ref: 'refs/remotes/origin/main' }).catch(() => undefined);
     const shared = remoteHead ? new Set((await git.log({ fs, gitdir, ref: remoteHead })).map((entry) => entry.oid)) : undefined;

@@ -1,4 +1,4 @@
-import type { ShapeAccess } from '@core/access/shape';
+import { guarded, type ShapeAccess } from '@core/access/shape';
 import type {
   BodyMesh,
   BodyProperties,
@@ -66,5 +66,5 @@ export interface AnalysisEngine {
 }
 
 export function createAnalysisEngine(shapes: ShapeAccess): AnalysisEngine {
-  return new OcctAnalysisEngine(shapes);
+  return guarded(new OcctAnalysisEngine(shapes), shapes);
 }

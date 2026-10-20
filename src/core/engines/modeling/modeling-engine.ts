@@ -214,6 +214,11 @@ export interface ModelingEngine {
   /** The bodies' solids and names, for publishing as a component result. */
   snapshot(bodies: readonly BodyState[]): Promise<Uint8Array>;
   /**
+   * How many times the kernel was started again after a failure (CAD-133): the shapes of earlier
+   * generations are gone, so what held them (open documents) reads them again.
+   */
+  kernelGeneration(): Promise<number>;
+  /**
    * Copies of bodies where an assembly puts them (ids as given), as a snapshot: an assembly's result.
    * The copies are not stored, so they never push other shapes out of the store (CAD-121).
    */

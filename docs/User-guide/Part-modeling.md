@@ -71,7 +71,7 @@ A **thread** goes on the wall of a hole or a shaft and starts at its open end. I
 | Screw (ISO 4762 socket head), nut (ISO 4032), washer (ISO 7089), heat-set insert | M2 to M10; a screw's length. The head stands on the plane, the shank goes below; an insert goes below the plane. |
 | Ball bearing | 623, 625, 608, 688, 6000, 6001, 6200, 6201 |
 | Magnet | diameter and height |
-| Gear | module, teeth, width, bore, pressure angle, helix angle (0 for a spur gear). **Meshes with a gear of** shows where the mating gear's point goes (the centre distance, along the sketch's X axis) and how far to turn it so the teeth mesh. The flanks are smooth involute curves with a fillet at the root: four to eight faces per tooth. |
+| Gear | module, teeth, width, bore, pressure angle, helix angle (0 for a spur gear), end chamfer (the teeth bevelled at 45° at both ends, by that much at the tip; 0 for none). **Meshes with a gear of** shows where the mating gear's point goes (the centre distance, along the sketch's X axis) and how far to turn it so the teeth mesh. The flanks are smooth involute curves with a fillet at the root: four to eight faces per tooth. |
 | Ring gear (internal) | module, teeth, width, outside diameter, pressure angle, helix angle; the teeth on the inside, a tooth space along the sketch's X axis. **Meshes with a planet of** shows where the planet's point goes ((ring − planet) × module / 2 along X, no turn), the sun that fits between the planets and how fast the carrier turns; a planet needs at least 10 teeth fewer than the ring. |
 | Gear rack | module, teeth, width, height to the pitch line; along the sketch's X axis, teeth towards its Y axis |
 | Snap-fit hook | arm length, width, thickness, hook; the hook points along the sketch's Y axis |

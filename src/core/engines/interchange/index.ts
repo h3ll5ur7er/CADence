@@ -1,5 +1,5 @@
 import { ellipseParameter, range } from '@core/utilities/math';
-import { place, type ShapeAccess } from '@core/access/shape';
+import { guarded, place, type ShapeAccess } from '@core/access/shape';
 import {
   fail,
   type ImportFormat,
@@ -273,7 +273,8 @@ class DefaultInterchangeEngine implements InterchangeEngine {
 
 /** Drawings need no kernel; solids need the Shape Access of the geometry worker. */
 export function createInterchangeEngine(shapes?: ShapeAccess, fonts?: (weight: TextWeight) => Promise<TextFont>): InterchangeEngine {
-  return new DefaultInterchangeEngine(shapes, fonts);
+  const engine = new DefaultInterchangeEngine(shapes, fonts);
+  return shapes ? guarded(engine, shapes) : engine;
 }
 
 /** A fine triangle mesh of a solid, for mesh formats. */

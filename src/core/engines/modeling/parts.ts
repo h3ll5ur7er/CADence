@@ -18,7 +18,8 @@ export type PartSolid =
   | { readonly kind: 'ring'; readonly inner: number; readonly outer: number; readonly height: number; readonly below: boolean }
   /** A round post (magnet, peg), chamfered at the top. */
   | { readonly kind: 'post'; readonly diameter: number; readonly height: number; readonly chamfer: number }
-  | { readonly kind: 'gear'; readonly module: number; readonly teeth: number; readonly width: number; readonly bore: number; readonly pressureAngle: number; readonly helixAngle: number }
+  /** `chamfer`: the teeth bevelled at both ends, that much at the tip (45°). */
+  | { readonly kind: 'gear'; readonly module: number; readonly teeth: number; readonly width: number; readonly bore: number; readonly pressureAngle: number; readonly helixAngle: number; readonly chamfer?: number }
   /** An internal gear: a ring of `outside` diameter with the teeth on the inside. */
   | { readonly kind: 'ring-gear'; readonly module: number; readonly teeth: number; readonly width: number; readonly outside: number; readonly pressureAngle: number; readonly helixAngle: number }
   | { readonly kind: 'rack'; readonly module: number; readonly teeth: number; readonly width: number; readonly height: number; readonly pressureAngle: number }
@@ -44,6 +45,20 @@ function polygon(points: readonly Vec2[]): Drawing {
   let pen = draw([first[0], first[1]]);
   for (const p of rest) pen = pen.lineTo([p[0], p[1]]);
   return pen.close();
+}
+
+/**
+ * A gear's teeth bevelled at both ends (CAD-140): what lies inside a revolved section whose 45° cones
+ * meet the end faces `chamfer` inside the tip circle. The section reaches past the ends and the tips,
+ * so none of its faces lies on one of the gear's.
+ */
+function tipRelief(gear: Shape3D, solid: Extract<PartSolid, { kind: 'gear' }>, origin: Vec3, x: Vec3, y: Vec3, n: Vec3): Shape3D {
+  const tip = (solid.module * Math.round(solid.teeth)) / 2 + solid.module;
+  const [w, c, past] = [solid.width, solid.chamfer ?? 0, solid.module];
+  if (!(c < Math.min(solid.module * 2, w / 2))) throw new PartError(`The chamfer must be less than ${Math.round(Math.min(solid.module * 2, w / 2) * 100) / 100} mm.`);
+  const section = polygon([[0, -past], [tip - c - past, -past], [tip + past, c + past], [tip + past, w - c - past], [tip - c - past, w + past], [0, w + past]]);
+  const tool = section.sketchOnPlane(new Plane([...origin], [...x], [...scale3(y, -1)])).revolve([...n], { origin: [...origin] }) as Shape3D;
+  return gear.intersect(tool);
 }
 
 /** One part at the origin of its local coordinates (see `PartSolid`). */
@@ -93,7 +108,8 @@ function partShape(solid: PartSolid, origin: Vec3, x: Vec3, y: Vec3, n: Vec3): S
       const pitchRadius = (module * Math.round(solid.teeth)) / 2;
       // Helical teeth: the outline turns as it rises, by the helix angle at the pitch circle.
       const twist = solid.helixAngle ? ((width * Math.tan(solid.helixAngle)) / pitchRadius) * (180 / Math.PI) : 0;
-      return outline.sketchOnPlane(on()).extrude(width, twist ? { twistAngle: twist } : {}) as Shape3D;
+      const gear = outline.sketchOnPlane(on()).extrude(width, twist ? { twistAngle: twist } : {}) as Shape3D;
+      return solid.kind === 'gear' && solid.chamfer ? tipRelief(gear, solid, origin, x, y, n) : gear;
     }
     case 'rack':
       return polygon(rackOutline(positive(solid.module, 'module'), solid.teeth, positive(solid.height, 'height'), solid.pressureAngle))

@@ -575,6 +575,10 @@
               Helix angle (0: spur)
               <input id="feature-part-helixAngle" autocomplete="off" [value]="f.part.helixAngle" (change)="setPart({ helixAngle: value($event) })" />
             </label>
+            <label class="field">
+              End chamfer (0: none)
+              <input id="feature-part-chamfer" autocomplete="off" [value]="f.part.chamfer ?? '0 mm'" (change)="setPart({ chamfer: length($event) })" />
+            </label>
             </div>
             <label class="field">
               Meshes with a gear of

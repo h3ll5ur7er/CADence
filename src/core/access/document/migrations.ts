@@ -1,18 +1,29 @@
-import { type CadDocument, currentSchemaVersion } from '@core/contracts';
+import { type CadDocument, currentSchemaVersion, type DocumentSummary, summarize } from '@core/contracts';
 
 /** A pure upgrade from schema version `n` to `n + 1`, indexed by `n`. */
 export type Migration = (document: Record<string, unknown>) => Record<string, unknown>;
 
 export class UnsupportedSchemaError extends Error {
   constructor(version: unknown) {
-    super(`Document schema version ${String(version)} is newer than this app supports (${currentSchemaVersion})`);
+    super(`This document was saved by a newer CADence (schema ${String(version)}; this app reads up to ${currentSchemaVersion}). Update CADence to open it: an older app would show it wrongly.`);
   }
 }
 
 /** The schema history (docs/Architecture/Document-model.md#schema-versioning). */
 export const documentMigrations: Readonly<Record<number, Migration>> = {
   1: (document) => (document['kind'] === 'assembly' ? { ...document, motionStudies: [] } : document),
+  // Fields added since (joint leans, view configurations, …) are optional: nothing to change.
+  2: (document) => document,
 };
+
+/**
+ * A stored document's summary, also of one saved by a newer CADence: the fields of summaries do not
+ * change, so a project lists such documents, and only opening them is refused (CAD-145).
+ */
+export function summaryOf(raw: Record<string, unknown>): DocumentSummary {
+  const version = Number(raw['schemaVersion'] ?? 1);
+  return summarize((Number.isInteger(version) && version > currentSchemaVersion ? raw : migrate(raw)) as unknown as CadDocument);
+}
 
 /** Upgrades a stored document to the current schema version. */
 export function migrate(

@@ -38,7 +38,7 @@ Click the clipboard in the toolbar. Choose a **Machine** from the presets, or ch
 | Closed solid | a body is not a closed, valid solid; slicers cannot fill it |
 | Build volume | a body is larger than the build volume (a warning if it only fits turned by 90°) |
 | Overhangs | faces point down more steeply than the overhang angle (default 45° from vertical); the bottom resting on the bed does not count |
-| Wall thickness | walls are thinner than two nozzle lines (warning) or than the nozzle (failure) |
+| Wall thickness | walls are thinner than two nozzle lines (warning) or than the nozzle (failure); measured straight into the material from every face, to where it leaves through a face within 40° of square, so an edge where two faces meet at more than 40° (the end of a 45° helical tooth) is no thin wall |
 
 **Laser cutters** (bed, kerf, sheet thickness):
 

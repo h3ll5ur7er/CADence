@@ -289,7 +289,7 @@ export class ComponentMode {
 
   /** Back to the theme's colour, opaque; a hidden body stays hidden. */
   protected resetLook(body: string): void {
-    void this.store.run({ type: 'set-appearance', body, appearance: this.appearances()[body]?.hidden ? { hidden: true } : {} });
+    this.look(body, this.lookOf(body)?.hidden ? { hidden: true } : {});
   }
 
   protected readonly pi = Math.PI;
@@ -378,8 +378,22 @@ export class ComponentMode {
 
   /** Changes how a body is shown; one undoable step. */
   protected setAppearance(body: string, change: Partial<Appearance>): void {
-    const { hidden, ...look } = { ...this.appearances()[body], ...change };
-    void this.store.run({ type: 'set-appearance', body, appearance: hidden ? { ...look, hidden } : look });
+    const { hidden, ...look } = { ...this.lookOf(body), ...change };
+    this.look(body, hidden ? { ...look, hidden } : look);
+  }
+
+  /** Looks sent but not applied yet, by body: a change made meanwhile builds on them, not on the older look. */
+  private readonly sentLooks = new Map<string, Appearance>();
+
+  private lookOf(body: string): Appearance | undefined {
+    return this.sentLooks.get(body) ?? this.appearances()[body];
+  }
+
+  private look(body: string, appearance: Appearance): void {
+    this.sentLooks.set(body, appearance);
+    void this.store.run({ type: 'set-appearance', body, appearance }).finally(() => {
+      if (this.sentLooks.get(body) === appearance) this.sentLooks.delete(body);
+    });
   }
 
   protected setMaterial(name: string): void {

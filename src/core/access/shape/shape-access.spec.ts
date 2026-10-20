@@ -1,6 +1,6 @@
 import { makeBox, type Shape3D } from 'replicad';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { createShapeAccess, type NamedShape } from './index';
+import { createShapeAccess, guarded, kernelFailure, type NamedShape } from './index';
 
 const box = (size: number): NamedShape => ({ shape: makeBox([0, 0, 0], [size, size, size]) as Shape3D, faces: new Map(), edges: new Map() });
 
@@ -21,5 +21,26 @@ describe('ShapeAccess', () => {
     shapes.keep(['a'], false);
     shapes.put('g', box(3));
     expect(['a', 'e', 'f', 'g'].filter((k) => shapes.has(k))).toEqual(['f', 'g']);
+  });
+
+  it('starts a new kernel after one that ran out of memory, without its shapes (CAD-133)', async () => {
+    expect(kernelFailure('Standard_OutOfMemory: Standard_MMgrRaw::Allocate(): malloc failed')).toBe('it ran out of memory');
+    expect(kernelFailure(new Error('null function or function signature mismatch'))).toBe('it failed inside');
+    expect(kernelFailure('The profile is open.')).toBeUndefined();
+    const other = createShapeAccess();
+    await other.ready();
+    other.put('x', box(1));
+    const before = other.generation();
+    // An engine's result that tells of the failure is enough.
+    const engine = guarded({ build: async () => ({ ok: false, error: { message: 'Standard_OutOfMemory: malloc failed' } }) }, other);
+    await engine.build();
+    await other.ready();
+    expect(other.generation()).toBe(before + 1);
+    expect(other.has('x')).toBe(false);
+    // The new kernel works, for every store of this thread.
+    await shapes.ready();
+    expect(shapes.has('g')).toBe(false);
+    shapes.put('h', box(2));
+    expect(shapes.get('h')?.shape.boundingBox.width).toBeCloseTo(2, 6);
   });
 });

@@ -80,7 +80,7 @@ export function projectTools(cadence: Cadence, env: NodeJS.ProcessEnv = process.
     },
     {
       name: 'import_project',
-      description: 'A new project from a .cadence archive on disk (as export_project or the app writes them).',
+      description: 'A new project from a .cadence archive on disk (as export_project or the app writes them). Its documents keep their ids where the project is not here yet; beside its original (a copy) they get new ones, and the history comes along either way.',
       inputSchema: object({ path: string('Path of the archive on this computer.') }, ['path']),
       run: async (args) => {
         const path = String(args['path']);
@@ -90,7 +90,7 @@ export function projectTools(cadence: Cadence, env: NodeJS.ProcessEnv = process.
     {
       name: 'versions',
       description:
-        "A project's version history: list (a project's, or a document's with document), record (a version now, with a message), restore (a document as it was in a version; the restore is a change of its own), name or unname (a version, the latest by default).",
+        "A project's version history: list (a project's, or a document's with document), record (a version now, with a message), restore (a document as it was in a version; the restore is a change of its own), name or unname (a version, the latest by default). Copies of projects (duplicated, or imported beside their original) keep the history.",
       inputSchema: object(
         {
           action: { type: 'string', enum: ['list', 'record', 'restore', 'name', 'unname'] },
@@ -107,6 +107,11 @@ export function projectTools(cadence: Cadence, env: NodeJS.ProcessEnv = process.
         const version = args['version'] === undefined ? undefined : String(args['version']);
         if (action === 'restore' || (action === 'list' && args['document'] !== undefined)) {
           const document = String(args['document'] ?? '') as DocumentId;
+          // Ids are the document's own: refuse one of another project than the one named (CAD-147).
+          if (args['project'] !== undefined) {
+            const [named, found] = [await projectId(args), await cadence.projects.findDocument(document)];
+            if (found && found.projectId !== named) throw new CadenceError('wrong-project', `${found.name} is a document of another project; its id there is ${found.id}.`);
+          }
           if (action === 'list') return cadence.projects.documentHistory(document);
           if (!version) throw new CadenceError('usage', 'restore needs a document and a version.');
           unwrap(await cadence.projects.restoreDocument(document, version));

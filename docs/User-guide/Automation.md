@@ -136,6 +136,10 @@ The server tells the agent how to model when it connects, and offers these tools
 
 **Agents can do what people do.** Every operation of the Project, Design, Assembly and Drawing Managers is a tool or part of one ([[CAD-124]]). Left out are only what serves the app's own screen: thumbnails, previews while dragging, screen recordings (agents get `animate_study`) and the colours of surface analysis.
 
+**Long calls, cancelling and failures.** The server answers requests side by side, so `list_projects` answers while a long `check_assembly` runs; the check reports progress part by part. A client that cancels a call (`notifications/cancelled`) stops the geometry kernel's work: the call gets no answer and the next one starts a new kernel. When the kernel runs out of memory or fails, the feature that made it fail is refused with the reason, the kernel starts again, and the call's answer says that the open documents were read again ([[Architecture/Decisions#ADR-52]]).
+
+**What answers tell.** `edit_component` lists faces that were only renumbered (`renumbered`: a face `~2` that is now `~3`) apart from faces made and removed; a sketch's `frame` is where it lies (its origin and its u and v axes in the model); a face whose body is missing names the feature that failed or is suppressed. A circle or rectangle placed by numbers is held by a fix (`c:fix`) that `move-point` moves along with its point.
+
 The server writes files without a `path` to `CADence exports` in the documents folder (or `--exports <dir>`), and says so when it connects.
 
 Ask the agent for a part ("a wall bracket for a 25 mm pipe, 4 mm thick, with two screw holes, as a 3MF"), and open the result in the desktop app, or sync it to the web app through git.

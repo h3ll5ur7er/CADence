@@ -1,7 +1,7 @@
-import { type CadDocument, type DocumentId, type DocumentSummary, type ProjectId, summarize } from '@core/contracts';
+import type { CadDocument, DocumentId, DocumentSummary, ProjectId } from '@core/contracts';
 import { KeyValueDatabase } from '@core/utilities/indexed-db';
 import type { DocumentAccess } from './document-access';
-import { migrate } from './migrations';
+import { migrate, summaryOf } from './migrations';
 
 const store = 'documents';
 
@@ -18,7 +18,7 @@ export class IndexedDbDocumentAccess implements DocumentAccess {
 
   async enumerate(projectId: ProjectId): Promise<DocumentSummary[]> {
     const raw = await this.db.getAll<Record<string, unknown>>(store, { name: 'projectId', value: projectId });
-    return raw.map((d) => summarize(migrate(d)));
+    return raw.map(summaryOf);
   }
 
   async load(id: DocumentId): Promise<CadDocument | undefined> {

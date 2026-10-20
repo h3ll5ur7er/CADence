@@ -178,6 +178,8 @@ export class Regeneration {
   private readonly flanges: FlangeMarker[] = [];
   private sheet: SheetView | undefined;
   private bodies: readonly BodyState[] = [];
+  /** The timeline being run, to name what made a missing body (CAD-142). */
+  private timeline: ComponentDocument['timeline'] = [];
   /** The layer left over counterbored holes for printing: the printer's layer height. */
   private layer = 0.2;
   /** What the printer needs added to holes (and taken off pegs) for parts to fit as designed. */
@@ -191,6 +193,7 @@ export class Regeneration {
 
   /** Runs the timeline with the project's parameters (the component's own of the same name win). */
   async run(document: ComponentDocument, context: RegenerationContext = {}): Promise<Derived> {
+    this.timeline = document.timeline;
     if (document.process?.kind === 'print') {
       this.layer = document.process.layerHeight;
       this.compensation = document.process.holeCompensation ?? 0;
@@ -388,10 +391,10 @@ export class Regeneration {
         return v.ok ? ok({ kind: 'post', diameter: num(v.value, 'diameter') - fitAllowance[part.fit] - this.compensation, height: num(v.value, 'height'), chamfer: 0.4 }) : v;
       }
       case 'gear': {
-        const v = lengths({ module: part.module, teeth: part.teeth, width: part.width, bore: part.bore, pressureAngle: part.pressureAngle, helixAngle: part.helixAngle });
+        const v = lengths({ module: part.module, teeth: part.teeth, width: part.width, bore: part.bore, pressureAngle: part.pressureAngle, helixAngle: part.helixAngle, chamfer: part.chamfer ?? '0 mm' });
         if (!v.ok) return v;
         const g = v.value;
-        return ok({ kind: 'gear', module: num(g, 'module'), teeth: num(g, 'teeth'), width: num(g, 'width'), bore: num(g, 'bore'), pressureAngle: num(g, 'pressureAngle'), helixAngle: num(g, 'helixAngle') });
+        return ok({ kind: 'gear', module: num(g, 'module'), teeth: num(g, 'teeth'), width: num(g, 'width'), bore: num(g, 'bore'), pressureAngle: num(g, 'pressureAngle'), helixAngle: num(g, 'helixAngle'), chamfer: num(g, 'chamfer') });
       }
       case 'ring-gear': {
         const v = lengths({ module: part.module, teeth: part.teeth, width: part.width, outside: part.outside, pressureAngle: part.pressureAngle, helixAngle: part.helixAngle });
@@ -873,9 +876,26 @@ export class Regeneration {
       return frame ? ok(frame) : fail({ code: 'missing-input', message: 'Its construction plane is missing, failed or comes later in the timeline.' });
     }
     if (!this.bodies.some((b) => b.id === ref.face.body)) {
-      return fail({ code: 'missing-input', message: 'The body of its face is missing at this point of the timeline.' });
+      // Name the feature that made the body, when it failed (CAD-142).
+      const maker = this.timeline.find((item) => item.id === ref.face.body.split(':')[0]);
+      const status = maker && this.items.get(maker.id);
+      const why = maker && status?.state === 'error' ? ` ${maker.name} failed: ${status.error}` : maker && status?.state === 'suppressed' ? ` ${maker.name} is suppressed.` : '';
+      return fail({ code: 'missing-input', message: `The body of its face is missing at this point of the timeline.${why}` });
     }
-    return this.engines.modeling.planeOf(this.bodies, ref.face);
+    const frame = await this.engines.modeling.planeOf(this.bodies, ref.face);
+    if (!frame.ok || !ref.anchor) return frame;
+    // The face's plane, with the origin and u where the sketch was made (CAD-136).
+    const { origin, u, v } = frame.value;
+    const n = cross(u, v);
+    const along = (p: Vec3, d: Vec3) => p[0] * d[0] + p[1] * d[1] + p[2] * d[2];
+    const lift = along([ref.anchor.origin[0] - origin[0], ref.anchor.origin[1] - origin[1], ref.anchor.origin[2] - origin[2]], n);
+    const anchored: Vec3 = [ref.anchor.origin[0] - n[0] * lift, ref.anchor.origin[1] - n[1] * lift, ref.anchor.origin[2] - n[2] * lift];
+    const w = along(ref.anchor.u, n);
+    const flatU: Vec3 = [ref.anchor.u[0] - n[0] * w, ref.anchor.u[1] - n[1] * w, ref.anchor.u[2] - n[2] * w];
+    const size = Math.hypot(...flatU);
+    if (size < 1e-9) return frame;
+    const au: Vec3 = [flatU[0] / size, flatU[1] / size, flatU[2] / size];
+    return ok({ origin: anchored, u: au, v: cross(n, au) });
   }
 
   private axis(ref: AxisRef): Result<AxisInput> {

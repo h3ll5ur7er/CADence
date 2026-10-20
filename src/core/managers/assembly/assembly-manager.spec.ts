@@ -185,7 +185,8 @@ describe('AssemblyManager', () => {
       return Math.max(...xs) - Math.min(...xs);
     };
     expect(width(sourceKey(link, 'long'))).toBeCloseTo(80);
-    expect(width(link)).toBeCloseTo(40);
+    // The parameters' own values are shown by no instance now: let go (CAD-135).
+    expect(session.state().components.has(link)).toBe(false);
   });
 
   it('keeps how instances look: hidden, colour and transparency', async () => {
@@ -266,6 +267,9 @@ describe('AssemblyManager', () => {
     expect(session.state().components.get(asDocumentId('cube'))).toMatchObject({ name: 'Cube', status: 'ready' });
     expect(session.state().document.instances[0]?.name).toBe('Cube 1');
     expect(session.state().components.get(asDocumentId('cube'))?.bodies[0]?.faces).toHaveLength(6);
+    // Without its instance, the file is no component of the assembly any more (CAD-135).
+    unwrap(await session.execute({ type: 'remove-instance', instanceId: 'c1' }));
+    expect(session.state().components.has(asDocumentId('cube'))).toBe(false);
   });
 
   it('tilts joint frames about their x axis (CAD-113)', () => {

@@ -5,9 +5,9 @@ import { join } from 'node:path';
 import { createNodeCore } from '@core/composition/node';
 import { decodePicture } from '@core/utilities/picture';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Cadence, type ComponentChanges, type ComponentSummary } from './api';
+import { Cadence, type ComponentChanges, type ComponentSummary, faceChanges } from './api';
 import { desktopFolder, type Io, parseArguments, runCli } from './cli';
-import { McpServer } from './mcp';
+import { McpServer, serveStdio } from './mcp';
 
 const repository = join(import.meta.dirname, '..', '..');
 const folders: string[] = [];
@@ -670,6 +670,8 @@ describe('the built command line', () => {
     child.stdin.end();
     const code = await new Promise<number | null>((resolve) => child.on('close', resolve));
     expect(code).toBe(0);
+    // Answered side by side (CAD-134): in the order they finish, so by id here.
+    responses.sort((a, b) => Number(a['id']) - Number(b['id']));
     expect(responses.map((r) => r['id'])).toEqual([1, 2, 3, 4, 5]);
     expect(text(responses[1])).toContain('"name": "Over stdio"');
     // The embedded reference holds the command, feature, part and assembly types, by topic, each short enough to read whole (CAD-111).
@@ -679,5 +681,191 @@ describe('the built command line', () => {
     expect(text(responses[4])).toContain('export type AssemblyCommand');
     expect(text(responses[4])).toContain('export interface Joint');
     for (const response of responses.slice(2)) expect(text(response).length).toBeLessThan(30_000);
+  });
+});
+
+describe('the keyboard enclosure findings', () => {
+  it('tells faces only renumbered from faces made and removed (CAD-139)', () => {
+    const before = [
+      { name: 'f:cut:side~1', center: [0, 0, 5] },
+      { name: 'f:cut:side~2', center: [10, 0, 5] },
+      { name: 'f:e:end', center: [5, 5, 10] },
+    ];
+    const after = [
+      { name: 'f:cut:side~1', center: [10, 0, 5] },
+      { name: 'f:cut:side~2', center: [0, 0, 5] },
+      { name: 'f:fillet:round', center: [5, 5, 9] },
+    ];
+    // The two cut walls swapped numbers: renumbered, not gone and new; the end face went, a round and a third wall came.
+    expect(faceChanges(before, [...after, { name: 'f:cut:side~3', center: [20, 0, 5] }])).toEqual({
+      added: ['f:fillet:round', 'f:cut:side~3'],
+      gone: ['f:e:end'],
+      renumbered: { 'f:cut:side~1': 'f:cut:side~2', 'f:cut:side~2': 'f:cut:side~1' },
+    });
+    const renamed = faceChanges(before, [{ name: 'f:cut:side~3', center: [0, 0, 5] }, { name: 'f:cut:side~1', center: [10, 0, 5] }, ...after.slice(2)]);
+    expect(renamed).toEqual({ added: ['f:fillet:round'], gone: ['f:e:end'], renumbered: { 'f:cut:side~2': 'f:cut:side~1', 'f:cut:side~1': 'f:cut:side~3' } });
+  });
+
+  it('extrudes the profiles of overlapping shapes at once (CAD-138)', { timeout: 60_000 }, async () => {
+    const core = createNodeCore({ exports: folder() });
+    const cadence = new Cadence(core, core.exports);
+    const created = (await cadence.projects.createProject('Ribs')) as { ok: true; value: { firstDocument: { id: string } } };
+    const c = await cadence.component(created.value.firstDocument.id);
+    // A housing circle, a block over it, a rib across the block's edge and one far away (the keyboard's top shell).
+    await c.run(
+      { type: 'create-sketch', id: 's', plane: 'XY' },
+      { type: 'add-circle', sketchId: 's', id: 'housing', x: 15, y: 144.5, diameter: 28 },
+      { type: 'add-rectangle', sketchId: 's', id: 'block', x: 7, y: 150, width: 16, height: 20 },
+      { type: 'add-rectangle', sketchId: 's', id: 'rib', x: -0.5, y: 155.5, width: 9.5, height: 10 },
+      { type: 'add-rectangle', sketchId: 's', id: 'far', x: 349, y: 155.5, width: 5.2625, height: 10 },
+    );
+    const profiles = c.summary().sketches.find((s) => s.id === 's')?.profiles ?? [];
+    // A sliver lies between the circle, the block and the rib.
+    expect(Math.min(...profiles.map((p) => p.area))).toBeLessThan(0.2);
+    await c.run({ type: 'add-feature', feature: { type: 'extrude', id: 'e', name: '', suppressed: false, sketch: 's', profiles: profiles.map((p) => p.id), distance: '38 mm', direction: 'normal', operation: 'new-body' } });
+    expect(c.summary().timeline.find((t) => t.id === 'e')).toMatchObject({ state: 'ok' });
+    const area = profiles.reduce((sum, p) => sum + p.area, 0);
+    expect((await c.properties()).reduce((sum, b) => sum + b.volume, 0)).toBeCloseTo(area * 38, 0);
+  });
+
+  it('intersects a helical gear with a chamfered cylinder of its tip diameter (CAD-137)', { timeout: 180_000 }, async () => {
+    const core = createNodeCore({ exports: folder() });
+    const cadence = new Cadence(core, core.exports);
+    const created = (await cadence.projects.createProject('Trimmed gear')) as { ok: true; value: { firstDocument: { id: string } } };
+    const c = await cadence.component(created.value.firstDocument.id);
+    const gear = { kind: 'gear', module: '1 mm', teeth: '16', width: '6 mm', bore: '6.8 mm', pressureAngle: '20 deg', helixAngle: '45 deg' } as const;
+    await c.run(
+      { type: 'create-sketch', id: 's', plane: 'XY' },
+      { type: 'add-sketch-geometry', sketchId: 's', entities: [{ id: 'p', kind: 'point', x: 0, y: 0 }], constraints: [] },
+      { type: 'add-feature', feature: { type: 'part', id: 'gear', name: 'Gear', suppressed: false, sketch: 's', points: ['p'], angle: '0 deg', flip: false, operation: 'new-body', part: gear } },
+      { type: 'create-sketch', id: 'k', plane: 'XY' },
+      { type: 'add-circle', sketchId: 'k', id: 'tip', x: 0, y: 0, diameter: 18 },
+    );
+    const profile = c.summary().sketches.find((s) => s.id === 'k')?.profiles[0]?.id;
+    await c.run({ type: 'add-feature', feature: { type: 'extrude', id: 'cyl', name: 'Tip', suppressed: false, sketch: 'k', profiles: [profile as string], distance: '6 mm', direction: 'normal', operation: 'new-body' } });
+    const rims = (c.summary({ body: 'cyl', only: ['edges'] }).bodies?.[0]?.edges ?? [])
+      .map((e) => ({ name: e.name, middle: [e.middle[0] ?? 0, e.middle[1] ?? 0, e.middle[2] ?? 0] as const }))
+      .filter((e) => !e.name.includes('seam') && Math.abs(Math.hypot(e.middle[0], e.middle[1]) - 9) < 0.01);
+    await c.run({ type: 'add-feature', feature: { type: 'chamfer', id: 'ch', name: '', suppressed: false, edges: rims.map((e) => ({ kind: 'edge' as const, body: 'cyl', name: e.name, hint: e.middle })), size: '0.8 mm' } });
+    // The tips lie on the cylinder: the exact common comes out empty, which cannot be right for bodies on top of each other; a fuzzy one is not.
+    await c.run({ type: 'add-feature', feature: { type: 'combine', id: 'x', name: 'Trim', suppressed: false, target: 'gear', tools: ['cyl'], operation: 'intersect', keepTools: false } });
+    expect(c.summary().timeline.find((t) => t.id === 'x')).toMatchObject({ state: 'ok' });
+    expect(c.summary().bodies.map((b) => b.id)).toEqual(['gear']);
+  });
+
+  it('keeps a sketch on a face where it was made, says where it is, and names a failed feature (CAD-136, CAD-142)', { timeout: 120_000 }, async () => {
+    const core = createNodeCore({ exports: folder() });
+    const server = new McpServer(new Cadence(core, core.exports), { commands: '// the types' }, '1.2.3');
+    let id = 0;
+    const call = async (name: string, args: Record<string, unknown> = {}) => server.handle({ jsonrpc: '2.0', id: ++id, method: 'tools/call', params: { name, arguments: args } });
+    const created = JSON.parse(text(await call('create_project', { name: 'Flange' }))) as { project: { id: string }; component: { id: string } };
+    const part = created.component.id;
+    await call('edit_component', {
+      document: part,
+      commands: [
+        { type: 'add-parameter', parameter: { id: 'w', name: 'width', expression: '60 mm' } },
+        { type: 'create-sketch', id: 's', plane: 'XY' },
+        { type: 'add-rectangle', sketchId: 's', id: 'r', x: 0, y: 0, width: 'width', height: 30 },
+      ],
+    });
+    const sketchOf = async (sketch: string) => (JSON.parse(text(await call('get_component', { document: part, only: ['sketches'], sketch }))) as ComponentSummary).sketches[0];
+    const profile = (await sketchOf('s'))?.profiles[0]?.id;
+    await call('edit_component', { document: part, commands: [{ type: 'add-feature', feature: { type: 'extrude', id: 'e', name: 'Plate', suppressed: false, sketch: 's', profiles: [profile], distance: '10 mm', direction: 'normal', operation: 'new-body' } }] });
+    await call('edit_component', { document: part, commands: [{ type: 'create-sketch', id: 'top', plane: { face: { kind: 'face', body: 'e', name: 'f:e:end' } } }] });
+    // At the face's middle, axes along the model's x and y.
+    expect((await sketchOf('top'))?.frame).toEqual({ origin: [30, 15, 10], u: [1, 0, 0], v: [0, 1, 0] });
+    // The plate grows: the face's middle moves, the sketch does not.
+    await call('edit_component', { document: part, commands: [{ type: 'set-parameter', parameter: { id: 'w', name: 'width', expression: '80 mm' } }] });
+    expect((await sketchOf('top'))?.frame?.origin).toEqual([30, 15, 10]);
+    // Without the plate, the sketch on its face says why its body is missing.
+    const answer = text(await call('edit_component', { document: part, commands: [{ type: 'suppress-item', itemId: 'e', suppressed: true }] }));
+    expect(answer).toContain('The body of its face is missing at this point of the timeline. Plate is suppressed.');
+  });
+
+  it('answers requests side by side, and a cancelled call stops the kernel without an answer (CAD-134)', { timeout: 60_000 }, async () => {
+    // The server: one request that waits until it is let go, others that answer at once.
+    let release: () => void = () => undefined;
+    const slow = new Promise<void>((resolve) => (release = resolve));
+    const server = { handle: async (message: { id?: number; method: string }) => (message.method === 'slow' ? (await slow, { id: message.id, result: 'slow' }) : { id: message.id, result: 'quick' }) };
+    const { PassThrough } = await import('node:stream');
+    const [input, output] = [new PassThrough(), new PassThrough()];
+    const lines: string[] = [];
+    output.on('data', (chunk: Buffer) => lines.push(...chunk.toString().split('\n').filter(Boolean)));
+    const served = serveStdio(server as unknown as McpServer, input, output);
+    input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'slow' })}\n${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'quick' })}\n`);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(lines.map((l) => (JSON.parse(l) as { id: number }).id)).toEqual([2]);
+    release();
+    input.end();
+    await served;
+    expect(lines.map((l) => (JSON.parse(l) as { id: number }).id)).toEqual([2, 1]);
+
+    // Cancelled while it runs: the kernel is stopped, and the call gets no answer.
+    const core = createNodeCore({ exports: folder() });
+    let stopped = 0;
+    let letGo: () => void = () => undefined;
+    const waiting = new Promise<void>((resolve) => (letGo = resolve));
+    const projectManager = new Proxy(core.projectManager, { get: (target, key) => (key === 'listProjects' ? async () => (await waiting, target.listProjects()) : Reflect.get(target, key)) });
+    const mcp = new McpServer(new Cadence({ ...core, projectManager, stopGeometry: () => void stopped++ }, core.exports), { commands: '// the types' }, '1.2.3');
+    const call = mcp.handle({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'list_projects', arguments: {} } });
+    await mcp.handle({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 7, reason: 'Too slow' } });
+    expect(stopped).toBe(1);
+    letGo();
+    expect(await call).toBeUndefined();
+  });
+
+  it('reads documents again after the kernel started anew, and says so (CAD-133)', { timeout: 120_000 }, async () => {
+    const core = createNodeCore({ exports: folder() });
+    // The kernel's generation, as the core reports it: changed by the test as a failure would.
+    let generation = 'a';
+    let asked = 0;
+    const cadence = new Cadence({ ...core, kernelGeneration: async () => (++asked, generation) }, core.exports);
+    const created = (await cadence.projects.createProject('Restarted')) as { ok: true; value: { firstDocument: { id: string } } };
+    const id = created.value.firstDocument.id;
+    const first = await cadence.component(id);
+    expect(await cadence.component(id)).toBe(first);
+    generation = 'b';
+    const again = await cadence.component(id);
+    expect(again).not.toBe(first);
+    expect(again.summary().timeline).toEqual([]);
+
+    const server = new McpServer(cadence, { commands: '// the types' }, '1.2.3');
+    const before = asked;
+    let calls = 0;
+    // The kernel fails while this call runs: the generation it ends with is a new one.
+    const failing = new McpServer(new Cadence({ ...core, kernelGeneration: async () => (++calls > 1 ? 'd' : 'c') }, core.exports), { commands: '// the types' }, '1.2.3');
+    const listed = result(await failing.handle({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'list_projects', arguments: {} } }));
+    expect(listed.content.at(-1)?.text).toContain('The geometry kernel failed during this call and started again');
+    expect(result(await server.handle({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'list_projects', arguments: {} } })).content).toHaveLength(1);
+    expect(asked).toBeGreaterThan(before);
+  });
+
+  it('restores only documents of the project named, and copies keep the history (CAD-147)', { timeout: 120_000 }, async () => {
+    const core = createNodeCore({ exports: folder() });
+    const server = new McpServer(new Cadence(core, core.exports), { commands: '// the types' }, '1.2.3');
+    let id = 0;
+    const call = async (name: string, args: Record<string, unknown> = {}) => server.handle({ jsonrpc: '2.0', id: ++id, method: 'tools/call', params: { name, arguments: args } });
+    const created = JSON.parse(text(await call('create_project', { name: 'Original' }))) as { project: { id: string }; component: { id: string } };
+    const version = JSON.parse(text(await call('versions', { action: 'record', project: created.project.id, message: 'Before the copy' }))) as { id: string };
+    const copy = JSON.parse(text(await call('duplicate', { project: created.project.id }))) as { id: string };
+    expect((JSON.parse(text(await call('versions', { action: 'list', project: copy.id }))) as { message: string }[]).map((v) => v.message)).toContain('Before the copy');
+    const refused = result(await call('versions', { action: 'restore', project: copy.id, document: created.component.id, version: version.id }));
+    expect(refused).toMatchObject({ isError: true, content: [{ text: expect.stringContaining('a document of another project') }] });
+  });
+
+  it('uses project parameters set after a component was opened (CAD-146)', { timeout: 120_000 }, async () => {
+    const core = createNodeCore({ exports: folder() });
+    const server = new McpServer(new Cadence(core, core.exports), { commands: '// the types' }, '1.2.3');
+    let id = 0;
+    const call = async (name: string, args: Record<string, unknown> = {}) => server.handle({ jsonrpc: '2.0', id: ++id, method: 'tools/call', params: { name, arguments: args } });
+    const created = JSON.parse(text(await call('create_project', { name: 'Tilted' }))) as { project: { id: string }; component: { id: string } };
+    const part = created.component.id;
+    // Opened first, then the project gets a parameter: no listener of the part hears of it.
+    await call('get_component', { document: part });
+    await call('set_project_parameters', { project: created.project.id, parameters: [{ name: 'tilt', expression: '5 deg' }] });
+    const added = result(await call('edit_component', { document: part, commands: [{ type: 'add-parameter', parameter: { id: 'rise', name: 'rise', expression: '100 mm * tan(tilt)' } }] }));
+    expect(added.isError, added.content[0]?.text).toBeUndefined();
+    const listed = (JSON.parse(text(await call('get_component', { document: part, only: ['parameters'] }))) as ComponentSummary).parameters;
+    expect(listed).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'tilt', project: true }), expect.objectContaining({ name: 'rise', value: expect.stringMatching(/^8\.7/) })]));
   });
 });

@@ -27,7 +27,12 @@ export type PlaneRef =
   | 'XY'
   | 'XZ'
   | 'YZ'
-  | { readonly face: TopologyRef }
+  /**
+   * A flat face. `anchor` is where the frame's origin and u axis were when the sketch was made
+   * (CAD-136): kept when the face grows or shrinks, while the plane follows the face. Without it,
+   * the frame sits at the face's centre (sketches made before phase 33).
+   */
+  | { readonly face: TopologyRef; readonly anchor?: { readonly origin: Vec3; readonly u: Vec3 } }
   | { readonly plane: string };
 
 /** An axis for revolving and circular patterns, or a direction for linear patterns. */

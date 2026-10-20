@@ -4,9 +4,10 @@ import { describe, expect, it } from 'vitest';
 import { SketchBuilder } from '@core/contracts/testing/sketch-builder';
 import { circleLoop, profile, rectangleLoop } from '@core/contracts/testing/profiles';
 import { createShapeAccess } from '@core/access/shape';
-import { draw, drawCircle, drawRectangle, importSTEP, measureVolume, type Shape3D } from 'replicad';
+import { draw, drawCircle, drawRectangle, importSTEP, makeBox, measureVolume, type Shape3D } from 'replicad';
 import { createInterchangeEngine } from './index';
 import { readStl } from './mesh-readers';
+import { maxSeparateSolids, store } from './solid-readers';
 import { meshVolume, writeStl } from './solids';
 import { readZip } from '@core/utilities/archive';
 
@@ -205,6 +206,15 @@ describe('InterchangeEngine imports', () => {
     expect(keys).toEqual(['asset-1:0']);
     expect(volumeOf('asset-1:0')).toBeCloseTo(40 * 20 * 4, 3);
     expect(ok(await engine.readSolids(new Uint8Array(), 'step', 'asset-1'))).toBe(keys);
+  });
+
+  it('keeps a file of many solids as one body (a board with its parts, CAD-135)', async () => {
+    await shapes.ready();
+    const boxes = (n: number) => Array.from({ length: n }, (_, i) => makeBox([i * 2, 0, 0], [i * 2 + 1, 1, 1]) as Shape3D);
+    expect(store(shapes, 'few', boxes(3))).toEqual(['few:0', 'few:1', 'few:2']);
+    const many = store(shapes, 'many', boxes(maxSeparateSolids + 1));
+    expect(many).toEqual(['many:0']);
+    expect(volumeOf('many:0')).toBeCloseTo(maxSeparateSolids + 1, 6);
   });
 
   it('turns closed meshes into solids with merged flat faces', async () => {

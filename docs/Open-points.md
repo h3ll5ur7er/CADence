@@ -1,8 +1,8 @@
 # Open points
 
-What CADence does not do yet: points left open by phases 0–32 (deferred on purpose, trade-offs of decisions, gaps from the phase reports and the radial engine stress test) and ideas for what such an application could do next. Points that were implemented are gone from this page; they live on as tasks ([[Roadmap]]).
+What CADence does not do yet: points left open by phases 0–32 (deferred on purpose, trade-offs of decisions, gaps from the phase reports and the stress tests) and ideas for what such an application could do next. Only open points are listed: a point that is implemented is removed from this page. Its task keeps what was done ([[Roadmap]]), and the git history keeps the page as it was.
 
-**Check the box of every point you want implemented**, and add your own at the end of a section or under [Your additions](#your-additions). Checked points become tasks in the next phases; the arrow after a checked point names its task, and ✅ marks the points that are done.
+**Check the box of every point you want implemented**, and add your own at the end of a section or under [Your additions](#your-additions). Checked points become tasks in the next phases; the arrow after a checked point names its task until the point is done and leaves the page.
 
 Each point says where it comes from: a task, a decision ([[Architecture/Decisions]]), or a phase report. Points marked *(new)* were never discussed.
 
@@ -135,7 +135,7 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 
 ## Future stress tests
 
-The radial engine ([[CAD-96]], [[Magnum opus]]) found 34 issues by building something real through the MCP server. Each of these would push other parts of CADence as hard. Check the ones to run next; each becomes a task like [[CAD-96]], with its findings filed as tasks.
+The radial engine ([[CAD-96]], [[Magnum opus]]) found 34 issues by building something real through the MCP server, and a keyboard enclosure around an imported circuit board 15 more (phase 33). Each of these would push other parts of CADence as hard. Check the ones to run next; each becomes a task like [[CAD-96]], with its findings filed as tasks.
 
 - [ ] **A mechanical clock:** escapement, gear trains with exact ratios, a pendulum, tiny parts and tight fits. *Stresses:* gears with many teeth and small modules, motion links and studies over long times, fits for printing, drawings of small parts.
 - [ ] **A desktop 3D printer:** a frame of aluminium extrusions, linear rails, belts, stepper motors and hundreds of fasteners. *Stresses:* standard parts and sub-assemblies, large assemblies with many identical instances, the bill of materials, build instructions, imported vendor STEP files.
@@ -143,7 +143,6 @@ The radial engine ([[CAD-96]], [[Magnum opus]]) found 34 issues by building some
 - [ ] **A Stewart platform:** a base and a top plate joined by six legs, each an actuator (a slider) between two ball or universal joints. Simple parts, hard motion: six closed loops share one plate. *Stresses:* many coupled loops solved at once (each leg's length sets the plate's pose), driving the plate's pose and getting the leg lengths (no joint gives that today), joint angle limits and leg collisions over the reach, universal joints (only ball joints exist), motion studies of the plate tilting and turning.
 - [ ] **A two-stage planetary gearbox with housing:** bearings, seals and shafts, dimensioned with fits. *Stresses:* planetary links, interference at the teeth, the strength check of shafts and teeth, drawings with tolerances.
 - [ ] **A laser-cut flat-pack kit** (a lamp, a shelf or a marble run): finger joints, slots, living hinges. *Stresses:* the laser workflow from 3D to DXF, kerf, nesting, assembly instructions for builders.
-- [ ] **An enclosure for a circuit board:** a KiCad board imported, snap fits, ports, screw bosses, a light pipe. *Stresses:* import, print rules and fits, standard parts (heat-set inserts), configurations for board variants.
 - [ ] **A drone or a propeller and a hull:** airfoil lofts, twisted blades, smooth hulls. *Stresses:* lofts and sweeps of spline sections, surface analysis, the kernel on free-form faces (and the drawings of them).
 - [ ] **Reverse engineering:** an existing part, given as STL or STEP, rebuilt as a parametric model that matches it. *Stresses:* import, measuring against a reference, comparing two shapes, sketches on imported faces.
 - [ ] **A configurable product family:** one parametric part (a bracket, a box, a Lego-compatible brick) in fifty configurations, each drawn and exported. *Stresses:* configurations at scale, drawings of configurations, batch exports through scripts, regeneration time.

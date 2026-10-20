@@ -7,6 +7,7 @@ import {
   asAssetId,
   asDocumentId,
   asProjectId,
+  type BodyMesh,
   type ComponentDocument,
   currentSchemaVersion,
   type DomainEvents,
@@ -906,6 +907,72 @@ describe('DesignManager', () => {
       // The flange lies flat: the bend allowance (π/2 × (1 + 0.4 × 1.5)) and 10 mm beyond x = 30.
       const allowance = (Math.PI / 2) * (1 + 0.4 * 1.5);
       expect(text).toContain(String(Math.round((30 + allowance + 10) * 1e6) / 1e6).slice(0, 6));
+    });
+
+    it('unfolds a box with corner reliefs and a hem on a flange (CAD-162, CAD-163)', async () => {
+      await drawRectangle(); // 28 × 15 from (2, 1)
+      const profile = session.state().sketches.get('s1')?.profiles[0]?.id as string;
+      const sheet = { type: 'base-flange', name: '', suppressed: false, sketch: 's1', profiles: [profile], direction: 'normal', thickness: '1 mm', bendRadius: '1 mm', kFactor: '0.5' } as const;
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'bf', ...sheet, cornerRelief: 'round', reliefSize: '2 mm' } }));
+      const edge = (side: string, hint: Vec3): TopologyRef => {
+        const found = session.state().bodies[0]?.edges.find((e) => e.name.includes('f:bf:end') && e.name.includes(`:side:${side}`));
+        return { kind: 'edge', body: 'bf', name: found?.name as string, hint };
+      };
+      const box = [edge('ab', [16, 1, 1]), edge('bc', [30, 8.5, 1]), edge('cd', [16, 16, 1]), edge('da', [2, 8.5, 1])];
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'ef', type: 'edge-flange', name: '', suppressed: false, edges: box, length: '8', angle: '90 deg' } }));
+      expect(session.state().bodies[0]?.faces.filter((f) => f.name.startsWith('f:ef:relief:'))).toHaveLength(4);
+      unwrap(await session.exportFlatPattern('dxf'));
+      const text = new TextDecoder().decode(files.delivered.at(-1)?.bytes);
+      // Four round reliefs, four bends.
+      expect(text.match(/\nARC\n/g)).toHaveLength(4);
+      expect(text.match(/\nBEND\n/g)?.length).toBeGreaterThanOrEqual(4);
+
+      // A hem on the top edge of the right flange (x = 31 to 32, up to z = 1 + 1 + 8 = 10), folded outwards.
+      const body = session.state().bodies[0] as BodyMesh;
+      // A straight edge's middle: halfway between the ends of its polyline.
+      const middle = (e: BodyMesh['edges'][number]): Vec3 => [0, 1, 2].map((i) => ((body.edgePositions[e.start * 3 + i] ?? 0) + (body.edgePositions[(e.start + e.count - 1) * 3 + i] ?? 0)) / 2) as unknown as Vec3;
+      const top = body.edges.find((e) => Math.hypot(...middle(e).map((v, i) => v - ([32, 8.5, 10][i] as number))) < 1e-4);
+      expect(top).toBeDefined();
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'hm', type: 'hem', name: '', suppressed: false, edges: [{ kind: 'edge', body: 'bf', name: top?.name as string, hint: [32, 8.5, 10] }], style: 'open', gap: '1 mm', length: '4' } }));
+      expect(session.state().items.get('hm')).toMatchObject({ state: 'ok' });
+      unwrap(await session.exportFlatPattern('svg'));
+      const flat = new TextDecoder().decode(files.delivered.at(-1)?.bytes);
+      // The hem lies flat beyond the right flange: 30 + its bend and 8 mm, then the hem's half turn (π × (0.5 + 0.5)) and 4 mm.
+      const reach = 30 + (Math.PI / 2) * 1.5 + 8 + Math.PI * 1 + 4;
+      expect(flat).toContain(String(Math.round(reach * 1000) / 1000).slice(0, 5));
+    });
+
+    it('runs a miter flange along two edges from a profile sketch', async () => {
+      await drawRectangle();
+      const profile = session.state().sketches.get('s1')?.profiles[0]?.id as string;
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'bf', type: 'base-flange', name: '', suppressed: false, sketch: 's1', profiles: [profile], direction: 'normal', thickness: '1 mm', bendRadius: '1 mm', kFactor: '0.5' } }));
+      // The profile on the front plane, square to the right edge: 10 mm up, then 4 mm back in.
+      unwrap(await session.execute({ type: 'create-sketch', id: 'p', plane: 'XZ' }));
+      unwrap(
+        await session.execute({
+          type: 'add-sketch-geometry',
+          sketchId: 'p',
+          entities: [
+            { id: 'p1', kind: 'point', x: 30, y: 1 },
+            { id: 'p2', kind: 'point', x: 30, y: 11 },
+            { id: 'p3', kind: 'point', x: 26, y: 11 },
+            { id: 'l1', kind: 'line', start: 'p1', end: 'p2', construction: false },
+            { id: 'l2', kind: 'line', start: 'p2', end: 'p3', construction: false },
+          ],
+          constraints: [],
+        }),
+      );
+      const edges = ['bc', 'cd'].map((side): TopologyRef => {
+        const found = session.state().bodies[0]?.edges.find((e) => e.name.includes('f:bf:end') && e.name.includes(`:side:${side}`));
+        return { kind: 'edge', body: 'bf', name: found?.name as string };
+      });
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'mf', type: 'miter-flange', name: '', suppressed: false, edges, sketch: 'p' } }));
+      expect(session.state().items.get('mf')).toMatchObject({ state: 'ok' });
+      expect(await volume()).toBeGreaterThan(28 * 15 + (15 + 28) * (10 + 4));
+      unwrap(await session.exportFlatPattern('dxf'));
+      const text = new TextDecoder().decode(files.delivered.at(-1)?.bytes);
+      // Two bends on each of the two pieces.
+      expect(text.match(/\nBEND\n/g)?.length).toBeGreaterThanOrEqual(4);
     });
 
     it('refuses parameter changes that would break the model', async () => {

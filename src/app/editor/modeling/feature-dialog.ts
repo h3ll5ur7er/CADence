@@ -4,6 +4,7 @@ import {
   bearings,
   type BodyOperation,
   centreDistance,
+  type CornerRelief,
   defaultPart,
   metric,
   metricSizes,
@@ -57,7 +58,9 @@ const hints: Readonly<Record<Feature['type'], string>> = {
   draft: 'Click the faces to taper. They lean away from the pull direction (the neutral plane\'s normal) by the angle.',
   rib: 'The open curves of a sketch, thickened and extruded along its normal: stiffeners for walls and floors.',
   'base-flange': 'Click the profiles of the flat sheet. The sheet rules here hold for the whole part: its edge flanges and its flat pattern.',
-  'edge-flange': 'Click straight edges of the sheet; each gets a bend and a flange, bent towards the side of the face the edge is on.',
+  'edge-flange': 'Click straight edges of the sheet or of a flange; each gets a bend and a flange, bent towards the side of the face the edge is on.',
+  hem: 'Click straight edges of the sheet; each is folded back over the face it is on.',
+  'miter-flange': 'Click a chain of connected straight edges of one face. The profile is a sketch of lines drawn square to one of them: each line a straight piece, a bend before each.',
 };
 
 /** Creates or edits one feature. Values are expressions; references are picked in the 3D view. */
@@ -149,6 +152,17 @@ export class FeatureDialog {
 
   protected setPartKind(kind: PartKind): void {
     this.set({ part: defaultPart(kind), ...(kind === 'living-hinge' || kind === 'dovetail' ? { operation: 'cut' as const } : {}) });
+  }
+
+  /** A base flange's corner relief; a new one starts at twice the sheet's thickness. */
+  protected setRelief(value: string): void {
+    const f = this.feature();
+    if (f?.type !== 'base-flange') return;
+    if (!value) {
+      const { cornerRelief: _relief, reliefSize: _size, ...rest } = f;
+      return this.store.updateDraft(rest);
+    }
+    this.set({ cornerRelief: value as CornerRelief, reliefSize: f.reliefSize || `2 * (${f.thickness})` });
   }
 
   protected setHoleSketch(id: string): void {

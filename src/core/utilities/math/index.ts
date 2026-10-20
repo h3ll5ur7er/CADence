@@ -103,3 +103,4 @@ export * from './curves';
 export { type FittedPiece, fitArcs } from './fit';
 export { type LineOrArc, type LoopEdge, offsetChain, offsetLoop } from './offset';
 export * from './transform';
+export { type BendThenStraight, bendLength, type FlangeSection, flangeSection, neutralAway, type SectionPiece } from './flange';

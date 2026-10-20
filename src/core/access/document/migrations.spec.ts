@@ -3,20 +3,20 @@ import { migrate } from './migrations';
 
 describe('document migrations', () => {
   it('passes documents of the current version through', () => {
-    const doc = { id: 'd', schemaVersion: 3, name: 'Bracket' };
+    const doc = { id: 'd', schemaVersion: 4, name: 'Bracket' };
     expect(migrate(doc)).toEqual(doc);
   });
 
   it('gives version 1 assemblies an empty list of motion studies', () => {
     expect(migrate({ id: 'a', schemaVersion: 1, kind: 'assembly', instances: [], joints: [] })).toEqual({
       id: 'a',
-      schemaVersion: 3,
+      schemaVersion: 4,
       kind: 'assembly',
       instances: [],
       joints: [],
       motionStudies: [],
     });
-    expect(migrate({ id: 'c', schemaVersion: 1, kind: 'component' })).toEqual({ id: 'c', schemaVersion: 3, kind: 'component' });
+    expect(migrate({ id: 'c', schemaVersion: 1, kind: 'component' })).toEqual({ id: 'c', schemaVersion: 4, kind: 'component' });
   });
 
   it('runs each step in order up to the target version', () => {
@@ -29,6 +29,11 @@ describe('document migrations', () => {
       3,
     );
     expect(migrated).toEqual({ id: 'd', schemaVersion: 3, name: 'BRACKET', units: 'mm' });
+  });
+
+  it('reads version 3 documents as they are: sheet metal features came as new, optional ones', () => {
+    const component = { id: 'c', schemaVersion: 3, kind: 'component', timeline: [{ id: 'bf', type: 'base-flange', thickness: '2 mm' }] };
+    expect(migrate(component)).toEqual({ ...component, schemaVersion: 4 });
   });
 
   it('rejects documents written by a newer app', () => {

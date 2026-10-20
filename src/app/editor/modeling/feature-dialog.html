@@ -109,6 +109,23 @@
             <input id="feature-k-factor" autocomplete="off" [value]="f.kFactor" (change)="set({ kFactor: value($event) })" />
           </label>
         </div>
+        <div class="row two">
+          <label class="field">
+            Corner relief
+            <select id="feature-corner-relief" [value]="f.cornerRelief ?? ''" (change)="setRelief(value($event))">
+              <option value="">None</option>
+              <option value="round">Round</option>
+              <option value="square">Square</option>
+              <option value="tear">Tear</option>
+            </select>
+          </label>
+          @if (f.cornerRelief) {
+            <label class="field">
+              Relief size
+              <input id="feature-relief-size" autocomplete="off" [value]="f.reliefSize ?? ''" (change)="set({ reliefSize: length($event) })" />
+            </label>
+          }
+        </div>
       }
       @case ('edge-flange') {
         <p class="count" data-testid="edge-selection">{{ f.edges.length }} edge{{ f.edges.length === 1 ? '' : 's' }} selected</p>
@@ -122,6 +139,40 @@
             <input id="feature-angle" autocomplete="off" [value]="f.angle" (change)="set({ angle: value($event) })" />
           </label>
         </div>
+      }
+      @case ('hem') {
+        <p class="count" data-testid="edge-selection">{{ f.edges.length }} edge{{ f.edges.length === 1 ? '' : 's' }} selected</p>
+        <label class="field">
+          Style
+          <select id="feature-hem-style" [value]="f.style" (change)="set({ style: $any(value($event)) })">
+            <option value="closed">Closed (flat on the sheet)</option>
+            <option value="open">Open (a gap between)</option>
+            <option value="teardrop">Teardrop (a loop)</option>
+          </select>
+        </label>
+        <div class="row two">
+          @if (f.style !== 'closed') {
+            <label class="field">
+              Gap
+              <input id="feature-gap" autocomplete="off" [value]="f.gap" (change)="set({ gap: length($event) })" />
+            </label>
+          }
+          <label class="field">
+            Length
+            <input id="feature-length" autocomplete="off" [value]="f.length" (change)="set({ length: length($event) })" />
+          </label>
+        </div>
+      }
+      @case ('miter-flange') {
+        <p class="count" data-testid="edge-selection">{{ f.edges.length }} edge{{ f.edges.length === 1 ? '' : 's' }} selected</p>
+        <label class="field">
+          Sketch with the profile
+          <select id="feature-sketch" (change)="set({ sketch: value($event) })">
+            @for (s of pathSketches(); track s.id) {
+              <option [value]="s.id" [selected]="s.id === f.sketch">{{ s.name }}</option>
+            }
+          </select>
+        </label>
       }
       @case ('draft') {
         <p class="count" data-testid="face-selection">{{ f.faces.length }} face{{ f.faces.length === 1 ? '' : 's' }} to draft</p>

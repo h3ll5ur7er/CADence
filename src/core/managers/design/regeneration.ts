@@ -8,6 +8,7 @@ import {
   fail,
   type Feature,
   fitAllowance,
+  type CornerRelief,
   type FlangeMarker,
   generatorOf,
   isDimension,
@@ -74,7 +75,12 @@ export interface RegenerationContext {
 export interface SheetView {
   readonly frame: PlaneFrame;
   readonly profiles: readonly Profile[];
-  readonly rules: { readonly thickness: number; readonly bendRadius: number; readonly kFactor: number };
+  readonly rules: {
+    readonly thickness: number;
+    readonly bendRadius: number;
+    readonly kFactor: number;
+    readonly relief?: { readonly shape: CornerRelief; readonly size: number };
+  };
 }
 
 export interface RegenerationEngines {
@@ -579,13 +585,28 @@ export class Regeneration {
         this.sheet = { frame: view.frame, profiles, rules: rules.value };
         return withKey({ ...base, type: 'extrude', frame: view.frame, profiles, distance: rules.value.thickness, direction: feature.direction, operation: 'new-body' });
       }
-      case 'edge-flange': {
-        if (!this.sheet) return fail({ code: 'missing-input', message: 'Edge flanges need a base flange earlier in the timeline.' });
-        const [length, angle] = [this.value(feature.length, 'length', 'Length'), this.value(feature.angle, 'angle', 'Angle')];
+      case 'edge-flange':
+      case 'hem':
+      case 'miter-flange': {
+        if (!this.sheet) return fail({ code: 'missing-input', message: 'Flanges and hems need a base flange earlier in the timeline.' });
+        const { thickness, bendRadius, relief } = this.sheet.rules;
+        const sheet = { thickness, bendRadius, ...(relief ? { relief } : {}), flanges: [...this.flanges] };
+        if (feature.type === 'miter-flange') {
+          const path = this.path(feature.sketch);
+          if (!path.ok) return path;
+          if (path.value.flat.closed) return fail({ code: 'invalid-input', message: 'A miter flange profile is an open chain of lines.' });
+          return withKey({ ...base, type: 'miter-flange', edges: feature.edges, profile: path.value.pieces, frame: path.value.frame, ...sheet });
+        }
+        const length = this.value(feature.length, 'length', 'Length');
         if (!length.ok) return length;
+        if (feature.type === 'hem') {
+          const gap = feature.style === 'closed' ? ok(0) : this.value(feature.gap, 'length', 'Gap');
+          if (!gap.ok) return gap;
+          return withKey({ ...base, type: 'hem', edges: feature.edges, style: feature.style, gap: gap.value, length: length.value, ...sheet });
+        }
+        const angle = this.value(feature.angle, 'angle', 'Angle');
         if (!angle.ok) return angle;
-        const { thickness, bendRadius } = this.sheet.rules;
-        return withKey({ ...base, type: 'edge-flange', edges: feature.edges, length: length.value, angle: angle.value, thickness, bendRadius });
+        return withKey({ ...base, type: 'edge-flange', edges: feature.edges, length: length.value, angle: angle.value, ...sheet });
       }
       case 'extrude':
       case 'revolve': {
@@ -791,7 +812,12 @@ export class Regeneration {
     if (!bendRadius.ok) return bendRadius;
     const kFactor = this.value(feature.kFactor, 'scalar', 'K-factor');
     if (!kFactor.ok) return kFactor;
-    return ok({ thickness: thickness.value, bendRadius: bendRadius.value, kFactor: kFactor.value });
+    const rules = { thickness: thickness.value, bendRadius: bendRadius.value, kFactor: kFactor.value };
+    if (!feature.cornerRelief) return ok(rules);
+    const size = this.value(feature.reliefSize ?? '', 'length', 'Relief size');
+    if (!size.ok) return size;
+    if (!(size.value > 0)) return fail({ code: 'invalid-input', message: 'The relief size must be greater than zero.' });
+    return ok({ ...rules, relief: { shape: feature.cornerRelief, size: size.value } });
   }
 
   /** The curves of a sketch as a path in world coordinates, in order. */

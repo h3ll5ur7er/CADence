@@ -158,8 +158,10 @@ Each feature type is its own interface in [[src/core/contracts/feature.ts]]. All
 | `split` | body, plane | |
 | `move` | bodies, axis | translation (x, y, z); angle; copy |
 | `scale` | bodies | factor (about the origin) |
-| `base-flange` | sketch, profile ids | direction; the sheet's rules: thickness, bend radius, K-factor |
-| `edge-flange` | straight edges of the sheet | length; angle |
+| `base-flange` | sketch, profile ids | direction; the sheet's rules: thickness, bend radius, K-factor; `cornerRelief` (`round`, `square`, `tear`; absent: none) and `reliefSize` (the round's diameter, the square's side, the tear's length) |
+| `edge-flange` | straight edges of the sheet or of a flange | length; angle |
+| `hem` | straight edges of the sheet or of a flange | `style` (`closed`, `open`, `teardrop`); gap (the inside diameter of the fold); length |
+| `miter-flange` | a chain of connected straight edges of one face, sketch (the profile: open lines drawn square to one of the edges) | |
 
 Construction `plane`s have a `mode`: `offset` (the default, from a base plane), `angle` (about an axis in the base plane), `midplane` (between the base and a parallel second plane) or `points` (three vertices).
 
@@ -203,7 +205,7 @@ The Modeling Engine names every face after each feature (*generative naming*, [[
 | Drafted face | its old name: it is the same face, tilted (from the kernel's history) |
 | Thread groove | `f:<feature>:flank` |
 | Rib | `f:<feature>:side`, `start`, `end` |
-| Edge flange | `f:<feature>:bend:<edge>` (round), `f:<feature>:flange:<edge>` (flat) |
+| Edge flange, hem, miter flange | `f:<feature>:bend:<edge>` (round), `f:<feature>:flange:<edge>` (flat), `f:<feature>:relief:<n>` (a corner relief, by corner) |
 | Anything else new | `f:<feature>:new:<n>`, in order of position |
 
 - **Kept names.** A face or edge a feature leaves as it was (the same element of the kernel) keeps its name, `~n` included, so references to it hold whatever the feature does elsewhere ([[CAD-104]], [[Architecture/Decisions#ADR-44]]).
@@ -283,5 +285,6 @@ Every document carries `schemaVersion`. Document Access runs pure migration func
 | 1 | First schema |
 | 2 | Assemblies get `motionStudies` (empty for older assemblies) |
 | 3 | Nothing to migrate: marks documents an older CADence must not open, since it would ignore their newer fields (`lean`, `anchor`, a gear's `chamfer`) and show them wrongly ([[CAD-145]]) |
+| 4 | Nothing to migrate: hems, miter flanges and a base flange's corner relief ([[CAD-162]], [[CAD-163]]) |
 
 A document of a newer schema than the app reads is listed in its project (from its name and kind) but not opened: the app says to update CADence. The version goes up with every field an older app must not ignore.

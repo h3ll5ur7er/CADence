@@ -26,7 +26,7 @@ That builds `dist/automation/cadence.mjs`. Run it with `npm run cadence -- <comm
 | --- | --- |
 | `projects` | Lists the projects |
 | `documents <project>` | Lists a project's documents |
-| `export <project> <document> <format>` | Exports a component: `step`, `stl`, `obj`, `3mf`; `dxf` or `svg` of a sketch (`--sketch <id>`) or of the flat pattern (`--flat-pattern`) |
+| `export <project> <document> <format>` | Exports a component: `step`, `stl`, `obj`, `3mf`; `dxf` or `svg` of a sketch (`--sketch <id>`) or of the flat pattern (`--flat-pattern`: flanges, flanges on flanges, hems and miter flanges unfolded, corner reliefs cut) |
 | `picture <project> <document> <file>` | A PNG of a component or an assembly: `--view iso` (default), `front`, `back`, `top`, `bottom`, `left` or `right`, or `--direction x,y,z` (towards the camera) with `--up x,y,z`; `--width`, `--height` (800 × 600); `--white` for a white background; `--focus`, `--hide`, `--ghost` with body or instance ids (`a,b`) to zoom onto, leave out or show see-through; assemblies also `--explode <view>` (with `--steps n`) or `--study <id> --time <seconds>` |
 | `convert <input> <output>` | Converts a file, formats from the extensions: `bracket.step` to `bracket.stl`, `logo.svg` to `logo.dxf` |
 | `run <script> [arguments]` | Runs a script (below) |

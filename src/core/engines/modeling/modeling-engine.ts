@@ -2,7 +2,9 @@ import type {
   BodyMesh,
   BodyOperation,
   BodyState,
+  CornerRelief,
   FlangeMarker,
+  HemStyle,
   Matrix4,
   PlaneFrame,
   Profile,
@@ -28,6 +30,14 @@ export type PathPiece =
   | { readonly kind: 'line'; readonly start: Vec3; readonly end: Vec3 }
   | { readonly kind: 'arc'; readonly start: Vec3; readonly mid: Vec3; readonly end: Vec3 }
   | { readonly kind: 'bezier'; readonly points: readonly [Vec3, Vec3, Vec3, Vec3] };
+
+/** What sheet metal features need: the sheet's rules, the corner relief, and the flanges earlier features made (corners with them get reliefs too). */
+export interface SheetInput {
+  readonly thickness: number;
+  readonly bendRadius: number;
+  readonly relief?: { readonly shape: CornerRelief; readonly size: number };
+  readonly flanges?: readonly FlangeMarker[];
+}
 
 /** Where one copy of a pattern goes: turned about an axis (radians), then shifted. */
 export interface Placement {
@@ -69,15 +79,21 @@ export type ModelingRequest = RequestBase &
         readonly operation: BodyOperation;
       }
     | { readonly type: 'fillet' | 'chamfer'; readonly edges: readonly TopologyRef[]; readonly size: number; readonly endSize?: number }
-    | {
+    | ({
         readonly type: 'edge-flange';
         readonly edges: readonly TopologyRef[];
         readonly length: number;
         /** Radians. */
         readonly angle: number;
-        readonly thickness: number;
-        readonly bendRadius: number;
-      }
+      } & SheetInput)
+    | ({ readonly type: 'hem'; readonly edges: readonly TopologyRef[]; readonly style: HemStyle; readonly gap: number; readonly length: number } & SheetInput)
+    | ({
+        readonly type: 'miter-flange';
+        readonly edges: readonly TopologyRef[];
+        /** The profile: straight lines in a plane square to one of the edges, and that plane. */
+        readonly profile: readonly PathPiece[];
+        readonly frame: PlaneFrame;
+      } & SheetInput)
     | { readonly type: 'draft'; readonly faces: readonly TopologyRef[]; readonly plane: PlaneFrame; readonly angle: number }
     | {
         readonly type: 'rib';
@@ -177,7 +193,7 @@ export interface ModelingOutcome {
   readonly error?: string;
   /** Where a thread feature put its thread. */
   readonly thread?: ThreadMarker;
-  /** Where an edge flange feature put its flanges. */
+  /** Where a sheet metal feature (edge flange, hem, miter flange) put its flanges. */
   readonly flanges?: readonly FlangeMarker[];
 }
 

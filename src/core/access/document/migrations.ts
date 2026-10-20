@@ -14,6 +14,8 @@ export const documentMigrations: Readonly<Record<number, Migration>> = {
   1: (document) => (document['kind'] === 'assembly' ? { ...document, motionStudies: [] } : document),
   // Fields added since (joint leans, view configurations, …) are optional: nothing to change.
   2: (document) => document,
+  // Hems, miter flanges and a base flange's corner relief are new, and optional: nothing to change.
+  3: (document) => document,
 };
 
 /**

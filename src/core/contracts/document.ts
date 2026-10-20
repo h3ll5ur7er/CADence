@@ -134,8 +134,10 @@ export interface ComponentDocument extends DocumentBase {
    * items are inserted before them. 0 puts the rollback marker at the end.
    */
   readonly rollbackIndex: number;
-  /** For mass; `materials[0]` when absent. */
+  /** For mass; `materials[0]` when absent. The default of every body without one of its own. */
   readonly material?: Material;
+  /** What bodies are made of, by body id, where it is not the component's material (CAD-158). */
+  readonly bodyMaterials?: Readonly<Record<string, Material>>;
   /** The machine the component is made on, for validation; `manufacturingProfiles[0]` when absent. */
   readonly process?: ManufacturingProfile;
   /** How bodies are shown, by body id; bodies without an entry use the defaults. */
@@ -181,7 +183,7 @@ export type CadDocument = ComponentDocument | AssemblyDocument | DrawingDocument
  * configurations, …), so that older apps refuse documents they would show wrongly (CAD-145). Raise it
  * whenever a field is added that an older app must not ignore.
  */
-export const currentSchemaVersion = 3;
+export const currentSchemaVersion = 4;
 
 export function summarize(document: CadDocument): DocumentSummary {
   const { id, projectId, kind, name, createdAt, modifiedAt } = document;

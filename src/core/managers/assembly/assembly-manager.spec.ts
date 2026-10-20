@@ -29,6 +29,7 @@ import { steppingClock } from '@core/utilities/clock';
 import { identity, transformPoint, translation } from '@core/utilities/math';
 import { EventBus } from '@core/utilities/messaging';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { readZip } from '@core/utilities/archive';
 import { type AssemblySession, createAssemblyManager } from './index';
 
 const shapes = createShapeAccess();
@@ -322,6 +323,26 @@ describe('AssemblyManager', () => {
     expect(weight.mass).toBeCloseTo((volume * 1.24) / 1000, 1);
     expect(weight.parts.map((p) => p.name)).toEqual(['Base 1', 'Link 1']);
     expect(weight.centerOfMass[2]).toBeGreaterThan(2.5);
+  });
+
+  it('weighs a part of two bodies by each one’s material, and lists both in the bill of materials (CAD-158)', async () => {
+    // A PLA housing (60 × 20 × 5 less a ⌀6 hole) with a steel pin (10 × 10 × 5) of its own.
+    const housing = await modeling.apply({ type: 'extrude', feature: 'housing', key: 'duo-housing', bodies: [], frame: originFrames.XY, profiles: [profile(rectangleLoop(0, 0, 60, 20, 'housing'), [circleLoop(10, 10, 3, 'housing-hole', false)])], distance: 5, direction: 'normal', operation: 'new-body' });
+    const pin = await modeling.apply({ type: 'extrude', feature: 'pin', key: 'duo-pin', bodies: housing.bodies, frame: originFrames.XY, profiles: [profile(rectangleLoop(100, 0, 10, 10, 'pin'))], distance: 5, direction: 'normal', operation: 'new-body' });
+    const duo = asDocumentId('duo');
+    await documents.store({ ...component('duo', 'Duo'), bodyMaterials: { pin: { name: 'Steel', density: 7.85 } } });
+    await assets.publishResult({ documentId: duo, projectId: project, stamp, bytes: await modeling.snapshot(pin.bodies) });
+    unwrap(await insert('d1', duo, identity(), true));
+    await until(() => session.state().components.get(duo)?.status === 'ready');
+    const [plastic, steel] = [(60 * 20 - Math.PI * 9) * 5 * 1.24, 10 * 10 * 5 * 7.85].map((g) => g / 1000);
+    const weight = await session.properties();
+    expect(weight.mass).toBeCloseTo((plastic as number) + (steel as number), 3);
+    expect(weight.parts).toMatchObject([{ instance: 'd1', material: 'PLA, Steel' }]);
+    const [line] = await session.billOfMaterials();
+    expect(line).toMatchObject({ component: 'Duo', material: 'PLA, Steel', mass: expect.closeTo((plastic as number) + (steel as number), 3) });
+    unwrap(await session.exportAssembly('3mf'));
+    const model = new TextDecoder().decode((await readZip(files.delivered.at(-1)?.bytes as Uint8Array)).get('3D/3dmodel.model'));
+    expect(model).toContain('<base name="PLA" displaycolor="#B4B4B4FF"/><base name="Steel" displaycolor="#B4B4B4FF"/>');
   });
 
   it('repeats instances in rows, around axes and mirrored, following their originals', async () => {

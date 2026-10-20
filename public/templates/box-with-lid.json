@@ -36,7 +36,7 @@
       "name": "Box",
       "createdAt": "2026-01-01T00:00:00.000Z",
       "modifiedAt": "2026-01-01T00:00:00.000Z",
-      "schemaVersion": 3,
+      "schemaVersion": 4,
       "kind": "component",
       "units": "mm",
       "parameters": [],
@@ -171,7 +171,11 @@
             {
               "kind": "face",
               "body": "box",
-              "name": "f:box:end"
+              "name": "f:box:end",
+              "shape": {
+                "type": "plane",
+                "size": 4799.999999999999
+              }
             }
           ],
           "thickness": "wall"
@@ -185,7 +189,7 @@
       "name": "Lid",
       "createdAt": "2026-01-01T00:00:00.000Z",
       "modifiedAt": "2026-01-01T00:00:00.000Z",
-      "schemaVersion": 3,
+      "schemaVersion": 4,
       "kind": "component",
       "units": "mm",
       "parameters": [],
@@ -441,7 +445,7 @@
       "name": "Box with lid",
       "createdAt": "2026-01-01T00:00:00.000Z",
       "modifiedAt": "2026-01-01T00:00:00.000Z",
-      "schemaVersion": 3,
+      "schemaVersion": 4,
       "kind": "assembly",
       "instances": [
         {

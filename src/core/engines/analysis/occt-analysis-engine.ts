@@ -83,7 +83,7 @@ export class OcctAnalysisEngine implements AnalysisEngine {
     }
   }
 
-  async properties(bodies: readonly BodyState[], density: number): Promise<BodyProperties[]> {
+  async properties(bodies: readonly BodyState[], density: number, densities?: Readonly<Record<string, number>>): Promise<BodyProperties[]> {
     await this.shapes.ready();
     return bodies.flatMap((body) => {
       const named = this.shapes.get(body.key);
@@ -95,7 +95,7 @@ export class OcctAnalysisEngine implements AnalysisEngine {
         body: body.id,
         volume: solid.volume,
         area: surface.area,
-        mass: (solid.volume * density) / 1000, // mm³ × g/cm³ = 1/1000 g
+        mass: (solid.volume * (densities?.[body.id] ?? density)) / 1000, // mm³ × g/cm³ = 1/1000 g
         centerOfMass: solid.centerOfMass,
         box: { min, max },
       };
@@ -215,8 +215,8 @@ export class OcctAnalysisEngine implements AnalysisEngine {
     return box;
   }
 
-  async simulate(meshes: readonly BodyMesh[], setup: SimulationSetup, material: Material): Promise<Result<SimulationResult>> {
-    return simulate(meshes, setup, material);
+  async simulate(meshes: readonly BodyMesh[], setup: SimulationSetup, material: Material, byBody?: Readonly<Record<string, Material>>): Promise<Result<SimulationResult>> {
+    return simulate(meshes, setup, material, byBody);
   }
 
   /** A stored body's volume, measured once. */

@@ -35,6 +35,7 @@ import { EventBus } from '@core/utilities/messaging';
 import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { png } from '@core/utilities/picture/testing';
+import { readZip } from '@core/utilities/archive';
 import { createDesignManager, type DesignSession } from './index';
 
 function unwrap<T>(result: Result<T>): T {
@@ -1081,6 +1082,47 @@ describe('DesignManager', () => {
       expect((await session.properties())[0]?.mass).toBeCloseTo((60 * 30 * 6 * 1.24) / 1000);
       expect(await session.execute({ type: 'set-material', material: { name: 'Air', density: 0 } })).toMatchObject({ ok: false, error: { code: 'invalid-command' } });
     });
+
+    it("weighs, checks and exports each body in its own material, the component's by default (CAD-158)", async () => {
+      await plate();
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'm1', type: 'move', name: '', suppressed: false, bodies: ['e1'], translate: ['0', '40', '0'], axis: { kind: 'origin', axis: 'Z' }, angle: '0 deg', copy: true } }));
+      const plateVolume = 60 * 30 * 6;
+      unwrap(await session.execute({ type: 'set-body-material', body: 'm1', material: { name: 'Steel', density: 7.85 } }));
+      expect(session.state().document.bodyMaterials).toEqual({ m1: { name: 'Steel', density: 7.85 } });
+      expect((await session.properties()).map((p) => [p.body, p.material, p.mass])).toEqual([
+        ['e1', 'PLA', expect.closeTo((plateVolume * 1.24) / 1000, 6)],
+        ['m1', 'Steel', expect.closeTo((plateVolume * 7.85) / 1000, 6)],
+      ]);
+      // The component's material changes the bodies without one of their own.
+      unwrap(await session.execute({ type: 'set-material', material: { name: 'PETG', density: 1.27 } }));
+      expect((await session.properties()).map((p) => p.material)).toEqual(['PETG', 'Steel']);
+      // Exports name each body's material.
+      unwrap(await session.exportBodies('3mf'));
+      const model = new TextDecoder().decode((await readZip(files.delivered.at(-1)?.bytes as Uint8Array)).get('3D/3dmodel.model'));
+      expect(model).toContain('<basematerials id="3"><base name="PETG" displaycolor="#B4B4B4FF"/><base name="Steel" displaycolor="#B4B4B4FF"/></basematerials>');
+      expect(model).toMatch(/<object id="2" name="[^"]+" type="model" pid="3" pindex="1">/);
+      unwrap(await session.exportBodies('obj'));
+      expect(new TextDecoder().decode(files.delivered.at(-1)?.bytes)).toContain('usemtl Steel');
+      // Back to the component's; a body that is not there cannot get one.
+      unwrap(await session.execute({ type: 'set-body-material', body: 'm1' }));
+      expect(session.state().document.bodyMaterials).toBeUndefined();
+      expect(await session.execute({ type: 'set-body-material', body: 'nothing', material: { name: 'Steel', density: 7.85 } })).toMatchObject({ ok: false });
+      expect(await session.execute({ type: 'set-body-material', body: 'e1', material: { name: 'Air', density: 0 } })).toMatchObject({ ok: false });
+    });
+
+    it("checks the strength of a steel body in a plastic part with steel's stiffness (CAD-158)", async () => {
+      await plate();
+      const faces = session.state().bodies[0]?.faces ?? [];
+      const at = (x: number) => ({ kind: 'face' as const, body: 'e1', name: faces.find((f) => Math.abs((f.center[0] as number) - x) < 1e-6 && f.planar)?.name as string });
+      unwrap(await session.execute({ type: 'set-simulation', setup: { fixed: [at(0)], loads: [{ kind: 'force', face: at(60), force: 50, direction: [0, 0, -1] }] } }));
+      const plastic = unwrap(await session.simulate());
+      unwrap(await session.execute({ type: 'set-body-material', body: 'e1', material: { name: 'Steel', density: 7.85 } }));
+      const steel = unwrap(await session.simulate());
+      // Bent less by about the stiffness ratio (200 GPa over 3.5; Poisson's ratios differ a little), with steel's yield strength.
+      expect(plastic.maxDisplacement / steel.maxDisplacement).toBeGreaterThan(0.95 * (200000 / 3500));
+      expect(plastic.maxDisplacement / steel.maxDisplacement).toBeLessThan(1.05 * (200000 / 3500));
+      expect(steel.safetyFactor).toBeCloseTo(250 / steel.maxStress, 6);
+    }, 60_000);
 
     it('checks the strength of a part held on one face and loaded on another', async () => {
       await plate();

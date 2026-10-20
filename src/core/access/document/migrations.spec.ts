@@ -3,20 +3,25 @@ import { migrate } from './migrations';
 
 describe('document migrations', () => {
   it('passes documents of the current version through', () => {
-    const doc = { id: 'd', schemaVersion: 3, name: 'Bracket' };
+    const doc = { id: 'd', schemaVersion: 4, name: 'Bracket' };
     expect(migrate(doc)).toEqual(doc);
   });
 
   it('gives version 1 assemblies an empty list of motion studies', () => {
     expect(migrate({ id: 'a', schemaVersion: 1, kind: 'assembly', instances: [], joints: [] })).toEqual({
       id: 'a',
-      schemaVersion: 3,
+      schemaVersion: 4,
       kind: 'assembly',
       instances: [],
       joints: [],
       motionStudies: [],
     });
-    expect(migrate({ id: 'c', schemaVersion: 1, kind: 'component' })).toEqual({ id: 'c', schemaVersion: 3, kind: 'component' });
+    expect(migrate({ id: 'c', schemaVersion: 1, kind: 'component' })).toEqual({ id: 'c', schemaVersion: 4, kind: 'component' });
+  });
+
+  it('keeps version 3 documents as they are: version 4 only marks the newer fields (CAD-158)', () => {
+    const component = { id: 'c', schemaVersion: 3, kind: 'component', material: { name: 'PLA', density: 1.24 } };
+    expect(migrate(component)).toEqual({ ...component, schemaVersion: 4 });
   });
 
   it('runs each step in order up to the target version', () => {

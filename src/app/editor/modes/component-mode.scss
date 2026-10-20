@@ -20,7 +20,8 @@
 }
 
 #component-units,
-.material select {
+.material select,
+.bodies .body-material {
   height: 30px;
   padding: 0 var(--space-1);
   border: 1px solid var(--border);
@@ -55,6 +56,11 @@
   dd {
     text-align: right;
     font-variant-numeric: tabular-nums;
+  }
+
+  .body-material {
+    max-width: 100%;
+    height: 24px;
   }
 }
 

@@ -29,6 +29,7 @@ classDiagram
     timeline: TimelineItem[]
     rollbackIndex: number
     material?: Material
+    bodyMaterials?: Record~bodyId, Material~
     process?: ManufacturingProfile
     appearances?: Record~bodyId, Appearance~
     simulation?: SimulationSetup
@@ -91,6 +92,8 @@ type ManufacturingProfile =
 
 When absent, the first preset applies (an FDM printer with a 220 × 220 × 250 mm volume and a 0.4 mm nozzle). The fields are optional, so older documents need no migration.
 
+`bodyMaterials` gives bodies a material of their own, by body id (a steel shaft in a plastic housing); every other body is of the component's `material` (`bodyMaterial`, [[CAD-158]]). Mass properties, the strength check, bills of materials, parts lists and 3MF and OBJ exports use each body's.
+
 ## Parameters
 
 ```ts
@@ -100,7 +103,7 @@ interface Parameter { id: ParameterId; name: string; expression: string; comment
 Expressions may reference other parameters by name, use units (`10 mm + 0.5 in`) and functions (`sin`, `max`, ...). Feature and constraint values are expressions too, so `"height / 2"` works everywhere a number does.
 
 - **Project parameters** (`Project.parameters`) are in scope in every component of the project; a component parameter of the same name wins. Changing them publishes `projectParametersChanged`.
-- **Folders** (`ComponentDocument.folders`): `{ id, name, first, last, note? }`, the items from `first` to `last` in timeline order; folders do not overlap. After a reorder or a delete each folder keeps its remaining items, from the first to the last of them (so items dropped in between join it); an emptied folder goes. Every timeline item may carry a `note`.
+- **Folders** (`ComponentDocument.folders`): `{ id, name, first, last, note? }`, the items from `first` to `last` in timeline order. Folders nest: two folders are apart or one holds the other, and of two with the same items the earlier holds the later (`nestFolders`, [[CAD-157]]). After a reorder or a delete each folder keeps its remaining items, from the first to the last of them (so items dropped in between join it); a moved item leaves its folders, a moved folder (`move-folder`) takes its items and the folders in it along; an emptied folder goes. Every timeline item may carry a `note`.
 - **Configurations** (`ComponentDocument.configurations`): `{ id, name, values: Record<parameter name, expression> }`. `configuration` is the one shown and edited; regeneration replaces the named parameters' expressions with its values. An assembly `Instance.configuration` shows another one (`sourceKey`: `<component>@<configuration>`).
 
 ## Timeline items
@@ -149,11 +152,11 @@ Each feature type is its own interface in [[src/core/contracts/feature.ts]]. All
 | `loft` | sections: a profile of each of two or more sketches, in order | ruled (straight) or smooth; operation |
 | `sweep` | sketch, profile ids, path (a sketch whose curves form one chain) | operation |
 | `path-pattern` | features to repeat, path (a sketch) | count; align (turn with the path) |
-| `hole` | sketch and its points (centres) | kind (simple, counterbore, countersink); diameter; through or a depth; counterbore diameter and depth; countersink diameter and angle; teardrop; bridge; fit (`press`, `snug`, `loose`: widened by `fitAllowance` plus the print profile's hole compensation) |
+| `hole` | sketch and its points (centres) | kind (simple, counterbore, countersink); diameter; through or a depth; a drill point below a depth (`drillPoint`, `pointAngle`: 118° when empty); counterbore diameter and depth; countersink diameter and angle; teardrop; bridge; fit (`press`, `snug`, `loose`: widened by `fitAllowance` plus the print profile's hole compensation) |
 | `part` | sketch and its points | `part`: a `PartSpec` ([[src/core/contracts/parts.ts]]): screw, nut, washer, insert, bearing by catalogue size; magnet; gear (helical with a helix angle, its teeth bevelled at both ends by `chamfer`), ring gear, rack; snap-fit, peg, dovetail, living hinge, with expressions; angle; flip; operation |
 | `thread` | a round face | ISO metric size (`metricThreads`); length (empty: the whole face); modelled; flip |
 | `draft` | faces, neutral plane | angle |
-| `rib` | sketch (open curves) | thickness; depth; direction |
+| `rib` | sketch (open curves) | thickness; depth, or up to the next face (`extent: 'next'`); direction |
 | `combine` | target body, tool bodies | join, cut or intersect; keep tools |
 | `split` | body, plane | |
 | `move` | bodies, axis | translation (x, y, z); angle; copy |
@@ -184,6 +187,7 @@ interface TopologyRef {
   body: string;      // the body: the id of the feature that created it
   name: string;      // e.g. "f:extrude1:side:line7" or "e:f:extrude1:end|f:extrude1:side:line7"
   hint?: Vec3;       // where it was when picked; tells split pieces apart
+  shape?: RefShape;  // { type, size, radius? }: what it was like when a command named it (CAD-157)
 }
 ```
 
@@ -198,7 +202,7 @@ The Modeling Engine names every face after each feature (*generative naming*, [[
 | Pattern or mirror copy | the original's name plus `@<feature>.<n>` |
 | Loft or sweep side | `f:<feature>:side:<sketch curve id>`, from the kernel's history: the faces generated from that profile edge (along the whole path) |
 | Loft or sweep cap | `f:<feature>:start` / `f:<feature>:end` |
-| Hole face | `f:<feature>:wall:<point>`, `bore`, `sink`, `floor` or `tip` (teardrop flats), by the sketch point of the hole |
+| Hole face | `f:<feature>:wall:<point>`, `bore`, `sink`, `floor`, `tip` (teardrop flats) or `point` (a drill point's cone), by the sketch point of the hole |
 | Split face | `f:<feature>:split` |
 | Drafted face | its old name: it is the same face, tilted (from the kernel's history) |
 | Thread groove | `f:<feature>:flank` |
@@ -211,6 +215,7 @@ The Modeling Engine names every face after each feature (*generative naming*, [[
 - **Edges** are named after the faces they separate: `e:<face A>|<face B>`.
 - **Vertices** are named after the edges that meet there: `v:<edge>&<edge>&…`, sorted. A vertex reference that no longer matches resolves only where it was picked.
 - **Repeated names.** When a name occurs more than once (a face split in two), `~1`, `~2` … are appended in order of position, skipping the numbers that kept names hold.
+- **Repairs.** The Design Manager records each face's and edge's `shape` when a command names it (its kind of surface or curve, its area or length, its radius). The candidates for a lost reference are the faces or edges of its kind ranked by unlikeness in shape and then by distance from its `hint` ([[Architecture/Decisions#ADR-55]]).
 - **Resolution.** A reference resolves by exact name, then among the split pieces of that name (nearest to the hint). Without a hint, the base name of pieces that lie apart (a shank and a ring a hex split) is refused: "… is split into 2 pieces (…). Name one of them, or pick it again" ([[CAD-105]]); pieces that touch (a hole's two half walls) are one face to the user. A reference that cannot be resolved makes its feature fail with "… no longer exists. Pick it again". It is never silently re-bound to a different face.
 - **Bodies** are named after the feature that made them: `<feature>`, then `<feature>:2`, `:3`, … without gaps.
 
@@ -283,5 +288,6 @@ Every document carries `schemaVersion`. Document Access runs pure migration func
 | 1 | First schema |
 | 2 | Assemblies get `motionStudies` (empty for older assemblies) |
 | 3 | Nothing to migrate: marks documents an older CADence must not open, since it would ignore their newer fields (`lean`, `anchor`, a gear's `chamfer`) and show them wrongly ([[CAD-145]]) |
+| 4 | Nothing to migrate either: marks documents with drill points, ribs up to the next face, nested folders and bodies' own materials ([[CAD-156]] to [[CAD-158]]) |
 
 A document of a newer schema than the app reads is listed in its project (from its name and kind) but not opened: the app says to update CADence. The version goes up with every field an older app must not ignore.

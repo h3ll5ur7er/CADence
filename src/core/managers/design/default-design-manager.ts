@@ -3,6 +3,7 @@ import type { DocumentAccess } from '@core/access/document';
 import type { ProjectAccess } from '@core/access/project';
 import type { ExternalFileAccess } from '@core/access/external-file';
 import {
+  bodyMaterial,
   type BodyMesh,
   type BodyProperties,
   type BodyState,
@@ -320,7 +321,9 @@ class Session implements DesignSession {
     // Another configuration is built for the export only; the session keeps showing its own.
     const other = options.configuration !== undefined && options.configuration !== (document.configuration ?? '');
     const derived = other ? await new Regeneration(this.deps).run(document, { ...this.context, configuration: options.configuration }) : this.current.derived;
-    const bodies = this.namedBodies(derived).filter((b) => !options.bodies || options.bodies.includes(b.id));
+    const bodies = this.namedBodies(derived)
+      .filter((b) => !options.bodies || options.bodies.includes(b.id))
+      .map((b) => ({ ...b, material: bodyMaterial(document, b.id).name }));
     if (derived.bodies.length === 0) return fail({ code: 'nothing-to-export', message: 'There are no bodies to export yet.' });
     if (bodies.length === 0) return fail({ code: 'nothing-to-export', message: 'Select at least one body to export.' });
     const variant = document.configurations?.find((c) => c.id === (other ? options.configuration : document.configuration))?.name;
@@ -337,8 +340,11 @@ class Session implements DesignSession {
     return this.deps.analysis.measure(this.current.derived.bodies, refs);
   }
 
-  properties(): Promise<BodyProperties[]> {
-    return this.deps.analysis.properties(this.current.derived.bodies, materialOf(this.current.document).density);
+  async properties(): Promise<BodyProperties[]> {
+    const { document, derived } = this.current;
+    const own = Object.fromEntries(Object.entries(document.bodyMaterials ?? {}).map(([body, m]) => [body, m.density]));
+    const found = await this.deps.analysis.properties(derived.bodies, materialOf(document).density, own);
+    return found.map((p) => ({ ...p, material: bodyMaterial(document, p.body).name }));
   }
 
   async validate(): Promise<ValidationReport> {
@@ -353,11 +359,11 @@ class Session implements DesignSession {
     const { document, derived } = this.current;
     if (!document.simulation) return fail({ code: 'not-fixed', message: 'Hold at least one face fixed.' });
     // Materials saved before strength checks have no stiffness: those of the catalogue's namesake stand in.
-    const material = materialOf(document);
-    const known = materials.find((m) => m.name === material.name);
+    const stiff = (material: Material): Material => ({ ...materials.find((m) => m.name === material.name), ...material });
     // Copies: buffers sent to the geometry worker move there, and the view keeps drawing these meshes.
     const meshes = (await this.meshes(derived)).map((m) => ({ ...m, positions: m.positions.slice(), normals: m.normals.slice(), indices: m.indices.slice(), edgePositions: m.edgePositions.slice() }));
-    return this.deps.analysis.simulate(meshes, document.simulation, { ...known, ...material });
+    const byBody = Object.fromEntries(Object.entries(document.bodyMaterials ?? {}).map(([body, m]) => [body, stiff(m)]));
+    return this.deps.analysis.simulate(meshes, document.simulation, stiff(materialOf(document)), byBody);
   }
 
   /** Bodies with the names of the features that made them. */
@@ -377,7 +383,7 @@ class Session implements DesignSession {
 
   private async apply(given: DesignCommand): Promise<Result<void>> {
     const command = await this.shaped(await this.anchored(given));
-    if (command.type === 'set-appearance' && !this.current.derived.bodies.some((b) => b.id === command.body)) {
+    if ((command.type === 'set-appearance' || (command.type === 'set-body-material' && command.material)) && !this.current.derived.bodies.some((b) => b.id === command.body)) {
       return fail({ code: 'invalid-command', message: `There is no body ${command.body}.` });
     }
     const applied = applyCommand(this.current.document, command);

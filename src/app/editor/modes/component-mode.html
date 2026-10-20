@@ -497,6 +497,15 @@
               <dl>
                 <dt>Volume</dt>
                 <dd class="mono" data-testid="body-volume">{{ mm(p.volume, 3) }}</dd>
+                <dt>Material</dt>
+                <dd>
+                  <select class="body-material" [attr.aria-label]="'Material of ' + body.name" (change)="setBodyMaterial(body.id, $any($event.target).value)">
+                    <option value="" [selected]="!body.material">As the component ({{ material().name }})</option>
+                    @for (m of materials; track m.name) {
+                      <option [value]="m.name" [selected]="m.name === body.material?.name">{{ m.name }} · {{ m.density }} g/cm³</option>
+                    }
+                  </select>
+                </dd>
                 <dt>Mass</dt>
                 <dd class="mono" data-testid="body-mass">{{ grams(p.mass) }}</dd>
                 <dt>Surface</dt>

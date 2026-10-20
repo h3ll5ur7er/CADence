@@ -577,6 +577,14 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
     case 'set-material':
       if (!command.material.name.trim() || !(command.material.density > 0)) return invalid('A material needs a name and a density above zero.');
       return ok({ document: { ...document, material: command.material } });
+    case 'set-body-material': {
+      const { material, body } = command;
+      if (material && (!material.name.trim() || !(material.density > 0))) return invalid('A material needs a name and a density above zero.');
+      const { [body]: _old, ...others } = document.bodyMaterials ?? {};
+      const bodyMaterials = material ? { ...others, [body]: material } : others;
+      const { bodyMaterials: _all, ...rest } = document;
+      return ok({ document: Object.keys(bodyMaterials).length ? { ...rest, bodyMaterials } : rest });
+    }
     case 'set-appearance': {
       const problem = appearanceProblem(command.appearance);
       if (problem) return invalid(problem);

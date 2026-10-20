@@ -3,6 +3,7 @@ import type { DocumentAccess } from '@core/access/document';
 import type { ProjectAccess } from '@core/access/project';
 import type { ExternalFileAccess } from '@core/access/external-file';
 import {
+  bodyMaterial,
   type AssemblyDocument,
   type BodyMesh,
   type BodyState,
@@ -14,6 +15,7 @@ import {
   isModelFormat,
   type JointOrigin,
   type Material,
+  materialNames,
   materials,
   type Matrix4,
   type Measurement,
@@ -73,7 +75,14 @@ interface LoadedComponent {
   readonly stamp: string;
   /** What its parts weigh by. */
   readonly material: Material;
+  /** Its bodies' own materials, by body id (CAD-158). */
+  readonly bodyMaterials?: Readonly<Record<string, Material>>;
 }
+
+/** The densities of a component's bodies that have a material of their own. */
+const densities = (component: LoadedComponent) => Object.fromEntries(Object.entries(component.bodyMaterials ?? {}).map(([body, m]) => [body, m.density]));
+/** The materials a component's bodies are made of, by name. */
+const materialsOf = (component: LoadedComponent) => materialNames(component, component.bodies.map((b) => b.id));
 
 interface Derived {
   readonly poses: ReadonlyMap<string, Matrix4>;
@@ -229,7 +238,7 @@ class Session implements AssemblySession {
     const parts: AssemblyProperties['parts'][number][] = [];
     for (const { instance, component, transform } of this.readyInstances()) {
       if (instance.appearance?.hidden) continue;
-      const bodies = await this.deps.analysis.properties(component.bodies, component.material.density);
+      const bodies = await this.deps.analysis.properties(component.bodies, component.material.density, densities(component));
       const partMass = bodies.reduce((sum, b) => sum + b.mass, 0);
       for (const body of bodies) {
         const center = transformPoint(transform, body.centerOfMass);
@@ -237,7 +246,7 @@ class Session implements AssemblySession {
         volume += body.volume;
       }
       mass += partMass;
-      parts.push({ instance: instance.id, name: instance.name, material: component.material.name, mass: partMass });
+      parts.push({ instance: instance.id, name: instance.name, material: materialsOf(component), mass: partMass });
     }
     const centerOfMass: Vec3 = mass > 0 ? [(moment[0] as number) / mass, (moment[1] as number) / mass, (moment[2] as number) / mass] : [0, 0, 0];
     return { mass, volume, centerOfMass, parts };
@@ -324,8 +333,8 @@ class Session implements AssemblySession {
       }
       const configuration = instance.configuration ? component.view.configurations?.find((c) => c.id === instance.configuration)?.name : undefined;
       const name = this.components.get(source)?.view.name.replace(/ \(.*\)$/, '') ?? 'Component';
-      const mass = this.deps.analysis.properties(component.bodies, component.material.density).then((bodies) => bodies.reduce((sum, b) => sum + b.mass, 0));
-      lines.set(source, { line: { component: name, ...(configuration ? { configuration } : {}), material: component.material.name }, instances: [instance.id], mass });
+      const mass = this.deps.analysis.properties(component.bodies, component.material.density, densities(component)).then((bodies) => bodies.reduce((sum, b) => sum + b.mass, 0));
+      lines.set(source, { line: { component: name, ...(configuration ? { configuration } : {}), material: materialsOf(component) }, instances: [instance.id], mass });
     }
     const result: BomLine[] = [];
     for (const { line, instances, mass } of lines.values()) result.push({ ...line, count: instances.length, mass: await mass, instances });
@@ -379,7 +388,7 @@ class Session implements AssemblySession {
     // Every part, also those still being regenerated.
     await this.loaded();
     const bodies = this.readyInstances().flatMap(({ instance, component, transform }) =>
-      component.bodies.map((body, k) => ({ name: component.bodies.length > 1 ? `${instance.name} (${k + 1})` : instance.name, key: body.key, transform })),
+      component.bodies.map((body, k) => ({ name: component.bodies.length > 1 ? `${instance.name} (${k + 1})` : instance.name, key: body.key, transform, material: bodyMaterial(component, body.id).name })),
     );
     if (bodies.length === 0) return fail({ code: 'nothing-to-export', message: 'Insert components with bodies first.' });
     try {
@@ -558,28 +567,30 @@ class Session implements AssemblySession {
       return;
     }
     const material = document.material ?? defaultMaterial;
+    const made = { material, ...(document.bodyMaterials ? { bodyMaterials: document.bodyMaterials } : {}) };
     const result = await this.deps.assets.latestResult(id, configuration);
     const stamp = resultStamp(document.modifiedAt, (await this.deps.projects.find(document.projectId))?.parameters);
     if (result?.stamp !== stamp) {
       const requests = this.requests.get(source) ?? 0;
       if (reason === 'regenerated' && requests >= maxRequests) {
-        this.hold(source, { view: view('missing', []), bodies: [], stamp: '', material });
+        this.hold(source, { view: view('missing', []), bodies: [], stamp: '', ...made });
         return;
       }
       this.requests.set(source, requests + 1);
-      this.hold(source, { view: view('loading', previous?.view.bodies ?? []), bodies: previous?.bodies ?? [], stamp: previous?.stamp ?? '', material });
+      this.hold(source, { view: view('loading', previous?.view.bodies ?? []), bodies: previous?.bodies ?? [], stamp: previous?.stamp ?? '', ...made });
       this.deps.events.publish('regenerateComponent', { documentId: id, ...(configuration ? { configuration } : {}) });
       return;
     }
     this.requests.delete(source);
     const appearances = document.appearances ?? {};
     if (previous?.stamp === result.stamp && previous.view.status === 'ready') {
-      this.hold(source, { ...previous, view: { ...view('ready', previous.view.bodies), appearances }, material });
+      const { bodyMaterials: _before, ...kept } = previous;
+      this.hold(source, { ...kept, view: { ...view('ready', previous.view.bodies), appearances }, ...made });
       return;
     }
     const bodies = await this.deps.modeling.restore(result.bytes, `result:${source}:${result.stamp}`);
     const meshes = bodies.length ? await this.deps.modeling.tessellate(bodies) : [];
-    this.hold(source, { view: { ...view('ready', meshes), appearances }, bodies, stamp: result.stamp, material });
+    this.hold(source, { view: { ...view('ready', meshes), appearances }, bodies, stamp: result.stamp, ...made });
   }
 
   /**

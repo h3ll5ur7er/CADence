@@ -103,6 +103,8 @@ export type DesignCommand =
   | { readonly type: 'set-parameter'; readonly parameter: Parameter }
   | { readonly type: 'delete-parameter'; readonly id: string }
   | { readonly type: 'set-material'; readonly material: Material }
+  /** What one body is made of (absent: the component's material again); mass, strength, bills of materials and exports use it (CAD-158). */
+  | { readonly type: 'set-body-material'; readonly body: string; readonly material?: Material }
   /** Replaces the configuration table; the configuration being edited must stay in it. */
   | { readonly type: 'set-configurations'; readonly configurations: readonly Configuration[] }
   /** Edits and shows a configuration (absent: the parameters' own values). */

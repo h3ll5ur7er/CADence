@@ -228,7 +228,7 @@ export class ComponentMode {
   });
   protected readonly material = computed(() => this.store.state()?.document.material ?? (materials[0] as Material));
   protected readonly properties = resource({
-    params: () => ({ bodies: this.bodies().map((b) => b.key).join(','), density: this.material().density }),
+    params: () => ({ bodies: this.bodies().map((b) => b.key).join(','), density: this.material().density, own: this.store.state()?.document.bodyMaterials }),
     loader: () => this.store.properties(),
   });
   protected readonly bodyRows = computed(() => {
@@ -240,6 +240,7 @@ export class ComponentMode {
       name: names.get(b.body) ?? b.body,
       properties: properties.find((p) => p.body === b.body),
       appearance: appearances[b.body] ?? {},
+      material: this.store.state()?.document.bodyMaterials?.[b.body],
     }));
   });
   /** How bodies are shown, from the document. */
@@ -401,6 +402,12 @@ export class ComponentMode {
   protected setMaterial(name: string): void {
     const material = materials.find((m) => m.name === name);
     if (material) void this.store.run({ type: 'set-material', material });
+  }
+
+  /** A body's own material, or the component's again (an empty name) (CAD-158). */
+  protected setBodyMaterial(body: string, name: string): void {
+    const material = materials.find((m) => m.name === name);
+    void this.store.run({ type: 'set-body-material', body, ...(material ? { material } : {}) });
   }
 
   protected togglePanel(panel: 'measure' | 'check' | 'simulate'): void {

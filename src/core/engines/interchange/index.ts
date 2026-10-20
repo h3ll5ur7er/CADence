@@ -39,6 +39,8 @@ export interface BodySource {
   readonly name: string;
   readonly key: string;
   readonly transform?: Matrix4;
+  /** What it is made of: written where the format can say it (3MF base materials, OBJ material names; CAD-158). */
+  readonly material?: string;
 }
 
 /**
@@ -254,7 +256,7 @@ class DefaultInterchangeEngine implements InterchangeEngine {
     const loaded = bodies.map((b) => {
       const named = shapes.get(b.key);
       if (!named) throw new Error(`Body ${b.name} has to be rebuilt first.`);
-      return { name: b.name, shape: b.transform ? place(named.shape, b.transform) : named.shape, placed: Boolean(b.transform) };
+      return { name: b.name, material: b.material, shape: b.transform ? place(named.shape, b.transform) : named.shape, placed: Boolean(b.transform) };
     });
     try {
       if (loaded.length === 0) throw new Error('There are no bodies to export.');
@@ -263,7 +265,7 @@ class DefaultInterchangeEngine implements InterchangeEngine {
         const blob = exportSTEP(loaded.map(({ name, shape }) => ({ shape, name })), { unit: 'MM', modelUnit: 'MM' });
         return new Uint8Array(await blob.arrayBuffer());
       }
-      const meshes = loaded.map(({ name, shape }) => meshOf(name, shape, quality));
+      const meshes = loaded.map(({ name, shape, material }) => ({ ...meshOf(name, shape, quality), ...(material ? { material } : {}) }));
       return meshWriters[format](meshes);
     } finally {
       for (const body of loaded) if (body.placed) body.shape.delete();

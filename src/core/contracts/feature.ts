@@ -120,6 +120,9 @@ export interface HoleFeature extends FeatureBase {
   readonly bridge: boolean;
   /** How tightly what goes in fits: its allowance (and the printer's hole compensation) widens the hole. */
   readonly fit?: FitClass;
+  /** Blind holes: a drill point (a cone of `pointAngle`, 118° when empty) below the depth instead of a flat floor. */
+  readonly drillPoint?: boolean;
+  readonly pointAngle?: string;
 }
 
 /** A part (standard, gear or for printing) at points of a sketch, on its plane (contracts/parts.ts). */
@@ -236,6 +239,8 @@ export interface RibFeature extends FeatureBase {
   readonly thickness: string;
   readonly depth: string;
   readonly direction: 'normal' | 'reverse' | 'symmetric';
+  /** `next`: up to the next face in its direction (each way when symmetric), `depth` unused; absent: `depth`. */
+  readonly extent?: 'depth' | 'next';
 }
 
 /** Hollows a body: the selected faces are removed, the walls get the given thickness (inward). */

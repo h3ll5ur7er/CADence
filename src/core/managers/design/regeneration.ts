@@ -625,13 +625,14 @@ export class Regeneration {
         return withKey({ ...base, type: 'draft', faces: feature.faces, plane: plane.value, angle: angle.value });
       }
       case 'rib': {
-        const [thickness, depth] = [this.value(feature.thickness, 'length', 'Thickness'), this.value(feature.depth, 'length', 'Depth')];
+        const next = feature.extent === 'next';
+        const [thickness, depth] = [this.value(feature.thickness, 'length', 'Thickness'), next ? ok(0) : this.value(feature.depth, 'length', 'Depth')];
         if (!thickness.ok) return thickness;
         if (!depth.ok) return depth;
         const path = this.path(feature.sketch);
         if (!path.ok) return path;
         if (path.value.flat.closed) return fail({ code: 'invalid-input', message: 'A rib is drawn as an open line or curve; closed outlines are extruded.' });
-        return withKey({ ...base, type: 'rib', frame: path.value.frame, path: path.value.pieces, thickness: thickness.value, depth: depth.value, direction: feature.direction });
+        return withKey({ ...base, type: 'rib', frame: path.value.frame, path: path.value.pieces, thickness: thickness.value, depth: next ? 'next' : depth.value, direction: feature.direction });
       }
       case 'shell': {
         const thickness = this.value(feature.thickness, 'length', 'Thickness');
@@ -692,10 +693,17 @@ export class Regeneration {
         const diameter = size(feature.diameter, 'Diameter');
         if (!diameter.ok) return diameter;
         let depth: number | undefined;
+        let point: number | undefined;
         if (feature.extent === 'blind') {
           const value = size(feature.depth, 'Depth');
           if (!value.ok) return value;
           depth = value.value;
+          if (feature.drillPoint) {
+            const angle = this.value(feature.pointAngle?.trim() || '118 deg', 'angle', 'Point angle');
+            if (!angle.ok) return angle;
+            if (!(angle.value > 0 && angle.value < Math.PI)) return fail({ code: 'invalid-input', message: 'The point angle is between 0° and 180°.' });
+            point = angle.value;
+          }
         }
         let bore: { diameter: number; depth: number } | undefined;
         let sink: { diameter: number; angle: number } | undefined;
@@ -713,7 +721,7 @@ export class Regeneration {
         }
         // A fit widens the hole by its allowance and the printer's compensation.
         const widen = feature.fit ? fitAllowance[feature.fit] + this.compensation : 0;
-        const spec = { diameter: diameter.value + widen, ...(depth === undefined ? {} : { depth }), ...(bore ? { bore } : {}), ...(sink ? { sink } : {}), teardrop: feature.teardrop, bridge: feature.bridge && bore ? this.layer : 0 };
+        const spec = { diameter: diameter.value + widen, ...(depth === undefined ? {} : { depth }), ...(point === undefined ? {} : { point }), ...(bore ? { bore } : {}), ...(sink ? { sink } : {}), teardrop: feature.teardrop, bridge: feature.bridge && bore ? this.layer : 0 };
         return withKey({ ...base, type: 'hole', frame: view.frame, points: points as { id: string; at: Vec2 }[], spec });
       }
       case 'thread': {

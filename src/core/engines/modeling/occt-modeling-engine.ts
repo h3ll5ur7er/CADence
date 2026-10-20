@@ -3,7 +3,7 @@ import { type BodyMesh, fail, type Matrix4, ok, type PlaneFrame, type Result, ty
 import { type Edge, type Face, getOC, makeCompound, makeVertex, measureVolume, type Shape3D, Vertex } from 'replicad';
 import { combine, type LoadedBody, renameCopy } from './bodies';
 import { BodyOperationError, combineBodies, splitBody, transformBodies } from './body-operations';
-import { DraftRibError, draftFaces, ribTool } from './draft-rib';
+import { DraftRibError, draftFaces, ribToNext, ribTool } from './draft-rib';
 import { drawingView, type ViewGeometry, type ViewRequest } from './drawing-view';
 import { edgeFlanges, FlangeError } from './flanges';
 import { HoleError, holeTool, threadGroove, threadPlacement } from './holes';
@@ -247,7 +247,11 @@ export class OcctModelingEngine implements ModelingEngine {
         return this.store({ bodies: bodies.map((b) => (b === body ? state : b.state)), stored: [[state.key, named]] });
       }
       case 'rib': {
-        const tool = ribTool(request.feature, request.frame, request.path, positive(request.thickness, 'thickness'), positive(request.depth, 'depth'), request.direction);
+        const thickness = positive(request.thickness, 'thickness');
+        const tool =
+          request.depth === 'next'
+            ? ribToNext(request.feature, request.frame, request.path, thickness, request.direction, bodies.map((b) => b.named.shape), 2 * reach(bodies.map((b) => b.named.shape), request.frame.origin) + 1)
+            : ribTool(request.feature, request.frame, request.path, thickness, positive(request.depth, 'depth'), request.direction);
         const toolKey = `${request.key}:tool`;
         this.shapes.put(toolKey, tool);
         return { ...this.store(combine(bodies, tool, 'join', request.feature, request.key)), toolKey };

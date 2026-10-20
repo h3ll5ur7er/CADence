@@ -268,5 +268,8 @@ describe('DrawingManager', () => {
     const document: ComponentDocument = { ...header('c', 'C'), kind: 'component', units: 'mm', parameters: [{ id: 'p', name: 'd', expression: '5 mm' }], timeline: [hole], rollbackIndex: 0 };
     expect(holeCallout(document, [], 'e:f:h1:wall:a|f:e1:end', 2.5, createParameterEngine())).toEqual(['2 × ⌀5 depth 12', 'counterbore ⌀9 depth 3']);
     expect(holeCallout(document, [], 'e:f:e1:side:hole', 4, createParameterEngine())).toEqual(['⌀8']);
+    // A drill point at the bottom (CAD-156).
+    const pointed: ComponentDocument = { ...document, timeline: [{ ...hole, kind: 'simple', drillPoint: true }] };
+    expect(holeCallout(pointed, [], 'f:h1:point:a', 2.5, createParameterEngine())).toEqual(['2 × ⌀5 depth 12, 118° point']);
   });
 });

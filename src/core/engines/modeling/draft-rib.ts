@@ -1,6 +1,7 @@
 import { adopt, type NamedShape } from '@core/access/shape';
 import type { PlaneFrame, Vec3 } from '@core/contracts';
 import { draw, drawCircle, type Drawing, type Face, getOC, type Shape3D } from 'replicad';
+import { cut, fuse, solidsOf } from './booleans';
 import { dot3, normalOf, sub3, toPlane } from './geometry';
 import type { PathPiece } from './modeling-engine';
 import { nameShape, namedSurfaces } from './naming';
@@ -45,11 +46,8 @@ export function draftFaces(named: NamedShape, faces: readonly Face[], frame: Pla
   }
 }
 
-/**
- * A rib: the path's curves thickened to `thickness` (half on each side; square ends, round joints) and
- * extruded `depth` along the plane's normal (or against it, or half each way).
- */
-export function ribTool(feature: string, frame: PlaneFrame, path: readonly PathPiece[], thickness: number, depth: number, direction: 'normal' | 'reverse' | 'symmetric'): NamedShape {
+/** The path's curves thickened to `thickness` (half on each side; square ends, round joints), in the plane's (u, v). */
+function ribOutline(frame: PlaneFrame, path: readonly PathPiece[], thickness: number): Drawing {
   const half = thickness / 2;
   const flat = (p: Vec3): [number, number] => {
     const d = sub3(p, frame.origin);
@@ -101,7 +99,15 @@ export function ribTool(feature: string, frame: PlaneFrame, path: readonly PathP
   }
   for (const p of joints) pieces.push(drawCircle(half).translate(p[0], p[1]));
   const [first, ...rest] = pieces as [Drawing, ...Drawing[]];
-  const outline = rest.reduce((all, piece) => all.fuse(piece), first);
+  return rest.reduce((all, piece) => all.fuse(piece), first);
+}
+
+/**
+ * A rib: the path's curves thickened to `thickness` and extruded `depth` along the plane's normal (or
+ * against it, or half each way).
+ */
+export function ribTool(feature: string, frame: PlaneFrame, path: readonly PathPiece[], thickness: number, depth: number, direction: 'normal' | 'reverse' | 'symmetric'): NamedShape {
+  const outline = ribOutline(frame, path, thickness);
   const normal = normalOf(frame);
   const from = direction === 'normal' ? 0 : direction === 'reverse' ? -depth : -depth / 2;
   const shape = outline.sketchOnPlane(toPlane(frame, from)).extrude(depth) as Shape3D;
@@ -113,6 +119,43 @@ export function ribTool(feature: string, frame: PlaneFrame, path: readonly PathP
     (f, surface) => {
       if (surface.type !== 'plane' || Math.abs(Math.abs(dot3(surface.normal, normal)) - 1) > 1e-6) return `f:${feature}:side`;
       return along(f.center.toTuple() as Vec3) < base + depth / 2 ? `f:${feature}:start` : `f:${feature}:end`;
+    },
+    feature,
+  );
+}
+
+/**
+ * A rib up to the next face (CAD-156): the outline extruded `reach` from the sketch plane (each way
+ * when symmetric), less the bodies, keeping the part from the plane to where it first meets them. The
+ * end follows the face it meets, whatever its shape.
+ */
+export function ribToNext(feature: string, frame: PlaneFrame, path: readonly PathPiece[], thickness: number, direction: 'normal' | 'reverse' | 'symmetric', bodies: readonly Shape3D[], reach: number): NamedShape {
+  const normal = normalOf(frame);
+  const along = (p: Vec3) => dot3(sub3(p, frame.origin), normal);
+  const sides = direction === 'symmetric' ? [1, -1] : [direction === 'normal' ? 1 : -1];
+  const pieces = sides.flatMap((side) => {
+    const long = ribOutline(frame, path, thickness).sketchOnPlane(toPlane(frame, side > 0 ? 0 : -reach)).extrude(reach) as Shape3D;
+    const left = bodies.length ? cut(long, ...bodies.map((b) => b.clone())) : long;
+    // How far each piece left starts and ends from the sketch plane, on this side.
+    const spans = solidsOf(left).map((solid) => {
+      const ends = solid.edges.flatMap((e) => [e.startPoint.toTuple(), e.endPoint.toTuple()] as Vec3[]).map((p) => side * along(p));
+      return { solid, near: Math.min(...ends), far: Math.max(...ends) };
+    });
+    if (!spans.length) throw new DraftRibError('The rib’s sketch lies inside the body: there is no gap to fill.');
+    const first = Math.min(...spans.map((s) => s.near));
+    const kept = spans.filter((s) => s.near < Math.max(first, 0) + 1e-6);
+    if (kept.some((s) => s.far > reach - 1e-6)) throw new DraftRibError('The rib meets no face in its direction: give it a depth instead.');
+    return kept.map((s) => s.solid);
+  });
+  const [one, ...more] = pieces as [Shape3D, ...Shape3D[]];
+  const shape = more.length ? fuse(one, ...more) : one;
+  return nameShape(
+    shape,
+    [],
+    (f) => {
+      const n = f.normalAt(f.center).toTuple() as Vec3;
+      if (Math.abs(dot3(n, normal)) < 1e-6) return `f:${feature}:side`;
+      return f.geomType === 'PLANE' && Math.abs(along(f.center.toTuple() as Vec3)) < 1e-6 ? `f:${feature}:start` : `f:${feature}:end`;
     },
     feature,
   );

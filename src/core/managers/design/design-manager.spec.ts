@@ -629,6 +629,20 @@ describe('DesignManager', () => {
       expect(before - (await volume())).toBeCloseTo(Math.PI * 2.7 ** 2 * 6, 1);
     });
 
+    it('ends blind holes in a drill point, 118° unless set (CAD-156)', async () => {
+      await plate();
+      unwrap(await session.execute({ type: 'create-sketch', id: 'sh', plane: { face: { kind: 'face', body: 'e1', name: 'f:e1:end' } } }));
+      unwrap(await session.execute({ type: 'add-sketch-geometry', sketchId: 'sh', entities: [{ id: 'hp', kind: 'point', x: 0, y: 0 }], constraints: [] }));
+      const before = await volume();
+      const hole = { id: 'h1', type: 'hole', name: '', suppressed: false, sketch: 'sh', points: ['hp'], kind: 'simple', diameter: '4 mm', extent: 'blind', depth: '3 mm', boreDiameter: '0 mm', boreDepth: '0 mm', sinkDiameter: '0 mm', sinkAngle: '90 deg', teardrop: false, bridge: false, drillPoint: true } as const;
+      unwrap(await session.execute({ type: 'add-feature', feature: hole }));
+      const cone = (angle: number) => (Math.PI * 4 * (2 / Math.tan((angle * Math.PI) / 360))) / 3;
+      expect(before - (await volume())).toBeCloseTo(Math.PI * 4 * 3 + cone(118), 2);
+      unwrap(await session.execute({ type: 'edit-feature', feature: { ...hole, pointAngle: '90 deg' } }));
+      expect(before - (await volume())).toBeCloseTo(Math.PI * 4 * 3 + cone(90), 2);
+      expect((await session.execute({ type: 'edit-feature', feature: { ...hole, pointAngle: '180 deg' } })).ok).toBe(false);
+    });
+
     it('extrudes a sketch profile into a body driven by parameters', async () => {
       await plate();
       expect(session.state().document.timeline.map((i) => i.name)).toEqual(['Sketch 1', 'Extrude 1']);

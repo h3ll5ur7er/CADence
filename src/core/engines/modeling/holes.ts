@@ -9,6 +9,8 @@ import type { Surface } from './surfaces';
 export interface HoleSpec {
   readonly diameter: number;
   readonly depth?: number;
+  /** Blind holes: the angle (radians) of a drill point below the depth (absent: a flat floor). */
+  readonly point?: number;
   readonly bore?: { readonly diameter: number; readonly depth: number };
   readonly sink?: { readonly diameter: number; readonly angle: number };
   /** A pointed top, so a hole lying on its side prints without support. */
@@ -30,8 +32,8 @@ function teardrop(radius: number): Drawing {
 
 /**
  * One hole's cutting tool at `at`, going `down` into the material. Revolved from its half section,
- * or, as a teardrop, extruded from its outline; faces named `wall`, `bore`, `sink`, `floor`, `tip`
- * with the point's id.
+ * or, as a teardrop, extruded from its outline; faces named `wall`, `bore`, `sink`, `floor`, `tip`,
+ * `point` (a drill point's cone) with the point's id.
  */
 function oneHole(feature: string, id: string, at: Vec3, down: Vec3, across: Vec3, spec: HoleSpec, depth: number): NamedShape {
   const up = scale3(down, -1);
@@ -79,11 +81,21 @@ function oneHole(feature: string, id: string, at: Vec3, down: Vec3, across: Vec3
   }
   if (depth <= start + 1e-9) throw new HoleError('The hole is not deeper than its counterbore or countersink.');
   cylinder(r, start, depth);
+  // A drill point: the cone a twist drill leaves, below the depth to the full diameter.
+  const tip = spec.point === undefined ? 0 : r / Math.tan(spec.point / 2);
+  if (tip > 0)
+    revolve([
+      [0, -depth],
+      [r, -depth],
+      [0, -depth - tip],
+    ]);
   const [first, ...more] = pieces as [Shape3D, ...Shape3D[]];
   const shape = more.reduce((all, piece) => all.fuse(piece), first);
   const axisDistance = (p: Vec3) => length3(cross3(sub3(p, at), down));
+  const below = (face: Face) => dot3(sub3(face.center.toTuple() as Vec3, at), down) > depth + 1e-6;
   const fresh = (face: Face, surface: Surface): string => {
     const role = (() => {
+      if (tip > 0 && surface.type !== 'plane' && surface.type !== 'cylinder' && below(face)) return 'point';
       if (surface.type === 'cylinder') return near(surface.radius, r) ? 'wall' : 'bore';
       if (surface.type === 'plane') return Math.abs(dot3(surface.normal, down)) > 1 - 1e-6 ? 'floor' : 'tip';
       // The countersink is a cone, which the kernel build cannot read: the one other surface of a hole.

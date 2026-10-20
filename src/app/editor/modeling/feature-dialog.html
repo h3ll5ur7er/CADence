@@ -157,10 +157,19 @@
             <input id="feature-thickness" autocomplete="off" [value]="f.thickness" (change)="set({ thickness: length($event) })" />
           </label>
           <label class="field">
+            Extent
+            <select id="feature-rib-extent" [value]="f.extent ?? 'depth'" (change)="set({ extent: $any(value($event)) })">
+              <option value="depth">To a depth</option>
+              <option value="next">Up to the next face</option>
+            </select>
+          </label>
+        </div>
+        @if (f.extent !== 'next') {
+          <label class="field">
             Depth
             <input id="feature-depth" autocomplete="off" [value]="f.depth" (change)="set({ depth: length($event) })" />
           </label>
-        </div>
+        }
         <label class="field">
           Direction
           <select id="feature-direction" [value]="f.direction" (change)="set({ direction: $any(value($event)) })">
@@ -432,6 +441,15 @@
             Depth
             <input id="feature-depth" autocomplete="off" [value]="f.depth" (change)="set({ depth: length($event) })" />
           </label>
+          <div class="row two">
+            <label class="check"><input type="checkbox" id="feature-drill-point" [checked]="f.drillPoint ?? false" (change)="set({ drillPoint: $any($event.target).checked })" /> Drill point</label>
+            @if (f.drillPoint) {
+              <label class="field">
+                Point angle
+                <input id="feature-point-angle" autocomplete="off" placeholder="118 deg" [value]="f.pointAngle ?? '118 deg'" (change)="set({ pointAngle: value($event) })" />
+              </label>
+            }
+          </div>
         }
         @if (f.kind === 'counterbore') {
           <div class="row two">

@@ -2,8 +2,8 @@ import type { ComponentDocument, HoleFeature, Parameter, ThreadFeature } from '@
 import type { ParameterEngine } from '@core/engines/parameter';
 import { formatValue } from './layout';
 
-/** The feature that made a named hole face or edge: `f:<feature>:wall:…`, `bore`, `sink`, `floor`. */
-const holeFeatureOf = (name: string) => /(?:^|[|&:])f:([^:|&~@]+):(?:wall|bore|sink|floor|tip)/.exec(name)?.[1];
+/** The feature that made a named hole face or edge: `f:<feature>:wall:…`, `bore`, `sink`, `floor`, `point`. */
+const holeFeatureOf = (name: string) => /(?:^|[|&:])f:([^:|&~@]+):(?:wall|bore|sink|floor|tip|point)/.exec(name)?.[1];
 
 /**
  * What a hole callout says about the circle `name` (radius `radius` mm): from its hole feature
@@ -22,7 +22,8 @@ export function holeCallout(document: ComponentDocument | undefined, projectPara
   };
   const count = hole.points.length > 1 ? `${hole.points.length} × ` : '';
   const thread = document.timeline.find((i): i is ThreadFeature => i.type === 'thread' && holeFeatureOf(i.face.name) === hole.id);
-  const lines = [`${count}⌀${value(hole.diameter)} ${hole.extent === 'through' ? 'thru' : `depth ${value(hole.depth)}`}`];
+  const point = hole.extent === 'blind' && hole.drillPoint ? `, ${value(hole.pointAngle?.trim() || '118 deg', 'angle')}° point` : '';
+  const lines = [`${count}⌀${value(hole.diameter)} ${hole.extent === 'through' ? 'thru' : `depth ${value(hole.depth)}${point}`}`];
   if (hole.kind === 'counterbore') lines.push(`counterbore ⌀${value(hole.boreDiameter)} depth ${value(hole.boreDepth)}`);
   if (hole.kind === 'countersink') lines.push(`countersink ⌀${value(hole.sinkDiameter)} × ${value(hole.sinkAngle, 'angle')}°`);
   if (thread) lines.unshift(`${count}${thread.size} thread${thread.length ? ` depth ${value(thread.length)}` : ''}`);

@@ -17,7 +17,7 @@ export function valid(shape: Shape3D): boolean {
 export class BooleanError extends Error {}
 
 /** The solids of a shape: itself, or those of a compound. */
-function solidsOf(shape: Shape3D): Shape3D[] {
+export function solidsOf(shape: Shape3D): Shape3D[] {
   const oc = getOC();
   if (shape.wrapped.ShapeType() !== oc.TopAbs_ShapeEnum.TopAbs_COMPOUND) return [shape];
   const solids: Shape3D[] = [];

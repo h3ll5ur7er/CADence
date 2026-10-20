@@ -1,4 +1,11 @@
 <div class="stage">
+  <cad-changed-elsewhere [shown]="store.elsewhere.pending()" (reload)="reopen()" (keep)="store.elsewhere.pending.set(false)" />
+  @if (store.state()?.document?.library; as link) {
+    <p class="library-note" role="note" data-testid="library-note">
+      <cad-icon name="library" [size]="14" />
+      From the library {{ link.libraryName }}{{ link.version.startsWith('standard') ? '' : ', version ' + link.version.slice(0, 7) }}: read only here, it changes in the library.
+    </p>
+  }
   <cad-viewport
     #viewport
     (thumbnail)="thumbnails.save($event)"

@@ -1,11 +1,12 @@
 import { computed, DestroyRef, inject, Injectable, resource, signal } from '@angular/core';
-import { type DocumentId, type DocumentSummary, type ExplodedView, type InstancePattern, type Interference, isImportedModel, type Joint, jointDofs, type JointOrigin, type JointType, type Matrix4, type Measurement, type MotionFrame, type MotionLink, type ProjectId, type Result, sourceKey, type Vec3 } from '@core/contracts';
+import { type DocumentId, type DocumentSummary, type LibraryPart, type LibrarySummary, standardLibraryId, type ExplodedView, type InstancePattern, type Interference, isImportedModel, type Joint, jointDofs, type JointOrigin, type JointType, type Matrix4, type Measurement, type MotionFrame, type MotionLink, type ProjectId, type Result, sourceKey, type Vec3 } from '@core/contracts';
 import type { AssemblyCommand, AssemblyFormat, AssemblyProperties, AssemblySession, AssemblyState, BomLine, Collision, InstructionPicture, PlacedRef } from '@core/managers/assembly';
 import { newId } from '@core/utilities/identity';
 import { compose, fromFrame, invertRigid, rotationVector, transformPoint, translation, translationOf } from '@core/utilities/math';
 import { ASSEMBLY_MANAGER, PROJECT_MANAGER } from '../../core.providers';
 import type { Pick } from '../../viewport/picking';
 import type { MoveHandle, PartDisplay } from '../../viewport/viewport-scene';
+import { ChangedElsewhere } from '../changed-elsewhere';
 
 /** One side of a joint being drawn; flat faces are remembered to mate them face to face. */
 export interface DraftSide {
@@ -23,7 +24,15 @@ export interface JointDraft {
 }
 
 export type AssemblySelection = { readonly kind: 'instance' | 'joint' | 'study' | 'link' | 'view'; readonly id: string } | undefined;
-export type AssemblyPanel = 'joint' | 'interference' | 'measure' | 'pattern' | 'bom' | undefined;
+export type AssemblyPanel = 'joint' | 'interference' | 'measure' | 'pattern' | 'bom' | 'library' | undefined;
+
+/** A library part to insert (CAD-151, CAD-152), and the hole it goes into when one is picked. */
+export interface LibraryDraft {
+  readonly library: string;
+  readonly part?: string;
+  readonly hole?: JointOrigin;
+  readonly flip: boolean;
+}
 
 /** The move handle of the selected instance: free ones move anywhere, jointed ones along their joint's free directions. */
 export type InstanceHandle = MoveHandle & { readonly instance: string; readonly joint?: Joint };
@@ -66,6 +75,8 @@ const translationX = (x: number): Matrix4 => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0
 export class AssemblyStore {
   private readonly manager = inject(ASSEMBLY_MANAGER);
   private readonly projects = inject(PROJECT_MANAGER);
+  /** The assembly changed elsewhere (another window, an agent: CAD-150). */
+  readonly elsewhere = new ChangedElsewhere(this.projects);
   private session: AssemblySession | undefined;
   private unsubscribe: (() => void) | undefined;
   private previewFrame: Promise<unknown> = Promise.resolve();
@@ -75,6 +86,11 @@ export class AssemblyStore {
   readonly selection = signal<AssemblySelection>(undefined);
   readonly panel = signal<AssemblyPanel>(undefined);
   readonly jointDraft = signal<JointDraft | undefined>(undefined);
+  readonly libraryDraft = signal<LibraryDraft | undefined>(undefined);
+  /** The libraries there are, and the parts of the one chosen. */
+  readonly libraries = signal<readonly LibrarySummary[]>([]);
+  readonly libraryParts = signal<readonly LibraryPart[]>([]);
+  private projectId: ProjectId | undefined;
   /** Poses shown instead of the document's while a slider is dragged or a study plays. */
   readonly previewPoses = signal<ReadonlyMap<string, Matrix4> | undefined>(undefined);
   readonly interference = signal<readonly Interference[] | undefined>(undefined);
@@ -144,7 +160,7 @@ export class AssemblyStore {
 
   /** Faces and edges a joint origin can be put on, while a joint is drawn; anything while measuring. */
   readonly pickable = computed(() =>
-    new Set<'face' | 'edge' | 'vertex'>(this.panel() === 'measure' ? ['face', 'edge', 'vertex'] : this.jointDraft() ? ['face', 'edge'] : ['face']),
+    new Set<'face' | 'edge' | 'vertex'>(this.panel() === 'measure' ? ['face', 'edge', 'vertex'] : this.jointDraft() || this.libraryDraft() ? ['face', 'edge'] : ['face']),
   );
 
   /** The picked joint origins, shown as selected. */
@@ -153,7 +169,7 @@ export class AssemblyStore {
       return this.measurePicks().map((r) => (r.kind === 'face' ? { kind: 'face', body: r.body, name: r.name, hint: r.hint ?? [0, 0, 0], planar: false, instance: r.instance } : { kind: r.kind, body: r.body, name: r.name, hint: r.hint ?? [0, 0, 0], instance: r.instance }));
     }
     const draft = this.jointDraft();
-    const origins = draft ? [draft.a?.origin, draft.b?.origin] : [];
+    const origins = draft ? [draft.a?.origin, draft.b?.origin] : this.panel() === 'library' ? [this.libraryDraft()?.hole] : [];
     return origins.flatMap((o) =>
       o?.ref ? [o.ref.kind === 'face' ? { kind: 'face', body: o.ref.body, name: o.ref.name, hint: o.ref.hint ?? [0, 0, 0], planar: false, instance: o.instance } : { kind: 'edge', body: o.ref.body, name: o.ref.name, hint: o.ref.hint ?? [0, 0, 0], instance: o.instance }] : [],
     );
@@ -168,6 +184,8 @@ export class AssemblyStore {
     this.state.set(undefined);
     this.selection.set(undefined);
     this.panel.set(undefined);
+    this.libraryDraft.set(undefined);
+    this.projectId = projectId;
     const opened = await this.manager.open(documentId);
     if (!opened.ok) {
       this.error.set(opened.error.message);
@@ -176,6 +194,8 @@ export class AssemblyStore {
     const session = opened.value;
     this.session = session;
     this.state.set(session.state());
+    // A joint being made is input the user would lose: they are asked first (CAD-150).
+    this.elsewhere.follow(documentId, () => this.state()?.document.modifiedAt, () => this.jointDraft() !== undefined, () => this.open(documentId, projectId));
     this.unsubscribe = session.subscribe((state) => this.state.set(state));
     this.insertable.set((await this.projects.listDocuments(projectId)).filter((d) => d.kind === 'component' || isImportedModel(d)));
   }
@@ -316,6 +336,55 @@ export class AssemblyStore {
     if (result && !result.ok) this.error.set(result.error.message);
   }
 
+  /** Opens the library panel: the standard parts first (CAD-151, CAD-152). */
+  async openLibrary(): Promise<void> {
+    this.selection.set(undefined);
+    this.jointDraft.set(undefined);
+    this.panel.set('library');
+    this.libraries.set(await this.projects.listLibraries());
+    await this.chooseLibrary(this.libraryDraft()?.library ?? standardLibraryId);
+  }
+
+  async chooseLibrary(library: string): Promise<void> {
+    this.libraryDraft.set({ library, flip: this.libraryDraft()?.flip ?? false, ...(this.libraryDraft()?.hole ? { hole: this.libraryDraft()?.hole as JointOrigin } : {}) });
+    const parts = await this.projects.libraryParts(library);
+    this.libraryParts.set(parts.ok ? parts.value : []);
+    this.error.set(parts.ok ? undefined : parts.error.message);
+  }
+
+  updateLibrary(change: Partial<LibraryDraft>): void {
+    const draft = this.libraryDraft();
+    if (draft) this.libraryDraft.set({ ...draft, ...change });
+  }
+
+  /**
+   * Inserts the library part chosen: the project takes it (once), and the instance goes onto the hole
+   * picked with a revolute joint, its origin (a screw's head underside) on the hole's axis.
+   */
+  async insertFromLibrary(): Promise<void> {
+    const draft = this.libraryDraft();
+    const state = this.state();
+    if (!draft?.part || !state || !this.projectId) return;
+    const taken = await this.projects.useLibraryPart(this.projectId, draft.library, draft.part);
+    if (!taken.ok) return void this.error.set(taken.error.message);
+    const id = newId();
+    const edge = rightEdge(state);
+    const transform = draft.hole || edge === undefined ? translationX(0) : translationX(edge + insertGap);
+    const joint: Joint | undefined = draft.hole && { id: newId(), name: '', type: 'revolute', a: draft.hole, b: { instance: id }, flip: draft.flip, values: [0], limits: [null] };
+    const grounded = state.document.instances.length === 0;
+    if (await this.run({ type: 'insert-instance', instance: { id, component: taken.value.id, name: '', transform, grounded }, ...(joint ? { joint } : {}) })) {
+      // The next one goes into another hole.
+      const { hole: _, ...rest } = draft;
+      this.libraryDraft.set(rest);
+      this.insertable.set((await this.projects.listDocuments(this.projectId)).filter((d) => d.kind === 'component' || isImportedModel(d)));
+    }
+  }
+
+  closeLibrary(): void {
+    this.libraryDraft.set(undefined);
+    if (this.panel() === 'library') this.panel.set(undefined);
+  }
+
   startJoint(type: JointType = 'revolute'): void {
     this.selection.set(undefined);
     this.panel.set('joint');
@@ -336,6 +405,12 @@ export class AssemblyStore {
       const picks = this.measurePicks().some(same) ? this.measurePicks().filter((r) => !same(r)) : [...this.measurePicks(), ref];
       this.measurePicks.set(picks);
       void this.measure(picks);
+      return;
+    }
+    if (this.panel() === 'library') {
+      // The hole a library part goes into: a round face or circular edge (CAD-152).
+      const library = this.libraryDraft();
+      if (library && !this.state()?.copies.has(pick.instance)) this.libraryDraft.set({ ...library, hole: { instance: pick.instance, ref: { kind: pick.kind, body: pick.body, name: pick.name, hint: pick.hint } } });
       return;
     }
     const draft = this.jointDraft();
@@ -497,6 +572,7 @@ export class AssemblyStore {
 
   private close(): void {
     this.unsubscribe?.();
+    this.elsewhere.close();
     this.session?.close();
     this.session = undefined;
   }

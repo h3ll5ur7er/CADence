@@ -1,4 +1,5 @@
 <div class="stage">
+  <cad-changed-elsewhere [shown]="store.elsewhere.pending()" (reload)="reopen()" (keep)="store.elsewhere.pending.set(false)" />
   <cad-viewport
     #viewport
     (thumbnail)="thumbnails.save($event)"
@@ -143,6 +144,7 @@
             } @empty {
               <button type="button" role="menuitem" disabled>No components in this project yet</button>
             }
+            <button type="button" role="menuitem" class="from-library" (click)="menu.set(undefined); store.openLibrary()">From a library…</button>
           </div>
         }
       </div>
@@ -218,6 +220,8 @@
   @let selection = store.selection();
   @if (store.panel() === 'joint') {
     <cad-joint-panel />
+  } @else if (store.panel() === 'library') {
+    <cad-library-panel />
   } @else if (store.panel() === 'pattern') {
     <cad-pattern-panel />
   } @else if (store.panel() === 'bom') {

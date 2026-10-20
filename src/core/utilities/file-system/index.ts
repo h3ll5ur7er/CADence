@@ -17,6 +17,12 @@ export interface FileSystem {
   remove(path: string): Promise<void>;
 }
 
+/**
+ * Starts watching a file system's folders (the desktop's project folders, CAD-150): the listener hears
+ * the paths another process changed, in batches.
+ */
+export type FolderWatch = (listener: (paths: readonly string[]) => void) => void;
+
 export const joinPath = (...parts: string[]): string => parts.filter(Boolean).join('/');
 
 export { IndexedDbFileSystem } from './indexed-db';

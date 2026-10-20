@@ -28,6 +28,7 @@ import { EditorStatus } from './editor-status';
 import { HistoryDialog } from './history-dialog';
 import { AboutDialog } from '../about/about-dialog';
 import { SyncDialog } from './sync-dialog';
+import { ProjectDialog } from './project-dialog';
 import { ThumbnailSaver } from './thumbnail-saver';
 import { AssemblyMode } from './modes/assembly-mode';
 import { ComponentMode } from './modes/component-mode';
@@ -39,7 +40,7 @@ const storageLabels = { browser: 'This browser', 'project-folders': 'Project fol
 
 @Component({
   selector: 'cad-editor-page',
-  imports: [RouterLink, Icon, DocumentsPanel, ComponentMode, AssemblyMode, DrawingMode, ImportedMode, NameDialog, ConfirmDialog, SettingsDialog, HistoryDialog, SyncDialog, AboutDialog],
+  imports: [RouterLink, Icon, DocumentsPanel, ComponentMode, AssemblyMode, DrawingMode, ImportedMode, NameDialog, ConfirmDialog, SettingsDialog, HistoryDialog, SyncDialog, AboutDialog, ProjectDialog],
   providers: [EditorStatus, ThumbnailSaver],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './editor-page.html',
@@ -57,6 +58,7 @@ export class EditorPage {
   protected readonly kindLabels = kindLabels;
   protected readonly storage = storageLabels[inject(STORAGE_KIND)];
   protected readonly message = signal<string | undefined>(undefined);
+  protected readonly emptySet: ReadonlySet<string> = new Set();
   private readonly projectManager = inject(PROJECT_MANAGER);
   private readonly router = inject(Router);
   private readonly nameDialog = viewChild.required(NameDialog);
@@ -64,6 +66,7 @@ export class EditorPage {
   private readonly syncDialog = viewChild.required(SyncDialog);
   private readonly aboutDialog = viewChild.required(AboutDialog);
   private readonly history = viewChild.required(HistoryDialog);
+  private readonly notes = viewChild.required(ProjectDialog);
 
   protected readonly project = resource({
     params: () => asProjectId(this.projectId()),
@@ -73,7 +76,19 @@ export class EditorPage {
     params: () => asProjectId(this.projectId()),
     loader: ({ params }) => this.projectManager.listDocuments(params),
   });
-  protected readonly active = computed(() => this.documents.value()?.find((d) => d.id === this.documentId()));
+  /**
+   * The open document. Lists read again (a change elsewhere, CAD-150) give it anew; it is the same one
+   * as long as it has the same name, so the editor showing it stays open (its store follows changes).
+   */
+  protected readonly active = computed(() => this.documents.value()?.find((d) => d.id === this.documentId()), {
+    // An imported file has no editor: a replaced one is shown anew.
+    equal: (a, b) => a?.id === b?.id && a?.name === b?.name && a?.library?.version === b?.library?.version && (a?.kind !== 'imported' || a.modifiedAt === b?.modifiedAt),
+  });
+  /** Library parts whose library has a newer version (CAD-151). */
+  protected readonly updates = resource({
+    params: () => ({ project: asProjectId(this.projectId()), documents: this.documents.value() }),
+    loader: async ({ params }) => new Set<string>(params.documents?.some((d) => d.library) ? (await this.projectManager.libraryUpdates(params.project)).map((u) => u.document.id) : []),
+  });
 
   constructor() {
     effect(() => this.thumbnails.document.set(this.documentId() ? asDocumentId(this.documentId() as string) : undefined));
@@ -101,6 +116,24 @@ export class EditorPage {
       ]);
     });
     inject(DestroyRef).onDestroy(() => withdraw());
+    // Documents and the project changed in other tabs, windows and programs (an agent's MCP server: CAD-150).
+    const stop = this.projectManager.watch((change) => {
+      if (change.kind === 'projects' && change.projectId && change.projectId !== this.projectId()) return;
+      if (change.kind === 'document' && change.gone && change.documentId === this.documentId()) void this.router.navigate(['/projects', this.projectId()]);
+      this.refresh();
+    });
+    inject(DestroyRef).onDestroy(stop);
+  }
+
+  protected openNotes(): void {
+    const project = this.project.value();
+    if (project) void this.notes().open(project);
+  }
+
+  protected async updatePart(document: DocumentSummary): Promise<void> {
+    const result = await this.projectManager.updateLibraryParts(document.projectId, [document.id]);
+    this.message.set(result.ok ? undefined : result.error.message);
+    this.refresh();
   }
 
   protected async create(kind: CreatableDocumentKind): Promise<void> {
@@ -148,7 +181,7 @@ export class EditorPage {
   protected async remove(document: DocumentSummary): Promise<void> {
     const confirmed = await this.confirmDialog().confirm({
       heading: `Delete “${document.name}”?`,
-      message: 'The document is removed from this project. It cannot be undone.',
+      message: 'The document goes to the trash, where it stays for 30 days with its history. Restore it from the trash on the home page.',
       confirmLabel: 'Delete',
     });
     if (!confirmed) return;

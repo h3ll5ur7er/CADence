@@ -80,6 +80,7 @@ ul {
 
 .item-actions {
   display: flex;
+  align-items: center;
   padding-right: 2px;
   opacity: 0;
 
@@ -87,6 +88,25 @@ ul {
     width: 24px;
     height: 24px;
   }
+
+  // A library part with a newer version shows its update at all times.
+  &.shown {
+    opacity: 1;
+  }
+
+  .update {
+    height: 22px;
+    padding: 0 var(--space-2);
+    font-size: 11px;
+  }
+}
+
+.from {
+  display: block;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
 }
 
 @media (hover: none) {

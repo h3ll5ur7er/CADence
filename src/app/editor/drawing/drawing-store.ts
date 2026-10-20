@@ -2,6 +2,7 @@ import { computed, DestroyRef, inject, Injectable, signal } from '@angular/core'
 import { type DimensionType, type DocumentId, type DocumentSummary, nextDimensionAnchor, type ProjectId, type Vec2, type ViewAnchor } from '@core/contracts';
 import type { DrawingCommand, DrawingSession, DrawingState, SheetAnchor } from '@core/managers/drawing';
 import { DRAWING_MANAGER, PROJECT_MANAGER } from '../../core.providers';
+import { ChangedElsewhere } from '../changed-elsewhere';
 
 /** What a click on the sheet does. */
 export type DrawingTool =
@@ -22,6 +23,8 @@ export type DrawingSelection = { readonly kind: 'view' | 'annotation'; readonly 
 export class DrawingStore {
   private readonly manager = inject(DRAWING_MANAGER);
   private readonly projects = inject(PROJECT_MANAGER);
+  /** The drawing changed elsewhere (another window, an agent: CAD-150). */
+  readonly elsewhere = new ChangedElsewhere(this.projects);
   private session: DrawingSession | undefined;
   private unsubscribe: (() => void) | undefined;
 
@@ -53,6 +56,8 @@ export class DrawingStore {
     }
     this.session = opened.value;
     this.state.set(this.session.state());
+    // An annotation half made is input the user would lose: they are asked first (CAD-150).
+    this.elsewhere.follow(documentId, () => this.state()?.document.modifiedAt, () => this.picked().length > 0, () => this.open(documentId, projectId));
     this.unsubscribe = this.session.subscribe((state) => this.state.set(state));
     const sources = (await this.projects.listDocuments(projectId)).filter((d) => d.kind === 'component' || d.kind === 'assembly');
     this.sources.set(sources);
@@ -127,6 +132,7 @@ export class DrawingStore {
 
   private close(): void {
     this.unsubscribe?.();
+    this.elsewhere.close();
     this.session?.close();
     this.session = undefined;
   }

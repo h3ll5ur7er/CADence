@@ -18,6 +18,8 @@ import { LinkPanel } from '../assembly/link-panel';
 import { PictureDialog } from '../picture-dialog';
 import { EditorStatus } from '../editor-status';
 import { ThumbnailSaver } from '../thumbnail-saver';
+import { ChangedElsewhereNotice } from '../changed-elsewhere';
+import { LibraryPanel } from '../assembly/library-panel';
 
 const exportFormats: readonly { format: AssemblyFormat; label: string }[] = [
   { format: 'step', label: 'STEP (one solid per instance)' },
@@ -37,13 +39,19 @@ const positionOf = (m: Matrix4): Position => {
 /** Assembly mode: instances of components, joints between them, motion studies. */
 @Component({
   selector: 'cad-assembly-mode',
-  imports: [Viewport, PictureDialog, Icon, JointPanel, JointProperties, MotionPanel, PatternPanel, LinkPanel, ExplodePanel],
+  imports: [ChangedElsewhereNotice, LibraryPanel, Viewport, PictureDialog, Icon, JointPanel, JointProperties, MotionPanel, PatternPanel, LinkPanel, ExplodePanel],
   providers: [AssemblyStore],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './assembly-mode.html',
   styleUrls: ['./mode-layout.scss', './editor-tools.scss', './assembly-mode.scss'],
 })
 export class AssemblyMode {
+  /** Opens the document again, with what another program changed (CAD-150). */
+  protected reopen(): void {
+    const { id, projectId } = this.document();
+    void this.store.open(id, projectId);
+  }
+
   readonly document = input.required<DocumentSummary>();
   protected readonly status = inject(EditorStatus);
   protected readonly thumbnails = inject(ThumbnailSaver);

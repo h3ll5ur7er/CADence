@@ -34,6 +34,7 @@ import type { Pick, PickKind, TopologyPick } from '../../viewport/picking';
 import type { StressField } from '../../viewport/surface-analysis';
 import { applyPick, defaultFeature, type FeatureDraft, type PickTarget, pickableFor, selectionOf } from '../modeling/feature-drafts';
 import type { SketchClipboard } from './selection';
+import { ChangedElsewhere } from '../changed-elsewhere';
 import type { TextDraft, Tool } from './sketch-tools';
 
 /** What the properties column shows besides feature dialogs and sketch info. */
@@ -193,8 +194,14 @@ export class DesignStore {
     return preview?.sketch.id === id ? preview : this.state()?.sketches.get(id);
   });
 
+  /** The component changed elsewhere (another window, an agent: CAD-150). */
+  readonly elsewhere = new ChangedElsewhere(this.projects);
+
   constructor() {
-    inject(DestroyRef).onDestroy(() => this.unsubscribe?.());
+    inject(DestroyRef).onDestroy(() => {
+      this.unsubscribe?.();
+      this.elsewhere.close();
+    });
   }
 
   /** The parameters of the open component's project (all of them, also those the component overrides). */
@@ -214,6 +221,8 @@ export class DesignStore {
     }
     this.session = opened.value;
     this.state.set(this.session.state());
+    // A feature dialog open or a sketch being edited is input the user would lose: they are asked first.
+    this.elsewhere.follow(documentId, () => this.state()?.document.modifiedAt, () => this.draft() !== undefined || this.editing() !== undefined, () => this.open(documentId, projectId));
     this.unsubscribe = this.session.subscribe((state) => {
       this.state.set(state);
       if (this.editing() && !state.sketches.has(this.editing() as string)) this.finishEditing();

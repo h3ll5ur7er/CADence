@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import type { DocumentId, CreatableDocumentKind, DocumentKind, DocumentSummary } from '@core/contracts';
 import { carriesFiles, droppedFiles } from '../shared/drop';
@@ -14,7 +14,10 @@ const groups: readonly { kind: DocumentKind; label: string; icon: IconName }[] =
   { kind: 'imported', label: 'Imported', icon: 'imported' },
 ];
 
-/** The project's documents, grouped by kind, with create, import (picked or dropped), duplicate, replace, rename and delete. */
+/**
+ * The project's documents, grouped by kind, with create, import (picked or dropped), duplicate,
+ * replace, rename and delete; parts taken from libraries in a group of their own, with updates (CAD-151).
+ */
 @Component({
   selector: 'cad-documents-panel',
   host: {
@@ -44,6 +47,10 @@ export class DocumentsPanel {
   readonly duplicate = output<DocumentSummary>();
   /** A newer file for an imported document. */
   readonly replace = output<{ readonly document: DocumentSummary; readonly file: File }>();
+  /** Library parts whose library has a newer version of them. */
+  readonly updates = input<ReadonlySet<string>>(new Set());
+  /** Brings a library part to its library's latest version. */
+  readonly update = output<DocumentSummary>();
   /** Files are dragged over the panel. */
   protected readonly dropping = signal(false);
 
@@ -51,8 +58,12 @@ export class DocumentsPanel {
   protected readonly accept = importAccept;
 
   protected ofKind(kind: DocumentKind): DocumentSummary[] {
-    return this.documents().filter((d) => d.kind === kind);
+    return this.documents().filter((d) => d.kind === kind && !d.library);
   }
+
+  /** The parts taken from libraries, and what they brought along. */
+  protected readonly libraryParts = computed(() => this.documents().filter((d) => d.library));
+  protected readonly iconOf = (kind: DocumentKind): IconName => groups.find((g) => g.kind === kind)?.icon ?? 'component';
 
   protected replaced(document: DocumentSummary, input: HTMLInputElement): void {
     const file = input.files?.[0];

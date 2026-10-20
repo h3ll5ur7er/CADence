@@ -56,3 +56,17 @@ export class FileSystemDocumentAccess implements DocumentAccess {
 
 const folder = (projectId: string) => joinPath('projects', projectId, 'documents');
 const path = (projectId: string, id: string) => joinPath(folder(projectId), `${id}.json`);
+
+/**
+ * What a changed path of the project folders is (CAD-150): a document's file, a project's record,
+ * or nothing lists show (versions, results, assets, files being written).
+ */
+export function folderChange(path: string): { readonly kind: 'document'; readonly projectId: ProjectId; readonly documentId: DocumentId } | { readonly kind: 'project'; readonly projectId: ProjectId } | undefined {
+  const parts = path.replaceAll('\\', '/').split('/').filter(Boolean);
+  const at = parts.lastIndexOf('projects');
+  const [projectId, folder, file] = at < 0 ? [] : parts.slice(at + 1);
+  if (!projectId) return undefined;
+  if (folder === 'project.json' && file === undefined) return { kind: 'project', projectId: projectId as ProjectId };
+  const documentId = folder === 'documents' && file?.endsWith('.json') && parts.length === at + 4 ? file.slice(0, -'.json'.length) : undefined;
+  return documentId ? { kind: 'document', projectId: projectId as ProjectId, documentId: documentId as DocumentId } : undefined;
+}

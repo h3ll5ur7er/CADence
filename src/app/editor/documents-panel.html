@@ -55,6 +55,31 @@
       </ul>
     }
   }
+  @if (libraryParts().length > 0) {
+    <h3 class="eyebrow">Library parts</h3>
+    <ul aria-label="Library parts">
+      @for (doc of libraryParts(); track doc.id) {
+        <li class="item" [class.active]="doc.id === activeId()">
+          <a [routerLink]="['/projects', doc.projectId, 'documents', doc.id]" [attr.aria-current]="doc.id === activeId() ? 'page' : null" [title]="'From ' + doc.library?.libraryName">
+            <span class="thumb" data-testid="document-thumbnail">
+              <cad-thumbnail [source]="loader(doc.id)" [key]="doc.modifiedAt + ':' + thumbnailsSaved()">
+                <cad-icon [name]="iconOf(doc.kind)" />
+              </cad-thumbnail>
+            </span>
+            <span class="name">{{ doc.name }}<small class="from">{{ doc.library?.libraryName }}</small></span>
+          </a>
+          <span class="item-actions" [class.shown]="updates().has(doc.id)">
+            @if (updates().has(doc.id)) {
+              <button type="button" class="btn update" [attr.aria-label]="'Update ' + doc.name" title="The library has a newer version" (click)="update.emit(doc)">Update</button>
+            }
+            <button type="button" class="icon-btn" title="Remove from the project" [attr.aria-label]="'Delete ' + doc.name" (click)="remove.emit(doc)">
+              <cad-icon name="trash" [size]="14" />
+            </button>
+          </span>
+        </li>
+      }
+    </ul>
+  }
   @if (documents().length === 0) {
     <p class="hint">This project is empty. Create a component to start modeling.</p>
   }

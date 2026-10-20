@@ -32,8 +32,9 @@ export function libraryCopies(options: {
   const { part, library, link, taken, projectId, now, newId } = options;
   const byId = new Map(library.map((d) => [d.id as string, d]));
   const needed: CadDocument[] = [part];
-  for (let i = 0; i < needed.length; i++) {
-    for (const [, value] of JSON.stringify(needed[i]).matchAll(jsonStrings)) {
+  // What is found is searched too (an array grows under for-of).
+  for (const document of needed) {
+    for (const [, value] of JSON.stringify(document).matchAll(jsonStrings)) {
       const used = value === undefined ? undefined : byId.get(value);
       if (used && used.id !== part.id && !needed.includes(used)) needed.push(used);
     }

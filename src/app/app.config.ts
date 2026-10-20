@@ -8,6 +8,7 @@ import { routes } from './app.routes';
 import { provideCore } from './core.providers';
 import { TauriFileDelivery } from './platform/tauri-file-delivery';
 import { TauriFileSystem } from './platform/tauri-file-system';
+import { watchProjectFolders } from './platform/tauri-folder-watch';
 import { openWebLinksInBrowser } from './platform/tauri-links';
 import { tauriAgentCli } from './platform/tauri-agent-cli';
 import { tauriOpenedFiles } from './platform/tauri-opened-files';
@@ -34,8 +35,10 @@ const options = {
 
 /** The host decides where projects live and how exports are saved. */
 const desktop = isTauri();
-const core = desktop
-  ? createDesktopCore(new TauriFileSystem(), new TauriFileDelivery(), options)
+const tauriFiles = desktop ? new TauriFileSystem() : undefined;
+// The desktop app follows what agents and scripts change in its project folders (CAD-150).
+const core = tauriFiles
+  ? createDesktopCore(tauriFiles, new TauriFileDelivery(), { ...options, watch: watchProjectFolders(tauriFiles) })
   : createBrowserCore(options);
 if (desktop) openWebLinksInBrowser();
 

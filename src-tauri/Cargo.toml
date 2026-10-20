@@ -18,7 +18,8 @@ tauri-build = { version = "2.7.2", features = [] }
 tauri = { version = "2.12.3", features = [] }
 # Plugin settings in tauri.conf.json are embedded as JSON by `generate_context!`.
 serde_json = "1"
-tauri-plugin-fs = "2"
+# `watch`: the app follows changes other processes (agents) make in its project folders (CAD-150).
+tauri-plugin-fs = { version = "2", features = ["watch"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "~2.6"
 tauri-plugin-process = "~2.4"

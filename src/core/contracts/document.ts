@@ -145,10 +145,10 @@ export type CadDocument = ComponentDocument | AssemblyDocument | DrawingDocument
 
 /**
  * 2: assemblies got motion studies. 3: the fields added by phases 21 to 33 (joint leans, view
- * configurations, …), so that older apps refuse documents they would show wrongly (CAD-145). Raise it
- * whenever a field is added that an older app must not ignore.
+ * configurations, …), so that older apps refuse documents they would show wrongly (CAD-145). 4: plugin
+ * features (CAD-174). Raise it whenever a field is added that an older app must not ignore.
  */
-export const currentSchemaVersion = 3;
+export const currentSchemaVersion = 4;
 
 export function summarize(document: CadDocument): DocumentSummary {
   const { id, projectId, kind, name, createdAt, modifiedAt } = document;

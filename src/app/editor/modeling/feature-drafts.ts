@@ -26,6 +26,7 @@ export interface FeatureDraft {
 }
 
 export const featureLabels: Readonly<Record<FeatureType, string>> = {
+  plugin: 'Plugin feature',
   insert: 'Insert body',
   extrude: 'Extrude',
   revolve: 'Revolve',
@@ -103,6 +104,9 @@ export function defaultFeature(type: FeatureType, id: string, state: DesignState
   const bodyIds = state.bodies.map((b) => b.body);
   const tools = lastTool ? [lastTool.id] : [];
   switch (type) {
+    // Plugin features are added from the Scripts panel, which knows the plugin (CAD-174).
+    case 'plugin':
+      return { ...base, type, plugin: '', version: '', feature: '', plane: 'XY', parameters: {}, operation };
     case 'insert':
       return { ...base, type, document: importedModels[0] ?? '' };
     case 'extrude':
@@ -278,6 +282,7 @@ export function selectionOf(draft: FeatureDraft): Pick[] {
     case 'path-pattern':
     case 'hole':
     case 'part':
+    case 'plugin':
       return [];
   }
 }

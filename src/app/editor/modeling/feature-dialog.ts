@@ -34,6 +34,7 @@ const operations: readonly { value: BodyOperation; label: string }[] = [
 ];
 
 const hints: Readonly<Record<Feature['type'], string>> = {
+  plugin: "A plugin of the project builds it from these values; they may use the component's parameters.",
   insert: 'Brings an imported STEP, STL, OBJ or 3MF file in as bodies you can sketch on, cut and round.',
   extrude: 'Click profiles in the view to add or remove them.',
   revolve: 'Click profiles in the view; the axis can be a construction line of the sketch or an edge.',
@@ -181,6 +182,14 @@ export class FeatureDialog {
   protected readonly planeFeatures = computed(() =>
     (this.store.state()?.document.timeline ?? []).filter((i) => !isSketch(i) && i.type === 'plane' && i.id !== this.feature()?.id),
   );
+
+  protected readonly pluginParameters = (parameters: Readonly<Record<string, string>>) => Object.entries(parameters);
+
+  /** A plugin feature's parameter, as an expression. */
+  protected setPluginParameter(name: string, expression: string): void {
+    const f = this.feature();
+    if (f?.type === 'plugin') this.store.updateDraft({ ...f, parameters: { ...f.parameters, [name]: expression } });
+  }
 
   protected set(changes: Partial<Feature>, target?: PickTarget): void {
     const f = this.feature();

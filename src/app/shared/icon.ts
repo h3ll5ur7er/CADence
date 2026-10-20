@@ -97,6 +97,7 @@ const paths = {
   keyboard: 'M3 6h18v12H3zM7 10h.01M11 10h.01M15 10h.01M7 14h10',
   settings: 'M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6zM12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1',
   redo: 'M15 14l5-5-5-5M20 9H10a6 6 0 0 0 0 12h3',
+  script: 'M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16',
 } as const;
 
 export type IconName = keyof typeof paths;

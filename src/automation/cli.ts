@@ -9,6 +9,7 @@ import type { DrawingFormat, SolidFormat } from '@core/managers/design';
 import type { StoppablePort } from '@core/utilities/messaging';
 import { Cadence, CadenceError, unwrap } from './api';
 import { McpServer, serveStdio } from './mcp';
+import type { ScriptSandbox } from './script';
 
 export const usage = `CADence on the command line
 
@@ -24,6 +25,7 @@ Commands:
                                         assemblies also --explode <view> [--steps n], --study <id> --time <s>)
   convert <input> <output>              Convert a file; formats from the extensions (step, stl, obj, 3mf, dxf, svg)
   run <script> [arguments]              Run a script: its default export is called with the API and the arguments
+  install-plugin <project> <file>       Install a plugin (a .cadence-plugin.js file) into a project
   open-git <url>                        Open a project from a git repository (--cors-proxy <url>)
   sync <project>                        Sync a project with its git repository
   mcp                                   Serve CADence to AI agents over stdio (Model Context Protocol)
@@ -91,9 +93,16 @@ export async function runCli(
    * Workers and files of the program: `views` draws drawing views exactly within a time limit
    * (CAD-125), `geometry` runs the kernel off this thread (CAD-134), `resources` are the kernels'
    * WebAssembly and the fonts when not in their packages (the self-contained binary, CAD-131).
-   * Absent: all in this thread, from the packages.
+   * Absent: all in this thread, from the packages. `guide` is the user guide's pages, for the MCP server;
+   * `sandbox` runs its scripts (in a worker of their own; in this thread when absent).
    */
-  host: { readonly views?: () => StoppablePort; readonly geometry?: () => StoppablePort; readonly resources?: NodeResources } = {},
+  host: {
+    readonly views?: () => StoppablePort;
+    readonly geometry?: () => StoppablePort;
+    readonly resources?: NodeResources;
+    readonly guide?: Readonly<Record<string, string>>;
+    readonly sandbox?: ScriptSandbox;
+  } = {},
 ): Promise<number> {
   const { positional, options } = parseArguments(args);
   const [command, ...rest] = positional;
@@ -108,7 +117,8 @@ export async function runCli(
   const credentials: RemoteCredentials | undefined =
     env['CADENCE_GIT_USERNAME'] || env['CADENCE_GIT_PASSWORD'] ? { username: env['CADENCE_GIT_USERNAME'] ?? '', password: env['CADENCE_GIT_PASSWORD'] ?? '' } : undefined;
   const open = (projects?: string) => {
-    const core = createNodeCore({ ...(projects ? { projects } : {}), exports: exportsFolder, ...host });
+    const { guide: _guide, sandbox: _sandbox, ...nodeHost } = host;
+    const core = createNodeCore({ ...(projects ? { projects } : {}), exports: exportsFolder, ...nodeHost });
     return new Cadence(core, core.exports);
   };
   const need = (count: number) => {
@@ -200,6 +210,15 @@ export async function runCli(
         await cadence.settled();
         return 0;
       }
+      case 'install-plugin': {
+        need(2);
+        const cadence = open(folder);
+        const project = await cadence.project(rest[0] as string);
+        const plugin = unwrap(await cadence.projects.installPlugin(project.id, await readFile(rest[1] as string, 'utf8')));
+        io.out(`${plugin.id}  ${plugin.name} ${plugin.version}  (${[...plugin.features.map((f) => `feature ${f.name}`), ...plugin.generators.map((g) => `generator ${g.name}`), ...plugin.exporters.map((e) => `exporter ${e.name}`)].join(', ')})`);
+        await cadence.settled();
+        return 0;
+      }
       case 'open-git': {
         need(1);
         const corsProxy = typeof options['cors-proxy'] === 'string' ? { corsProxy: options['cors-proxy'] } : {};
@@ -219,7 +238,7 @@ export async function runCli(
         return 0;
       }
       case 'mcp': {
-        await serveStdio(new McpServer(open(folder), reference, version, exportsFolder));
+        await serveStdio(new McpServer(open(folder), reference, version, exportsFolder, host.guide, host.sandbox));
         return 0;
       }
       default:

@@ -27,6 +27,7 @@ import { DocumentsPanel } from './documents-panel';
 import { EditorStatus } from './editor-status';
 import { HistoryDialog } from './history-dialog';
 import { AboutDialog } from '../about/about-dialog';
+import { ScriptsDialog } from './scripts-dialog';
 import { SyncDialog } from './sync-dialog';
 import { ThumbnailSaver } from './thumbnail-saver';
 import { AssemblyMode } from './modes/assembly-mode';
@@ -39,7 +40,7 @@ const storageLabels = { browser: 'This browser', 'project-folders': 'Project fol
 
 @Component({
   selector: 'cad-editor-page',
-  imports: [RouterLink, Icon, DocumentsPanel, ComponentMode, AssemblyMode, DrawingMode, ImportedMode, NameDialog, ConfirmDialog, SettingsDialog, HistoryDialog, SyncDialog, AboutDialog],
+  imports: [RouterLink, Icon, DocumentsPanel, ComponentMode, AssemblyMode, DrawingMode, ImportedMode, NameDialog, ConfirmDialog, SettingsDialog, HistoryDialog, SyncDialog, ScriptsDialog, AboutDialog],
   providers: [EditorStatus, ThumbnailSaver],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './editor-page.html',
@@ -62,6 +63,7 @@ export class EditorPage {
   private readonly nameDialog = viewChild.required(NameDialog);
   private readonly confirmDialog = viewChild.required(ConfirmDialog);
   private readonly syncDialog = viewChild.required(SyncDialog);
+  private readonly scriptsDialog = viewChild.required(ScriptsDialog);
   private readonly aboutDialog = viewChild.required(AboutDialog);
   private readonly history = viewChild.required(HistoryDialog);
 
@@ -96,6 +98,7 @@ export class EditorPage {
         { label: 'New assembly', group: 'Project', run: () => void this.create('assembly') },
         { label: 'New drawing', group: 'Project', run: () => void this.create('drawing') },
         { label: 'Sync with git', group: 'Project', run: () => this.openSync() },
+        { label: 'Scripts and plugins', group: 'Project', run: () => this.openScripts() },
         ...documents.filter((d) => d.id === this.documentId()).map((d) => ({ label: `Versions of ${d.name}`, group: 'Project', run: () => void this.history().open(d) })),
         { label: 'About CADence', group: 'CADence', run: () => this.aboutDialog().open() },
       ]);
@@ -169,6 +172,11 @@ export class EditorPage {
   protected openSync(): void {
     const project = this.project.value();
     if (project) this.syncDialog().open(project);
+  }
+
+  protected openScripts(): void {
+    const project = this.project.value();
+    if (project) void this.scriptsDialog().open(project, this.active());
   }
 
   private open(document: DocumentSummary, replaceUrl = false): Promise<boolean> {

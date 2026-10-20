@@ -119,6 +119,7 @@ const featureMenus: readonly { id: string; label: string; icon: IconName; items:
 ];
 
 const itemIcons: Readonly<Record<TimelineItem['type'], IconName>> = {
+  plugin: 'part',
   part: 'part',
   insert: 'imported',
   sketch: 'sketch',

@@ -1,4 +1,4 @@
-import type { CadDocument, Parameter, Project, ProjectTemplate } from '@core/contracts';
+import type { CadDocument, Parameter, Project, ProjectPlugin, ProjectScript, ProjectTemplate } from '@core/contracts';
 
 /**
  * A project's content, apart from where it is kept: its settings, documents and imported originals.
@@ -13,7 +13,16 @@ export interface ProjectBundle {
   readonly originals: ReadonlyMap<string, Uint8Array>;
   /** The ids a copy's documents had in its history (`Project.copiedFrom`, CAD-147). */
   readonly copiedFrom?: Project['copiedFrom'];
+  /** Scripts and plugins kept with the project (CAD-173, CAD-174). */
+  readonly scripts?: readonly ProjectScript[];
+  readonly plugins?: readonly ProjectPlugin[];
 }
+
+/** A project's scripts and plugins, where it has any: settings files and archives leave them out otherwise. */
+export const extras = (from: Pick<Project, 'scripts' | 'plugins'>): Pick<Project, 'scripts' | 'plugins'> => ({
+  ...(from.scripts?.length ? { scripts: from.scripts } : {}),
+  ...(from.plugins?.length ? { plugins: from.plugins } : {}),
+});
 
 /** Every JSON string; ids are always whole strings, never parts of one. */
 const jsonStrings = /"((?:[^"\\]|\\.)*)"/g;
@@ -64,7 +73,7 @@ export const archiveVersion = 1;
 export function archiveFiles(bundle: ProjectBundle, history: readonly { path: string; bytes: Uint8Array }[] = []): { name: string; bytes: Uint8Array }[] {
   const text = (value: unknown) => new TextEncoder().encode(JSON.stringify(value, null, 2));
   return [
-    { name: 'cadence.json', bytes: text({ format: archiveFormat, version: archiveVersion, name: bundle.name, parameters: bundle.parameters, ...(bundle.copiedFrom ? { copiedFrom: bundle.copiedFrom } : {}) }) },
+    { name: 'cadence.json', bytes: text({ format: archiveFormat, version: archiveVersion, name: bundle.name, parameters: bundle.parameters, ...(bundle.copiedFrom ? { copiedFrom: bundle.copiedFrom } : {}), ...extras(bundle) }) },
     ...bundle.documents.map((document) => ({ name: `documents/${document.id}.json`, bytes: text({ ...document, projectId: undefined }) })),
     ...[...bundle.originals].map(([id, bytes]) => ({ name: `originals/${id}`, bytes })),
     ...history.map((file) => ({ name: `history/${file.path}`, bytes: file.bytes })),
@@ -75,7 +84,7 @@ export function archiveFiles(bundle: ProjectBundle, history: readonly { path: st
 export function readArchive(files: ReadonlyMap<string, Uint8Array>): { bundle: ProjectBundle; history: { path: string; bytes: Uint8Array }[] } | undefined {
   const manifest = files.get('cadence.json');
   if (!manifest) return undefined;
-  const settings = JSON.parse(new TextDecoder().decode(manifest)) as { format?: string; version?: number; name?: string; parameters?: Parameter[]; copiedFrom?: Project['copiedFrom'] };
+  const settings = JSON.parse(new TextDecoder().decode(manifest)) as { format?: string; version?: number; name?: string; parameters?: Parameter[]; copiedFrom?: Project['copiedFrom'] } & Pick<Project, 'scripts' | 'plugins'>;
   if (settings.format !== archiveFormat || (settings.version ?? 0) > archiveVersion) return undefined;
   const documents: CadDocument[] = [];
   const originals = new Map<string, Uint8Array>();
@@ -85,5 +94,5 @@ export function readArchive(files: ReadonlyMap<string, Uint8Array>): { bundle: P
     else if (path.startsWith('originals/')) originals.set(path.slice('originals/'.length), bytes);
     else if (path.startsWith('history/') && !path.endsWith('/')) history.push({ path: path.slice('history/'.length), bytes });
   }
-  return { bundle: { name: settings.name ?? 'Imported project', parameters: settings.parameters ?? [], documents, originals, ...(settings.copiedFrom ? { copiedFrom: settings.copiedFrom } : {}) }, history };
+  return { bundle: { name: settings.name ?? 'Imported project', parameters: settings.parameters ?? [], documents, originals, ...(settings.copiedFrom ? { copiedFrom: settings.copiedFrom } : {}), ...extras(settings) }, history };
 }

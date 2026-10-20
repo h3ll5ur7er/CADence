@@ -5,6 +5,31 @@
     <p class="hint" [class.waiting]="draft()?.target">{{ hint() }}</p>
 
     @switch (f.type) {
+      @case ('plugin') {
+        <p class="count" data-testid="plugin-feature">{{ f.plugin }} {{ f.version }}: {{ f.feature }}</p>
+        @for (entry of pluginParameters(f.parameters); track entry[0]) {
+          <label class="field">
+            {{ entry[0] }}
+            <input [id]="'feature-plugin-' + entry[0]" autocomplete="off" [value]="entry[1]" (change)="setPluginParameter(entry[0], value($event))" />
+          </label>
+        }
+        <label class="field">
+          Plane
+          <select id="feature-plugin-plane" [value]="f.plane" (change)="set({ plane: $any(value($event)) })">
+            <option value="XY">XY</option>
+            <option value="XZ">XZ</option>
+            <option value="YZ">YZ</option>
+          </select>
+        </label>
+        <label class="field">
+          Operation
+          <select id="feature-operation" [value]="f.operation" (change)="set({ operation: $any(value($event)) })">
+            @for (op of operations; track op.value) {
+              <option [value]="op.value">{{ op.label }}</option>
+            }
+          </select>
+        </label>
+      }
       @case ('insert') {
         <label class="field">
           Imported file

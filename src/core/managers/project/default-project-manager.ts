@@ -24,7 +24,9 @@ import {
   type Parameter,
   type Project,
   type ProjectId,
+  type ProjectPlugin,
   type ProjectRemote,
+  type ProjectScript,
   type ProjectSummary,
   type ProjectTemplate,
   type RemoteCredentials,
@@ -35,6 +37,7 @@ import {
 } from '@core/contracts';
 import { InvalidVersionNameError, RemoteError, type Version, type VersionAccess, type VersionFile } from '@core/access/version';
 import type { InterchangeEngine } from '@core/engines/interchange';
+import { createPluginEngine, type PluginEngine } from '@core/engines/plugin';
 import { readZip, zip } from '@core/utilities/archive';
 import { range } from '@core/utilities/math';
 import { pictureSize } from '@core/utilities/picture';
@@ -42,7 +45,7 @@ import { loadFont } from '@core/utilities/text';
 import type { ParameterEngine } from '@core/engines/parameter';
 import type { Clock } from '@core/utilities/clock';
 import type { EventBus } from '@core/utilities/messaging';
-import { archiveFiles, copyOf, type ProjectBundle, readArchive, remapIds, templateBundle, withNewIds } from './project-bundles';
+import { archiveFiles, copyOf, extras, type ProjectBundle, readArchive, remapIds, templateBundle, withNewIds } from './project-bundles';
 import type { CreatedProject, ExternalFile, ImportedContent, ImportedView, ProjectManager } from './project-manager';
 
 export interface ProjectManagerDependencies {
@@ -60,6 +63,8 @@ export interface ProjectManagerDependencies {
   readonly events: EventBus<DomainEvents>;
   readonly clock: Clock;
   readonly newId: () => string;
+  /** Reads the plugins installed into projects (CAD-174); one of the script sandbox by default. */
+  readonly plugins?: PluginEngine;
 }
 
 const maxNameLength = 80;
@@ -159,6 +164,7 @@ export class DefaultProjectManager implements ProjectManager {
   private readonly pending = new Map<ProjectId, ReturnType<typeof setTimeout>>();
   /** One recording or sync at a time. */
   private recording: Promise<unknown> = Promise.resolve();
+  private plugins: PluginEngine | undefined;
 
   constructor(private readonly deps: ProjectManagerDependencies) {
     deps.events.subscribe('documentSaved', ({ projectId }) => this.scheduleVersion(projectId));
@@ -197,7 +203,7 @@ export class DefaultProjectManager implements ProjectManager {
       const { assetId } = document;
       files.push({ path: originalPath(assetId), bytes: async () => (await this.deps.assets.fetch(assetId))?.bytes ?? new Uint8Array() });
     }
-    files.push({ path: settingsPath, text: JSON.stringify({ name: project.name, parameters: project.parameters ?? [] }, null, 2) });
+    files.push({ path: settingsPath, text: JSON.stringify({ name: project.name, parameters: project.parameters ?? [], ...extras(project) }, null, 2) });
     const summary = message ?? (await this.changes(id, files, documents.flatMap((d) => (d ? [d] : []))));
     await this.deps.versions.record(id, files, summary, this.now());
   }
@@ -394,9 +400,12 @@ export class DefaultProjectManager implements ProjectManager {
     if (!project) return;
     const settings = await versions.read(id, version, settingsPath);
     if (settings) {
-      const { name, parameters } = JSON.parse(settings) as Pick<Project, 'name' | 'parameters'>;
-      await this.deps.projects.revise({ ...project, name, parameters: parameters ?? [], modifiedAt: this.now() });
-      if (JSON.stringify(parameters ?? []) !== JSON.stringify(project.parameters ?? [])) events.publish('projectParametersChanged', { projectId: id });
+      const { name, parameters, ...kept } = JSON.parse(settings) as Pick<Project, 'name' | 'parameters' | 'scripts' | 'plugins'>;
+      const { scripts: _scripts, plugins: _plugins, ...rest } = project;
+      await this.deps.projects.revise({ ...rest, name, parameters: parameters ?? [], ...extras(kept), modifiedAt: this.now() });
+      // Plugins build features: a change of them is a change of what components are made with.
+      const before = JSON.stringify([project.parameters ?? [], project.plugins ?? []]);
+      if (JSON.stringify([parameters ?? [], kept.plugins ?? []]) !== before) events.publish('projectParametersChanged', { projectId: id });
     }
     const kept = new Set<string>();
     for (const path of await versions.files(id, version)) {
@@ -455,6 +464,51 @@ export class DefaultProjectManager implements ProjectManager {
     if (!evaluated.ok) return evaluated;
     await this.deps.projects.revise({ ...project, parameters, modifiedAt: this.now() });
     this.deps.events.publish('projectParametersChanged', { projectId: id });
+    return ok(undefined);
+  }
+
+  async setProjectScripts(id: ProjectId, scripts: readonly ProjectScript[]): Promise<Result<void>> {
+    const project = await this.deps.projects.find(id);
+    if (!project) return unknownProject(id);
+    const names = new Set<string>();
+    for (const script of scripts) {
+      const name = validName(script.name);
+      if (!name.ok) return name;
+      if (names.has(script.name.trim())) return fail({ code: 'duplicate-name', message: `Two scripts are named “${script.name.trim()}”.` });
+      names.add(script.name.trim());
+      const parameter = script.parameters.find((p) => !/^[A-Za-z_$][\w$]*$/.test(p.name));
+      if (parameter) return fail({ code: 'invalid-name', message: `“${parameter.name}” cannot name a parameter: use letters, digits and _, not starting with a digit.` });
+    }
+    const { scripts: _scripts, ...rest } = project;
+    const kept = scripts.map((s) => ({ ...s, name: s.name.trim() }));
+    await this.deps.projects.revise({ ...rest, ...(kept.length ? { scripts: kept } : {}), modifiedAt: this.now() });
+    this.scheduleVersion(id);
+    return ok(undefined);
+  }
+
+  async installPlugin(id: ProjectId, source: string): Promise<Result<ProjectPlugin>> {
+    const project = await this.deps.projects.find(id);
+    if (!project) return unknownProject(id);
+    this.plugins ??= this.deps.plugins ?? createPluginEngine();
+    const read = await this.plugins.read(source);
+    if (!read.ok) return read;
+    const plugins = [...(project.plugins ?? []).filter((p) => p.id !== read.value.id), read.value].sort((a, b) => a.name.localeCompare(b.name));
+    await this.deps.projects.revise({ ...project, plugins, modifiedAt: this.now() });
+    // Its features regenerate with the new version, as with new parameters.
+    this.deps.events.publish('projectParametersChanged', { projectId: id });
+    this.scheduleVersion(id);
+    return ok(read.value);
+  }
+
+  async removePlugin(id: ProjectId, pluginId: string): Promise<Result<void>> {
+    const project = await this.deps.projects.find(id);
+    if (!project) return unknownProject(id);
+    if (!project.plugins?.some((p) => p.id === pluginId)) return fail({ code: 'unknown-plugin', message: `The project has no plugin ${pluginId}.` });
+    const { plugins: _plugins, ...rest } = project;
+    const plugins = project.plugins.filter((p) => p.id !== pluginId);
+    await this.deps.projects.revise({ ...rest, ...(plugins.length ? { plugins } : {}), modifiedAt: this.now() });
+    this.deps.events.publish('projectParametersChanged', { projectId: id });
+    this.scheduleVersion(id);
     return ok(undefined);
   }
 
@@ -653,7 +707,7 @@ export class DefaultProjectManager implements ProjectManager {
       const asset = await this.deps.assets.fetch(document.assetId);
       if (asset) originals.set(document.assetId, asset.bytes);
     }
-    return { name: project.name, parameters: project.parameters ?? [], documents, originals, ...(project.copiedFrom ? { copiedFrom: project.copiedFrom } : {}) };
+    return { name: project.name, parameters: project.parameters ?? [], documents, originals, ...(project.copiedFrom ? { copiedFrom: project.copiedFrom } : {}), ...extras(project) };
   }
 
   /** A new project holding the bundle's documents and originals as they are (ids included). */
@@ -666,6 +720,7 @@ export class DefaultProjectManager implements ProjectManager {
       modifiedAt: now,
       parameters: bundle.parameters,
       ...(copied ? { copiedFrom: copied } : {}),
+      ...extras(bundle),
     };
     await this.deps.projects.establish(project);
     const documents = bundle.documents.map((d) => ({ ...d, projectId: project.id }) as CadDocument);

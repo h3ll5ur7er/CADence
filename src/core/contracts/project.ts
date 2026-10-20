@@ -18,6 +18,63 @@ export interface Project {
    * documents and originals had there, by their ids here (oldest last), so restoring finds them (CAD-147).
    */
   readonly copiedFrom?: Readonly<Record<string, readonly string[]>>;
+  /** Scripts kept with the project, to run again with other values (CAD-173). */
+  readonly scripts?: readonly ProjectScript[];
+  /** Plugins installed into the project: its plugin features regenerate wherever it goes (CAD-174). */
+  readonly plugins?: readonly ProjectPlugin[];
+}
+
+/** What a script or a plugin's feature or generator asks for before it runs. */
+export interface ScriptParameter {
+  readonly name: string;
+  /** What the form shows; the name when absent. */
+  readonly label?: string;
+  /** The value offered, as text: `20`, `20 mm`, `M8`. */
+  readonly default: string;
+  /** Lengths (mm) and angles (degrees) are numbers in the script; `text` stays text. */
+  readonly kind: 'number' | 'length' | 'angle' | 'text';
+}
+
+/** A script kept with a project: a generator that runs again with other parameters ([[Architecture/Decisions#ADR-60]]). */
+export interface ProjectScript {
+  readonly id: string;
+  readonly name: string;
+  /** The body of an async function with `cadence` and `params` (the sandboxed scripting API). */
+  readonly source: string;
+  readonly parameters: readonly ScriptParameter[];
+}
+
+/** A plugin's feature, generator or exporter, as its description lists it. */
+export interface PluginPart {
+  readonly name: string;
+  readonly label: string;
+  readonly parameters: readonly ScriptParameter[];
+}
+
+export interface PluginExporter {
+  readonly name: string;
+  readonly label: string;
+  /** The file's extension, without the dot. */
+  readonly extension: string;
+  readonly mediaType: string;
+}
+
+/** The plugin API version this app runs ([[Architecture/Decisions#ADR-60a]]). */
+export const pluginApiVersion = 1;
+
+/** A plugin installed into a project: its description and its source (one JavaScript file). */
+export interface ProjectPlugin {
+  /** Lower case, dotted: `acme.trays`. */
+  readonly id: string;
+  readonly name: string;
+  /** Semantic: `1.2.0`. */
+  readonly version: string;
+  /** The plugin API it was written for. */
+  readonly api: number;
+  readonly features: readonly PluginPart[];
+  readonly generators: readonly PluginPart[];
+  readonly exporters: readonly PluginExporter[];
+  readonly source: string;
 }
 
 /** A starting point for new projects: settings and documents, made with CADence (public/templates). */

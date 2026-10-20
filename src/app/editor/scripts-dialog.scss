@@ -1,0 +1,349 @@
+.scripts {
+  width: min(1100px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: var(--space-4) var(--space-5);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  h2 {
+    margin: 0;
+  }
+}
+
+.icon-close {
+  display: inline-flex;
+  padding: var(--space-1);
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text);
+    background: var(--surface-2);
+  }
+}
+
+.hint {
+  margin: var(--space-1) 0 var(--space-3);
+  font-size: 12px;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: var(--space-4);
+  min-height: 0;
+}
+
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  max-height: calc(100vh - 170px);
+  overflow: auto;
+
+  h3 {
+    margin: var(--space-2) 0 0;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  ul {
+    display: grid;
+    gap: 2px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .none {
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+}
+
+.item {
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+
+  &:hover {
+    background: var(--surface-2);
+  }
+
+  &.active {
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+    font-weight: 500;
+  }
+}
+
+.plugin {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.plugin-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+
+  strong {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .version {
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+}
+
+.btn.small {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+  justify-content: flex-start;
+}
+
+.file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+label.btn {
+  position: relative;
+  cursor: pointer;
+}
+
+.main {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  max-height: calc(100vh - 170px);
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.row {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.grow {
+  flex: 1;
+}
+
+.parameters {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+
+  legend {
+    padding: 0 var(--space-1);
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+
+  .add {
+    justify-self: start;
+  }
+}
+
+.parameter {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 96px auto;
+  gap: var(--space-1);
+
+  input,
+  select {
+    height: 28px;
+    padding: 0 6px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface-raised);
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+  }
+}
+
+.code {
+  position: relative;
+
+  textarea {
+    width: 100%;
+    min-height: 260px;
+    padding: var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-raised);
+    color: var(--text);
+    font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.5;
+    tab-size: 2;
+    resize: vertical;
+    white-space: pre;
+  }
+}
+
+.completions {
+  position: absolute;
+  right: var(--space-2);
+  bottom: var(--space-2);
+  z-index: 2;
+  width: min(460px, calc(100% - 16px));
+  max-height: 220px;
+  margin: 0;
+  padding: 2px;
+  overflow: auto;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-1);
+  box-shadow: var(--shadow);
+
+  li {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: var(--space-2);
+    padding: 4px 6px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+
+    &.highlighted {
+      background: var(--accent-soft);
+    }
+  }
+
+  .member {
+    font-family: ui-monospace, Consolas, monospace;
+    font-weight: 600;
+  }
+
+  .signature {
+    overflow: hidden;
+    color: var(--text-muted);
+    font-family: ui-monospace, Consolas, monospace;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .doc {
+    grid-column: 1 / -1;
+    color: var(--text-muted);
+  }
+}
+
+.types {
+  font-size: 12px;
+
+  summary {
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  pre {
+    max-height: 240px;
+    margin: var(--space-2) 0 0;
+    padding: var(--space-2);
+    overflow: auto;
+    border-radius: var(--radius);
+    background: var(--surface-2);
+    font-size: 11.5px;
+  }
+}
+
+.ask {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+
+  .spacer {
+    flex: 1;
+  }
+}
+
+.output {
+  min-height: 64px;
+  max-height: 200px;
+  padding: var(--space-2);
+  overflow: auto;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+
+  .line {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .status {
+    margin: var(--space-1) 0 0;
+    color: var(--text);
+    font-family: var(--font-sans, inherit);
+    overflow-wrap: anywhere;
+
+    &.failed {
+      color: var(--danger);
+    }
+  }
+}
+
+.error {
+  margin: 0;
+  padding: var(--space-2);
+  border-radius: var(--radius);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .side,
+  .main {
+    max-height: none;
+  }
+}

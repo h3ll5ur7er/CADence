@@ -28,7 +28,7 @@ async function edgesOf(page: Page, pattern: string): Promise<{ name: string; mid
 }
 
 /** The top edges of the sheet: between its top face and a side. */
-const topEdges = '^e:f:[^:]+:end[|]f:[^:]+:side:[^|:]+(~\d+)?$';
+const topEdges = '^e:f:[^:]+:end[|]f:[^:]+:side:[^|:]+(~[0-9]+)?$';
 
 type EdgeOnScreen = Awaited<ReturnType<typeof edgesOf>>[number];
 

@@ -590,7 +590,8 @@ export class Regeneration {
       case 'miter-flange': {
         if (!this.sheet) return fail({ code: 'missing-input', message: 'Flanges and hems need a base flange earlier in the timeline.' });
         const { thickness, bendRadius, relief } = this.sheet.rules;
-        const sheet = { thickness, bendRadius, ...(relief ? { relief } : {}), flanges: [...this.flanges] };
+        // Earlier flanges matter only for the corners a relief is cut at.
+        const sheet = { thickness, bendRadius, ...(relief ? { relief, flanges: [...this.flanges] } : {}) };
         if (feature.type === 'miter-flange') {
           const path = this.path(feature.sketch);
           if (!path.ok) return path;

@@ -1,6 +1,8 @@
 import type {
   BodyMesh,
+  CadDocument,
   ConflictChoice,
+  DocumentChange,
   CreatableDocumentKind,
   DocumentId,
   DocumentSummary,
@@ -56,6 +58,16 @@ export type ImportedContent =
   /** A picture (PNG, JPEG): its size in pixels, and its bytes to show. */
   | { readonly kind: 'picture'; readonly width: number; readonly height: number; readonly mediaType: string; readonly bytes: Uint8Array };
 
+/** A document in two versions, and what changed from one to the other (CAD-175). */
+export interface VersionComparison {
+  readonly before: CadDocument;
+  readonly after: CadDocument;
+  /** The project's parameters in each version, which its components use. */
+  readonly projectParameters: { readonly before: readonly Parameter[]; readonly after: readonly Parameter[] };
+  /** What changed from `before` to `after`: in the document, then in the project's parameters. */
+  readonly changes: readonly DocumentChange[];
+}
+
 /** Project and document lifecycle (see docs/Architecture/Components.md#project-manager). */
 export interface ProjectManager {
   /** Most recently modified first. */
@@ -96,6 +108,8 @@ export interface ProjectManager {
   projectHistory(id: ProjectId): Promise<Version[]>;
   /** The versions in which a document changed, newest first. */
   documentHistory(id: DocumentId): Promise<Version[]>;
+  /** A document as it was in a version (`from`) beside another version, or beside how it is now (no `to`). */
+  compareVersions(id: DocumentId, from: string, to?: string): Promise<Result<VersionComparison>>;
   /** Brings a document back as it was in a version (a change of its own, recorded as a version). */
   restoreDocument(id: DocumentId, version: string): Promise<Result<void>>;
   /** Names a version (the latest when none is given); a name given again moves. */

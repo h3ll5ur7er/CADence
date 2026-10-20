@@ -1,5 +1,5 @@
 import { find, kernelFailure, type NamedShape, piecesOf, place, type ShapeAccess } from '@core/access/shape';
-import { type BodyMesh, fail, type Matrix4, ok, type PlaneFrame, type Result, type TopologyRef, type Vec2, type Vec3 } from '@core/contracts';
+import { type BodyDifference, type BodyMesh, fail, type Matrix4, ok, type PlaneFrame, type Result, type TopologyRef, type Vec2, type Vec3 } from '@core/contracts';
 import { type Edge, type Face, getOC, makeCompound, makeVertex, measureVolume, type Shape3D, Vertex } from 'replicad';
 import { combine, type LoadedBody, renameCopy } from './bodies';
 import { BodyOperationError, combineBodies, splitBody, transformBodies } from './body-operations';
@@ -21,6 +21,8 @@ import { BooleanError, cut, valid } from './booleans';
 class FeatureError extends Error {}
 
 const outcomeCacheSize = 500;
+/** Less than this (mm³) left of a body without the other version's bodies is where both versions agree. */
+const unchanged = 1e-3;
 
 export class OcctModelingEngine implements ModelingEngine {
   private readonly outcomes = new Map<string, ModelingOutcome>();
@@ -162,6 +164,36 @@ export class OcctModelingEngine implements ModelingEngine {
   async tessellate(bodies: readonly BodyState[]): Promise<BodyMesh[]> {
     await this.shapes.ready();
     return this.load(bodies).map((b) => tessellate(b.state, b.named));
+  }
+
+  async compare(before: readonly BodyState[], after: readonly BodyState[]): Promise<Result<BodyDifference>> {
+    await this.shapes.ready();
+    try {
+      const [old, now] = [this.load(before), this.load(after)];
+      const total = (bodies: readonly LoadedBody[]) => bodies.reduce((sum, b) => sum + Math.abs(measureVolume(b.named.shape)), 0);
+      // Each body without the other version's bodies; pieces of no volume are where both agree.
+      const rest = (from: readonly LoadedBody[], without: readonly LoadedBody[], prefix: string) =>
+        from.flatMap((body) => {
+          const left = without.length ? cut(body.named.shape, ...without.map((b) => b.named.shape)) : body.named.shape;
+          try {
+            const volume = Math.abs(measureVolume(left));
+            if (volume < unchanged) return [];
+            const state = { id: `${prefix}:${body.state.id}`, key: `${prefix}:${body.state.key}` };
+            return [{ mesh: tessellate(state, { shape: left, faces: new Map(), edges: new Map() }), volume }];
+          } finally {
+            if (left !== body.named.shape) left.delete();
+          }
+        });
+      const [added, removed] = [rest(now, old, 'added'), rest(old, now, 'removed')];
+      const sum = (pieces: readonly { volume: number }[]) => pieces.reduce((s, p) => s + p.volume, 0);
+      return ok({
+        added: added.map((p) => p.mesh),
+        removed: removed.map((p) => p.mesh),
+        volume: { before: total(old), after: total(now), added: sum(added), removed: sum(removed) },
+      });
+    } catch (error) {
+      return fail({ code: 'compare-failed', message: `The versions' bodies could not be compared (${describe(error)}).` });
+    }
   }
 
   private compute(request: ModelingRequest): ModelingOutcome {

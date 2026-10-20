@@ -32,8 +32,11 @@ import {
   summarize,
   type SyncConflict,
   type SyncOutcome,
+  type ItemConflict,
 } from '@core/contracts';
+import { migrate, UnsupportedSchemaError } from '@core/access/document';
 import { InvalidVersionNameError, RemoteError, type Version, type VersionAccess, type VersionFile } from '@core/access/version';
+import { compareDocuments, mergeDocuments } from '@core/engines/revision';
 import type { InterchangeEngine } from '@core/engines/interchange';
 import { readZip, zip } from '@core/utilities/archive';
 import { range } from '@core/utilities/math';
@@ -43,7 +46,7 @@ import type { ParameterEngine } from '@core/engines/parameter';
 import type { Clock } from '@core/utilities/clock';
 import type { EventBus } from '@core/utilities/messaging';
 import { archiveFiles, copyOf, type ProjectBundle, readArchive, remapIds, templateBundle, withNewIds } from './project-bundles';
-import type { CreatedProject, ExternalFile, ImportedContent, ImportedView, ProjectManager } from './project-manager';
+import type { CreatedProject, ExternalFile, ImportedContent, ImportedView, ProjectManager, VersionComparison } from './project-manager';
 
 export interface ProjectManagerDependencies {
   readonly projects: ProjectAccess;
@@ -230,6 +233,43 @@ export class DefaultProjectManager implements ProjectManager {
     return [...new Map(all.map((v) => [v.id, v])).values()].sort((a, b) => (a.time < b.time ? 1 : a.time > b.time ? -1 : 0));
   }
 
+  async compareVersions(id: DocumentId, from: string, to?: string): Promise<Result<VersionComparison>> {
+    const current = await this.deps.documents.load(id);
+    if (!current) return unknownDocument(id);
+    const project = await this.deps.projects.find(current.projectId);
+    const sides = await Promise.all([from, to].map((version) => (version === undefined ? { ok: true as const, value: { document: current, parameters: project?.parameters ?? [] } } : this.asIn(current, version))));
+    const [before, after] = sides as [Result<{ document: CadDocument; parameters: readonly Parameter[] }>, Result<{ document: CadDocument; parameters: readonly Parameter[] }>];
+    if (!before.ok) return before;
+    if (!after.ok) return after;
+    const projectChanges = compareDocuments({ parameters: before.value.parameters }, { parameters: after.value.parameters }).map((change) => ({
+      ...change,
+      path: `project/${change.path}`,
+      label: `Project ${change.label.charAt(0).toLowerCase()}${change.label.slice(1)}`,
+      area: 'project',
+    }));
+    return ok({
+      before: before.value.document,
+      after: after.value.document,
+      projectParameters: { before: before.value.parameters, after: after.value.parameters },
+      changes: [...compareDocuments(before.value.document as never, after.value.document as never), ...projectChanges],
+    });
+  }
+
+  /** A document and its project's parameters as they were in a version. */
+  private async asIn(current: CadDocument, version: string): Promise<Result<{ document: CadDocument; parameters: readonly Parameter[] }>> {
+    const { projectId, id } = current;
+    const text = (await this.deps.versions.read(projectId, version, documentPath(id))) ?? (await this.fromBeforeTheCopy(projectId, id, version));
+    if (text === undefined) return fail({ code: 'unknown-version', message: 'The document did not exist in that version.' });
+    try {
+      const document = { ...migrate(JSON.parse(text) as Record<string, unknown>), id, projectId } as CadDocument;
+      const settings = await this.deps.versions.read(projectId, version, settingsPath);
+      return ok({ document, parameters: settings ? ((JSON.parse(settings) as Pick<Project, 'parameters'>).parameters ?? []) : [] });
+    } catch (error) {
+      if (error instanceof UnsupportedSchemaError) return fail({ code: 'newer-version', message: error.message });
+      throw error;
+    }
+  }
+
   async restoreDocument(id: DocumentId, version: string): Promise<Result<void>> {
     const current = await this.deps.documents.load(id);
     if (!current) return fail({ code: 'unknown-document', message: `Document ${id} does not exist.` });
@@ -368,14 +408,46 @@ export class DefaultProjectManager implements ProjectManager {
       else if (sameBytes(ours, base)) kept = other;
       else if (resolutions[path]) kept = resolutions[path] === 'mine' ? ours : other;
       else {
-        conflicts.push({ path, name: this.conflictName(path, ours ?? other) });
-        continue;
+        // Both changed it: merged item by item; only items both changed differently are asked (CAD-176).
+        const combined = ours && other ? this.combine(path, base, ours, other, resolutions) : undefined;
+        if (!combined || combined.items.length) {
+          conflicts.push({ path, name: this.conflictName(path, ours ?? other), ...(combined ? { items: combined.items } : {}) });
+          continue;
+        }
+        kept = combined.bytes;
       }
       if (!kept) continue;
       const bytes = kept;
       files.push(isOriginal(path) ? { path, bytes: async () => bytes } : { path, text: new TextDecoder().decode(bytes) });
     }
     return conflicts.length ? { conflicts } : { files };
+  }
+
+  /**
+   * A document (or the project's settings) changed on both sides, merged by its items (Revision
+   * Engine); undefined when it cannot be (not JSON, or saved by a newer CADence). Item resolutions are
+   * given as `<path>#<item path>`.
+   */
+  private combine(
+    path: string,
+    base: Uint8Array | undefined,
+    ours: Uint8Array,
+    other: Uint8Array,
+    resolutions: Readonly<Record<string, ConflictChoice>>,
+  ): { bytes: Uint8Array; items: ItemConflict[] } | undefined {
+    if (path !== settingsPath && !documentPattern.test(path)) return undefined;
+    const read = (bytes: Uint8Array) => {
+      const json = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
+      return path === settingsPath ? json : (migrate(json) as unknown as Record<string, unknown>);
+    };
+    try {
+      const prefix = `${path}#`;
+      const chosen = Object.fromEntries(Object.entries(resolutions).flatMap(([key, choice]) => (key.startsWith(prefix) ? [[key.slice(prefix.length), choice]] : [])));
+      const merged = mergeDocuments(base ? read(base) : undefined, read(ours), read(other), { resolutions: chosen, time: this.now() });
+      return { bytes: new TextEncoder().encode(JSON.stringify(merged.document, null, 2)), items: [...merged.conflicts] };
+    } catch {
+      return undefined;
+    }
   }
 
   private conflictName(path: string, bytes: Uint8Array | undefined): string {

@@ -40,6 +40,7 @@ import { type ConfigurationImport, configurationsCsv, readConfigurationsCsv } fr
 import { type BrokenReference, brokenReferences } from './references';
 import { applyCommand } from './commands';
 import type {
+  BodyComparison,
   DesignCommand,
   DesignManager,
   DesignSession,
@@ -479,6 +480,22 @@ export class DefaultDesignManager implements DesignManager {
     const derived = await new Regeneration(this.deps).run(document, context);
     const meshes = derived.bodies.length ? await this.deps.modeling.tessellate(derived.bodies) : [];
     return ok(new Session(this.deps, { document, derived, meshes }, new ResultPublisher(this.deps), context));
+  }
+
+  async compareBodies(
+    before: ComponentDocument,
+    after: ComponentDocument,
+    projectParameters?: { readonly before: readonly Parameter[]; readonly after: readonly Parameter[] },
+  ): Promise<Result<BodyComparison>> {
+    const build = async (document: ComponentDocument, parameters: readonly Parameter[] | undefined) =>
+      (await new Regeneration(this.deps).run(document, { projectParameters: parameters ?? (await projectParametersOf(this.deps, document)) })).bodies;
+    // One after the other: both share the one kernel.
+    const old = await build(before, projectParameters?.before);
+    const now = await build(after, projectParameters?.after);
+    const difference = await this.deps.modeling.compare(old, now);
+    if (!difference.ok) return difference;
+    const meshes = async (bodies: readonly BodyState[]) => (bodies.length ? this.deps.modeling.tessellate(bodies) : []);
+    return ok({ before: await meshes(old), after: await meshes(now), ...difference.value });
   }
 
   /** Answers a queued `regenerateComponent` request (for one configuration) with `componentRegenerated`. */

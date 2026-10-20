@@ -45,6 +45,26 @@ async function names(bodies: readonly BodyState[]) {
 }
 
 describe('ModelingEngine', () => {
+  it('compares two versions of a plate: the hole cut is removed material, a thicker plate added (CAD-175)', async () => {
+    const before = ok(await plate(5, 'compare-before'));
+    const after = ok(
+      await engine.apply({ type: 'extrude', feature: 'hole', key: 'compare-hole', bodies: before, frame: XY, profiles: [profile(circleLoop(20, 20, 4, 'hole'))], distance: 5, direction: 'normal', operation: 'cut' }),
+    );
+    const compared = await engine.compare(before, after);
+    if (!compared.ok) throw new Error(compared.error.message);
+    expect(compared.value.added).toEqual([]);
+    expect(compared.value.removed.map((m) => m.body)).toEqual(['removed:plate']);
+    expect(compared.value.volume.removed).toBeCloseTo(Math.PI * 16 * 5, 0);
+    expect(compared.value.volume.before - compared.value.volume.after).toBeCloseTo(compared.value.volume.removed, 3);
+    // The other way round, and against a thicker plate.
+    const back = await engine.compare(after, before);
+    expect(back.ok && back.value.added.map((m) => m.body)).toEqual(['added:plate']);
+    const thicker = await engine.compare(before, ok(await plate(8, 'compare-thicker')));
+    expect(thicker.ok && thicker.value.volume.added).toBeCloseTo(80 * 40 * 3, 0);
+    const same = await engine.compare(before, before);
+    expect(same.ok && [same.value.added.length, same.value.removed.length]).toEqual([0, 0]);
+  });
+
   it('extrudes a profile and names faces by how they were made', async () => {
     const bodies = ok(await plate());
     expect(bodies).toEqual([{ id: 'plate', key: 'plate-5:plate' }]);

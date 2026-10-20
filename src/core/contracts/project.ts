@@ -1,5 +1,6 @@
 import type { CadDocument, Parameter } from './document';
 import type { ProjectId } from './ids';
+import type { ItemConflict } from './revision';
 
 /** ISO 8601 timestamp, e.g. `2026-10-14T18:00:00.000Z`. */
 export type Timestamp = string;
@@ -42,11 +43,20 @@ export interface RemoteCredentials {
   readonly password: string;
 }
 
-/** A document (or the project's settings) changed both here and on the remote. */
+/**
+ * A document (or the project's settings) changed both here and on the remote, in ways that do not
+ * merge on their own. Resolutions are given for the whole document by its `path` (`mine` or `theirs`
+ * throughout), or per item by `<path>#<item path>`.
+ */
 export interface SyncConflict {
-  /** Where it is kept in the version history; resolutions are given by it. */
+  /** Where it is kept in the version history. */
   readonly path: string;
   readonly name: string;
+  /**
+   * The items both sides changed differently (CAD-176); everything else of the document merges.
+   * Absent when the document cannot be merged item by item (deleted on one side).
+   */
+  readonly items?: readonly ItemConflict[];
 }
 
 /** Which side of a conflict to keep. */

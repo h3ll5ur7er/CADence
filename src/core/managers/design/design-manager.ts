@@ -1,5 +1,6 @@
 import type {
   Appearance,
+  BodyDifference,
   BodyMesh,
   BodyProperties,
   ComponentDocument,
@@ -234,7 +235,22 @@ export interface DesignSession {
   simulate(): Promise<Result<SimulationResult>>;
 }
 
+/** Two versions of a component built: their bodies, and the material added and removed between them (CAD-175). */
+export interface BodyComparison extends BodyDifference {
+  readonly before: readonly BodyMesh[];
+  readonly after: readonly BodyMesh[];
+}
+
 /** Part design workflow (docs/Architecture/Components.md#design-manager). */
 export interface DesignManager {
   open(documentId: DocumentId): Promise<Result<DesignSession>>;
+  /**
+   * Builds two versions of a component (as the Project Manager's `compareVersions` gives them, with
+   * the project parameters of each; the project's current ones when absent) and compares their bodies.
+   */
+  compareBodies(
+    before: ComponentDocument,
+    after: ComponentDocument,
+    projectParameters?: { readonly before: readonly Parameter[]; readonly after: readonly Parameter[] },
+  ): Promise<Result<BodyComparison>>;
 }

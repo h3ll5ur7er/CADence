@@ -478,3 +478,34 @@ Imported SVG `<text>` and DXF `TEXT`/`MTEXT` become editable sketch texts in thi
 
 *Why:* an agent modelling a keyboard enclosure through the MCP server lost its session to one failed revolve, waited half an hour for a check, and worked around refused booleans, moved sketches and a desktop app that silently dropped new fields.
 *Trade-off:* a restarted kernel builds every open document again (seconds for large parts); the geometry worker copies shapes' bytes for drawing views as before. A 40° limit lets wedges of 40° to 90° pass, which lose up to about a nozzle line at their edge. Newer documents cannot be opened by older apps even when they use none of the newer fields.
+
+## ADR-61a
+
+**Users, sharing and real-time collaboration (CAD-177, CAD-178): a small self-hostable CADence server, whose relay orders commands.**
+
+CADence has no server. Versions are a git repository per project, synced with any git host ([[Architecture/Decisions#ADR-30]]), and every document changes only through commands. Accounts, shared projects and live editing each need something running somewhere; these are the ways to get it.
+
+*Where accounts and shared projects live:*
+
+| | A. Git hosts are the accounts | B. A small CADence server, self-hostable | C. A hosted backend service |
+| --- | --- | --- | --- |
+| What | Sign in with GitHub, GitLab or Gitea (OAuth). A shared project is a repository; view and edit are its read and write access; the host's own sharing invites people. | One Node program in this repository (`server/`, a Docker image): accounts, projects stored as git repositories, members per project (owner, editor, viewer), share links, and a WebSocket relay. | Supabase, Firebase or a collaboration service (Liveblocks, PartyKit): accounts, storage and live rooms run by a vendor. |
+| Sign-in | OAuth of the host. Browsers need a tiny token exchange (a serverless function: GitHub's OAuth endpoints allow no CORS); the desktop app and the command line use the device flow. | OAuth with GitHub and Google (plus an e-mail link for people without either); its own sessions. A test provider for journeys. | The vendor's sign-in. |
+| Shared links | `…/open?remote=<repository>`: anyone can view a public repository; a private one asks to sign in. | `…/s/<token>` opens a read-only view in any browser, no account needed; editor links ask to sign in. | The vendor's rules. |
+| Storage | The git host (free, backed up there). | The server's disk: bare git repositories, so ADR-30's sync works against it unchanged; one SQLite file for accounts and members. | The vendor's database and file storage. |
+| Real time | Not possible through git alone: needs a relay anyway (B's relay, or C). | The same server relays commands. | Built in (Liveblocks, PartyKit) or with realtime tables (Supabase). |
+| Cost | Free; the token exchange fits free tiers (Cloudflare Workers, Netlify). | A small VPS, about 5 € a month, or free on the owner's own machine; backups, updates and security are the owner's. | Free tiers, then per user or per connection; moving away later means rewriting this layer. |
+| Fits | People who already use git. Nothing of ours to operate. | Everything in one place we control, offline-first apps that sync to it, and agents through the same API. | Least code, most lock-in; projects leave the owner's hands. |
+
+*How live editing is ordered (CAD-178):*
+
+| | 1. Commands through a relay that orders them | 2. A CRDT of the document (Yjs, Automerge) | 3. Operational transforms of commands |
+| --- | --- | --- | --- |
+| How | Clients send commands; the relay gives each a sequence number; a client applies the others' commands and replays its own pending ones on top (the commands are pure functions of the document). A command that no longer applies (its item was deleted) is dropped and reported. | The document becomes a shared map and arrays keyed by ids; changes merge on their own, without a server deciding an order (also peer to peer). | Each pair of command types gets a transform, so concurrent commands are rewritten against each other. |
+| Offline | Pending commands wait; on reconnect the three-way merge of [[CAD-176]] combines the offline document with the live one. | Native: changes merge whenever peers meet. | Like 1, with a longer log to transform. |
+| Valid documents | Always: each command is checked by the Design Manager as today (solving, conflicting constraints). | Not guaranteed: two valid edits can merge into a sketch that does not solve; checked and repaired after merging. | Valid if every transform is right. |
+| Cost to build | Small: the commands exist; a relay of a few hundred lines; presence (who edits where) as a separate small message. | A second representation of every document kind, kept in step with the schema; about 70 KB more for Yjs. | Large: more than 60 command types, so thousands of pairs. |
+
+*Recommendation:* **B with 1**: a small self-hostable server (git repositories as storage, so sync keeps working with any git host as well; GitHub and Google OAuth; members and share links) whose relay orders commands, with the three-way merge of [[CAD-176]] for offline catch-up. It is the only option that gives CAD-177 and CAD-178 one home the owner controls without a vendor. Its cost is operating a server; A is the fallback when that is not wanted (sharing works, live editing does not).
+
+*Decision (the owner, 2026-10-21):* **B with 1**, as recommended.

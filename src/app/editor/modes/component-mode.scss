@@ -102,6 +102,7 @@
 /* CAD-75: timeline folders and notes. */
 .folder {
   padding: 0 0 0 2px;
+  margin-left: calc(var(--space-3) * var(--depth, 0));
 
   &:hover .item-actions,
   &:focus-within .item-actions {
@@ -127,7 +128,7 @@
 }
 
 .item.in-folder {
-  margin-left: var(--space-3);
+  margin-left: calc(var(--space-3) * var(--depth, 1));
 }
 
 .has-note {

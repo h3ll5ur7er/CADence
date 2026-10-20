@@ -17,6 +17,18 @@ export interface TopologyRef {
   readonly body: string;
   readonly name: string;
   readonly hint?: Vec3;
+  /** What it was like when it was picked (recorded by the Design Manager): repairs look for its like (CAD-157). */
+  readonly shape?: RefShape;
+}
+
+/**
+ * The shape of a face or edge: its kind of surface or curve (`plane`, `cylinder`, `line`, `circle`, …),
+ * its size (area in mm², length in mm) and, for round ones, its radius.
+ */
+export interface RefShape {
+  readonly type: string;
+  readonly size: number;
+  readonly radius?: number;
 }
 
 /** The persistent name of a vertex: the names of the edges that meet there, in a fixed order. */

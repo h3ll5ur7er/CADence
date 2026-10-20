@@ -37,7 +37,7 @@ import { inferRelations, type SketchEngine } from '@core/engines/sketch';
 import type { Clock } from '@core/utilities/clock';
 import type { EventBus } from '@core/utilities/messaging';
 import { type ConfigurationImport, configurationsCsv, readConfigurationsCsv } from './configurations';
-import { type BrokenReference, brokenReferences } from './references';
+import { type BrokenReference, brokenReferences, elementsOf, lostReferences, shapeKey, topologyRefs, withShapes } from './references';
 import { applyCommand } from './commands';
 import type {
   DesignCommand,
@@ -278,7 +278,13 @@ class Session implements DesignSession {
     if (!item) return fail({ code: 'invalid-command', message: `Item ${itemId} does not exist.` });
     // The bodies as they are just before the item.
     const before = await new Regeneration(this.deps).run({ ...document, rollbackIndex: Math.max(document.rollbackIndex, document.timeline.length - index) }, this.context);
-    return ok(brokenReferences(item, await this.meshes(before)));
+    const meshes = await this.meshes(before);
+    // Lost references whose shape was recorded are matched with faces and edges of the same shape (CAD-157).
+    const kinds = new Set(lostReferences(item, meshes).flatMap((r) => (r.shape && r.kind !== 'vertex' ? [r.kind] : [])));
+    const elements = [...kinds].flatMap((kind) => elementsOf(kind, meshes));
+    const found = elements.length ? await this.deps.analysis.shapesOf(before.bodies, elements) : [];
+    const shapes = new Map(elements.flatMap((ref, i) => (found[i] ? [[shapeKey(ref), found[i]] as const] : [])));
+    return ok(brokenReferences(item, meshes, shapes));
   }
 
   async exportConfigurations(): Promise<Result<void>> {
@@ -360,8 +366,17 @@ class Session implements DesignSession {
     return derived.bodies.map((b) => ({ ...b, name: document.timeline.find((item) => item.id === b.id)?.name ?? b.id }));
   }
 
+  /** The command with the shape of each face and edge it names recorded, as the bodies are now, so a repair can find its like (CAD-157). */
+  private async shaped(command: DesignCommand): Promise<DesignCommand> {
+    const refs = topologyRefs(command).filter((r) => r.kind !== 'vertex' && !r.shape);
+    if (!refs.length || !this.current.derived.bodies.length) return command;
+    const found = await this.deps.analysis.shapesOf(this.current.derived.bodies, refs);
+    const shapes = new Map(refs.flatMap((ref, i) => (found[i] ? [[shapeKey(ref), found[i]] as const] : [])));
+    return shapes.size ? withShapes(command, shapes) : command;
+  }
+
   private async apply(given: DesignCommand): Promise<Result<void>> {
-    const command = await this.anchored(given);
+    const command = await this.shaped(await this.anchored(given));
     if (command.type === 'set-appearance' && !this.current.derived.bodies.some((b) => b.id === command.body)) {
       return fail({ code: 'invalid-command', message: `There is no body ${command.body}.` });
     }

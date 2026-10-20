@@ -161,13 +161,21 @@ export function itemDependencies(item: TimelineItem, timeline: readonly Timeline
 
 /**
  * Folders after the timeline changed: each keeps the items it had that are still there (`moved`
- * leaves it), from the first to the last of them, so items dropped between them join it; a folder
- * left empty goes.
+ * leaves it, unless the folder is `carried` along with them), from the first to the last of them, so
+ * items dropped between them join it; a folder left empty goes.
  */
-function refolded(folders: readonly TimelineFolder[] | undefined, before: readonly TimelineItem[], after: readonly TimelineItem[], moved?: string): TimelineFolder[] | undefined {
+function refolded(
+  folders: readonly TimelineFolder[] | undefined,
+  before: readonly TimelineItem[],
+  after: readonly TimelineItem[],
+  moved: readonly string[] = [],
+  carried: ReadonlySet<string> = new Set(),
+): TimelineFolder[] | undefined {
   if (!folders) return undefined;
+  const leaving = new Set(moved);
   return folders.flatMap((folder) => {
-    const kept = new Set(folderItems(folder, before).filter((id) => id !== moved));
+    const items = folderItems(folder, before);
+    const kept = new Set(carried.has(folder.id) ? items : items.filter((id) => !leaving.has(id)));
     const members = after.filter((i) => kept.has(i.id));
     const [first, last] = [members[0], members.at(-1)];
     return first && last ? [{ ...folder, first: first.id, last: last.id }] : [];
@@ -432,7 +440,7 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
       return ok({
         document: withFolders(
           { ...document, timeline, rollbackIndex: document.rollbackIndex - (rolledBack ? 1 : 0) },
-          refolded(document.folders, document.timeline, timeline, command.itemId),
+          refolded(document.folders, document.timeline, timeline, [command.itemId]),
         ),
       });
     }
@@ -444,7 +452,7 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
       const timeline = [...rest.slice(0, command.index), item, ...rest.slice(command.index)];
       const problem = orderProblem(timeline);
       if (problem) return invalid(problem);
-      return ok({ document: withFolders({ ...document, timeline }, refolded(document.folders, document.timeline, timeline, item.id)), target: item.id });
+      return ok({ document: withFolders({ ...document, timeline }, refolded(document.folders, document.timeline, timeline, [item.id])), target: item.id });
     }
     case 'replace-reference': {
       if (!document.timeline.some((item) => item.id === command.itemId)) return invalid(`Item ${command.itemId} does not exist.`);
@@ -466,9 +474,15 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
       const { folder } = command;
       const items = folderItems(folder, document.timeline);
       if (!items.length) return invalid('A folder runs from an item to the same or a later one.');
+      // Folders nest (CAD-157): another folder is apart from this one, holds it, or is held by it.
       const others = (document.folders ?? []).filter((f) => f.id !== folder.id);
-      const taken = new Set(others.flatMap((f) => folderItems(f, document.timeline)));
-      if (items.some((id) => taken.has(id))) return invalid('Folders cannot overlap: an item can only be in one folder.');
+      const mine = new Set(items);
+      const crossed = others.find((f) => {
+        const theirs = folderItems(f, document.timeline);
+        const shared = theirs.filter((id) => mine.has(id)).length;
+        return shared > 0 && shared < theirs.length && shared < items.length;
+      });
+      if (crossed) return invalid(`A folder holds whole folders or none of them: this one would hold part of ${crossed.name}.`);
       const existing = document.folders?.find((f) => f.id === folder.id);
       const name = folder.name.trim() || existing?.name || nextFolderName(document);
       if (name.length > 80) return fail({ code: 'invalid-name', message: 'Names need 1 to 80 characters.' });
@@ -477,6 +491,22 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
       const changed: TimelineFolder = { ...rest, name, ...(note ? { note } : {}) };
       const folders = existing ? (document.folders ?? []).map((f) => (f.id === folder.id ? changed : f)) : [...(document.folders ?? []), changed];
       return ok({ document: withFolders(document, folders) });
+    }
+    case 'move-folder': {
+      const folder = document.folders?.find((f) => f.id === command.folderId);
+      if (!folder) return invalid('That folder does not exist.');
+      const ids = folderItems(folder, document.timeline);
+      const moving = new Set(ids);
+      const block = document.timeline.filter((i) => moving.has(i.id));
+      const rest = document.timeline.filter((i) => !moving.has(i.id));
+      if (!block.length) return invalid('That folder has no items.');
+      if (!Number.isInteger(command.index) || command.index < 0 || command.index > rest.length) return invalid('That place is outside the timeline.');
+      const timeline = [...rest.slice(0, command.index), ...block, ...rest.slice(command.index)];
+      const problem = orderProblem(timeline);
+      if (problem) return invalid(problem);
+      // The folder and those in it go along with their items.
+      const carried = new Set((document.folders ?? []).filter((f) => folderItems(f, document.timeline).every((id) => moving.has(id))).map((f) => f.id));
+      return ok({ document: withFolders({ ...document, timeline }, refolded(document.folders, document.timeline, timeline, ids, carried)) });
     }
     case 'delete-folder':
       if (!document.folders?.some((f) => f.id === command.folderId)) return invalid('That folder does not exist.');

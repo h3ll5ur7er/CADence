@@ -69,14 +69,29 @@
               <span class="marker-line"></span>
             </li>
             }
-            @if (folderStartingAt(item); as folder) {
-              <li class="node folder" [class.suppressed]="folderSuppressed(folder)" [attr.title]="folder.note ?? null">
+            @for (placed of foldersStartingAt(item); track placed.folder.id) {
+              @let folder = placed.folder;
+              <li
+                class="node folder"
+                draggable="true"
+                [hidden]="folderHidden(placed)"
+                [style.--depth]="placed.depth"
+                [class.suppressed]="folderSuppressed(folder)"
+                [class.dragging]="dragging() === 'folder:' + folder.id"
+                [attr.title]="folder.note ?? null"
+                (dragstart)="startDrag($event, 'folder:' + folder.id)"
+                (dragend)="dragging.set(undefined)"
+                (dragover)="$event.preventDefault()"
+                (drop)="dropAt($event, placed.from)"
+              >
                 <button
                   type="button"
                   class="item-main"
                   [attr.aria-expanded]="!collapsed().has(folder.id)"
                   [attr.aria-label]="(collapsed().has(folder.id) ? 'Open ' : 'Close ') + folder.name"
+                  [attr.aria-keyshortcuts]="'Alt+ArrowUp Alt+ArrowDown'"
                   (click)="toggleFolder(folder)"
+                  (keydown)="folderKey($event, placed)"
                 >
                   <cad-icon name="chevronRight" [size]="14" class="chevron" [class.open]="!collapsed().has(folder.id)" />
                   <cad-icon name="folder" />
@@ -112,6 +127,7 @@
               draggable="true"
               [hidden]="inClosedFolder(item)"
               [class.in-folder]="folderOf().has(item.id)"
+              [style.--depth]="depthOf(item)"
               [class.active]="store.editing() === item.id || store.draft()?.feature?.id === item.id"
               [class.suppressed]="item.suppressed"
               [class.failed]="itemStatus?.state === 'error'"

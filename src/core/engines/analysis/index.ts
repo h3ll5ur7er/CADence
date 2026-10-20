@@ -10,6 +10,7 @@ import type {
   Material,
   Measurement,
   Profile,
+  RefShape,
   Result,
   SimulationResult,
   SimulationSetup,
@@ -51,6 +52,8 @@ export interface AnalysisEngine {
   measure(bodies: readonly BodyState[], refs: readonly TopologyRef[]): Promise<Result<Measurement>>;
   /** Like `measure`, between faces, edges and vertices of placed parts (each reference names its part's instance). */
   measurePlaced(parts: readonly PlacedPart[], refs: readonly (TopologyRef & { readonly instance: string })[]): Promise<Result<Measurement>>;
+  /** The shape of each face or edge (undefined for vertices and those not found): what repairs match lost references by (CAD-157). */
+  shapesOf(bodies: readonly BodyState[], refs: readonly TopologyRef[]): Promise<(RefShape | undefined)[]>;
   /** Volume, area, mass (density in g/cm³), centre of mass and bounding box of each body. */
   properties(bodies: readonly BodyState[], density: number): Promise<BodyProperties[]>;
   /** The manufacturability rules of the profile's process, applied to the bodies and sketches. */

@@ -48,7 +48,7 @@ export function modelTools(cadence: Cadence): Tool[] {
     },
     {
       name: 'broken_references',
-      description: 'The faces and edges a timeline item refers to that are gone (after an earlier change), each with the nearest faces or edges it could refer to instead; fix them with edit-feature.',
+      description: 'The faces and edges a timeline item refers to that are gone (after an earlier change), each with the faces or edges it could refer to instead, those of the same shape (kind, size, radius) first, then the nearest; fix them with edit-feature.',
       inputSchema: object({ document: documentArg, item: string('The timeline item (feature) id.') }, ['document', 'item']),
       run: async (args) => (await component(args)).brokenReferences(String(args['item'])),
     },

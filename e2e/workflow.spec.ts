@@ -72,7 +72,7 @@ test('repairs a fillet whose edge a chamfer took away', async ({ page }) => {
   const lost = page.getByRole('list', { name: 'Lost references' });
   await expect(lost).toContainText('Lost edge');
   await evidence(page, '77-repair');
-  await lost.getByRole('button', { name: /Use the nearest edge/ }).click();
+  await lost.getByRole('button', { name: /Use the (same-shaped|nearest) edge/ }).first().click();
   await expect(page.getByTestId('nothing-lost')).toBeVisible();
   await page.getByRole('button', { name: 'Done' }).click();
   await expect(page.locator('.item.rolled-back')).toHaveCount(0);

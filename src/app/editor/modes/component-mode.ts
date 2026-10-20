@@ -29,6 +29,8 @@ import {
   type SketchText,
   type TextPath,
   folderItems,
+  nestFolders,
+  type PlacedFolder,
   type TimelineFolder,
   type TimelineItem,
 } from '@core/contracts';
@@ -462,7 +464,7 @@ export class ComponentMode {
 
   /** The number of items before the rollback marker. */
   protected readonly marker = computed(() => this.timeline().length - (this.store.state()?.document.rollbackIndex ?? 0));
-  /** The timeline item (or `marker`) being dragged. */
+  /** The timeline item (or `marker`, or `folder:<id>`) being dragged. */
   protected readonly dragging = signal<string | undefined>(undefined);
 
   protected startDrag(event: DragEvent, what: string): void {
@@ -482,10 +484,25 @@ export class ComponentMode {
     void this.moveTo(what, slot);
   }
 
-  /** Moves the marker or an item to a slot between items (0 … length). */
+  /** A drop on a folder's row: before the folder. */
+  protected dropAt(event: DragEvent, slot: number): void {
+    event.preventDefault();
+    const what = this.dragging();
+    this.dragging.set(undefined);
+    if (what) void this.moveTo(what, slot);
+  }
+
+  /** Moves the marker, an item or a folder to a slot between items (0 … length). */
   private async moveTo(what: string, slot: number): Promise<void> {
     if (what === 'marker') {
       if (slot !== this.marker()) await this.store.run({ type: 'roll-to', position: slot });
+      return;
+    }
+    if (what.startsWith('folder:')) {
+      const placed = this.placedFolders().find((f) => f.folder.id === what.slice('folder:'.length));
+      if (!placed || slot < 0 || slot > this.timeline().length || (slot >= placed.from && slot <= placed.to + 1)) return;
+      const index = slot > placed.to ? slot - (placed.to - placed.from + 1) : slot;
+      await this.store.run({ type: 'move-folder', folderId: placed.folder.id, index });
       return;
     }
     const from = this.timeline().findIndex((i) => i.id === what);
@@ -529,18 +546,43 @@ export class ComponentMode {
   }
 
   protected readonly folders = computed(() => this.store.state()?.document.folders ?? []);
-  /** The folder each timeline item is in. */
-  protected readonly folderOf = computed(() => new Map(this.folders().flatMap((f) => folderItems(f, this.timeline()).map((id) => [id, f] as const))));
+  /** The folders where they are, outer ones first, each with the one it is in (CAD-157). */
+  protected readonly placedFolders = computed(() => nestFolders(this.folders(), this.timeline()));
+  /** The folders each timeline item is in, outermost first. */
+  protected readonly folderOf = computed(() => {
+    const holding = new Map<string, PlacedFolder[]>();
+    for (const placed of this.placedFolders()) for (const id of folderItems(placed.folder, this.timeline())) holding.set(id, [...(holding.get(id) ?? []), placed]);
+    return holding;
+  });
   /** Folders shown closed (not stored: how the timeline is looked at, not what it is). */
   protected readonly collapsed = signal<ReadonlySet<string>>(new Set());
 
-  protected folderStartingAt(item: TimelineItem): TimelineFolder | undefined {
-    return this.folders().find((f) => f.first === item.id);
+  /** The folders whose first item this is, outer ones first. */
+  protected foldersStartingAt(item: TimelineItem): PlacedFolder[] {
+    return this.placedFolders().filter((f) => f.folder.first === item.id);
+  }
+
+  /** How many folders an item is in, for its indent. */
+  protected depthOf(item: TimelineItem): number {
+    return this.folderOf().get(item.id)?.length ?? 0;
   }
 
   protected inClosedFolder(item: TimelineItem): boolean {
-    const folder = this.folderOf().get(item.id);
-    return !!folder && this.collapsed().has(folder.id);
+    return (this.folderOf().get(item.id) ?? []).some((f) => this.collapsed().has(f.folder.id));
+  }
+
+  /** Whether a folder's row is hidden: a folder holding it is closed. */
+  protected folderHidden(placed: PlacedFolder): boolean {
+    const byId = new Map(this.placedFolders().map((f) => [f.folder.id, f]));
+    for (let parent = placed.parent; parent; parent = byId.get(parent)?.parent) if (this.collapsed().has(parent)) return true;
+    return false;
+  }
+
+  /** Alt+arrow keys move a folder, with what it holds, past the item above or below it. */
+  protected folderKey(event: KeyboardEvent, placed: PlacedFolder): void {
+    if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
+    event.preventDefault();
+    void this.moveTo(`folder:${placed.folder.id}`, event.key === 'ArrowUp' ? placed.from - 1 : placed.to + 2);
   }
 
   protected toggleFolder(folder: TimelineFolder): void {

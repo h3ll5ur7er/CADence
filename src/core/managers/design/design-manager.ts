@@ -89,8 +89,10 @@ export type DesignCommand =
   | { readonly type: 'replace-reference'; readonly itemId: string; readonly from: TopologyRef; readonly to: TopologyRef }
   /** A note on a timeline item (empty: none). */
   | { readonly type: 'set-note'; readonly itemId: string; readonly note: string }
-  /** Groups the items from `first` to `last` in a new folder (an empty name gets "Folder 2" and so on), or changes a folder; folders may not overlap. */
+  /** Groups the items from `first` to `last` in a new folder (an empty name gets "Folder 2" and so on), or changes a folder; a folder holds whole folders or none of them. */
   | { readonly type: 'set-folder'; readonly folder: TimelineFolder }
+  /** Moves a folder's items, the folders in it with them, to `index` (in the timeline without them); dropped between another folder's items, it is in that folder. */
+  | { readonly type: 'move-folder'; readonly folderId: string; readonly index: number }
   /** Removes a folder; its items stay. */
   | { readonly type: 'delete-folder'; readonly folderId: string }
   /** Suppresses or unsuppresses every item of a folder. */

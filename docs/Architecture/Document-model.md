@@ -14,6 +14,8 @@ classDiagram
     createdAt, modifiedAt
     parameters?: Parameter[]
     remote?: ProjectRemote
+    scripts?: ProjectScript[]
+    plugins?: ProjectPlugin[]
   }
   class DocumentSummary {
     id: DocumentId
@@ -53,6 +55,8 @@ classDiagram
 ```
 
 All lengths are stored **in millimetres**, and `units` controls display only. Angles are stored in degrees in expressions and in radians internally. Plain numbers in expressions are millimetres; a plain number typed in a document of another unit is saved with the unit written out (`lengthExpression`), so changing `units` never changes the model.
+
+**Scripts and plugins** travel with the project ([[CAD-173]], [[CAD-174]]): `scripts` are the script console's kept scripts (name, source, parameters with defaults and kinds), `plugins` the installed plugins (their description and source, [[src/core/contracts/project.ts]]). Both are part of the project's settings in its versions (`project.json`), its archives and its copies.
 
 ## Versions
 
@@ -160,6 +164,7 @@ Each feature type is its own interface in [[src/core/contracts/feature.ts]]. All
 | `scale` | bodies | factor (about the origin) |
 | `base-flange` | sketch, profile ids | direction; the sheet's rules: thickness, bend radius, K-factor |
 | `edge-flange` | straight edges of the sheet | length; angle |
+| `plugin` | a plugin of the project (id, the version it was made with), its feature's name, a plane (`XY`, `XZ`, `YZ`) | the feature's parameters by name; operation. The plugin builds outlines with heights from the values; they are extruded in the plane ([[Architecture/Decisions#ADR-60a]]) |
 
 Construction `plane`s have a `mode`: `offset` (the default, from a base plane), `angle` (about an axis in the base plane), `midplane` (between the base and a parallel second plane) or `points` (three vertices).
 
@@ -283,5 +288,6 @@ Every document carries `schemaVersion`. Document Access runs pure migration func
 | 1 | First schema |
 | 2 | Assemblies get `motionStudies` (empty for older assemblies) |
 | 3 | Nothing to migrate: marks documents an older CADence must not open, since it would ignore their newer fields (`lean`, `anchor`, a gear's `chamfer`) and show them wrongly ([[CAD-145]]) |
+| 4 | Nothing to migrate: plugin features ([[CAD-174]]), which an older CADence cannot build |
 
 A document of a newer schema than the app reads is listed in its project (from its name and kind) but not opened: the app says to update CADence. The version goes up with every field an older app must not ignore.

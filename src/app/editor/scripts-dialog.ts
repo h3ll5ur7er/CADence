@@ -33,7 +33,7 @@ await box.run(
   { type: 'add-rectangle', sketchId: 's', id: 'r', x: 0, y: 0, width: params.size, height: params.size },
 );
 const [profile] = (await box.summary({ only: ['sketches'] })).sketches[0].profiles;
-await box.run({ type: 'add-feature', feature: { type: 'extrude', id: 'e', name: '', suppressed: false, sketch: 's', profiles: [profile.id], distance: params.size, direction: 'normal', operation: 'new-body' } });
+await box.run({ type: 'add-feature', feature: { type: 'extrude', id: 'e', name: '', suppressed: false, sketch: 's', profiles: [profile.id], distance: params.size + ' mm', direction: 'normal', operation: 'new-body' } });
 console.log('Made', created.value.name);
 return created.value.name;
 `;

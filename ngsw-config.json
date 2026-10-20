@@ -16,6 +16,7 @@
           "/icon*",
           "/fonts/*",
           "/templates/*.json",
+          "/plugins/*.js",
           "/third-party-licences.txt"
         ]
       }

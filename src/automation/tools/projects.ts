@@ -90,13 +90,14 @@ export function projectTools(cadence: Cadence, env: NodeJS.ProcessEnv = process.
     {
       name: 'versions',
       description:
-        "A project's version history: list (a project's, or a document's with document), record (a version now, with a message), restore (a document as it was in a version; the restore is a change of its own), name or unname (a version, the latest by default). Copies of projects (duplicated, or imported beside their original) keep the history.",
+        "A project's version history: list (a project's, or a document's with document), record (a version now, with a message), restore (a document as it was in a version; the restore is a change of its own), compare (a document in version with it in to, or as it is now: what was added, removed, changed and moved in its timeline, sketches and parameters, in words, and for components the volume added and removed), name or unname (a version, the latest by default). Copies of projects (duplicated, or imported beside their original) keep the history.",
       inputSchema: object(
         {
-          action: { type: 'string', enum: ['list', 'record', 'restore', 'name', 'unname'] },
+          action: { type: 'string', enum: ['list', 'record', 'restore', 'compare', 'name', 'unname'] },
           project: projectArg,
           document: documentArg,
           version: string('A version id (from list).'),
+          to: string('compare: the newer version id (the document as it is now by default).'),
           message: string('record: what changed.'),
           name: string('name, unname: the version name, e.g. "v1.0".'),
         },
@@ -105,7 +106,7 @@ export function projectTools(cadence: Cadence, env: NodeJS.ProcessEnv = process.
       run: async (args) => {
         const action = String(args['action']);
         const version = args['version'] === undefined ? undefined : String(args['version']);
-        if (action === 'restore' || (action === 'list' && args['document'] !== undefined)) {
+        if (action === 'restore' || action === 'compare' || (action === 'list' && args['document'] !== undefined)) {
           const document = String(args['document'] ?? '') as DocumentId;
           // Ids are the document's own: refuse one of another project than the one named (CAD-147).
           if (args['project'] !== undefined) {
@@ -113,7 +114,8 @@ export function projectTools(cadence: Cadence, env: NodeJS.ProcessEnv = process.
             if (found && found.projectId !== named) throw new CadenceError('wrong-project', `${found.name} is a document of another project; its id there is ${found.id}.`);
           }
           if (action === 'list') return cadence.projects.documentHistory(document);
-          if (!version) throw new CadenceError('usage', 'restore needs a document and a version.');
+          if (!version) throw new CadenceError('usage', `${action} needs a document and a version.`);
+          if (action === 'compare') return cadence.compareVersions(document, version, args['to'] === undefined ? undefined : String(args['to']));
           unwrap(await cadence.projects.restoreDocument(document, version));
           cadence.forget(document);
           return `Restored as of ${version}.`;
@@ -139,8 +141,8 @@ export function projectTools(cadence: Cadence, env: NodeJS.ProcessEnv = process.
     {
       name: 'sync_project',
       description:
-        'Syncs a project with its git repository (sign-in from $CADENCE_GIT_USERNAME and $CADENCE_GIT_PASSWORD), after setting the repository with url. Answers what happened; when both sides changed documents, it lists them: sync again with resolutions ({"<path>": "mine" | "theirs"}).',
-      inputSchema: object({ project: projectArg, url: string('The repository to sync with from now on.'), resolutions: { type: 'object', additionalProperties: { type: 'string', enum: ['mine', 'theirs'] }, description: 'Which side to keep for each conflict, by its path.' } }, ['project']),
+        'Syncs a project with its git repository (sign-in from $CADENCE_GIT_USERNAME and $CADENCE_GIT_PASSWORD), after setting the repository with url. Answers what happened. Documents changed on both sides are merged by their timeline items, sketch elements and parameters; what both changed differently is listed per document (items, each with how mine and theirs have it): sync again with resolutions, {"<path>#<item path>": "mine" | "theirs"} per item, or {"<path>": "mine" | "theirs"} for a whole document.',
+      inputSchema: object({ project: projectArg, url: string('The repository to sync with from now on.'), resolutions: { type: 'object', additionalProperties: { type: 'string', enum: ['mine', 'theirs'] }, description: 'Which side to keep for each conflict: by "<path>#<item path>" per item, or by the path of the document for all of it.' } }, ['project']),
       run: async (args) => {
         const project = await projectId(args);
         if (args['url'] !== undefined) unwrap(await cadence.projects.setRemote(project, { url: String(args['url']) }));

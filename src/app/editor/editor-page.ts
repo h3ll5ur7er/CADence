@@ -8,6 +8,7 @@ import {
   input,
   resource,
   signal,
+  untracked,
   viewChild,
 } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
@@ -25,6 +26,7 @@ import { Icon } from '../shared/icon';
 import { SettingsDialog } from '../shared/settings-dialog';
 import { DocumentsPanel } from './documents-panel';
 import { EditorStatus } from './editor-status';
+import { CompareView, type CompareRequest } from './compare-view';
 import { HistoryDialog } from './history-dialog';
 import { AboutDialog } from '../about/about-dialog';
 import { SyncDialog } from './sync-dialog';
@@ -39,7 +41,7 @@ const storageLabels = { browser: 'This browser', 'project-folders': 'Project fol
 
 @Component({
   selector: 'cad-editor-page',
-  imports: [RouterLink, Icon, DocumentsPanel, ComponentMode, AssemblyMode, DrawingMode, ImportedMode, NameDialog, ConfirmDialog, SettingsDialog, HistoryDialog, SyncDialog, AboutDialog],
+  imports: [RouterLink, Icon, DocumentsPanel, CompareView, ComponentMode, AssemblyMode, DrawingMode, ImportedMode, NameDialog, ConfirmDialog, SettingsDialog, HistoryDialog, SyncDialog, AboutDialog],
   providers: [EditorStatus, ThumbnailSaver],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './editor-page.html',
@@ -57,6 +59,8 @@ export class EditorPage {
   protected readonly kindLabels = kindLabels;
   protected readonly storage = storageLabels[inject(STORAGE_KIND)];
   protected readonly message = signal<string | undefined>(undefined);
+  /** Two versions of a document shown in place of its editor (CAD-175). */
+  protected readonly comparing = signal<CompareRequest | undefined>(undefined);
   private readonly projectManager = inject(PROJECT_MANAGER);
   private readonly router = inject(Router);
   private readonly nameDialog = viewChild.required(NameDialog);
@@ -77,6 +81,11 @@ export class EditorPage {
 
   constructor() {
     effect(() => this.thumbnails.document.set(this.documentId() ? asDocumentId(this.documentId() as string) : undefined));
+    // Opening another document ends a comparison.
+    effect(() => {
+      const id = this.documentId();
+      if (untracked(this.comparing) && untracked(this.comparing)?.document.id !== id) this.comparing.set(undefined);
+    });
     // A project opened without a document shows its most recently edited one.
     effect(() => {
       const documents = this.documents.value();
@@ -164,6 +173,12 @@ export class EditorPage {
     if (!name || name === project.name) return;
     await this.projectManager.renameProject(project.id, name);
     this.project.reload();
+  }
+
+  /** Shows two versions of a document in place of its editor, opening it first when another is open. */
+  protected async compare(request: CompareRequest): Promise<void> {
+    if (request.document.id !== this.documentId()) await this.open(request.document);
+    this.comparing.set(request);
   }
 
   protected openSync(): void {

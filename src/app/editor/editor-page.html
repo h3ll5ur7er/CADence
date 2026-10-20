@@ -55,6 +55,8 @@
       <h1>Project not found</h1>
       <p>It may have been deleted. <a routerLink="/">Back to all projects</a></p>
     </div>
+  } @else if (comparing(); as request) {
+    <cad-compare-view [request]="request" (closed)="comparing.set(undefined)" />
   } @else if (active(); as doc) {
     @switch (doc.kind) {
       @case ('component') {
@@ -104,5 +106,5 @@
 <cad-settings-dialog #settings />
 <cad-about-dialog #about />
 <cad-confirm-dialog />
-<cad-history-dialog #historyDialog (restored)="documents.reload(); project.reload()" />
+<cad-history-dialog #historyDialog (restored)="documents.reload(); project.reload()" (compare)="compare($event)" />
 <cad-sync-dialog (synced)="refresh()" />

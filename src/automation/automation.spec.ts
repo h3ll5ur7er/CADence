@@ -249,6 +249,11 @@ describe('everything the app does, for agents (CAD-124)', () => {
     expect(text(await call('versions', { action: 'name', project, name: 'v1' }))).toBe('Named v1.');
     await call('rename_document', { document: part, name: 'Renamed part' });
     expect((await json('versions', { action: 'list', project })) as unknown).toEqual(expect.arrayContaining([expect.objectContaining({ names: ['v1'] })]));
+    // Compared in words (CAD-175): renamed, and the same body.
+    const compared = (await json('versions', { action: 'compare', document: part, version: recorded.id })) as { changes: string[]; volume: Record<string, number> };
+    expect(compared.changes).toContainEqual(expect.stringMatching(/^Changed Name: .* → Renamed part$/));
+    expect(compared.volume).toMatchObject({ added: 0, removed: 0 });
+    expect(compared.volume['before']).toBeGreaterThan(0);
     expect(text(await call('versions', { action: 'restore', document: part, version: recorded.id }))).toBe(`Restored as of ${recorded.id}.`);
     expect((await core.projectManager.findDocument(part as never))?.name).not.toBe('Renamed part');
 

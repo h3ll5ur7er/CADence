@@ -77,9 +77,23 @@ fn read_system_font(name: String) -> Result<tauri::ipc::Response, String> {
     std::fs::read(path).map(tauri::ipc::Response::new).map_err(|error| error.to_string())
 }
 
+/// The command line and MCP server installed with the app (CAD-132), next to its executable: for
+/// agents to start (`cadence-cli mcp`). None where there is none, or inside an AppImage, whose
+/// folder changes on every start.
+#[tauri::command]
+fn agent_cli() -> Option<String> {
+    if std::env::var_os("APPIMAGE").is_some() {
+        return None;
+    }
+    let name = if cfg!(windows) { "cadence-cli.exe" } else { "cadence-cli" };
+    let path = std::env::current_exe().ok()?.parent()?.join(name);
+    path.is_file().then(|| path.to_string_lossy().into_owned())
+}
+
 /// Desktop shell: hosts the web client and exposes the file system the desktop storage uses
 /// (scoped to the app data folder in `capabilities/default.json`), save dialogs, the browser for
-/// links, updates from GitHub releases, the files the app was started with, and installed fonts.
+/// links, updates from GitHub releases, the files the app was started with, installed fonts, and
+/// where the command line for agents is.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -88,7 +102,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![opened_files, read_opened_file, system_fonts, read_system_font])
+        .invoke_handler(tauri::generate_handler![opened_files, read_opened_file, system_fonts, read_system_font, agent_cli])
         .run(tauri::generate_context!())
         .expect("error while running CADence");
 }

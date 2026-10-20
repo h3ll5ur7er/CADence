@@ -1,6 +1,10 @@
-# CAD-59: a version tag (v1.2.3, matching `node tools/release/version.mjs`) builds the desktop
-# installers and publishes them as a GitHub release, with the signed update files (latest.json) that
-# installed desktop apps check for at start.
+# CAD-59, CAD-132: a version tag (v1.2.3, matching `node tools/release/version.mjs`) builds the
+# desktop installers for Windows, macOS (Apple silicon) and Linux and publishes them as a GitHub
+# release, with the signed update files (latest.json) that installed desktop apps check for at
+# start. Each installer carries the command line and MCP server for agents (cadence-cli, a Node
+# single executable application), which the release also offers on its own for each platform.
+# Run by hand (workflow_dispatch), or for a pull request that changes how they are built, it builds
+# the same and keeps them as workflow artifacts instead.
 #
 # Needs the repository secrets TAURI_SIGNING_PRIVATE_KEY (the private key made with
 # `npx tauri signer generate`, whose public key is in src-tauri/tauri.conf.json) and
@@ -10,14 +14,30 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+  pull_request:
+    paths: ['.github/workflows/release.yml', 'src-tauri/**', 'tools/automation/**', 'src/automation/binary.ts', 'src/automation/main.ts']
 
 permissions:
   contents: write
 
 jobs:
   desktop:
-    name: Desktop installers (Windows)
-    runs-on: windows-latest
+    name: Installers (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            runner: windows-latest
+            cli: cadence-cli-windows-x64.exe
+          - name: macOS Apple silicon
+            runner: macos-latest
+            cli: cadence-cli-macos-arm64
+          - name: Linux x64
+            runner: ubuntu-22.04
+            cli: cadence-cli-linux-x64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -29,11 +49,31 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+      - name: Linux build dependencies (WebKitGTK and friends)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - name: The tag matches the version
+        if: github.event_name == 'push'
         shell: bash
         run: test "v$(node tools/release/version.mjs)" = "$GITHUB_REF_NAME"
+      - name: The update signing key is set (docs/Development.md#releases)
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: test -n "$TAURI_SIGNING_PRIVATE_KEY" || { echo "::error::The repository secret TAURI_SIGNING_PRIVATE_KEY is not set: installed apps could not trust the update files."; exit 1; }
       - run: npm ci
+      - name: The command line for agents, for the installer and on its own
+        shell: bash
+        run: |
+          npm run build:binary -- --sidecar
+          cli=dist/binary/cadence-cli; [ "$RUNNER_OS" = Windows ] && cli=$cli.exe
+          mv "$cli" "dist/binary/${{ matrix.cli }}"
+          "dist/binary/${{ matrix.cli }}" --help | head -1
       - name: Build, sign the update files and publish the release
+        if: github.event_name == 'push'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -42,8 +82,30 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: CADence ${{ github.ref_name }}
-          releaseBody: Installers for Windows. Installed apps update themselves; the web app is at https://h3ll5ur7er.github.io/CADence/.
+          releaseBody: |
+            Installers for Windows, macOS (Apple silicon) and Linux; installed apps update themselves. The web app is at https://h3ll5ur7er.github.io/CADence/.
+            Each installer has the command line and MCP server for agents next to the app (`cadence-cli`; the About dialog shows how to add it to Claude Code). The `cadence-cli-*` files are the same on their own.
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
           args: --config src-tauri/tauri.release.conf.json
+      - name: The command line on its own, in the release
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" "dist/binary/${{ matrix.cli }}" --clobber
+      # Without the signed update files: those need the release key, which a trial run does without.
+      - name: Build without publishing (by hand, or for a pull request)
+        if: github.event_name != 'push'
+        shell: bash
+        run: npx tauri build --config src-tauri/tauri.release.conf.json --config '{"bundle":{"createUpdaterArtifacts":false}}'
+      - name: Keep the installers (by hand, or for a pull request)
+        if: github.event_name != 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.cli }}
+          path: |
+            src-tauri/target/release/bundle/
+            dist/binary/${{ matrix.cli }}
+          retention-days: 14

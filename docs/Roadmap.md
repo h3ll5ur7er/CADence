@@ -36,6 +36,7 @@ The work is planned in phases. Each phase ends with a running demo and visible e
 | 29. Agents can do everything ✅ | Every manager operation for agents: drawings, projects, versions, git, measuring, sketch checks, viewers, tables and build instructions, section pictures; loops that keep their branch, shapes held by open documents, steady animations | [[CAD-120]] [[CAD-121]] [[CAD-122]] [[CAD-123]] [[CAD-124]] |
 | 30. Drawings of the engine ✅ | The radial engine's drawings ([[CAD-96]], round 5): views within a time limit, drawn from the triangles when the exact projection takes too long, and kept with the drawing; views of configurations; outlines, centres, leader angles, extremes and section lines to dimension; short anchor answers for agents | [[CAD-125]] [[CAD-126]] [[CAD-127]] [[CAD-128]] [[CAD-129]] [[CAD-130]] |
 | 31. A binary for agents ✅ | The command line and MCP server as one self-contained executable with the kernels and fonts inside, for agents of other projects | [[CAD-131]] |
+| 32. Releases for every system ✅ | Installers for Windows, macOS and Linux from each version tag, each with the command line for agents next to the app; the command line on its own per system; the About dialog says how to add it to Claude Code | [[CAD-132]] |
 
 The order follows the dependencies: the Sketcher needs the editor shell, Part modeling needs profiles, and Assemblies need regenerated components. Within a phase, tasks are listed in the order they will be done.
 

@@ -147,7 +147,8 @@
   height: 24px;
 }
 
-.item[hidden] {
+.item[hidden],
+.folder[hidden] {
   display: none;
 }
 

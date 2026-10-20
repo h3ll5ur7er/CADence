@@ -42,10 +42,10 @@ import { bodyNames } from './body-names';
     h2 { font-size: 15px; }
     .hint { margin: 0; color: var(--text-muted); font-size: 12px; }
     .lost { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; font-size: 13px; }
-    .lost li { display: grid; gap: var(--space-1); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius); }
+    .lost li { display: grid; min-width: 0; gap: var(--space-1); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius); }
     .lost li.current { border-color: var(--accent); background: var(--accent-soft); }
     .target { display: grid; gap: 2px; padding: 0; border: 0; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
-    .candidate { justify-self: start; }
+    .candidate { justify-self: start; max-width: 100%; height: auto; min-height: 32px; padding-block: var(--space-1); white-space: normal; text-align: left; }
     .candidate.same { border-color: var(--accent); }
     .muted, .none { color: var(--text-muted); font-size: 12px; }
     .btn-primary { justify-self: start; }

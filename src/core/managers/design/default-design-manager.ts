@@ -376,7 +376,8 @@ class Session implements DesignSession {
   private async shaped(command: DesignCommand): Promise<DesignCommand> {
     const refs = topologyRefs(command).filter((r) => r.kind !== 'vertex' && !r.shape);
     if (!refs.length || !this.current.derived.bodies.length) return command;
-    const found = await this.deps.analysis.shapesOf(this.current.derived.bodies, refs);
+    // Recording what they are like never stops a command.
+    const found = await this.deps.analysis.shapesOf(this.current.derived.bodies, refs).catch(() => []);
     const shapes = new Map(refs.flatMap((ref, i) => (found[i] ? [[shapeKey(ref), found[i]] as const] : [])));
     return shapes.size ? withShapes(command, shapes) : command;
   }

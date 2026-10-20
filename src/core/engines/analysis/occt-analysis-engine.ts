@@ -58,8 +58,12 @@ export class OcctAnalysisEngine implements AnalysisEngine {
       if (ref.kind === 'vertex') return undefined;
       const body = bodies.find((b) => b.id === ref.body);
       const named = body && this.shapes.get(body.key);
-      const element = named && find(named, ref);
-      return element && !(element instanceof Vertex) ? shapeOf(element) : undefined;
+      try {
+        const element = named && find(named, ref);
+        return element && !(element instanceof Vertex) ? shapeOf(element) : undefined;
+      } catch {
+        return undefined;
+      }
     });
   }
 

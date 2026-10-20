@@ -9,6 +9,6 @@ export * from './ids';
 export * from './parts';
 export type * from './mesh';
 export type * from './project';
-export { resultStamp } from './project';
+export { resultStamp, standardLibraryId, trashDays } from './project';
 export * from './result';
 export * from './sketch';

@@ -3,6 +3,8 @@ import type { DocumentId, ProjectId } from './ids';
 /** Queued domain events published by managers (manager → manager calls are queued only). */
 export interface DomainEvents {
   readonly projectDeleted: { readonly projectId: ProjectId };
+  /** A project's settings changed in another process (its folder watched, CAD-150): lists read it again. */
+  readonly projectChanged: { readonly projectId: ProjectId };
   /** The project's parameters changed: its components regenerate. */
   readonly projectParametersChanged: { readonly projectId: ProjectId };
   readonly documentRenamed: { readonly documentId: DocumentId; readonly name: string };

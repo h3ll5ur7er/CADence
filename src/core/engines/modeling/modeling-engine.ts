@@ -89,6 +89,16 @@ export type ModelingRequest = RequestBase &
       }
     | { readonly type: 'shell'; readonly faces: readonly TopologyRef[]; readonly thickness: number }
     | {
+        /** Profiles wrapped or projected onto a face, raised out of it or cut into it (wrap.ts). */
+        readonly type: 'wrap';
+        readonly frame: PlaneFrame;
+        readonly profiles: readonly Profile[];
+        readonly face: TopologyRef;
+        readonly method: 'wrap' | 'project';
+        readonly depth: number;
+        readonly operation: 'emboss' | 'engrave';
+      }
+    | {
         readonly type: 'linear-pattern';
         readonly tools: readonly ToolInput[];
         readonly direction: AxisInput;

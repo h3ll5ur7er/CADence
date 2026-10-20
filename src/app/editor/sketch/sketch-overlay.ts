@@ -30,6 +30,7 @@ export function curvePath(entity: SketchEntity, points: ReadonlyMap<string, Vec2
     case 'drawing':
     case 'equation':
     case 'picture':
+    case 'block':
     case 'text':
       return '';
     case 'line': {
@@ -103,7 +104,7 @@ function anchorOf(sketch: Sketch, id: string, points: ReadonlyMap<string, Vec2>)
   const point = points.get(id);
   if (point) return point;
   const e = sketch.entities.find((x) => x.id === id);
-  if (!e || e.kind === 'point' || e.kind === 'projection' || e.kind === 'drawing' || e.kind === 'equation' || e.kind === 'picture') return undefined;
+  if (!e || e.kind === 'point' || e.kind === 'projection' || e.kind === 'drawing' || e.kind === 'equation' || e.kind === 'picture' || e.kind === 'block') return undefined;
   const at = (p: string): Vec2 => points.get(p) ?? [0, 0];
   if (e.kind === 'text') return at(e.anchor);
   if (e.kind === 'line') {
@@ -289,7 +290,7 @@ export function hitTest(sketch: Sketch, at: Vec2, tolerance: number, texts: Text
   const point = (id: string): Vec2 => points.get(id) ?? [0, 0];
   for (const e of sketch.entities) {
     let d: number;
-    if (e.kind === 'point' || e.kind === 'projection' || e.kind === 'drawing' || e.kind === 'equation' || e.kind === 'picture') continue;
+    if (e.kind === 'point' || e.kind === 'projection' || e.kind === 'drawing' || e.kind === 'equation' || e.kind === 'picture' || e.kind === 'block') continue;
     if (e.kind === 'text') {
       // Text is hit on its outlines.
       const lines = textPolylines(texts.get(e.id) ?? []);

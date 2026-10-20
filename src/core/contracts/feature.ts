@@ -238,6 +238,22 @@ export interface RibFeature extends FeatureBase {
   readonly direction: 'normal' | 'reverse' | 'symmetric';
 }
 
+/**
+ * Profiles of a sketch laid onto a face of a body and raised out of it (emboss) or cut into it
+ * (engrave) by a depth along the face's normal (ADR-54c). `wrap` rolls them onto a cylinder or cone,
+ * keeping lengths along the surface (the sketch plane lies along the axis, and where it is nearest
+ * the face is where the sketch touches it); `project` casts them onto any face along the sketch's normal.
+ */
+export interface WrapFeature extends FeatureBase {
+  readonly type: 'wrap';
+  readonly sketch: string;
+  readonly profiles: readonly string[];
+  readonly face: TopologyRef;
+  readonly method: 'wrap' | 'project';
+  readonly depth: string;
+  readonly operation: 'emboss' | 'engrave';
+}
+
 /** Hollows a body: the selected faces are removed, the walls get the given thickness (inward). */
 export interface ShellFeature extends FeatureBase {
   readonly type: 'shell';
@@ -330,6 +346,7 @@ export type Feature =
   | EdgeFlangeFeature
   | DraftFeature
   | RibFeature
+  | WrapFeature
   | HoleFeature
   | ThreadFeature
   | LoftFeature

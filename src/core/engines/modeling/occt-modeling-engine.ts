@@ -1,4 +1,4 @@
-import { find, kernelFailure, type NamedShape, piecesOf, place, type ShapeAccess } from '@core/access/shape';
+import { facesOf, find, kernelFailure, type NamedShape, piecesOf, place, type ShapeAccess } from '@core/access/shape';
 import { type BodyMesh, fail, type Matrix4, ok, type PlaneFrame, type Result, type TopologyRef, type Vec2, type Vec3 } from '@core/contracts';
 import { type Edge, type Face, getOC, makeCompound, makeVertex, measureVolume, type Shape3D, Vertex } from 'replicad';
 import { combine, type LoadedBody, renameCopy } from './bodies';
@@ -16,6 +16,7 @@ import { readSnapshot, snapshotOf } from './results';
 import { tessellate } from './tessellation';
 import { extrudeTool, loftTool, RevolveError, revolveTool, sweepTool } from './tools';
 import { BooleanError, cut, valid } from './booleans';
+import { WrapError, wrapTool } from './wrap';
 
 /** A failure the user can act on, as opposed to a defect. */
 class FeatureError extends Error {}
@@ -35,7 +36,7 @@ export class OcctModelingEngine implements ModelingEngine {
     try {
       outcome = this.compute(request);
     } catch (error) {
-      const known = error instanceof FeatureError || error instanceof BooleanError || error instanceof GearError || error instanceof BodyOperationError || error instanceof HoleError || error instanceof PartError || error instanceof DraftRibError || error instanceof FlangeError || error instanceof RevolveError;
+      const known = error instanceof FeatureError || error instanceof BooleanError || error instanceof GearError || error instanceof BodyOperationError || error instanceof HoleError || error instanceof PartError || error instanceof DraftRibError || error instanceof FlangeError || error instanceof RevolveError || error instanceof WrapError;
       // A kernel that ran out of memory starts again before the next feature (CAD-133).
       const failure = known ? undefined : kernelFailure(describe(error));
       if (failure) this.shapes.report(describe(error));
@@ -251,6 +252,20 @@ export class OcctModelingEngine implements ModelingEngine {
         const toolKey = `${request.key}:tool`;
         this.shapes.put(toolKey, tool);
         return { ...this.store(combine(bodies, tool, 'join', request.feature, request.key)), toolKey };
+      }
+      case 'wrap': {
+        const body = bodies.find((b) => b.state.id === request.face.body);
+        if (!body) throw new WrapError(`The body of ${request.face.name} no longer exists.`);
+        const face = this.element(body, request.face);
+        if (!('normalAt' in face)) throw new WrapError('Pick a face to wrap the sketch onto.');
+        // The face as the user sees it: all its pieces (a round face's halves), the picked one first.
+        const split = (name: string) => name.replace(/~\d+$/, '');
+        const others = request.face.hint ? [] : facesOf(body.named.shape).filter((f) => f.hashCode !== face.hashCode && split(body.named.faces.get(f.hashCode) ?? '') === split(request.face.name));
+        const pieces = [face as Face, ...others];
+        const tool = wrapTool(request.feature, request.frame, request.profiles, pieces, request.method, request.depth, request.operation);
+        const toolKey = `${request.key}:tool`;
+        this.shapes.put(toolKey, tool);
+        return { ...this.store(combine(bodies, tool, request.operation === 'emboss' ? 'join' : 'cut', request.feature, request.key)), toolKey };
       }
       case 'shell':
         return this.shell(request.feature, request.key, bodies, request.faces, positive(request.thickness, 'thickness'));

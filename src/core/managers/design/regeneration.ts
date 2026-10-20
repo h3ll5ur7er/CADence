@@ -31,6 +31,9 @@ import {
   type SketchDrawing,
   type SketchEntity,
   type SketchEquation,
+  type SketchInsertion,
+  insertedId,
+  isCurve,
   sketchOriginId,
   type SketchProjection,
   type ThreadMarker,
@@ -43,7 +46,7 @@ import type { DocumentAccess } from '@core/access/document';
 import type { DrawingEntities, InterchangeEngine } from '@core/engines/interchange';
 import type { AxisInput, BodyState, ModelingEngine, ModelingRequest, PathPiece, Placement, ToolInput, PartSolid } from '@core/engines/modeling';
 import type { ParameterEngine, ParameterError, Quantity, ValueKind } from '@core/engines/parameter';
-import { type DragTarget, type FontFiles, placesAlong, type SketchEngine, type SketchPath, sketchPath } from '@core/engines/sketch';
+import { type DragTarget, type FontFiles, measureDimension, placesAlong, type SketchEngine, type SketchPath, sketchPath } from '@core/engines/sketch';
 import { contentHash } from '@core/utilities/identity';
 import { references } from './commands';
 import type { ItemStatus, ParameterView, SketchView } from './design-manager';
@@ -51,12 +54,12 @@ import type { ItemStatus, ParameterView, SketchView } from './design-manager';
 /** Imported drawings read for sketches, by original and id prefix (originals never change). */
 const drawingCache = new Map<string, Promise<Result<DrawingEntities>>>();
 
-/** Whether solving moved a handle point of a drawing kept as one piece. */
+/** Whether solving moved a handle point of a drawing kept as one piece, or the point a block is placed at. */
 function handlesMoved(before: Sketch, after: Sketch): boolean {
   const at = (sketch: Sketch, id: string) => sketch.entities.find((e) => e.id === id);
   return before.entities.some((e) => {
-    if (e.kind !== 'drawing') return false;
-    return [e.origin, e.handle].some((id) => {
+    if (e.kind !== 'drawing' && e.kind !== 'block') return false;
+    return (e.kind === 'drawing' ? [e.origin, e.handle] : [e.origin]).some((id) => {
       const [p, q] = [at(before, id), at(after, id)];
       return p?.kind === 'point' && q?.kind === 'point' && Math.hypot(p.x - q.x, p.y - q.y) > 1e-9;
     });
@@ -157,6 +160,41 @@ const constraintLabels: Readonly<Record<string, string>> = {
   angle: 'angle',
 };
 
+/** A named reference dimension as a parameter: what it measured last (ADR-54). */
+interface NamedReference {
+  readonly id: string;
+  readonly name: string;
+  readonly expression: string;
+  readonly sketch: string;
+  readonly sketchName: string;
+  readonly dimension: string;
+  /** The sketch's place in the timeline. */
+  readonly index: number;
+  readonly angle: boolean;
+}
+
+/** A value in millimetres or radians as an expression. */
+const quantityText = (value: number, angle: boolean) => `${value.toFixed(9)} ${angle ? "rad" : "mm"}`;
+
+/**
+ * The document's named reference dimensions, at first with what they measured when last solved (the
+ * stored positions). Names taken by parameters, or by an earlier reference, are left out.
+ */
+function namedReferences(document: ComponentDocument, taken: ReadonlySet<string>): NamedReference[] {
+  const names = new Set(taken);
+  const found: NamedReference[] = [];
+  for (const [index, item] of document.timeline.entries()) {
+    if (!isSketch(item)) continue;
+    for (const d of item.constraints) {
+      if (!isDimension(d) || !d.reference || !d.name || names.has(d.name)) continue;
+      names.add(d.name);
+      const angle = d.kind === 'angle';
+      found.push({ id: `${item.id}/${d.id}`, name: d.name, expression: quantityText(measureDimension(item, d) ?? 0, angle), sketch: item.id, sketchName: item.name, dimension: d.id, index, angle });
+    }
+  }
+  return found;
+}
+
 /** Omit that keeps a union's members apart. */
 type WithoutKey<T> = T extends unknown ? Omit<T, 'key'> : never;
 
@@ -204,13 +242,9 @@ export class Regeneration {
     const configured = (p: Parameter): Parameter => (p.name in values ? { ...p, expression: values[p.name] as string } : p);
     const own = new Set(document.parameters.map((p) => p.name));
     const shared = (context.projectParameters ?? []).filter((p) => !own.has(p.name));
-    const evaluated = this.engines.parameters.evaluateAll([...shared, ...document.parameters].map(configured));
-    if (evaluated.ok) this.scope = evaluated.value;
-    const view = (parameter: Parameter, project: boolean): ParameterView => {
-      const value = this.scope.get(parameter.name);
-      return { parameter, ...(value ? { display: display(value, document.units) } : {}), ...(project ? { project } : {}) };
-    };
-    const parameters = [...shared.map((p) => view(p, true)), ...document.parameters.map((p) => view(p, false))];
+    this.parameterList = [...shared, ...document.parameters].map(configured);
+    this.references = namedReferences(document, new Set([...own, ...shared.map((p) => p.name)]));
+    const evaluated = this.evaluateParameters();
     const marker = document.timeline.length - document.rollbackIndex;
     for (const [index, item] of document.timeline.entries()) {
       if (index >= marker) {
@@ -221,9 +255,18 @@ export class Regeneration {
         this.items.set(item.id, { state: 'suppressed' });
         continue;
       }
-      const result = isSketch(item) ? await this.sketch(item) : await this.feature(item);
+      const result = isSketch(item) ? await this.sketch(item, index) : await this.feature(item);
       this.items.set(item.id, result.ok ? { state: 'ok' } : { state: 'error', error: result.error.message });
     }
+    const view = (parameter: Parameter, project: boolean): ParameterView => {
+      const value = this.scope.get(parameter.name);
+      return { parameter, ...(value ? { display: display(value, document.units) } : {}), ...(project ? { project } : {}) };
+    };
+    const measuredViews = this.references.map((r): ParameterView => {
+      const value = this.scope.get(r.name);
+      return { parameter: { id: r.id, name: r.name, expression: r.expression }, ...(value ? { display: display(value, document.units) } : {}), measured: r.sketchName };
+    });
+    const parameters = [...shared.map((p) => view(p, true)), ...document.parameters.map((p) => view(p, false)), ...measuredViews];
     return {
       sketches: this.sketches,
       items: this.items,
@@ -238,13 +281,56 @@ export class Regeneration {
     };
   }
 
+  /** The parameters in effect (the project's and the component's, configured). */
+  private parameterList: readonly Parameter[] = [];
+  /** Named reference dimensions, as parameters that hold what they measure (ADR-54). */
+  private references: NamedReference[] = [];
+
+  /** Evaluates the parameters with the values the named reference dimensions measure so far. */
+  private evaluateParameters(): Result<Map<string, Quantity>, ParameterError> {
+    const evaluated = this.engines.parameters.evaluateAll([...this.parameterList, ...this.references]);
+    if (evaluated.ok) this.scope = evaluated.value;
+    return evaluated;
+  }
+
+  /**
+   * The first of `names` an expression uses, also through the parameters it uses: a dimension that
+   * would read what its own sketch (or a later one) measures cannot drive it.
+   */
+  private usesAny(expression: string, names: ReadonlySet<string>): string | undefined {
+    const expressions = new Map<string, string>([...this.parameterList, ...this.references].map((p) => [p.name, p.expression]));
+    const seen = new Set<string>();
+    const stack = this.engines.parameters.namesIn(expression);
+    while (stack.length) {
+      const name = stack.pop() as string;
+      if (seen.has(name)) continue;
+      seen.add(name);
+      if (names.has(name)) return name;
+      const next = expressions.get(name);
+      if (next !== undefined) stack.push(...this.engines.parameters.namesIn(next));
+    }
+    return undefined;
+  }
+
+  /** After a sketch solved: the values its named references measure, for everything after it. */
+  private measuredBy(sketch: Sketch, measured: ReadonlyMap<string, number>): void {
+    let changed = false;
+    this.references = this.references.map((r) => {
+      const value = r.sketch === sketch.id ? measured.get(r.dimension) : undefined;
+      if (value === undefined || r.expression === quantityText(value, r.angle)) return r;
+      changed = true;
+      return { ...r, expression: quantityText(value, r.angle) };
+    });
+    if (changed) this.evaluateParameters();
+  }
+
   /** Evaluates an expression with the component's parameters. */
   value(expression: string, kind: ValueKind, what: string): Result<number> {
     const value = this.engines.parameters.evaluate(expression, kind, this.scope);
     return value.ok ? value : fail({ code: 'invalid-expression', message: `${what} "${expression}": ${value.error.message}` });
   }
 
-  private async sketch(stored: Sketch): Promise<Result<void>> {
+  private async sketch(stored: Sketch, index = 0): Promise<Result<void>> {
     const frame = await this.frame(stored.plane);
     const unsolved = (error: string, f: PlaneFrame = originFrames.XY, conflicting?: readonly string[]) => {
       this.sketches.set(stored.id, { sketch: stored, frame: f, status: 'failed', degreesOfFreedom: 0, profiles: [], texts: new Map(), values: new Map(), error, ...(conflicting ? { conflicting } : {}) });
@@ -255,7 +341,16 @@ export class Regeneration {
     if (!projected.ok) return unsolved(projected.error.message, frame.value);
     let sketch = projected.value;
     const values = new Map<string, number>();
+    // What this sketch and later ones measure cannot drive its dimensions.
+    const later = new Set(this.references.filter((r) => r.index >= index).map((r) => r.name));
     for (const dimension of sketch.constraints.filter(isDimension)) {
+      if (dimension.reference) {
+        const taken = dimension.name && !this.references.some((r) => r.sketch === sketch.id && r.dimension === dimension.id);
+        if (taken) return unsolved(`The name "${dimension.name}" is already used by a parameter or another reference dimension.`, frame.value);
+        continue;
+      }
+      const read = later.size ? this.usesAny(dimension.expression, later) : undefined;
+      if (read) return unsolved(`${constraintLabels[dimension.kind]} "${dimension.expression}" uses ${read}, which this sketch or a later one measures: a reference cannot drive what it measures.`, frame.value);
       const value = this.dimension(dimension);
       if (!value.ok) return unsolved(value.error.message, frame.value);
       values.set(dimension.id, value.value);
@@ -276,7 +371,8 @@ export class Regeneration {
     }
     if (solution.status === 'failed') return unsolved('The sketch cannot satisfy these constraints. Check the dimension values.', frame.value);
     if (collapses(solution.sketch)) return unsolved('This would shrink a line, circle or arc to nothing.', frame.value);
-    this.sketches.set(sketch.id, { ...solution, frame: frame.value, values });
+    this.sketches.set(sketch.id, { ...solution, frame: frame.value, values: new Map([...values, ...solution.measured]) });
+    this.measuredBy(sketch, solution.measured);
     return ok(undefined);
   }
 
@@ -288,8 +384,14 @@ export class Regeneration {
     const projections = sketch.entities.filter((e): e is SketchProjection => e.kind === 'projection');
     const drawings = sketch.entities.filter((e): e is SketchDrawing => e.kind === 'drawing');
     const equations = sketch.entities.filter((e): e is SketchEquation => e.kind === 'equation');
-    if (!projections.length && !drawings.length && !equations.length) return ok(sketch);
+    const blocks = sketch.entities.filter((e): e is SketchInsertion => e.kind === 'block');
+    if (!projections.length && !drawings.length && !equations.length && !blocks.length) return ok(sketch);
     const entities = sketch.entities.filter((e) => !generatorOf(sketch, e.id));
+    for (const insertion of blocks) {
+      const pieces = await this.blockPieces(insertion, sketch);
+      if (!pieces.ok) return pieces;
+      entities.push(...pieces.value);
+    }
     for (const equation of equations) {
       const pieces = this.equationPieces(equation);
       if (!pieces.ok) return pieces;
@@ -425,6 +527,85 @@ export class Regeneration {
         return v.ok ? ok({ kind: 'groove', length: num(v.value, 'length'), width: num(v.value, 'width'), depth: num(v.value, 'depth') }) : v;
       }
     }
+  }
+
+  /** Components read for the blocks they hold, once per regeneration. */
+  private readonly blockDocuments = new Map<string, Promise<ComponentDocument | undefined>>();
+
+  /** A block sketch: solved earlier in this run, or as last stored (later in the timeline, or in another component). */
+  private async blockSketch(insertion: SketchInsertion): Promise<Sketch | undefined> {
+    let timeline = this.timeline;
+    if (insertion.document) {
+      let loading = this.blockDocuments.get(insertion.document);
+      if (!loading) {
+        loading = this.engines.documents.load(asDocumentId(insertion.document)).then((d) => (d?.kind === 'component' ? d : undefined));
+        this.blockDocuments.set(insertion.document, loading);
+      }
+      timeline = (await loading)?.timeline ?? [];
+    }
+    const stored = timeline.find((item): item is Sketch => item.id === insertion.block && isSketch(item));
+    if (!stored?.block) return undefined;
+    const solved = insertion.document ? undefined : this.sketches.get(stored.id);
+    return solved && !solved.error ? solved.sketch : stored;
+  }
+
+  /**
+   * The curves, points and texts of a block placed in a sketch (ADR-54b): turned and scaled about the
+   * block's origin and moved to the insertion's point, fixed for the solver. What the block itself
+   * places of this sketch is left out, so a sketch never holds itself.
+   */
+  private async blockPieces(insertion: SketchInsertion, sketch: Sketch): Promise<Result<SketchEntity[]>> {
+    if (insertion.block === sketch.id && !insertion.document) return fail({ code: 'invalid-input', message: 'A block cannot be placed in itself.' });
+    const block = await this.blockSketch(insertion);
+    if (!block) return fail({ code: 'missing-input', message: `The block ${insertion.block} no longer exists. Explode or delete its placement.` });
+    const angle = this.value(insertion.angle, 'angle', 'Block angle');
+    if (!angle.ok) return angle;
+    const scale = this.value(insertion.scale, 'scalar', 'Block scale');
+    if (!scale.ok) return scale;
+    if (!(scale.value > 0)) return fail({ code: 'invalid-expression', message: 'A block is scaled by more than zero.' });
+    const origin = sketch.entities.find((e) => e.id === insertion.origin);
+    const at: Vec2 = origin?.kind === 'point' ? [origin.x, origin.y] : [0, 0];
+    const [cos, sin, s] = [Math.cos(angle.value), Math.sin(angle.value), scale.value];
+    const place = (x: number, y: number): Vec2 => [at[0] + s * (cos * x - sin * y), at[1] + s * (sin * x + cos * y)];
+    const placedHere = (id: string) => {
+      const owner = generatorOf(block, id);
+      return owner?.kind === 'block' && owner.block === sketch.id && !owner.document;
+    };
+    const content = block.entities.filter((e) => (e.kind === 'point' || isCurve(e) || e.kind === 'text') && !placedHere(e.id));
+    const id = (ref: string) => insertedId(insertion.id, ref);
+    const pieces: SketchEntity[] = [];
+    if (content.some((e) => references(e).includes(sketchOriginId))) {
+      pieces.push({ id: id(sketchOriginId), kind: 'point', x: at[0], y: at[1] });
+    }
+    const construction = (e: { readonly construction: boolean }) => e.construction || insertion.construction;
+    for (const e of content) {
+      switch (e.kind) {
+        case 'point': {
+          const [x, y] = place(e.x, e.y);
+          pieces.push({ id: id(e.id), kind: 'point', x, y });
+          break;
+        }
+        case 'line':
+          pieces.push({ ...e, id: id(e.id), start: id(e.start), end: id(e.end), construction: construction(e) });
+          break;
+        case 'circle':
+          pieces.push({ ...e, id: id(e.id), center: id(e.center), radius: e.radius * s, construction: construction(e) });
+          break;
+        case 'arc':
+          pieces.push({ ...e, id: id(e.id), center: id(e.center), start: id(e.start), end: id(e.end), construction: construction(e) });
+          break;
+        case 'ellipse':
+          pieces.push({ ...e, id: id(e.id), center: id(e.center), major: id(e.major), minorRadius: e.minorRadius * s, construction: construction(e) });
+          break;
+        case 'spline':
+          pieces.push({ ...e, id: id(e.id), points: e.points.map(id), construction: construction(e) });
+          break;
+        case 'text':
+          pieces.push({ ...e, id: id(e.id), anchor: id(e.anchor), height: e.height * s, angle: e.angle + angle.value, construction: construction(e), ...(e.along ? { along: { ...e.along, curve: id(e.along.curve), offset: e.along.offset * s } } : {}) });
+          break;
+      }
+    }
+    return ok(pieces);
   }
 
   /** The points an equation curve passes through, and the smooth curve through them. */
@@ -632,6 +813,17 @@ export class Regeneration {
         if (!path.ok) return path;
         if (path.value.flat.closed) return fail({ code: 'invalid-input', message: 'A rib is drawn as an open line or curve; closed outlines are extruded.' });
         return withKey({ ...base, type: 'rib', frame: path.value.frame, path: path.value.pieces, thickness: thickness.value, depth: depth.value, direction: feature.direction });
+      }
+      case 'wrap': {
+        const depth = this.value(feature.depth, 'length', 'Depth');
+        if (!depth.ok) return depth;
+        const view = this.sketches.get(feature.sketch);
+        if (!view || view.error) return fail({ code: 'missing-input', message: 'Its sketch is missing, later in the timeline or does not solve.' });
+        const profiles = view.profiles.filter((p) => feature.profiles.includes(p.id));
+        if (profiles.length < feature.profiles.length || profiles.length === 0) {
+          return fail({ code: 'missing-input', message: 'Some of its profiles no longer exist. Edit the feature and pick them again.' });
+        }
+        return withKey({ ...base, type: 'wrap', frame: view.frame, profiles, face: feature.face, method: feature.method, depth: depth.value, operation: feature.operation });
       }
       case 'shell': {
         const thickness = this.value(feature.thickness, 'length', 'Thickness');

@@ -137,7 +137,7 @@
                 (click)="open(item, i)"
                 (keydown)="itemKey($event, item, i)"
               >
-                <cad-icon [name]="itemIcons[item.type]" />
+                <cad-icon [name]="isSketch(item) && item.block ? 'block' : itemIcons[item.type]" />
                 <span class="item-name">{{ item.name }}</span>
                 @if (item.note) {
                   <cad-icon name="note" [size]="12" class="has-note" />
@@ -348,6 +348,9 @@
     @if (!store.draft() && store.panel() !== 'parameters') {
       <div class="toast" role="alert">
         <p>{{ error }}</p>
+        @if (store.referenceOffer()) {
+          <button type="button" class="btn" (click)="store.addAsReference()">Add as a reference dimension</button>
+        }
         @if (conflicts().length) {
           <ul class="conflicts" aria-label="Conflicting relations and dimensions">
             @for (c of conflicts(); track c.id) {
@@ -392,6 +395,45 @@
       <dt>Profiles</dt>
       <dd data-testid="profile-count">{{ view.profiles.length }}</dd>
     </dl>
+    <label class="check" title="Other sketches, here and in the project's other components, can place a block; it is not drawn in the model">
+      <input type="checkbox" aria-label="Sketch is a block" [checked]="!!view.sketch.block" (change)="setSketchBlock(view.sketch.id, $any($event.target).checked)" /> Block (place it in other sketches)
+    </label>
+    @if (selectedDimension(); as d) {
+      <p class="eyebrow">{{ d.dimension.reference ? 'Reference dimension' : 'Dimension' }}</p>
+      <div class="text-form">
+        <dl>
+          <dt>Value</dt>
+          <dd class="mono" data-testid="dimension-value">{{ d.dimension.reference ? '(' + dimensionValue(d) + ')' : dimensionValue(d) }}</dd>
+        </dl>
+        <label class="check">
+          <input type="checkbox" aria-label="Reference dimension" [checked]="!!d.dimension.reference" (change)="setReference(d.dimension, $any($event.target).checked)" />
+          Reference: shows the measured value, drives nothing
+        </label>
+        @if (d.dimension.reference) {
+          <label class="field">
+            Name (parameters and later features read it)
+            <input aria-label="Name of the reference dimension" autocomplete="off" placeholder="e.g. diagonal" [value]="d.dimension.name ?? ''" (change)="setReference(d.dimension, true, $any($event.target).value)" />
+          </label>
+        }
+      </div>
+    }
+    @if (selectedBlock(); as b) {
+      <p class="eyebrow">Placed block</p>
+      <div class="text-form">
+        <dl>
+          <dt>Block</dt>
+          <dd>{{ b.name }}</dd>
+        </dl>
+        <label class="field">Angle <input aria-label="Angle of the placed block" autocomplete="off" [value]="b.insertion.angle" (change)="setBlock(b.insertion, { angle: $any($event.target).value })" /></label>
+        <label class="field">Scale <input aria-label="Scale of the placed block" autocomplete="off" [value]="b.insertion.scale" (change)="setBlock(b.insertion, { scale: $any($event.target).value })" /></label>
+        <div class="row-actions">
+          @if (b.editable) {
+            <button type="button" class="btn" (click)="editBlock(b.insertion)">Edit the block</button>
+          }
+          <button type="button" class="btn" (click)="explodeBlock(b.insertion)">Explode</button>
+        </div>
+      </div>
+    }
     @if (selectedText(); as t) {
       <p class="eyebrow">Text</p>
       <div class="text-form">

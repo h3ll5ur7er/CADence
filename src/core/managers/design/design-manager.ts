@@ -43,9 +43,26 @@ export type DesignCommand =
   | { readonly type: 'add-sketch-geometry'; readonly sketchId: string; readonly entities: readonly SketchEntity[]; readonly constraints: readonly SketchConstraint[] }
   | { readonly type: 'add-constraint'; readonly sketchId: string; readonly constraint: SketchConstraint }
   | { readonly type: 'set-dimension'; readonly sketchId: string; readonly constraintId: string; readonly expression: string }
+  /**
+   * Makes a dimension a reference (it shows what the sketch measures and drives nothing; with a `name`,
+   * later items and parameters read it) or driving again, at the value it shows (ADR-54).
+   */
+  | { readonly type: 'set-dimension-reference'; readonly sketchId: string; readonly constraintId: string; readonly reference: boolean; readonly name?: string }
   | { readonly type: 'move-point'; readonly sketchId: string; readonly pointId: string; readonly x: number; readonly y: number }
   | { readonly type: 'toggle-construction'; readonly sketchId: string; readonly ids: readonly string[] }
   | { readonly type: 'delete-sketch-elements'; readonly sketchId: string; readonly ids: readonly string[] }
+  /**
+   * Makes a block of chosen points, curves and texts (ADR-54a): a new block sketch `block` (before this
+   * one; an empty name gets "Block 2" and so on) whose origin is `base`, placed back where they were as
+   * `insertion` (on the point `<insertion>-origin`).
+   */
+  | { readonly type: 'make-block'; readonly sketchId: string; readonly block: string; readonly name?: string; readonly ids: readonly string[]; readonly base: Vec2; readonly insertion: string }
+  /** Makes a sketch a block that other sketches can place, or an ordinary sketch again. */
+  | { readonly type: 'set-sketch-block'; readonly sketchId: string; readonly block: boolean }
+  /** Turns a placed block into plain points, curves and texts where it is (ids `<insertion>.<id in the block>`). */
+  | { readonly type: 'explode-block'; readonly sketchId: string; readonly insertion: string }
+  /** How a placed block is turned (an angle expression) and scaled (a number expression). */
+  | { readonly type: 'set-block'; readonly sketchId: string; readonly insertion: string; readonly angle: string; readonly scale: string }
   /**
    * Moves sketch elements (and the points of curves among them), then turns them about `rotate.center`.
    * A turn drops their horizontal and vertical relations, which would undo it.
@@ -151,6 +168,8 @@ export interface ParameterView {
   readonly display?: string;
   /** A project parameter (edited in the project, used here). */
   readonly project?: boolean;
+  /** A named reference dimension: what it measures, read only; the name of its sketch (ADR-54). */
+  readonly measured?: string;
 }
 
 export interface DesignState {
@@ -189,8 +208,18 @@ export interface InsertDrawingOptions {
   readonly trace?: TraceSettings;
 }
 
+/** A block that sketches can place: a block sketch of this component, or (with `document`) of another one of the project. */
+export interface BlockSummary {
+  readonly sketch: string;
+  readonly name: string;
+  readonly document?: DocumentId;
+  readonly documentName?: string;
+}
+
 export interface DesignSession {
   state(): DesignState;
+  /** The blocks of the project: this component's first, then those of its other components (ADR-54a). */
+  blocks(): Promise<BlockSummary[]>;
   /** Called after every change; returns the unsubscribe function. */
   subscribe(listener: (state: DesignState) => void): () => void;
   execute(command: DesignCommand): Promise<Result<void>>;

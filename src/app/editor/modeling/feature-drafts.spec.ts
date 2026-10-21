@@ -1,4 +1,4 @@
-import type { EdgeTreatmentFeature, ExtrudeFeature, ProfileLoop } from '@core/contracts';
+import type { EdgeTreatmentFeature, ExtrudeFeature, ProfileLoop, WrapFeature } from '@core/contracts';
 import { circleLoop, profile, rectangleLoop } from '@core/contracts/testing/profiles';
 import { applyPick, type FeatureDraft, pickableFor, selectionOf, solidProfiles } from './feature-drafts';
 
@@ -55,5 +55,20 @@ describe('feature drafts', () => {
     expect(picked.target).toBeUndefined();
     expect(picked.feature).toMatchObject({ axis: { kind: 'edge', edge: { name: 'e:y' } } });
   });
-});
 
+  it('picks the profiles to wrap, then the face to wrap them onto (CAD-155)', () => {
+    const wrap: FeatureDraft = {
+      mode: 'create',
+      feature: { id: 'w', type: 'wrap', name: '', suppressed: false, sketch: 's1', profiles: [], face: { kind: 'face', body: '', name: '' }, method: 'wrap', depth: '0.5', operation: 'emboss' } satisfies WrapFeature,
+    };
+    expect([...pickableFor(wrap)]).toEqual(['profile']);
+    const letters = applyPick(wrap, { kind: 'profile', sketch: 's1', profile: 'a' });
+    expect((letters.feature as WrapFeature).profiles).toEqual(['a']);
+    const waiting: FeatureDraft = { ...letters, target: 'face' };
+    expect([...pickableFor(waiting)]).toEqual(['face']);
+    const onto = applyPick(waiting, { kind: 'face', body: 'b', name: 'f:e:side:rim', hint: [0, -10, 5], planar: false });
+    expect(onto.target).toBeUndefined();
+    expect(onto.feature).toMatchObject({ profiles: ['a'], face: { body: 'b', name: 'f:e:side:rim' } });
+    expect(selectionOf(onto).map((p) => p.kind)).toEqual(['profile', 'face']);
+  });
+});

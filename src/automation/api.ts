@@ -16,9 +16,9 @@ import type {
   Vec2,
   Vec3,
 } from '@core/contracts';
-import { type MotionFrame, sourceKey } from '@core/contracts';
+import { isDimension, type MotionFrame, sourceKey } from '@core/contracts';
 import type { AssemblyCommand, AssemblyFormat, AssemblySession, AssemblyState, BomLine, CollisionOptions, CollisionReport, InstructionPicture, PlacedRef } from '@core/managers/assembly';
-import type { BrokenReference, DesignSession, DesignState, DrawingFormat, ExportOptions, SolidFormat } from '@core/managers/design';
+import type { BrokenReference, DesignSession, DesignState, DrawingFormat, ExportOptions, SketchView, SolidFormat } from '@core/managers/design';
 import type { ProjectManager } from '@core/managers/project';
 import { deflate, encodeGif, encodePng, type Pixels } from '@core/utilities/picture';
 import { boundsOf, type RasterMesh, rasterize, type RasterView, rasterViews, type Vec3 as RasterVec3 } from '@core/utilities/raster';
@@ -172,6 +172,10 @@ interface SketchEntry {
   readonly error?: string;
   /** Closed regions: area (mm²), extent of the outline, and how many holes are cut out of it. */
   readonly profiles: readonly { readonly id: string; readonly area: number; readonly holes: number; readonly min: Vec2; readonly max: Vec2 }[];
+  /** What its reference dimensions measure (mm, or degrees for angles), with their names (ADR-54). */
+  readonly references?: readonly { readonly id: string; readonly name?: string; readonly value: number }[];
+  /** A block other sketches place (ADR-54a). */
+  readonly block?: true;
 }
 
 interface BodyEntry {
@@ -451,6 +455,8 @@ export class ComponentScript {
                 status: view.status,
                 degreesOfFreedom: view.degreesOfFreedom,
                 ...(view.error ? { error: view.error } : {}),
+                ...referencesOf(view),
+                ...(view.sketch.block ? { block: true as const } : {}),
                 profiles: view.profiles.map((profile) => {
                   const xs = profile.outer.polygon.map((p) => p[0]);
                   const ys = profile.outer.polygon.map((p) => p[1]);
@@ -1077,3 +1083,12 @@ export class Cadence {
 
 export { CadenceError, type ExportTarget, unwrap };
 export type { ScriptCommand };
+
+/** A sketch's reference dimensions and what they measure, when it has any. */
+function referencesOf(view: SketchView): Pick<SketchEntry, 'references'> {
+  const references = view.sketch.constraints.filter(isDimension).flatMap((d) => {
+    const value = d.reference ? view.values.get(d.id) : undefined;
+    return value === undefined ? [] : [{ id: d.id, ...(d.name ? { name: d.name } : {}), value: round(d.kind === 'angle' ? (value * 180) / Math.PI : value) }];
+  });
+  return references.length ? { references } : {};
+}

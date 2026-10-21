@@ -7,6 +7,7 @@ import {
   isImportedModel,
   isImportedFont,
   isImportedPicture,
+  isDimension,
   type ProjectId,
   type Feature,
   type FeatureType,
@@ -26,7 +27,7 @@ import {
   type LengthUnit,
   type SketchFreedom,
 } from '@core/contracts';
-import type { BrokenReference, ConfigurationImport, DesignCommand, DesignSession, DesignState, DrawingFormat, ExportOptions, InsertDrawingOptions, SketchView, SolidFormat } from '@core/managers/design';
+import type { BlockSummary, BrokenReference, ConfigurationImport, DesignCommand, DesignSession, DesignState, DrawingFormat, ExportOptions, InsertDrawingOptions, SketchView, SolidFormat } from '@core/managers/design';
 import { newId } from '@core/utilities/identity';
 import { DESIGN_MANAGER, PROJECT_MANAGER } from '../../core.providers';
 import { pictureUrl } from '../../shared/picture-url';
@@ -60,6 +61,12 @@ export class DesignStore {
   readonly error = signal<string | undefined>(undefined);
   /** A sketch command refused because it contradicts relations or dimensions the sketch has: those, and the command to try again. */
   readonly conflict = signal<{ readonly sketchId: string; readonly constraints: readonly string[]; readonly command: DesignCommand } | undefined>(undefined);
+  /** A dimension refused because it would over-constrain the sketch: it can go in as a reference instead (ADR-54). */
+  readonly referenceOffer = signal<Extract<DesignCommand, { type: 'add-constraint' }> | undefined>(undefined);
+  /** New dimensions are references (they show values and drive nothing). */
+  readonly referenceDimensions = signal(false);
+  /** The block the place-block tool puts down. */
+  readonly blockToPlace = signal<BlockSummary | undefined>(undefined);
   readonly editing = signal<string | undefined>(undefined);
   readonly tool = signal<Tool>('select');
   /** Corners of the polygon tool. */
@@ -239,7 +246,21 @@ export class DesignStore {
     this.error.set(result.ok ? undefined : result.error.message);
     const sketchId = 'sketchId' in command ? command.sketchId : undefined;
     this.conflict.set(!result.ok && sketchId && result.error.related?.length ? { sketchId, constraints: result.error.related, command } : undefined);
+    const offer = !result.ok && result.error.code === 'over-constrained' && command.type === 'add-constraint' && isDimension(command.constraint) && !command.constraint.reference;
+    this.referenceOffer.set(offer ? command : undefined);
     return result.ok;
+  }
+
+  /** Adds the refused dimension as a reference: it shows the value without driving the sketch. */
+  async addAsReference(): Promise<boolean> {
+    const offer = this.referenceOffer();
+    if (!offer || !isDimension(offer.constraint)) return false;
+    return this.run({ ...offer, constraint: { ...offer.constraint, reference: true } });
+  }
+
+  /** The blocks sketches can place: this component's and the project's other components'. */
+  async blocks(): Promise<BlockSummary[]> {
+    return (await this.session?.blocks()) ?? [];
   }
 
   /** Removes one of the relations or dimensions a refused command conflicted with, then runs that command again. */

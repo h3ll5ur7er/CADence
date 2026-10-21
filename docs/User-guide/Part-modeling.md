@@ -40,6 +40,7 @@ The toolbar above the view has buttons for the everyday features (extrude, revol
 | **Create →** Sweep | profiles; the path is the curves of another sketch, starting at the profile | operation |
 | **Create →** Hole | (choose the sketch with the hole points) | simple, counterbored or countersunk; diameter; through all or to a depth; teardrop and bridge layer for printing |
 | **Create →** Rib | (choose the sketch with an open line or curve) | thickness, depth, direction |
+| **Create →** Wrap | profiles (letters, a scale, a logo), then **Pick the face** and click it | wrapped round or projected; depth; emboss or engrave |
 | **Create →** Thread | the wall of a hole or a shaft | ISO metric size; length; shown or modelled; start at the other end |
 | **Create →** Insert body | (choose an imported 3D file) | |
 | **Pattern →** Linear / circular / along a path | (choose the features to repeat) | direction, axis or path (a sketch); count; spacing, angle, or turning with the path |
@@ -61,6 +62,15 @@ Draw the hole centres with the **Point** tool in a sketch on the face, then **Cr
 - **Fit for printing** widens the hole so a part fits as designed: *press* by nothing, *snug* by 0.15 mm, *loose* by 0.3 mm, each plus the printer's **hole compensation** (set it under **Check manufacturability** with the other printer values; measure it once by printing a test hole).
 
 A **thread** goes on the wall of a hole or a shaft and starts at its open end. ISO metric coarse sizes M2 to M20 are offered; the hole must be between the thread's minor and major diameter (a 5 mm hole for M6), the shaft about its major diameter. A thread is shown as a helix on the face. **Model the thread** cuts the 60° groove into the body instead: slower, but printable. The groove stops half a groove short of the face's far end, so a thread up to a shoulder (a hex, a flange) is cut too; a thread that would cut nothing is refused.
+
+### Wrap: emboss and engrave on round faces
+
+**Create → Wrap** puts the profiles of a sketch onto a face of a body and raises them out of it (**emboss**) or cuts them into it (**engrave**) by the depth, along the face's normal:
+
+- **Wrapped round** rolls the sketch onto a cylinder or a cone, so lengths along the surface stay as drawn: a 5 mm step of a scale is 5 mm round the knob. Draw the sketch on a plane along the axis (for a part standing on XY, the XZ or YZ plane, or a construction plane at an angle); the sketch touches the face on the side its plane is on, and its x direction runs round the face. For exact lengths on a cone, use a plane that touches it along a line.
+- **Projected along the sketch's normal** casts the profiles straight onto any face (a dome, a curved lid), seen from the sketch's front; only the side of the face nearest it is marked.
+
+Text works like any profile: sketch the letters with the Text tool and pick them all. A wrap reaches at most once round the face.
 
 ### Parts
 

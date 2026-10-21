@@ -16,7 +16,7 @@ import type { DesignState } from '@core/managers/design';
 import type { Pick, PickKind } from '../../viewport/picking';
 
 /** Which kind of pick the dialog is waiting for, beyond its main selection. */
-export type PickTarget = 'axis' | 'plane' | 'second';
+export type PickTarget = 'axis' | 'plane' | 'second' | 'face';
 
 /** A feature being created or edited in the dialog. */
 export interface FeatureDraft {
@@ -48,6 +48,7 @@ export const featureLabels: Readonly<Record<FeatureType, string>> = {
   thread: 'Thread',
   draft: 'Draft',
   rib: 'Rib',
+  wrap: 'Wrap',
   'base-flange': 'Base flange',
   'edge-flange': 'Edge flange',
 };
@@ -186,6 +187,9 @@ export function defaultFeature(type: FeatureType, id: string, state: DesignState
       const ribSketch = active.filter(isSketch).at(-1);
       return { ...base, type, sketch: ribSketch?.id ?? '', thickness: '2', depth: '10', direction: 'normal' };
     }
+    case 'wrap':
+      // The latest sketch's profiles, onto a face picked next.
+      return { ...base, type, sketch: sketch?.id ?? '', profiles, face: { kind: 'face', body: '', name: '' }, method: 'wrap', depth: '0.5', operation: 'emboss' };
   }
 }
 
@@ -203,7 +207,7 @@ export function pickableFor(draft: FeatureDraft | undefined): ReadonlySet<PickKi
   if (!draft) return new Set<PickKind>(['face']);
   const f = draft.feature;
   if (draft.target === 'axis') return new Set<PickKind>(['edge']);
-  if (draft.target === 'plane' || draft.target === 'second') return new Set<PickKind>(['face']);
+  if (draft.target === 'plane' || draft.target === 'second' || draft.target === 'face') return new Set<PickKind>(['face']);
   if (f.type === 'plane' && f.mode === 'points') return new Set<PickKind>(['vertex']);
   switch (f.type) {
     case 'extrude':
@@ -211,6 +215,7 @@ export function pickableFor(draft: FeatureDraft | undefined): ReadonlySet<PickKi
     case 'loft':
     case 'sweep':
     case 'base-flange':
+    case 'wrap':
       return new Set<PickKind>(['profile']);
     case 'edge-flange':
       return new Set<PickKind>(['edge']);
@@ -272,6 +277,8 @@ export function selectionOf(draft: FeatureDraft): Pick[] {
       return [...f.faces.map(pickOf), ...planeFace(f.plane)];
     case 'rib':
       return [];
+    case 'wrap':
+      return [...f.profiles.map((profile): Pick => ({ kind: 'profile', sketch: f.sketch, profile })), ...(f.face.name ? [pickOf(f.face)] : [])];
     case 'insert':
     case 'combine':
     case 'scale':
@@ -296,6 +303,7 @@ export function applyPick(draft: FeatureDraft, pick: Pick): FeatureDraft {
   if (draft.target === 'second' && pick.kind === 'face' && pick.planar && f.type === 'plane' && f.mode === 'midplane') {
     return { mode: draft.mode, feature: { ...f, second: { face: refOf(pick) } } };
   }
+  if (draft.target === 'face' && pick.kind === 'face' && f.type === 'wrap') return { mode: draft.mode, feature: { ...f, face: refOf(pick) } };
   if (draft.target === 'plane' && pick.kind === 'face' && pick.planar) {
     const face = { face: refOf(pick) };
     if (f.type === 'plane' && f.mode !== 'points') return { mode: draft.mode, feature: { ...f, base: face } };
@@ -313,6 +321,7 @@ export function applyPick(draft: FeatureDraft, pick: Pick): FeatureDraft {
     case 'edge-flange':
       return pick.kind === 'edge' ? { ...draft, feature: { ...f, edges: toggle(f.edges, refOf(pick), sameRef) } } : draft;
     case 'base-flange':
+    case 'wrap':
     case 'sweep': {
       if (pick.kind !== 'profile') return draft;
       const profiles = pick.sketch === f.sketch ? toggle(f.profiles, pick.profile, (a, b) => a === b) : [pick.profile];

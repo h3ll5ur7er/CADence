@@ -504,3 +504,34 @@ How a reference between projects is stored and resolved:
 
 *Why:* assemblies must use one company bracket or a standard screw in many projects without copying them by hand, and an update must reach every project that uses it, with the version used recorded.
 *Trade-off:* the alternative, instances that point into another project's documents, would need every reader (assemblies, drawings, exports, the MCP server) to resolve documents and their results by project and version, and would break wherever the library is missing. Copies take room (a part per project that uses it) and an update rebuilds the part; the read-only rule only holds in CADence (an older app opens a part as an ordinary component, and the next update replaces what it changed). Libraries do not nest (a library's part that is itself from a library is not offered), and sub-assemblies cannot be library parts yet.
+
+## ADR-54
+
+**Reference dimensions: measured from the solved sketch, readable by name (CAD-153).**
+- *A flag on a dimension:* any dimension may be a reference (`reference: true`). The Sketch Engine solves without it (it adds no constraint, so it can never over-constrain) and measures it on the solved geometry (`measureDimension`): lengths unsigned, an angle between 0 and 180°. The solution carries the measured values (`measured`), and the sketch's `values` show them, in brackets in the editor. A reference's expression is ignored; made driving again (`set-dimension-reference`), it keeps the value it shows.
+- *Offered where a dimension would over-constrain:* the refusal says it can go in as a reference, and the editor offers *Add as a reference dimension*.
+- *Read by name:* a reference with a `name` is a parameter that holds what it measures (in mm or radians). Regeneration starts with the values the stored (last solved) positions give, and after each sketch solves, the parameters are evaluated again with what it measured, so everything after it in the timeline reads the new value. A dimension that would use (directly or through parameters) a value measured by its own sketch or a later one is refused: a reference cannot drive what it measures. Names may not repeat a parameter's.
+
+*Why:* makers want to see a length they did not set (a diagonal, a gap) without over-constraining, and to use it (a lid as wide as the box turned out).
+*Trade-off:* features before the measuring sketch read the value as last solved, not as solved in this run; parameters cannot drive a dimension of the sketch whose reference they read.
+
+## ADR-54a
+
+**Blocks are sketches; placements are generated geometry (CAD-154).**
+- *A block is a sketch marked `block`:* it is edited like any sketch (all tools, relations and dimensions), is not drawn in the model, and its origin is the insertion point. *Make a block of the selection* (`make-block`) moves the chosen points, curves and texts, with the relations among them, into a new block sketch before the current one (a chosen point at the base stays on the block's origin), and places it back where it was.
+- *A placement is an entity* (`{ kind: 'block', block, document?, origin, angle, scale }`) like a drawing kept as one piece: each regeneration copies the block's points, curves and texts, turned and scaled about its origin and moved to the placement's point, as generated geometry (`<placement>:<id in the block>`, fixed for the solver). So the block is constrained as one, by its point; relations to its pieces hold other geometry; dimensions within it live in the block. Editing the block updates every placement; `explode-block` turns one into plain curves.
+- *Within the project:* a placement may name a block of another component of the project (`document`). That component's stored sketch is read (no regeneration of it); open editors of components that place it follow its `documentSaved`/`documentChanged`, and the results of the others are discarded, so assemblies and drawings ask for them anew. Blocks of a library project ([[CAD-151]]) can be placed the same way once projects refer to libraries.
+
+*Why:* a block as a sketch needs no editor of its own and no new place in the project files: it travels with its component through versions, archives and sync. Generated geometry is how projections and drawings already follow their sources.
+*Trade-off:* a block's own relations do not reach into the sketches that place it; a block later in the timeline, or in another component, is placed as last stored (one edit behind within a regeneration, never wrong after it is saved). Blocks that place each other in a loop grow by one level per change (a block never places itself or a sketch that places it directly).
+
+## ADR-54b
+
+**Wrapping and projecting sketches onto faces (CAD-155).**
+- *One feature, `wrap`:* profiles of a sketch on a face of a body, raised out of it (`emboss`, joined) or cut into it (`engrave`) by a depth along the face's normal; `method` `wrap` rolls them onto a cylinder or cone, `project` casts them along the sketch's normal onto any face.
+- *Wrapped in the face's own parameters:* the sketch plane must lie along the axis; where it is nearest the axis is where it touches. On a cylinder the unrolling is affine in the surface's (u, v), so lines, Béziers (text) and arcs map exactly (arcs become ellipses in (u, v)) and lengths along the surface are kept. A cone rolls out into a sector (distance from the apex, angle × sin of its half angle), mapped with Hermite cubics through the mapped points and tangents; its apex and axis are read from points on it, as the kernel build reads no cones. The outlines are laid on the surface (replicad `sketchOnFace`, native parameters) and thickened (`MakeThickSolidBySimple`).
+- *Projected through a prism:* the profiles extruded through everything along the sketch's normal, met with the face thickened by the depth; where the prism passes the face twice (both sides of a cylinder), only the solids nearest the sketch's front are kept.
+- *Not touching the body's face:* the tool starts a hundredth of a millimetre on the far side of the face (inside for an emboss, outside for an engrave), so it adds or removes nothing there, and booleans of touching cones do not fail. Its faces are `f:<wrap>:top` (the depth away), `base` and `side`.
+
+*Why:* labels, grips and scales on round parts are common in printing; rolled onto the exact surface they stay true to size and smooth, without approximating the round face.
+*Trade-off:* a wrap needs a sketch plane along the axis, and wraps at most once round; a cone's lengths are exact only for a plane that touches it along a line. Projected profiles are not kept true to size. Many letters make many faces, so text takes a second or two to build.

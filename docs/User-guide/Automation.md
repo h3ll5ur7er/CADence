@@ -87,6 +87,12 @@ Sizes and positions are numbers (mm) or expressions (`'width'`, `'2 * wall'`, `'
 
 Ids are yours to choose; they make later commands readable (`profiles`, `sketch`, `itemId`). Faces and edges for fillets, chamfers, shells or sketches on faces are named in `summary().bodies`.
 
+**Measuring, blocks and wraps** (phase 35):
+
+- A dimension with `reference: true` drives nothing; `summary().sketches` lists what it measures under `references` (mm, or degrees for angles). Give it a `name` and parameters and later features can use it (`{ type: 'add-parameter', parameter: { id, name: 'half', expression: 'diagonal / 2' } }`). `set-dimension-reference` turns a dimension into a reference or back into a driving one at the value it shows. A dimension that would over-constrain is refused with a message that it can go in as a reference.
+- `{ type: 'make-block', sketchId, block, name, ids, base: [x, y], insertion }` makes a block sketch of the chosen points, curves and texts and places it back; `{ id, kind: 'block', block: <block sketch>, document?: <another component of the project>, origin: <point>, angle: '30 deg', scale: '2', construction: false }` (with `add-sketch-geometry`) places it again; its pieces are `<placement>:<id in the block>`. `set-block` turns and scales a placement, `explode-block` makes it plain curves, `set-sketch-block` marks any sketch as a block. Editing the block sketch updates every placement.
+- The feature `{ type: 'wrap', sketch, profiles, face, method: 'wrap' | 'project', depth, operation: 'emboss' | 'engrave' }` raises or cuts profiles (letters too) on a round or any face; see [[User guide/Part modeling#Wrap: emboss and engrave on round faces]].
+
 ## AI agents (MCP)
 
 `cadence mcp` is an MCP server over stdio. Add it to an MCP client with the full path to the self-contained binary (below) or the built file, for example:

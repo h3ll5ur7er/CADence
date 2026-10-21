@@ -6,6 +6,7 @@ import {
   type Feature,
   type FeatureType,
   isDefaultAppearance,
+  isDimension,
   isSketch,
   lengthUnitSize,
   ok,
@@ -14,12 +15,13 @@ import {
   type SketchConstraint,
   isCurve,
   type SketchEntity,
+  type SketchInsertion,
   sketchOriginId,
   folderItems,
   type TimelineFolder,
   type TimelineItem,
 } from '@core/contracts';
-import { chamfer, type EditResult, extend as extendCurve, fillet, offset, type SketchEdit, split, trim } from '@core/engines/sketch';
+import { chamfer, type EditResult, extend as extendCurve, fillet, measureDimension, offset, type SketchEdit, split, trim } from '@core/engines/sketch';
 import type { DesignCommand, SketchOperation } from './design-manager';
 import { replaceReference } from './references';
 
@@ -56,11 +58,13 @@ const featureLabels: Readonly<Record<FeatureType, string>> = {
   thread: 'Thread',
   draft: 'Draft',
   rib: 'Rib',
+  wrap: 'Wrap',
   'base-flange': 'Base flange',
   'edge-flange': 'Edge flange',
 };
 
 const invalid = (message: string) => fail({ code: 'invalid-command', message });
+const round6 = (value: number) => Math.round(value * 1e6) / 1e6;
 
 /** Ids an entity or constraint refers to. */
 export function references(item: SketchEntity | SketchConstraint): string[] {
@@ -85,6 +89,8 @@ export function references(item: SketchEntity | SketchConstraint): string[] {
       return [item.origin, item.handle];
     case 'text':
       return [item.anchor];
+    case 'block':
+      return [item.origin];
     case 'horizontal-points':
     case 'vertical-points':
       return [...item.points];
@@ -148,10 +154,11 @@ export function itemDependencies(item: TimelineItem, timeline: readonly Timeline
     if (Array.isArray(value)) value.forEach((v) => visit(v, key));
     else if (value && typeof value === 'object') for (const [k, v] of Object.entries(value)) visit(v, k);
   };
-  // A sketch's own geometry refers to nothing in the timeline; its plane and projections do.
+  // A sketch's own geometry refers to nothing in the timeline; its plane, projections and blocks of this component do.
   if (isSketch(item)) {
     visit(item.plane, 'plane');
     for (const e of item.entities) if (e.kind === 'projection') visit(e.refs);
+    for (const e of item.entities) if (e.kind === 'block' && !e.document) found.add(e.block);
   } else {
     visit({ ...item, id: undefined, name: undefined });
   }
@@ -274,11 +281,89 @@ function remove(sketch: Sketch, ids: readonly string[]): Sketch {
   };
 }
 
+/**
+ * A block made of chosen points, curves and texts of a sketch (ADR-54a): they move into a new block
+ * sketch, with the relations among them, placed so that `base` is its origin, and the sketch places
+ * the block at `base` instead. Points that other curves use stay as well; relations between the chosen
+ * geometry and the rest go, so the block is placed by its point alone.
+ */
+function makeBlock(document: ComponentDocument, command: Extract<DesignCommand, { type: 'make-block' }>): Result<Applied> {
+  const index = document.timeline.findIndex((item) => item.id === command.sketchId && isSketch(item));
+  const source = document.timeline[index] as Sketch | undefined;
+  if (!source) return invalid(`Sketch ${command.sketchId} does not exist.`);
+  if (document.timeline.some((item) => item.id === command.block)) return invalid(`Id ${command.block} is already in use.`);
+  const origin = `${command.insertion}-origin`;
+  if (source.entities.some((e) => e.id === command.insertion || e.id === origin)) return invalid(`Id ${command.insertion} is already in use.`);
+  const chosen = source.entities.filter((e) => command.ids.includes(e.id));
+  if (chosen.some((e) => generatorOf(source, e.id) || (e.kind !== 'point' && !isCurve(e) && e.kind !== 'text'))) {
+    return invalid('Only drawn points, curves and texts go into a block: explode projections, drawings and blocks first.');
+  }
+  if (!chosen.length) return invalid('Select the curves, points or texts to make a block of.');
+  const members = new Set(chosen.flatMap((e) => [e.id, ...(e.kind === 'point' ? [] : references(e))]));
+  members.delete(sketchOriginId);
+  const [bx, by] = command.base;
+  const entities = source.entities.filter((e) => members.has(e.id)).map((e) => (e.kind === 'point' ? { ...e, x: e.x - bx, y: e.y - by } : e));
+  const within = (c: SketchConstraint) => references(c).every((r) => members.has(r));
+  const constraints: SketchConstraint[] = source.constraints.filter(within).map((c) => (c.kind === 'fix' ? { ...c, x: c.x - bx, y: c.y - by } : c));
+  // A chosen point at the base is the block's insertion point: it stays on the block's origin.
+  const atBase = entities.find((e) => e.kind === 'point' && Math.hypot(e.x, e.y) < 1e-9);
+  if (atBase) constraints.push({ id: `${command.block}-base`, kind: 'coincident', points: [atBase.id, sketchOriginId] });
+  const block: Sketch = { id: command.block, type: 'sketch', name: command.name?.trim() || nextName(document, 'Block'), suppressed: false, plane: 'XY', entities, constraints, block: true };
+  // Points the rest of the sketch still uses stay in it.
+  const rest = source.entities.filter((e) => !members.has(e.id));
+  const used = new Set(rest.flatMap(references));
+  const kept = source.entities.filter((e) => !members.has(e.id) || (e.kind === 'point' && used.has(e.id)));
+  const keptIds = new Set(kept.map((e) => e.id));
+  const placed: Sketch = {
+    ...source,
+    entities: [
+      ...kept,
+      { id: origin, kind: 'point', x: bx, y: by },
+      { id: command.insertion, kind: 'block', block: command.block, origin, angle: '0 deg', scale: '1', construction: false },
+    ],
+    constraints: source.constraints.filter((c) => !within(c) && references(c).every((r) => r === sketchOriginId || keptIds.has(r))),
+  };
+  const timeline = [...document.timeline.slice(0, index), block, placed, ...document.timeline.slice(index + 1)];
+  return ok({ document: { ...document, timeline }, target: command.sketchId });
+}
+
+/** A placed block made plain points, curves and texts of the sketch, where it is now (they lose their `:`). */
+function explode(sketch: Sketch, insertionId: string): Result<Sketch> {
+  const insertion = sketch.entities.find((e) => e.id === insertionId && e.kind === 'block');
+  if (!insertion) return invalid(`There is no block placed as ${insertionId}.`);
+  const plain = (id: string) => (generatorOf(sketch, id) === insertion ? `${insertionId}.${id.slice(insertionId.length + 1)}` : id);
+  const renamed = (e: SketchEntity): SketchEntity => {
+    switch (e.kind) {
+      case 'point':
+        return { ...e, id: plain(e.id) };
+      case 'line':
+        return { ...e, id: plain(e.id), start: plain(e.start), end: plain(e.end) };
+      case 'circle':
+        return { ...e, id: plain(e.id), center: plain(e.center) };
+      case 'arc':
+        return { ...e, id: plain(e.id), center: plain(e.center), start: plain(e.start), end: plain(e.end) };
+      case 'ellipse':
+        return { ...e, id: plain(e.id), center: plain(e.center), major: plain(e.major) };
+      case 'spline':
+        return { ...e, id: plain(e.id), points: e.points.map(plain) };
+      case 'text':
+        return { ...e, id: plain(e.id), anchor: plain(e.anchor), ...(e.along ? { along: { ...e.along, curve: plain(e.along.curve) } } : {}) };
+      default:
+        return e;
+    }
+  };
+  const swap = (value: unknown): unknown =>
+    typeof value === 'string' ? plain(value) : Array.isArray(value) ? value.map(swap) : value;
+  const constraints = sketch.constraints.map((c) => Object.fromEntries(Object.entries(c).map(([key, value]) => [key, key === 'id' || key === 'expression' || key === 'name' ? value : swap(value)])) as unknown as SketchConstraint);
+  return ok({ ...sketch, entities: sketch.entities.filter((e) => e !== insertion).map(renamed), constraints });
+}
+
 /** Moves and turns elements: their points, and the points their curves use. */
 function transformed(sketch: Sketch, ids: readonly string[], [dx, dy]: readonly [number, number], rotate?: { readonly center: readonly [number, number]; readonly angle: number }): Result<Sketch> {
   if (!ids.length || ids.some((id) => !sketch.entities.some((e) => e.id === id))) return invalid('Select sketch elements to move.');
   // A piece of a drawing kept as one piece moves the whole drawing, by its handle points.
-  const owners = new Set(ids.map((id) => (generatorOf(sketch, id)?.kind === 'drawing' ? (generatorOf(sketch, id)?.id ?? id) : id)));
+  // A piece of a placed block moves the block, by its point.
+  const owners = new Set(ids.map((id) => (generatorOf(sketch, id)?.kind === 'drawing' || generatorOf(sketch, id)?.kind === 'block' ? (generatorOf(sketch, id)?.id ?? id) : id)));
   const chosen = sketch.entities.filter((e) => owners.has(e.id));
   const points = new Set(chosen.flatMap((e) => (e.kind === 'point' ? [e.id] : references(e))));
   points.delete(sketchOriginId);
@@ -353,10 +438,25 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
       return withSketch(document, command.sketchId, (s) => {
         const target = s.constraints.find((c) => c.id === command.constraintId);
         if (!target || !('expression' in target)) return invalid(`Dimension ${command.constraintId} does not exist.`);
+        if (target.reference) return invalid('A reference dimension shows what the sketch measures: make it driving to set its value.');
         return ok({
           ...s,
           constraints: s.constraints.map((c) => (c === target ? { ...target, expression: command.expression } : c)),
         });
+      });
+    case 'set-dimension-reference':
+      return withSketch(document, command.sketchId, (s) => {
+        const target = s.constraints.find((c) => c.id === command.constraintId);
+        if (!target || !isDimension(target)) return invalid(`Dimension ${command.constraintId} does not exist.`);
+        if (command.reference) {
+          const { name: _, ...rest } = target;
+          return ok({ ...s, constraints: s.constraints.map((c) => (c === target ? { ...rest, reference: true, ...(command.name ? { name: command.name } : {}) } : c)) });
+        }
+        // A reference made driving keeps the value it shows.
+        const measured = measureDimension(s, target);
+        const { reference: _r, name: _n, ...driving } = target;
+        const expression = measured === undefined ? target.expression : target.kind === 'angle' ? `${round6((measured * 180) / Math.PI)} deg` : `${round6(measured)} mm`;
+        return ok({ ...s, constraints: s.constraints.map((c) => (c === target ? { ...driving, expression } : c)) });
       });
     case 'move-point': {
       const applied = withSketch(document, command.sketchId, (s) => {
@@ -389,6 +489,22 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
       );
     case 'delete-sketch-elements':
       return withSketch(document, command.sketchId, (s) => ok(remove(s, command.ids)));
+    case 'make-block':
+      return makeBlock(document, command);
+    case 'set-sketch-block':
+      return withSketch(document, command.sketchId, (s) => {
+        const { block: _, ...rest } = s;
+        return ok(command.block ? { ...rest, block: true } : rest);
+      });
+    case 'explode-block':
+      return withSketch(document, command.sketchId, (s) => explode(s, command.insertion));
+    case 'set-block':
+      return withSketch(document, command.sketchId, (s) => {
+        const target = s.entities.find((e): e is SketchInsertion => e.id === command.insertion && e.kind === 'block');
+        if (!target) return invalid(`There is no block placed as ${command.insertion}.`);
+        const changed: SketchInsertion = { ...target, angle: command.angle, scale: command.scale };
+        return ok({ ...s, entities: s.entities.map((e) => (e === target ? changed : e)) });
+      });
     case 'set-sketch-picture':
       return withSketch(document, command.sketchId, (s) => {
         const target = s.entities.find((e) => e.id === command.pictureId && e.kind === 'picture');

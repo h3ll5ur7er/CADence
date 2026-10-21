@@ -10,6 +10,7 @@ import {
   type DocumentId,
   type DomainEvents,
   fail,
+  isDimension,
   isSketch,
   type ManufacturingProfile,
   manufacturingProfiles,
@@ -40,6 +41,7 @@ import { type ConfigurationImport, configurationsCsv, readConfigurationsCsv } fr
 import { type BrokenReference, brokenReferences } from './references';
 import { applyCommand } from './commands';
 import type {
+  BlockSummary,
   DesignCommand,
   DesignManager,
   DesignSession,
@@ -92,6 +94,8 @@ class Session implements DesignSession {
 
   /** Listening for project parameter changes, while the session has listeners. */
   private projectWatch: (() => void) | undefined;
+  /** Listening for changes of the components whose blocks this one places. */
+  private blockWatch: (() => void)[] | undefined;
 
   constructor(
     private readonly deps: DesignManagerDependencies,
@@ -158,13 +162,32 @@ class Session implements DesignSession {
     this.projectWatch ??= this.deps.events.subscribe('projectParametersChanged', (event) =>
       event.projectId === projectId ? void this.serialized(() => this.projectChanged()) : undefined,
     );
+    // Blocks placed from other components follow when those change, here or in another window (ADR-54a).
+    const follow = (event: { readonly documentId: DocumentId }) =>
+      event.documentId !== this.current.document.id && blockSources(this.current.document).has(event.documentId) ? void this.serialized(() => this.projectChanged()) : undefined;
+    this.blockWatch ??= [this.deps.events.subscribe('documentSaved', follow), this.deps.events.subscribe('documentChanged', follow)];
     return () => {
       this.listeners.delete(listener);
       if (this.listeners.size === 0) {
         this.projectWatch?.();
         this.projectWatch = undefined;
+        for (const stop of this.blockWatch ?? []) stop();
+        this.blockWatch = undefined;
       }
     };
+  }
+
+  async blocks(): Promise<BlockSummary[]> {
+    const { document } = this.current;
+    const own = (d: ComponentDocument, other: boolean): BlockSummary[] =>
+      d.timeline.flatMap((item) => (isSketch(item) && item.block ? [{ sketch: item.id, name: item.name, ...(other ? { document: d.id, documentName: d.name } : {}) }] : []));
+    const others: BlockSummary[] = [];
+    for (const summary of await this.deps.documents.enumerate(document.projectId)) {
+      if (summary.kind !== 'component' || summary.id === document.id) continue;
+      const other = await this.deps.documents.load(summary.id);
+      if (other?.kind === 'component') others.push(...own(other, true));
+    }
+    return [...own(document, false), ...others];
   }
 
   /** Commands run one after another, so fast input (drags, typing) can never interleave. */
@@ -200,7 +223,7 @@ class Session implements DesignSession {
     if (!view || view.error) return undefined;
     const solution = await this.deps.sketches.solve(view.sketch, view.values, { point: pointId, x, y }, importedFonts(this.deps.documents, this.deps.assets));
     if (solution.status === 'over-constrained' || solution.status === 'failed') return undefined;
-    return { ...solution, frame: view.frame, values: view.values };
+    return { ...solution, frame: view.frame, values: new Map([...view.values, ...solution.measured]) };
   }
 
   async exportSketch(sketchId: string, format: DrawingFormat, options: { readonly compensateKerf?: boolean } = {}): Promise<Result<void>> {
@@ -338,7 +361,8 @@ class Session implements DesignSession {
   async validate(): Promise<ValidationReport> {
     const { document, derived } = this.current;
     const profile = processOf(document);
-    const sketches = [...derived.sketches.values()].filter((v) => !v.error).map((v) => ({ sketch: v.sketch, profiles: v.profiles }));
+    // Blocks are not cut themselves: the sketches that place them are.
+    const sketches = [...derived.sketches.values()].filter((v) => !v.error && !v.sketch.block).map((v) => ({ sketch: v.sketch, profiles: v.profiles }));
     const checks = await this.deps.analysis.validate({ bodies: this.namedBodies(), sketches }, profile);
     return { profile, checks };
   }
@@ -389,7 +413,11 @@ class Session implements DesignSession {
       const view = target ? derived.sketches.get(target) : undefined;
       const involved = view?.conflicting?.filter((id) => view.sketch.constraints.some((c) => c.id === id));
       const related = involved?.filter((id) => before?.includes(id));
-      return fail({ code: errorCode(status.error), message: status.error ?? 'This change fails.', ...(related?.length ? { related } : {}), ...(involved?.length ? { involved } : {}) });
+      const code = errorCode(status.error);
+      // A dimension that over-constrains can still show its value, as a reference (ADR-54).
+      const asReference = code === 'over-constrained' && command.type === 'add-constraint' && isDimension(command.constraint) && !command.constraint.reference;
+      const message = `${status.error ?? 'This change fails.'}${asReference ? ' Or add it as a reference dimension: it shows the value without driving it.' : ''}`;
+      return fail({ code, message, ...(related?.length ? { related } : {}), ...(involved?.length ? { involved } : {}) });
     }
     // Solved positions become the stored ones, so a drag stays where it was dropped.
     const timeline = document.timeline.map((item) => (isSketch(item) ? (derived.sketches.get(item.id)?.error ? item : (derived.sketches.get(item.id)?.sketch ?? item)) : item));
@@ -416,6 +444,7 @@ class Session implements DesignSession {
   }
 
   private async commit(snapshot: Snapshot): Promise<void> {
+    const before = this.current.document;
     this.current = snapshot;
     await this.deps.documents.store(snapshot.document);
     this.deps.events.publish('documentSaved', { projectId: snapshot.document.projectId, documentId: snapshot.document.id });
@@ -424,6 +453,19 @@ class Session implements DesignSession {
     await this.results.publish(snapshot.document, snapshot.derived.bodies, this.context.projectParameters, snapshot.document.configuration);
     const { configuration } = snapshot.document;
     this.deps.events.publish('resultPublished', { documentId: snapshot.document.id, ...(configuration ? { configuration } : {}) });
+    if (blocksOf(before) !== blocksOf(snapshot.document)) await this.blocksChanged(snapshot.document);
+  }
+
+  /**
+   * The results of the other components that place this one's blocks are out of date: discarded, so
+   * assemblies and drawings ask for them anew (ADR-54a). Open editors of them follow `documentSaved`.
+   */
+  private async blocksChanged(document: ComponentDocument): Promise<void> {
+    for (const summary of await this.deps.documents.enumerate(document.projectId)) {
+      if (summary.kind !== 'component' || summary.id === document.id) continue;
+      const other = await this.deps.documents.load(summary.id);
+      if (other?.kind === 'component' && blockSources(other).has(document.id)) await this.deps.assets.discardResult(summary.id);
+    }
   }
 
   private serialized<T>(work: () => Promise<T>): Promise<T> {
@@ -434,6 +476,16 @@ class Session implements DesignSession {
 }
 
 /** The parameters of the component's project. */
+/** The other components whose blocks a component places. */
+function blockSources(document: ComponentDocument): Set<string> {
+  return new Set(document.timeline.flatMap((item) => (isSketch(item) ? item.entities.flatMap((e) => (e.kind === 'block' && e.document ? [e.document] : [])) : [])));
+}
+
+/** A component's block sketches, to tell when they changed. */
+function blocksOf(document: ComponentDocument): string {
+  return JSON.stringify(document.timeline.filter((item) => isSketch(item) && item.block));
+}
+
 async function projectParametersOf(deps: DesignManagerDependencies, document: ComponentDocument): Promise<readonly Parameter[]> {
   return (await deps.projects.find(document.projectId))?.parameters ?? [];
 }

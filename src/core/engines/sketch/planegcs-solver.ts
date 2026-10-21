@@ -1,5 +1,6 @@
 import {
   generatorOf,
+  isDriving,
   type Sketch,
   type SketchConstraint,
   type SketchEntity,
@@ -360,7 +361,14 @@ export class PlanegcsSolver {
    * Solves each independent part of the sketch on its own: the solver's work grows with the cube of
    * a system's size, so hundreds of separate holes would otherwise take minutes and run out of memory (CAD-94).
    */
-  async solve(sketch: Sketch, values: ReadonlyMap<string, number>, drag?: DragTarget): Promise<SolveOutcome> {
+  async solve(given: Sketch, values: ReadonlyMap<string, number>, drag?: DragTarget): Promise<SolveOutcome> {
+    // Reference dimensions add no constraint: they are solved without, and kept (ADR-54).
+    if (given.constraints.every(isDriving)) return this.solveDriving(given, values, drag);
+    const outcome = await this.solveDriving({ ...given, constraints: given.constraints.filter(isDriving) }, values, drag);
+    return { ...outcome, sketch: { ...outcome.sketch, constraints: given.constraints } };
+  }
+
+  private async solveDriving(sketch: Sketch, values: ReadonlyMap<string, number>, drag?: DragTarget): Promise<SolveOutcome> {
     const parts = independentParts(sketch);
     if (parts.length <= 1) return this.solvePart(sketch, values, drag);
     const outcomes: SolveOutcome[] = [];

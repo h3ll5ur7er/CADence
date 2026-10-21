@@ -166,6 +166,16 @@ path {
   &.selected text {
     fill: var(--selection);
   }
+
+  // Reference dimensions show what is measured: lighter, and selected rather than typed into.
+  &.reference {
+    cursor: pointer;
+
+    text {
+      fill: var(--text-muted);
+      font-weight: 500;
+    }
+  }
 }
 
 .dimension-input {

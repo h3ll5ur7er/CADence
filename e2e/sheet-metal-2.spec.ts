@@ -99,10 +99,11 @@ test('bends a box with corner reliefs and a flange on a flange, and lays it flat
   await page.waitForTimeout(800);
   await evidence(page, 'phase-38-box-reliefs');
 
-  // A lip on top of one wall: an edge flange on the wall's outer top edge, bent outwards.
-  await fromModelMenu(page, 'Create', 'Edge flange');
-  // The walls' edges, once the view shows the flanged body; of those at the top, the one furthest left (the left wall's outer edge).
+  // A lip on top of one wall: an edge flange on the wall's outer top edge, bent outwards. The walls' edges,
+  // once the view shows the flanged body; of those at the top, the one furthest left (the left wall's outer edge).
   await expect.poll(async () => (await edgesOf(page, ':flange:')).length, { timeout: 30_000 }).toBeGreaterThan(0);
+  await fromModelMenu(page, 'Create', 'Edge flange');
+  await expect(page.getByRole('heading', { name: 'New edge flange' })).toBeVisible();
   const walls = await edgesOf(page, ':flange:');
   const height = Math.max(...walls.map((e) => e.middle[2] ?? 0));
   const rim = walls.filter((e) => (e.middle[2] ?? 0) > height - 1e-3).reduce((a, b) => ((a.middle[0] ?? 0) <= (b.middle[0] ?? 0) ? a : b));
@@ -139,32 +140,36 @@ test('hems an edge and runs a miter flange along two edges from a profile', asyn
   await page.getByRole('button', { name: 'OK' }).click();
   await expect(page.locator('.item.failed')).toHaveCount(0);
 
-  // The profile on the YZ plane (square to the back and front edges): up, then over outwards.
+  // The profile on the XZ plane (square to the left and right edges), from the origin at the left edge's
+  // front end: up, then over outwards (to the left).
   await page.getByRole('button', { name: 'New sketch' }).click();
-  await page.getByRole('menuitem', { name: 'YZ plane (right)' }).click();
+  await page.getByRole('menuitem', { name: 'XZ plane (front)' }).click();
   await page.waitForTimeout(500);
   const origin = await center(page, 'circle.point.origin');
   await page.getByRole('button', { name: 'Line', exact: true }).click();
   for (const [dx, dy] of [
-    [60, -10],
-    [60, -110],
-    [100, -110],
+    [0, 0],
+    [0, -100],
+    [-40, -100],
   ] as const) {
     await page.mouse.move(origin.x + dx, origin.y + dy);
+    await page.waitForTimeout(150);
     await page.mouse.click(origin.x + dx, origin.y + dy);
   }
   await page.keyboard.press('Escape');
+  await expect(page.locator('.curve')).toHaveCount(2);
   await page.getByRole('button', { name: 'Finish sketch' }).click();
 
-  // The back edge and the right edge, which meet at a corner.
+  // The left edge and the back edge, which meet at a corner.
   await page.getByRole('button', { name: 'Home view' }).click();
   await page.waitForTimeout(800);
   const edges = await edgesOf(page, topEdges);
   const back = edges.reduce((a, b) => ((a.middle[1] ?? 0) > (b.middle[1] ?? 0) ? a : b));
-  const right = edges.reduce((a, b) => ((a.middle[0] ?? 0) > (b.middle[0] ?? 0) ? a : b));
+  const left = edges.reduce((a, b) => ((a.middle[0] ?? 0) < (b.middle[0] ?? 0) ? a : b));
   await fromModelMenu(page, 'Create', 'Miter flange');
+  await expect(page.getByRole('heading', { name: 'New miter flange' })).toBeVisible();
+  await clickTop(page, left);
   await clickTop(page, back);
-  await clickTop(page, right);
   await expect(page.getByTestId('edge-selection')).toHaveText('2 edges selected');
   await page.getByRole('button', { name: 'OK' }).click();
   await expect(page.locator('.item.failed')).toHaveCount(0);

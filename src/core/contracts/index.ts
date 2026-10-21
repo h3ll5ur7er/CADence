@@ -6,6 +6,7 @@ export * from './drawing';
 export * from './feature';
 export type * from './events';
 export * from './ids';
+export * from './mechanics';
 export * from './parts';
 export type * from './mesh';
 export type * from './project';

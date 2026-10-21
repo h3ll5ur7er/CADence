@@ -1,5 +1,5 @@
 import type { TopologyRef, Vec3 } from './feature';
-import type { SpringProperties } from './parts';
+import type { SpringProperties } from './mechanics';
 import type { Vec2 } from './sketch';
 
 /**

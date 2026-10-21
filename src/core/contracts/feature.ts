@@ -108,29 +108,6 @@ export interface HelixFeature extends FeatureBase {
   readonly leftHanded: boolean;
 }
 
-/** A helix in space, as built: about `axis` through `origin`, starting at `origin + radius · x` (mm, radians). */
-export interface HelixPath {
-  readonly feature: string;
-  readonly origin: Vec3;
-  readonly axis: Vec3;
-  readonly x: Vec3;
-  readonly radius: number;
-  readonly pitch: number;
-  readonly height: number;
-  readonly taper: number;
-  readonly leftHanded: boolean;
-}
-
-/** A point of a helix, `t` of the way along it (0 to 1). */
-export function helixPoint(helix: HelixPath, t: number): Vec3 {
-  const { origin, axis: n, x, radius, pitch, height, taper, leftHanded } = helix;
-  const y: Vec3 = [n[1] * x[2] - n[2] * x[1], n[2] * x[0] - n[0] * x[2], n[0] * x[1] - n[1] * x[0]];
-  const rise = height * t;
-  const angle = ((leftHanded ? -2 : 2) * Math.PI * rise) / pitch;
-  const r = radius + rise * Math.tan(taper);
-  return [0, 1, 2].map((k) => (origin[k] as number) + (n[k] as number) * rise + r * (Math.cos(angle) * (x[k] as number) + Math.sin(angle) * (y[k] as number))) as unknown as Vec3;
-}
-
 /** Repeats the effect of earlier features along a path (the curves of a sketch), evenly spaced. */
 export interface PathPatternFeature extends FeatureBase {
   readonly type: 'path-pattern';

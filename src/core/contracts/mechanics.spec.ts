@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { materials } from './analysis';
-import { springProperties } from './parts';
+import { springProperties } from './mechanics';
 
 const steel = materials.find((m) => m.name === 'Steel') as (typeof materials)[number];
 

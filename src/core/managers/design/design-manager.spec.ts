@@ -550,7 +550,8 @@ describe('DesignManager', () => {
         const ringGear = await part({ kind: 'ring-gear', module: '1 mm', teeth: '40', width: '5 mm', outside: '50 mm', pressureAngle: '20 deg', helixAngle: '0 deg' });
         const solid = ring(40, 50, 5);
         expect(Math.abs(ringGear - solid) / solid).toBeLessThan(0.05);
-        expect(session.state().bodies[0]?.faces.length).toBeLessThanOrEqual(40 * 6 + 3);
+        // Per space two flanks, a tip and a root arc, two lines below the base circle and two root fillets (CAD-159).
+        expect(session.state().bodies[0]?.faces.length).toBeLessThanOrEqual(40 * 8 + 3);
         // Twisting the teeth of a helical gear is slow on a CI runner.
       }, 60_000);
 

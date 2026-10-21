@@ -59,7 +59,8 @@ test('runs a rib up to the next face, and ends a blind hole in a drill point (CA
 test('drills a blind hole that ends in a 118° drill point (CAD-156)', async ({ page }) => {
   await plateProject(page, 'Drill point');
   await topPoints(page, [0]);
-  const volume = await total(page, 'body-volume');
+  const volume = 60 * 30 * 6;
+  await expect.poll(() => total(page, 'body-volume')).toBeCloseTo(volume, 0);
   await fromModelMenu(page, 'Create', 'Hole');
   await page.locator('#feature-extent').selectOption('blind');
   await page.locator('#feature-depth').fill('3');

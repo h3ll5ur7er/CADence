@@ -42,6 +42,7 @@ export const featureLabels: Readonly<Record<FeatureType, string>> = {
   scale: 'Scale bodies',
   loft: 'Loft',
   sweep: 'Sweep',
+  helix: 'Helix',
   'path-pattern': 'Pattern along a path',
   hole: 'Hole',
   part: 'Part',
@@ -139,10 +140,13 @@ export function defaultFeature(type: FeatureType, id: string, state: DesignState
       return { ...base, type, sections, ruled: false, operation };
     }
     case 'sweep': {
-      // The profiles of the latest sketch with profiles, along the curves of the latest other sketch.
-      const path = active.filter(isSketch).filter((s) => s.id !== sketch?.id).at(-1);
+      // The profiles of the latest sketch with profiles, along the latest helix or else the curves of the latest other sketch.
+      const helix = active.filter((i) => !isSketch(i) && i.type === 'helix').at(-1);
+      const path = helix ?? active.filter(isSketch).filter((s) => s.id !== sketch?.id).at(-1);
       return { ...base, type, sketch: sketch?.id ?? '', profiles, path: path?.id ?? '', operation };
     }
+    case 'helix':
+      return { ...base, type, plane: 'XY', diameter: '20', pitch: '5', extent: 'turns', turns: '5', height: '25', taper: '0 deg', leftHanded: false };
     case 'path-pattern': {
       const path = active.filter(isSketch).at(-1);
       return { ...base, type, features: tools, path: path?.id ?? '', count: '4', align: false };
@@ -255,6 +259,7 @@ export function selectionOf(draft: FeatureDraft): Pick[] {
     case 'circular-pattern':
       return f.axis.kind === 'edge' ? [pickOf(f.axis.edge)] : [];
     case 'split':
+    case 'helix':
       return planeFace(f.plane);
     case 'move':
       return f.axis.kind === 'edge' ? [pickOf(f.axis.edge)] : [];
@@ -301,6 +306,7 @@ export function applyPick(draft: FeatureDraft, pick: Pick): FeatureDraft {
     if (f.type === 'plane' && f.mode !== 'points') return { mode: draft.mode, feature: { ...f, base: face } };
     if (f.type === 'mirror') return { mode: draft.mode, feature: { ...f, plane: face } };
     if (f.type === 'split') return { mode: draft.mode, feature: { ...f, plane: face } };
+    if (f.type === 'helix') return { mode: draft.mode, feature: { ...f, plane: face } };
     if (f.type === 'draft') return { mode: draft.mode, feature: { ...f, plane: face } };
   }
   switch (f.type) {

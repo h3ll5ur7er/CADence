@@ -80,14 +80,55 @@ export interface LoftFeature extends FeatureBase {
   readonly operation: BodyOperation;
 }
 
-/** Sweeps sketch profiles along a path: the curves of another sketch, joined end to end. */
+/** Sweeps sketch profiles along a path: the curves of another sketch, joined end to end, or a helix. */
 export interface SweepFeature extends FeatureBase {
   readonly type: 'sweep';
   readonly sketch: string;
   readonly profiles: readonly string[];
-  /** The sketch whose curves are the path. */
+  /** The sketch whose curves are the path, or a helix feature (CAD-161). */
   readonly path: string;
   readonly operation: BodyOperation;
+}
+
+/**
+ * A helix (CAD-161): a path for sweeps (springs, threads of any profile) about the normal of a plane,
+ * through the plane's origin, starting on its u axis at half the diameter. It rises `pitch` per turn,
+ * for `turns` turns or to `height` (`extent`), widening by the `taper` angle as it rises (narrowing
+ * when negative); right-handed unless `leftHanded`. It makes no body.
+ */
+export interface HelixFeature extends FeatureBase {
+  readonly type: 'helix';
+  readonly plane: PlaneRef;
+  readonly diameter: string;
+  readonly pitch: string;
+  readonly extent: 'turns' | 'height';
+  readonly turns: string;
+  readonly height: string;
+  readonly taper: string;
+  readonly leftHanded: boolean;
+}
+
+/** A helix in space, as built: about `axis` through `origin`, starting at `origin + radius · x` (mm, radians). */
+export interface HelixPath {
+  readonly feature: string;
+  readonly origin: Vec3;
+  readonly axis: Vec3;
+  readonly x: Vec3;
+  readonly radius: number;
+  readonly pitch: number;
+  readonly height: number;
+  readonly taper: number;
+  readonly leftHanded: boolean;
+}
+
+/** A point of a helix, `t` of the way along it (0 to 1). */
+export function helixPoint(helix: HelixPath, t: number): Vec3 {
+  const { origin, axis: n, x, radius, pitch, height, taper, leftHanded } = helix;
+  const y: Vec3 = [n[1] * x[2] - n[2] * x[1], n[2] * x[0] - n[0] * x[2], n[0] * x[1] - n[1] * x[0]];
+  const rise = height * t;
+  const angle = ((leftHanded ? -2 : 2) * Math.PI * rise) / pitch;
+  const r = radius + rise * Math.tan(taper);
+  return [0, 1, 2].map((k) => (origin[k] as number) + (n[k] as number) * rise + r * (Math.cos(angle) * (x[k] as number) + Math.sin(angle) * (y[k] as number))) as unknown as Vec3;
 }
 
 /** Repeats the effect of earlier features along a path (the curves of a sketch), evenly spaced. */
@@ -325,6 +366,7 @@ export interface ScaleFeature extends FeatureBase {
 
 export type Feature =
   | PartFeature
+  | HelixFeature
   | InsertFeature
   | BaseFlangeFeature
   | EdgeFlangeFeature

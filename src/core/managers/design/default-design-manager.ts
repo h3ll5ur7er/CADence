@@ -15,6 +15,7 @@ import {
   manufacturingProfiles,
   type Material,
   materials,
+  springProperties,
   type Measurement,
   ok,
   type Parameter,
@@ -145,6 +146,7 @@ class Session implements DesignSession {
       planes: derived.planes,
       bodies: meshes,
       threads: derived.threads,
+      helices: [...derived.helices.values()],
       sheetMetal: derived.sheet !== undefined,
       parameters: derived.parameters,
       canUndo: this.undoStack.length > 0,
@@ -331,8 +333,16 @@ class Session implements DesignSession {
     return this.deps.analysis.measure(this.current.derived.bodies, refs);
   }
 
-  properties(): Promise<BodyProperties[]> {
-    return this.deps.analysis.properties(this.current.derived.bodies, materialOf(this.current.document).density);
+  async properties(): Promise<BodyProperties[]> {
+    const { document, derived } = this.current;
+    const material = materialOf(document);
+    const properties = await this.deps.analysis.properties(derived.bodies, material.density);
+    // Springs have a rate (CAD-161); materials saved before strength checks take their catalogue namesake's stiffness.
+    const stiffness = { ...materials.find((m) => m.name === material.name), ...material };
+    return properties.map((p) => {
+      const spring = derived.springs.get(p.body);
+      return spring ? { ...p, spring: springProperties(spring, stiffness) } : p;
+    });
   }
 
   async validate(): Promise<ValidationReport> {

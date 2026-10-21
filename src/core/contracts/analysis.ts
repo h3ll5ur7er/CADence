@@ -1,4 +1,5 @@
 import type { TopologyRef, Vec3 } from './feature';
+import type { SpringProperties } from './parts';
 import type { Vec2 } from './sketch';
 
 /**
@@ -123,6 +124,8 @@ export interface BodyProperties {
   readonly mass: number;
   readonly centerOfMass: Vec3;
   readonly box: { readonly min: Vec3; readonly max: Vec3 };
+  /** A spring part made as this body: its rate and lengths from the material (CAD-161). */
+  readonly spring?: SpringProperties;
 }
 
 export type CheckStatus = 'pass' | 'warning' | 'fail';

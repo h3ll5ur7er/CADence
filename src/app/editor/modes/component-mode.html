@@ -14,6 +14,7 @@
     [field]="store.stressField()"
     [measureLine]="measureLine()"
     [threads]="store.state()?.threads ?? []"
+    [helices]="store.state()?.helices ?? []"
     (picked)="store.pick($event)"
     (backendReady)="status.renderer.set($event)"
   >
@@ -489,6 +490,18 @@
                 <dd class="mono" data-testid="body-size">{{ at([p.box.max[0] - p.box.min[0], p.box.max[1] - p.box.min[1], p.box.max[2] - p.box.min[2]]) }} {{ store.units() }}</dd>
                 <dt>Centre of mass</dt>
                 <dd class="mono">{{ at(p.centerOfMass) }}</dd>
+                @if (p.spring; as s) {
+                  <dt>Spring rate</dt>
+                  <dd class="mono" data-testid="spring-rate">{{ rate(s.rate) }} {{ s.kind === 'torsion' ? 'N·mm/°' : 'N/mm' }}</dd>
+                  <dt>{{ s.kind === 'extension' ? 'Inside the hooks' : s.kind === 'torsion' ? 'Coil length' : 'Free length' }}</dt>
+                  <dd class="mono" data-testid="spring-length">{{ mm(s.freeLength) }}</dd>
+                  @if (s.solidLength !== undefined) {
+                    <dt>Solid length</dt>
+                    <dd class="mono">{{ mm(s.solidLength) }}</dd>
+                  }
+                  <dt>Active turns</dt>
+                  <dd class="mono">{{ rate(s.activeTurns) }}</dd>
+                }
               </dl>
               <div class="look">
                 <input

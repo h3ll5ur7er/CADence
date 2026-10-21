@@ -186,14 +186,15 @@ export interface JointFreedom {
 /**
  * One joint's freedom follows another's: `driven = offset + ratio × driver`. Gears turn the other
  * way (a negative ratio, teeth over teeth), a rack moves π·d/360 mm per degree of its pinion, and a
- * belt turns its pulleys the same way (diameter over diameter). In a planetary set with its ring
+ * belt turns its pulleys the same way (diameter over diameter). Bevel gears turn like gears (teeth
+ * over teeth, CAD-160); a worm turns its wheel starts over teeth of its turn. In a planetary set with its ring
  * fixed, the sun drives the carrier and each planet on it ({@link planetaryRatios}). A cam moves its
  * follower by its profile: `driven = offset + ratio × lift(driver)` ({@link linkedValue}).
  */
 export interface MotionLink {
   readonly id: string;
   readonly name: string;
-  readonly kind: 'gear' | 'rack' | 'belt' | 'carrier' | 'planet' | 'cam';
+  readonly kind: 'gear' | 'bevel' | 'worm' | 'rack' | 'belt' | 'carrier' | 'planet' | 'cam';
   readonly driver: JointFreedom;
   readonly driven: JointFreedom;
   readonly ratio: number;

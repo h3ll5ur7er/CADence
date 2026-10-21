@@ -350,8 +350,58 @@
             @for (s of pathSketches(); track s.id) {
               <option [value]="s.id" [selected]="s.id === f.path">{{ s.name }}</option>
             }
+            @for (h of helixFeatures(); track h.id) {
+              <option [value]="h.id" [selected]="h.id === f.path">{{ h.name }}</option>
+            }
           </select>
         </label>
+      }
+      @case ('helix') {
+        <label class="field">
+          Plane
+          <select id="feature-plane" [value]="planeValue(f.plane)" (change)="setPlane(value($event), 'plane')">
+            <option value="XY">XY plane</option>
+            <option value="XZ">XZ plane</option>
+            <option value="YZ">YZ plane</option>
+            @for (p of planeFeatures(); track p.id) {
+              <option [value]="'plane:' + p.id">{{ p.name }}</option>
+            }
+            <option value="face">A flat face (pick in the view)…</option>
+          </select>
+        </label>
+        <div class="row two">
+          <label class="field">
+            Diameter
+            <input id="feature-helix-diameter" autocomplete="off" [value]="f.diameter" (change)="set({ diameter: length($event) })" />
+          </label>
+          <label class="field">
+            Pitch
+            <input id="feature-helix-pitch" autocomplete="off" [value]="f.pitch" (change)="set({ pitch: length($event) })" />
+          </label>
+          <label class="field">
+            Length by
+            <select id="feature-helix-extent" [value]="f.extent" (change)="set({ extent: $any(value($event)) })">
+              <option value="turns">Turns</option>
+              <option value="height">Height</option>
+            </select>
+          </label>
+          @if (f.extent === 'turns') {
+            <label class="field">
+              Turns
+              <input id="feature-helix-turns" autocomplete="off" [value]="f.turns" (change)="set({ turns: value($event) })" />
+            </label>
+          } @else {
+            <label class="field">
+              Height
+              <input id="feature-helix-height" autocomplete="off" [value]="f.height" (change)="set({ height: length($event) })" />
+            </label>
+          }
+          <label class="field">
+            Taper (0: none)
+            <input id="feature-helix-taper" autocomplete="off" [value]="f.taper" (change)="set({ taper: value($event) })" />
+          </label>
+        </div>
+        <label class="check"><input type="checkbox" id="feature-helix-left" [checked]="f.leftHanded" (change)="set({ leftHanded: $any($event.target).checked })" /> Left-handed</label>
       }
       @case ('path-pattern') {
         <fieldset class="tools">
@@ -579,14 +629,206 @@
               End chamfer (0: none)
               <input id="feature-part-chamfer" autocomplete="off" [value]="f.part.chamfer ?? '0 mm'" (change)="setPart({ chamfer: length($event) })" />
             </label>
+            <label class="field">
+              Profile shift (× module)
+              <input id="feature-part-shift" autocomplete="off" [value]="f.part.shift ?? '0'" (change)="setPart({ shift: value($event) })" />
+            </label>
             </div>
+            @if (undercut(); as u) {
+              <p class="hint" data-testid="undercut">{{ u.teeth }} teeth are undercut without a profile shift of at least {{ u.shift }}.</p>
+            }
+            <div class="row two">
             <label class="field">
               Meshes with a gear of
               <input id="feature-mate-teeth" type="number" min="6" [value]="mateTeeth()" (change)="mateTeeth.set(+value($event))" />
             </label>
+            <label class="field">
+              Its profile shift
+              <input id="feature-mate-shift" type="number" step="0.05" [value]="mateShift()" (change)="mateShift.set(+value($event))" />
+            </label>
+            </div>
             @if (mate(); as m) {
               <p class="count" data-testid="centre-distance">Put its centre {{ m.distance }} mm along X{{ m.turn ? ', turned ' + m.turn + '°' : '' }}.</p>
             }
+          }
+          @case ('bevel-gear') {
+            <div class="row two">
+            <label class="field">
+              Module
+              <input id="feature-part-module" autocomplete="off" [value]="f.part.module" (change)="setPart({ module: length($event) })" />
+            </label>
+            <label class="field">
+              Teeth
+              <input id="feature-part-teeth" autocomplete="off" [value]="f.part.teeth" (change)="setPart({ teeth: value($event) })" />
+            </label>
+            <label class="field">
+              Teeth of the mate
+              <input id="feature-part-mateTeeth" autocomplete="off" [value]="f.part.mateTeeth" (change)="setPart({ mateTeeth: value($event) })" />
+            </label>
+            <label class="field">
+              Shaft angle
+              <input id="feature-part-shaftAngle" autocomplete="off" [value]="f.part.shaftAngle" (change)="setPart({ shaftAngle: value($event) })" />
+            </label>
+            <label class="field">
+              Face width
+              <input id="feature-part-faceWidth" autocomplete="off" [value]="f.part.faceWidth" (change)="setPart({ faceWidth: length($event) })" />
+            </label>
+            <label class="field">
+              Bore (0: none)
+              <input id="feature-part-bore" autocomplete="off" [value]="f.part.bore" (change)="setPart({ bore: length($event) })" />
+            </label>
+            <label class="field">
+              Pressure angle
+              <input id="feature-part-pressureAngle" autocomplete="off" [value]="f.part.pressureAngle" (change)="setPart({ pressureAngle: value($event) })" />
+            </label>
+            </div>
+            @if (bevel(); as b) {
+              <p class="count" data-testid="centre-distance">The apex of its cone is {{ b.apex }} mm up its axis. Put the mate ({{ b.mateTeeth }} teeth) with its large end centred {{ b.x }} mm along X and {{ b.z }} mm up, its axis towards the apex at {{ b.shaft }}° to this one's, its X axis along Y and turned {{ b.turn }}°. It turns {{ b.ratio }} of this gear's turn.</p>
+            }
+          }
+          @case ('worm') {
+            <div class="row two">
+            <label class="field">
+              Module
+              <input id="feature-part-module" autocomplete="off" [value]="f.part.module" (change)="setPart({ module: length($event) })" />
+            </label>
+            <label class="field">
+              Starts
+              <input id="feature-part-starts" autocomplete="off" [value]="f.part.starts" (change)="setPart({ starts: value($event) })" />
+            </label>
+            <label class="field">
+              Lead angle
+              <input id="feature-part-leadAngle" autocomplete="off" [value]="f.part.leadAngle" (change)="setPart({ leadAngle: value($event) })" />
+            </label>
+            <label class="field">
+              Length
+              <input id="feature-part-length" autocomplete="off" [value]="f.part.length" (change)="setPart({ length: length($event) })" />
+            </label>
+            <label class="field">
+              Bore (0: none)
+              <input id="feature-part-bore" autocomplete="off" [value]="f.part.bore" (change)="setPart({ bore: length($event) })" />
+            </label>
+            <label class="field">
+              Pressure angle
+              <input id="feature-part-pressureAngle" autocomplete="off" [value]="f.part.pressureAngle" (change)="setPart({ pressureAngle: value($event) })" />
+            </label>
+            </div>
+            <label class="field">
+              Drives a wheel of
+              <input id="feature-mate-teeth" type="number" min="6" [value]="mateTeeth()" (change)="mateTeeth.set(+value($event))" />
+            </label>
+            @if (worm(); as w) {
+              <p class="count" data-testid="centre-distance">Its pitch diameter is {{ w.worm }} mm. Put the wheel's middle {{ w.distance }} mm along X on this plane, its axis along Y; it turns {{ w.ratio }} of a turn per turn of the worm.</p>
+            }
+          }
+          @case ('worm-wheel') {
+            <div class="row two">
+            <label class="field">
+              Module
+              <input id="feature-part-module" autocomplete="off" [value]="f.part.module" (change)="setPart({ module: length($event) })" />
+            </label>
+            <label class="field">
+              Teeth
+              <input id="feature-part-teeth" autocomplete="off" [value]="f.part.teeth" (change)="setPart({ teeth: value($event) })" />
+            </label>
+            <label class="field">
+              Starts of the worm
+              <input id="feature-part-starts" autocomplete="off" [value]="f.part.starts" (change)="setPart({ starts: value($event) })" />
+            </label>
+            <label class="field">
+              Lead angle of the worm
+              <input id="feature-part-leadAngle" autocomplete="off" [value]="f.part.leadAngle" (change)="setPart({ leadAngle: value($event) })" />
+            </label>
+            <label class="field">
+              Width
+              <input id="feature-part-width" autocomplete="off" [value]="f.part.width" (change)="setPart({ width: length($event) })" />
+            </label>
+            <label class="field">
+              Bore (0: none)
+              <input id="feature-part-bore" autocomplete="off" [value]="f.part.bore" (change)="setPart({ bore: length($event) })" />
+            </label>
+            <label class="field">
+              Pressure angle
+              <input id="feature-part-pressureAngle" autocomplete="off" [value]="f.part.pressureAngle" (change)="setPart({ pressureAngle: value($event) })" />
+            </label>
+            </div>
+            @if (worm(); as w) {
+              <p class="count" data-testid="centre-distance">The worm (pitch ⌀ {{ w.worm }} mm) goes {{ w.distance }} mm along −X, {{ w.half }} mm up: its point there, in a sketch on the plane through this axis and X. The wheel turns {{ w.ratio }} of a turn per turn of the worm.</p>
+            }
+          }
+          @case ('compression-spring') {
+            <div class="row two">
+            <label class="field">
+              Wire
+              <input id="feature-part-wire" autocomplete="off" [value]="f.part.wire" (change)="setPart({ wire: length($event) })" />
+            </label>
+            <label class="field">
+              Outside diameter
+              <input id="feature-part-outside" autocomplete="off" [value]="f.part.outside" (change)="setPart({ outside: length($event) })" />
+            </label>
+            <label class="field">
+              Pitch
+              <input id="feature-part-pitch" autocomplete="off" [value]="f.part.pitch" (change)="setPart({ pitch: length($event) })" />
+            </label>
+            <label class="field">
+              Turns (in all)
+              <input id="feature-part-turns" autocomplete="off" [value]="f.part.turns" (change)="setPart({ turns: value($event) })" />
+            </label>
+            </div>
+            <label class="field">
+              Ends
+              <select id="feature-part-ends" (change)="setPart({ ends: value($event) })">
+                <option value="open" [selected]="f.part.ends === 'open'">Open</option>
+                <option value="closed" [selected]="f.part.ends === 'closed'">Closed</option>
+                <option value="ground" [selected]="f.part.ends === 'ground'">Closed and ground</option>
+              </select>
+            </label>
+            @if (spring(); as s) {
+              <p class="count" data-testid="spring-lengths">Free length {{ s.freeLength }} mm, solid {{ s.solidLength }} mm, {{ s.activeTurns }} active turns.</p>
+            }
+          }
+          @case ('extension-spring') {
+            <div class="row two">
+            <label class="field">
+              Wire
+              <input id="feature-part-wire" autocomplete="off" [value]="f.part.wire" (change)="setPart({ wire: length($event) })" />
+            </label>
+            <label class="field">
+              Outside diameter
+              <input id="feature-part-outside" autocomplete="off" [value]="f.part.outside" (change)="setPart({ outside: length($event) })" />
+            </label>
+            <label class="field">
+              Turns
+              <input id="feature-part-turns" autocomplete="off" [value]="f.part.turns" (change)="setPart({ turns: value($event) })" />
+            </label>
+            </div>
+            @if (spring(); as s) {
+              <p class="count" data-testid="spring-lengths">{{ s.freeLength }} mm inside the hooks.</p>
+            }
+          }
+          @case ('torsion-spring') {
+            <div class="row two">
+            <label class="field">
+              Wire
+              <input id="feature-part-wire" autocomplete="off" [value]="f.part.wire" (change)="setPart({ wire: length($event) })" />
+            </label>
+            <label class="field">
+              Outside diameter
+              <input id="feature-part-outside" autocomplete="off" [value]="f.part.outside" (change)="setPart({ outside: length($event) })" />
+            </label>
+            <label class="field">
+              Pitch
+              <input id="feature-part-pitch" autocomplete="off" [value]="f.part.pitch" (change)="setPart({ pitch: length($event) })" />
+            </label>
+            <label class="field">
+              Turns
+              <input id="feature-part-turns" autocomplete="off" [value]="f.part.turns" (change)="setPart({ turns: value($event) })" />
+            </label>
+            <label class="field">
+              Legs
+              <input id="feature-part-legs" autocomplete="off" [value]="f.part.legs" (change)="setPart({ legs: length($event) })" />
+            </label>
+            </div>
           }
           @case ('ring-gear') {
             <div class="row two">

@@ -4,6 +4,7 @@ import { OcctModelingEngine } from './occt-modeling-engine';
 
 export type {
   HoleSpec,
+  HelixPiece,
   PathPiece,
   Placement,
   AxisInput,

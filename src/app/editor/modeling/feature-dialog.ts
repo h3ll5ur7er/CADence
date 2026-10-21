@@ -2,11 +2,13 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import {
   type AxisRef,
   bearings,
+  bevelMesh,
   type BodyOperation,
   centreDistance,
   defaultPart,
   metric,
   metricSizes,
+  minimumProfileShift,
   partLabels,
   planetaryRatios,
   ringGearMesh,
@@ -20,11 +22,17 @@ import {
   lengthExpression,
   metricThreads,
   type PlaneRef,
+  type SpringSize,
+  springProperties,
+  wormMesh,
 } from '@core/contracts';
 import { Icon } from '../../shared/icon';
 import { bodyNames } from './body-names';
 import { DesignStore } from '../sketch/design-store';
 import { featureLabels, holePoints, type PickTarget } from './feature-drafts';
+
+/** An angle typed in degrees ("20 deg", "20"), in radians. */
+const degrees = (expression: string) => ((parseFloat(expression) || 20) * Math.PI) / 180;
 
 const operations: readonly { value: BodyOperation; label: string }[] = [
   { value: 'new-body', label: 'New body' },
@@ -49,7 +57,8 @@ const hints: Readonly<Record<Feature['type'], string>> = {
   move: 'Turns the bodies about an axis, then shifts them. Click bodies in the view to add or remove them.',
   scale: 'Scales the bodies about the origin, the same in every direction.',
   loft: 'Click one profile in each sketch, in order; the loft blends through their outlines.',
-  sweep: 'Click the profiles to sweep; the path is the curves of another sketch, starting at the profile.',
+  sweep: 'Click the profiles to sweep; the path is the curves of another sketch or a helix, starting at the profile.',
+  helix: 'A helix about the plane\'s normal through its origin, starting on its X axis: a path for sweeps such as springs and threads.',
   'path-pattern': 'Repeats the selected features along the curves of a sketch, evenly spaced.',
   part: 'Parts go at the points of a sketch (drawn with the Point tool), standing on its plane. Flip puts them on the other side.',
   hole: 'Holes go at the points of a sketch (drawn with the Point tool), into the material below it.',
@@ -96,6 +105,12 @@ export class FeatureDialog {
     return (document?.timeline ?? []).slice(0, (document?.timeline.length ?? 0) - (document?.rollbackIndex ?? 0)).filter(isSketch);
   });
 
+  /** Helix features before the marker, as sweep paths (CAD-161). */
+  protected readonly helixFeatures = computed(() => {
+    const document = this.store.state()?.document;
+    return (document?.timeline ?? []).slice(0, (document?.timeline.length ?? 0) - (document?.rollbackIndex ?? 0)).filter((i) => !isSketch(i) && i.type === 'helix');
+  });
+
   /** A loft section as a label: its sketch's name and which of its profiles. */
   protected sectionLabel(section: { readonly sketch: string; readonly profile: string }): string {
     const state = this.store.state();
@@ -139,7 +154,54 @@ export class FeatureDialog {
       return { distance, turn: 0, fits: fits && sun > 0, difference: ringGearMinimumDifference, sun, carrier: round(planetaryRatios(sun, teeth).carrier) };
     }
     // With an even number of teeth, a tooth faces the first gear: turn it by half a tooth to mesh.
-    return { distance: centreDistance(module, teeth, mate), turn: mate % 2 === 0 ? 180 / mate : 0, fits: true, difference: 0, sun: 0, carrier: 0 };
+    const shift = parseFloat(f.part.shift ?? '0') || 0;
+    const distance = round(centreDistance(module, teeth, mate, shift, this.mateShift() || 0, degrees(f.part.pressureAngle)));
+    return { distance, turn: mate % 2 === 0 ? 180 / mate : 0, fits: true, difference: 0, sun: 0, carrier: 0 };
+  });
+  /** The mate's profile shift, for the centre distance (CAD-159). */
+  protected readonly mateShift = signal(0);
+  /** A gear with too few teeth for its profile shift: the shift that keeps its involute whole. */
+  protected readonly undercut = computed(() => {
+    const f = this.feature();
+    if (f?.type !== 'part' || f.part.kind !== 'gear') return undefined;
+    const teeth = Math.round(parseFloat(f.part.teeth));
+    const least = minimumProfileShift(teeth, degrees(f.part.pressureAngle));
+    return teeth > 0 && least > (parseFloat(f.part.shift ?? '0') || 0) + 1e-9 ? { teeth, shift: Math.ceil(least * 100) / 100 } : undefined;
+  });
+  /** Where a bevel gear's mate goes (CAD-160). */
+  protected readonly bevel = computed(() => {
+    const f = this.feature();
+    if (f?.type !== 'part' || f.part.kind !== 'bevel-gear') return undefined;
+    const [module, teeth, mateTeeth, shaft] = [parseFloat(f.part.module), Math.round(parseFloat(f.part.teeth)), Math.round(parseFloat(f.part.mateTeeth)), parseFloat(f.part.shaftAngle)];
+    if (!(module > 0 && teeth > 0 && mateTeeth > 0 && shaft > 0 && shaft < 180)) return undefined;
+    const mesh = bevelMesh(module, teeth, mateTeeth, (shaft * Math.PI) / 180);
+    const round = (v: number) => Math.round(v * 1000) / 1000;
+    return { apex: round(mesh.apex), mateTeeth, shaft, x: round(mesh.mate[0]), z: round(mesh.mate[1]), turn: round(mesh.turn), ratio: round(mesh.ratio) };
+  });
+  /** Where a worm's wheel goes, or a wheel's worm (CAD-160). */
+  protected readonly worm = computed(() => {
+    const f = this.feature();
+    if (f?.type !== 'part' || (f.part.kind !== 'worm' && f.part.kind !== 'worm-wheel')) return undefined;
+    const [module, starts, lead] = [parseFloat(f.part.module), Math.round(parseFloat(f.part.starts)), parseFloat(f.part.leadAngle)];
+    const teeth = f.part.kind === 'worm-wheel' ? Math.round(parseFloat(f.part.teeth)) : this.mateTeeth();
+    if (!(module > 0 && starts > 0 && lead > 0 && lead < 90 && teeth > 0)) return undefined;
+    const mesh = wormMesh(module, starts, (lead * Math.PI) / 180, teeth);
+    const round = (v: number) => Math.round(v * 1000) / 1000;
+    const half = f.part.kind === 'worm-wheel' ? parseFloat(f.part.width) / 2 : 0;
+    return { worm: round(mesh.worm), distance: round(mesh.distance), ratio: `${starts}/${teeth}`, half: round(half) };
+  });
+  /** A spring's lengths, from its sizes (CAD-161); its rate is in the component's properties. */
+  protected readonly spring = computed(() => {
+    const f = this.feature();
+    if (f?.type !== 'part') return undefined;
+    const part = f.part;
+    if (part.kind !== 'compression-spring' && part.kind !== 'extension-spring') return undefined;
+    const [wire, outside, turns] = [parseFloat(part.wire), parseFloat(part.outside), parseFloat(part.turns)];
+    if (!(wire > 0 && outside > wire && turns > 0)) return undefined;
+    const size: SpringSize = part.kind === 'compression-spring' ? { kind: 'compression', wire, mean: outside - wire, pitch: parseFloat(part.pitch), turns, ends: part.ends } : { kind: 'extension', wire, mean: outside - wire, turns };
+    const p = springProperties(size, {});
+    const round = (v: number) => Math.round(v * 1000) / 1000;
+    return { freeLength: round(p.freeLength), solidLength: round(p.solidLength ?? 0), activeTurns: round(p.activeTurns) };
   });
 
   protected setPart(changes: Partial<Record<string, string>>): void {

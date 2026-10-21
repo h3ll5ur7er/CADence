@@ -1,7 +1,8 @@
 import type { NamedShape } from '@core/access/shape';
-import type { PlaneFrame, Vec2, Vec3 } from '@core/contracts';
-import { draw, drawCircle, type Drawing, drawPolysides, drawRectangle, Plane, type Shape3D } from 'replicad';
-import { gearDrawing, rackOutline, ringGearDrawing } from './gears';
+import type { PlaneFrame, SpringSize, Vec2, Vec3 } from '@core/contracts';
+import { draw, drawCircle, type Drawing, drawPolysides, drawRectangle, makeCylinder, Plane, type Shape3D } from 'replicad';
+import { bevelGearDrawing, bevelTaper, gearDrawing, rackOutline, ringGearDrawing } from './gears';
+import { springSolid, wormSolid } from './helices';
 import { add3, cross3, normalOf, scale3, toWorld } from './geometry';
 import { nameShape } from './naming';
 
@@ -19,7 +20,16 @@ export type PartSolid =
   /** A round post (magnet, peg), chamfered at the top. */
   | { readonly kind: 'post'; readonly diameter: number; readonly height: number; readonly chamfer: number }
   /** `chamfer`: the teeth bevelled at both ends, that much at the tip (45°). */
-  | { readonly kind: 'gear'; readonly module: number; readonly teeth: number; readonly width: number; readonly bore: number; readonly pressureAngle: number; readonly helixAngle: number; readonly chamfer?: number }
+  /** `shift`: the profile shift coefficient (CAD-159). */
+  | { readonly kind: 'gear'; readonly module: number; readonly teeth: number; readonly width: number; readonly bore: number; readonly pressureAngle: number; readonly helixAngle: number; readonly chamfer?: number; readonly shift?: number }
+  /** A straight bevel gear: its large end on the plane, narrowing towards the apex of its pitch cone (half angle `pitchAngle`). */
+  | { readonly kind: 'bevel-gear'; readonly module: number; readonly teeth: number; readonly pitchAngle: number; readonly faceWidth: number; readonly bore: number; readonly pressureAngle: number }
+  /** A worm centred on the plane, `diameter` its pitch diameter. */
+  | { readonly kind: 'worm'; readonly module: number; readonly starts: number; readonly diameter: number; readonly length: number; readonly bore: number; readonly pressureAngle: number }
+  /** A worm wheel: helical teeth at the worm's lead angle. */
+  | { readonly kind: 'worm-wheel'; readonly module: number; readonly teeth: number; readonly leadAngle: number; readonly width: number; readonly bore: number; readonly pressureAngle: number }
+  /** A spring standing on the plane. */
+  | { readonly kind: 'spring'; readonly size: SpringSize }
   /** An internal gear: a ring of `outside` diameter with the teeth on the inside. */
   | { readonly kind: 'ring-gear'; readonly module: number; readonly teeth: number; readonly width: number; readonly outside: number; readonly pressureAngle: number; readonly helixAngle: number }
   | { readonly kind: 'rack'; readonly module: number; readonly teeth: number; readonly width: number; readonly height: number; readonly pressureAngle: number }
@@ -98,7 +108,7 @@ function partShape(solid: PartSolid, origin: Vec3, x: Vec3, y: Vec3, n: Vec3): S
       const module = positive(solid.module, 'module');
       let outline: Drawing;
       if (solid.kind === 'gear') {
-        outline = gearDrawing(module, solid.teeth, solid.pressureAngle);
+        outline = gearDrawing(module, solid.teeth, solid.pressureAngle, solid.shift ?? 0);
         if (solid.bore > 0) outline = outline.cut(drawCircle(solid.bore / 2));
       } else {
         const root = (module * Math.round(solid.teeth)) / 2 + 1.25 * module;
@@ -111,6 +121,33 @@ function partShape(solid: PartSolid, origin: Vec3, x: Vec3, y: Vec3, n: Vec3): S
       const gear = outline.sketchOnPlane(on()).extrude(width, twist ? { twistAngle: twist } : {}) as Shape3D;
       return solid.kind === 'gear' && solid.chamfer ? tipRelief(gear, solid, origin, x, y, n) : gear;
     }
+    case 'bevel-gear': {
+      const module = positive(solid.module, 'module');
+      const width = positive(solid.faceWidth, 'face width');
+      const pitch = (module * Math.round(solid.teeth)) / 2;
+      // Along the cone, at most a third of the way to the apex (as is usual), so the small end keeps its teeth.
+      const cone = pitch / Math.sin(solid.pitchAngle);
+      if (!(width <= cone / 3 + 1e-9)) throw new PartError(`The face width must be at most ${Math.round((cone / 3) * 100) / 100} mm (a third of the cone).`);
+      const height = width * Math.cos(solid.pitchAngle);
+      const endFactor = bevelTaper(module, solid.teeth, solid.pitchAngle, height);
+      const gear = bevelGearDrawing(module, solid.teeth, solid.pressureAngle, solid.pitchAngle).sketchOnPlane(on()).extrude(height, { extrusionProfile: { profile: 'linear', endFactor } }) as Shape3D;
+      if (!(solid.bore > 0)) return gear;
+      if (!(solid.bore / 2 < endFactor * (pitch - 1.5 * module))) throw new PartError('The bore is too big for the small end of the gear.');
+      return gear.cut(makeCylinder(solid.bore / 2, height + 2, [...add3(origin, scale3(n, -1))], [...n]) as Shape3D);
+    }
+    case 'worm':
+      return wormSolid(positive(solid.module, 'module'), solid.starts, positive(solid.diameter, 'diameter'), positive(solid.length, 'length'), solid.pressureAngle, solid.bore, { origin, x, y, n });
+    case 'worm-wheel': {
+      const [module, width, z] = [positive(solid.module, 'module'), positive(solid.width, 'width'), Math.round(solid.teeth)];
+      // Right-hand teeth at the lead angle (a crossed helical gear); turned so that halfway up a tooth space faces −x.
+      const twist = (width * Math.tan(solid.leadAngle)) / ((module * z) / 2);
+      const turn = Math.PI - Math.PI / z - twist / 2;
+      let outline = gearDrawing(module, z, solid.pressureAngle).rotate((turn * 180) / Math.PI, [0, 0]);
+      if (solid.bore > 0) outline = outline.cut(drawCircle(solid.bore / 2));
+      return outline.sketchOnPlane(on()).extrude(width, twist ? { twistAngle: (twist * 180) / Math.PI } : {}) as Shape3D;
+    }
+    case 'spring':
+      return springSolid(solid.size, { origin, x, y, n });
     case 'rack':
       return polygon(rackOutline(positive(solid.module, 'module'), solid.teeth, positive(solid.height, 'height'), solid.pressureAngle))
         .sketchOnPlane(on())

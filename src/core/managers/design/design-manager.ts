@@ -28,6 +28,7 @@ import type {
   TextPath,
   TextWeight,
   ThreadMarker,
+  HelixPath,
   TraceSettings,
   TopologyRef,
   ValidationReport,
@@ -162,6 +163,8 @@ export interface DesignState {
   readonly bodies: readonly BodyMesh[];
   /** Threads, for showing on their faces. */
   readonly threads: readonly ThreadMarker[];
+  /** Helix features, for showing as curves (CAD-161). */
+  readonly helices: readonly HelixPath[];
   /** Whether the component is a sheet metal part (it has a base flange), which can be laid flat. */
   readonly sheetMetal: boolean;
   readonly parameters: readonly ParameterView[];

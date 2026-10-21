@@ -13,7 +13,7 @@ import {
   untracked,
   viewChild,
 } from '@angular/core';
-import type { Appearance, BodyMesh, PlaneFrame, ThreadMarker, Vec3 } from '@core/contracts';
+import type { Appearance, BodyMesh, HelixPath, PlaneFrame, ThreadMarker, Vec3 } from '@core/contracts';
 import { Icon } from '../shared/icon';
 import { mouseBindings } from '../shared/keymap';
 import { Shortcuts } from '../shared/shortcuts';
@@ -195,6 +195,8 @@ export class Viewport {
   readonly measureLine = input<readonly [Vec3, Vec3] | undefined>(undefined);
   /** Threads, drawn as helices on their faces. */
   readonly threads = input<readonly ThreadMarker[]>([]);
+  /** Helix features, drawn as curves (CAD-161). */
+  readonly helices = input<readonly HelixPath[]>([]);
   /** Results of a strength check drawn on the bodies. */
   readonly field = input<StressField | undefined>(undefined);
   readonly backendReady = output<RendererBackend>();
@@ -284,6 +286,7 @@ export class Viewport {
     effect(() => this.scene()?.setField(this.field()));
     effect(() => this.scene()?.setMeasureLine(this.measureLine()));
     effect(() => this.scene()?.setThreads(this.threads()));
+    effect(() => this.scene()?.setHelices(this.helices()));
     effect(() => this.scene()?.setHandle(this.handle()));
     effect(() => this.scene()?.setAnalysis(this.analysis()));
     effect(() => void this.scene()?.setRealistic(this.settings.realistic()));

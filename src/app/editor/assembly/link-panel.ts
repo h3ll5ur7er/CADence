@@ -5,6 +5,8 @@ import { AssemblyStore } from './assembly-store';
 
 const kindLabels: Readonly<Record<MotionLink['kind'], string>> = {
   gear: 'Gears',
+  bevel: 'Bevel gears',
+  worm: 'Worm and wheel',
   rack: 'Rack and pinion',
   belt: 'Belt or chain',
   carrier: 'Sun to planet carrier',
@@ -15,6 +17,8 @@ const kindLabels: Readonly<Record<MotionLink['kind'], string>> = {
 /** What the sizes the ratio comes from are, per kind (a rack has one, a cam none: its profile). */
 const sizeLabels: Readonly<Record<MotionLink['kind'], readonly string[]>> = {
   gear: ['Teeth of the driver', 'Teeth of the driven'],
+  bevel: ['Teeth of the driver', 'Teeth of the driven'],
+  worm: ['Starts of the worm', 'Teeth of the wheel'],
   rack: ['Pinion pitch ⌀ (mm)'],
   belt: ['Driver pulley ⌀ (mm)', 'Driven pulley ⌀ (mm)'],
   carrier: ['Teeth of the sun', 'Teeth of the ring (fixed)'],
@@ -31,7 +35,7 @@ const firstProfile: readonly (readonly [number, number])[] = [
 ];
 
 /** Kinds that turn the driven joint the other way by themselves. */
-const reverses = (kind: MotionLink['kind']) => kind === 'gear' || kind === 'planet';
+const reverses = (kind: MotionLink['kind']) => kind === 'gear' || kind === 'bevel' || kind === 'worm' || kind === 'planet';
 
 /** A selected motion link: which joint drives which, and by how much (from teeth or diameters). */
 @Component({
@@ -156,7 +160,8 @@ export class LinkPanel {
   }
 
   /**
-   * Gears turn the other way by teeth over teeth; a rack moves π·d/360 mm per degree; a belt turns the
+   * Gears (and bevel gears) turn the other way by teeth over teeth, a worm's wheel by starts over teeth
+   * (each about its axis towards the other part, as the parts are built: CAD-160); a rack moves π·d/360 mm per degree; a belt turns the
    * same way by diameters; a planetary set's carrier and planets follow from the sun's and ring's teeth.
    */
   private ratioOf(kind: MotionLink['kind'], [a, b]: readonly [number, number]): number {
@@ -164,7 +169,7 @@ export class LinkPanel {
     if (kind === 'carrier' || kind === 'planet') return planetaryRatios(a, b)[kind];
     if (kind === 'cam') return 1;
     const ratio = a / (b || 1);
-    return kind === 'gear' ? -ratio : ratio;
+    return reverses(kind) ? -ratio : ratio;
   }
 
   protected remove(link: MotionLink): void {

@@ -33,9 +33,11 @@ import type {
   TopologyRef,
   ValidationReport,
   Vec2,
+  LiveWhere,
 } from '@core/contracts';
 
 import type { ConfigurationImport } from './configurations';
+import type { LiveState, LiveTarget } from './live';
 import type { BrokenReference } from './references';
 
 /** Every change to a component is one of these commands (docs/Architecture/Decisions.md#adr-10). Ids come from the caller. */
@@ -168,6 +170,8 @@ export interface DesignState {
   readonly parameters: readonly ParameterView[];
   readonly canUndo: boolean;
   readonly canRedo: boolean;
+  /** While editing live with others (CAD-178). */
+  readonly live?: LiveState;
 }
 
 export type DrawingFormat = 'dxf' | 'svg';
@@ -233,6 +237,14 @@ export interface DesignSession {
   validate(): Promise<ValidationReport>;
   /** The strength check of the stored setup, with the component's material (CAD-93). */
   simulate(): Promise<Result<SimulationResult>>;
+  /**
+   * Edits the component live with the others who have it open, through its project's CADence server
+   * (CAD-178): changes made here go to them, theirs come here, all in the server's order.
+   */
+  goLive(target: LiveTarget): Result<void>;
+  leaveLive(): void;
+  /** Tells the others where one works: the sketch, the item, the pointer. */
+  present(where: LiveWhere): void;
 }
 
 /** Two versions of a component built: their bodies, and the material added and removed between them (CAD-175). */

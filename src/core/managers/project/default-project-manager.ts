@@ -33,8 +33,14 @@ import {
   type SyncConflict,
   type SyncOutcome,
   type ItemConflict,
+  type ProjectRole,
+  type ServerInfo,
+  type ServerSignIn,
+  type ServerUser,
+  type SharedProject,
 } from '@core/contracts';
 import { migrate, UnsupportedSchemaError } from '@core/access/document';
+import { type ServerAccess, ServerError } from '@core/access/server';
 import { InvalidVersionNameError, RemoteError, type Version, type VersionAccess, type VersionFile } from '@core/access/version';
 import { compareDocuments, mergeDocuments } from '@core/engines/revision';
 import type { InterchangeEngine } from '@core/engines/interchange';
@@ -58,6 +64,8 @@ export interface ProjectManagerDependencies {
   readonly parameters: ParameterEngine;
   /** Each project's version history. */
   readonly versions: VersionAccess;
+  /** CADence servers, where projects are shared (CAD-177); absent: no sharing on this host. */
+  readonly server?: ServerAccess;
   /** How long after the last save a version is recorded (ms). */
   readonly versionDelay?: number;
   readonly events: EventBus<DomainEvents>;
@@ -140,6 +148,9 @@ function validName(name: string): Result<string> {
   }
   return ok(trimmed);
 }
+
+/** A server sign-in as git's: the token is the password. */
+const credentialsOf = (signIn: ServerSignIn): RemoteCredentials => ({ username: 'token', password: signIn.token });
 
 const unknownProject = (id: ProjectId) => fail({ code: 'unknown-project', message: `Project ${id} does not exist.` });
 const invalidRemote = () => fail({ code: 'invalid-remote', message: 'A remote is a git repository address starting with https:// (or http://).' });
@@ -326,10 +337,114 @@ export class DefaultProjectManager implements ProjectManager {
     if (!project) return unknownProject(id);
     const { remote } = project;
     if (!remote) return fail({ code: 'no-remote', message: 'The project is not shared with a git repository yet.' });
+    // Opened through a view link: the link is the sign-in.
+    const link = remote.server?.link;
+    const signIn = credentials ?? (link ? { username: 'link', password: link } : undefined);
     return this.serially(async () => {
       await this.record(id);
-      return this.exchange(id, remote, credentials, resolutions);
+      return this.exchange(id, remote, signIn, resolutions);
     });
+  }
+
+  /** A server call, its failures as results. */
+  private async onServer<T>(work: (server: ServerAccess) => Promise<T>): Promise<Result<T>> {
+    if (!this.deps.server) return fail({ code: 'no-server', message: 'This CADence cannot reach CADence servers.' });
+    try {
+      return ok(await work(this.deps.server));
+    } catch (error) {
+      if (error instanceof ServerError) return fail({ code: `server-${error.problem}`, message: error.message });
+      throw error;
+    }
+  }
+
+  /** The project on the server a project here is synced with. */
+  private async serverProjectOf(id: ProjectId, signIn: ServerSignIn): Promise<Result<string>> {
+    const project = await this.deps.projects.find(id);
+    if (!project) return unknownProject(id);
+    const server = project.remote?.server;
+    if (!server || server.url !== signIn.server) return fail({ code: 'not-shared', message: `${project.name} is not shared on ${signIn.server}.` });
+    return ok(server.project);
+  }
+
+  serverInfo(server: string): Promise<Result<ServerInfo>> {
+    return this.onServer((s) => s.info(server));
+  }
+
+  signInByName(server: string, name: string): Promise<Result<ServerSignIn>> {
+    return this.onServer((s) => s.signInByName(server, name));
+  }
+
+  serverUser(signIn: ServerSignIn): Promise<Result<ServerUser>> {
+    return this.onServer((s) => s.user(signIn));
+  }
+
+  async signOut(signIn: ServerSignIn): Promise<void> {
+    await this.onServer((s) => s.signOut(signIn));
+  }
+
+  sharedProjects(signIn: ServerSignIn): Promise<Result<SharedProject[]>> {
+    return this.onServer((s) => s.projects(signIn));
+  }
+
+  async shareProject(id: ProjectId, signIn: ServerSignIn): Promise<Result<SharedProject>> {
+    const project = await this.deps.projects.find(id);
+    if (!project) return unknownProject(id);
+    if (project.remote?.server) return this.sharing(id, signIn);
+    const created = await this.onServer((s) => s.createProject(signIn, project.name));
+    if (!created.ok) return created;
+    const { git, id: serverProject, role } = created.value;
+    const remote = await this.setRemote(id, { url: git, server: { url: signIn.server, project: serverProject, role } });
+    if (!remote.ok) return remote;
+    const synced = await this.syncProject(id, credentialsOf(signIn));
+    return synced.ok ? created : synced;
+  }
+
+  async sharing(id: ProjectId, signIn: ServerSignIn): Promise<Result<SharedProject>> {
+    const at = await this.serverProjectOf(id, signIn);
+    return at.ok ? this.onServer((s) => s.project(signIn, at.value)) : at;
+  }
+
+  async setMember(id: ProjectId, signIn: ServerSignIn, who: string, role: ProjectRole): Promise<Result<SharedProject>> {
+    const at = await this.serverProjectOf(id, signIn);
+    return at.ok ? this.onServer((s) => s.setMember(signIn, at.value, who, role)) : at;
+  }
+
+  async removeMember(id: ProjectId, signIn: ServerSignIn, userId: string): Promise<Result<SharedProject>> {
+    const at = await this.serverProjectOf(id, signIn);
+    return at.ok ? this.onServer((s) => s.removeMember(signIn, at.value, userId)) : at;
+  }
+
+  async addViewLink(id: ProjectId, signIn: ServerSignIn): Promise<Result<SharedProject>> {
+    const at = await this.serverProjectOf(id, signIn);
+    return at.ok ? this.onServer((s) => s.addLink(signIn, at.value)) : at;
+  }
+
+  async removeViewLink(id: ProjectId, signIn: ServerSignIn, token: string): Promise<Result<SharedProject>> {
+    const at = await this.serverProjectOf(id, signIn);
+    return at.ok ? this.onServer((s) => s.removeLink(signIn, at.value, token)) : at;
+  }
+
+  async openShared(signIn: ServerSignIn, serverProject: string): Promise<Result<ProjectSummary>> {
+    const here = (await this.deps.projects.enumerate()).find((p) => p.remote?.server?.url === signIn.server && p.remote.server.project === serverProject && !p.remote.server.link);
+    if (here) {
+      const synced = await this.syncProject(here.id, credentialsOf(signIn));
+      return synced.ok ? ok(await this.summarizeProject((await this.deps.projects.find(here.id)) ?? here)) : synced;
+    }
+    const shared = await this.onServer((s) => s.project(signIn, serverProject));
+    if (!shared.ok) return shared;
+    return this.openRemoteProject({ url: shared.value.git, server: { url: signIn.server, project: serverProject, role: shared.value.role } }, credentialsOf(signIn));
+  }
+
+  async openViewLink(server: string, link: string): Promise<Result<ProjectSummary>> {
+    const found = await this.onServer((s) => s.link(server, link));
+    if (!found.ok) return found;
+    const url = server.replace(/\/+$/, '');
+    const here = (await this.deps.projects.enumerate()).find((p) => p.remote?.server?.url === url && p.remote.server.link === link);
+    if (here) {
+      const synced = await this.syncProject(here.id);
+      return synced.ok ? ok(await this.summarizeProject((await this.deps.projects.find(here.id)) ?? here)) : synced;
+    }
+    return this.openRemoteProject({ url: found.value.git, server: { url, project: found.value.project.id, role: 'viewer', link } }, { username: 'link', password: link });
   }
 
   async openRemoteProject(remote: ProjectRemote, credentials?: RemoteCredentials): Promise<Result<ProjectSummary>> {

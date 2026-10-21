@@ -16,6 +16,7 @@ import {
   InMemoryProjectAccess,
   type ProjectAccess,
 } from '@core/access/project';
+import { HttpServerAccess } from '@core/access/server';
 import { GitVersionAccess, type VersionAccess } from '@core/access/version';
 import type { DomainEvents, TextWeight } from '@core/contracts';
 import type { AnalysisEngine } from '@core/engines/analysis';
@@ -172,6 +173,7 @@ export function createCore(host: Host): Core {
   if (host.channel) relayEvents(events, host.channel, relayed);
   const { projects, documents, assets, externalFiles } = host;
   const fonts = fontSource(host.fontUrls);
+  const server = new HttpServerAccess();
   const geometry: Geometry = host.geometry
     ? {
         modeling: remote<ModelingEngine>(host.geometry, 'modeling'),
@@ -188,6 +190,7 @@ export function createCore(host: Host): Core {
       interchange: geometry.interchange,
       parameters: createParameterEngine(),
       versions: host.versions,
+      server,
       events,
       clock: systemClock,
       newId,
@@ -204,6 +207,7 @@ export function createCore(host: Host): Core {
       assets,
       events,
       clock: systemClock,
+      server,
     }),
     assemblyManager: createAssemblyManager({
       projects,

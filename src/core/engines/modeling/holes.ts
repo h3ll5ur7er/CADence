@@ -1,6 +1,6 @@
 import { adopt, type NamedShape } from '@core/access/shape';
 import type { PlaneFrame, ThreadMarker, Vec2, Vec3 } from '@core/contracts';
-import { assembleWire, draw, type Drawing, type Face, getOC, makeHelix, makeLine, Plane, type Shape3D } from 'replicad';
+import { assembleWire, draw, type Drawing, type Face, getOC, makeCylinder, makeHelix, makeLine, Plane, type Shape3D } from 'replicad';
 import { add3, cross3, dot3, length3, normalize3, normalOf, scale3, sub3, toWorld } from './geometry';
 import { nameShape, namedSurfaces } from './naming';
 import type { Surface } from './surfaces';
@@ -157,15 +157,11 @@ export function threadPlacement(face: Face, axis: { origin: Vec3; direction: Vec
  */
 export function threadGroove(marker: ThreadMarker, faceLength: number): Shape3D {
   const oc = getOC();
-  const { origin, direction, radius, pitch, diameter, internal } = marker;
-  // Internal threads cut outwards from the hole to the major diameter; external ones inwards to the minor diameter.
-  const depth = internal ? diameter / 2 - radius : 0.6134 * pitch;
+  const { origin, direction, radius, internal } = marker;
+  const { depth, overlap, half, length } = grooveOf(marker, faceLength);
   if (!(depth > 0)) throw new HoleError('This hole is already as wide as the thread.');
-  const overlap = 0.05 * pitch;
-  const half = (depth + overlap) * Math.tan(Math.PI / 6);
-  const length = Math.min(marker.length, faceLength - half - overlap);
-  if (!(length > pitch)) throw new HoleError('The face is too short for this thread.');
-  const helix = makeHelix(pitch, length, radius, [...origin], [...direction]);
+  if (!(length > marker.pitch)) throw new HoleError('The face is too short for this thread.');
+  const helix = makeHelix(marker.pitch, length, radius, [...origin], [...direction]);
   const start = helix.edges[0]?.startPoint.toTuple() as Vec3;
   const out = normalize3(sub3(start, add3(origin, scale3(direction, dot3(sub3(start, origin), direction)))));
   const inward = internal ? out : scale3(out, -1);
@@ -183,5 +179,56 @@ export function threadGroove(marker: ThreadMarker, faceLength: number): Shape3D 
   } finally {
     builder.delete();
     binormal.delete();
+  }
+}
+
+/** The size of a thread's groove: how deep, how far past the face it reaches, half its width along the axis, and how long its helix is. */
+function grooveOf(marker: ThreadMarker, faceLength: number): { depth: number; overlap: number; half: number; length: number } {
+  // Internal threads cut outwards from the hole to the major diameter; external ones inwards to the minor diameter.
+  const depth = marker.internal ? marker.diameter / 2 - marker.radius : 0.6134 * marker.pitch;
+  const overlap = 0.05 * marker.pitch;
+  const half = (depth + overlap) * Math.tan(Math.PI / 6);
+  return { depth, overlap, half, length: Math.min(marker.length, faceLength - half - overlap) };
+}
+
+/**
+ * A body with the groove of a modelled thread filled in again (CAD-166): drawings show threads as
+ * lines (ISO 6410), and the kernel's hidden-line removal of a helix can take minutes (ADR-49). The
+ * groove is filled by a cylinder a little wider than it, then the wall turned down (a shaft) or
+ * bored out (a hole) to the face's radius and what stands out past the thread's open end taken off.
+ * None of these tools touches the groove's flanks, so no helix is intersected.
+ */
+export function threadFilled(body: Shape3D, marker: ThreadMarker, faceLength: number): Shape3D {
+  const { origin, direction, radius, internal } = marker;
+  const { overlap, half, length } = grooveOf(marker, faceLength);
+  // Along the axis from the open end: the groove reaches from −half to its helix's end plus half.
+  const [from, to] = [-half - overlap, length + half + overlap / 2];
+  const outer = internal ? marker.diameter / 2 + overlap : radius + 2 * overlap;
+  const cylinder = (r: number, a: number, b: number) => makeCylinder(r, b - a, [...add3(origin, scale3(direction, a))], [...direction]) as Shape3D;
+  const owned: Shape3D[] = [];
+  const step = (shape: Shape3D, next: Shape3D) => {
+    owned.push(shape);
+    return next;
+  };
+  try {
+    const fill = cylinder(outer, from, to);
+    owned.push(fill);
+    let shape = body.fuse(fill) as Shape3D;
+    if (internal) {
+      const bore = cylinder(radius, from, to);
+      owned.push(bore);
+      shape = step(shape, shape.cut(bore) as Shape3D);
+    } else {
+      const turned = cylinder(outer + overlap, from, to).cut(cylinder(radius, from - 1, to + 1)) as Shape3D;
+      owned.push(turned);
+      shape = step(shape, shape.cut(turned) as Shape3D);
+    }
+    // Past the open end, where the fill stands out of the body.
+    const beyond = cylinder(outer + 2 * overlap, from - overlap, 0);
+    owned.push(beyond);
+    shape = step(shape, shape.cut(beyond) as Shape3D);
+    return step(shape, shape.simplify() as Shape3D);
+  } finally {
+    for (const shape of owned) shape.delete();
   }
 }

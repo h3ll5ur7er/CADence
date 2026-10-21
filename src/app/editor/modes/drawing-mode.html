@@ -112,6 +112,7 @@
       <button type="button" class="icon-btn tool" aria-label="Centre mark" title="Centre mark" [class.on]="store.tool().kind === 'center-mark'" (click)="use({ kind: 'center-mark' })"><cad-icon name="origin" [size]="18" /></button>
       <button type="button" class="icon-btn tool" aria-label="Centre line" title="Centre line" [class.on]="store.tool().kind === 'center-line'" (click)="use({ kind: 'center-line' })"><cad-icon name="construction" [size]="18" /></button>
       <button type="button" class="icon-btn tool" aria-label="Hole callout" title="Hole callout" [class.on]="store.tool().kind === 'callout'" (click)="use({ kind: 'callout' })"><cad-icon name="hole" [size]="18" /></button>
+      <button type="button" class="icon-btn tool" aria-label="Surface finish" title="Surface finish (ISO 1302)" [class.on]="store.tool().kind === 'surface-finish'" (click)="use({ kind: 'surface-finish' })"><cad-icon name="check" [size]="18" /></button>
       <button type="button" class="icon-btn tool" aria-label="Detail view" title="Detail view" [class.on]="store.tool().kind === 'detail'" (click)="use({ kind: 'detail' })"><cad-icon name="inspect" [size]="18" /></button>
       <button type="button" class="icon-btn tool" aria-label="Balloon" title="Balloon" [class.on]="store.tool().kind === 'balloon'" (click)="use({ kind: 'balloon' })"><cad-icon name="info" [size]="18" /></button>
       <button type="button" class="icon-btn tool" aria-label="Parts list" title="Parts list" [class.on]="store.tool().kind === 'parts-list'" (click)="use({ kind: 'parts-list' })"><cad-icon name="copy" [size]="18" /></button>
@@ -188,8 +189,22 @@
       @if (view.section; as section) {
         <label class="field">
           Cut towards the viewer (mm)
-          <input id="view-section-offset" type="number" step="any" [value]="section.offset" (change)="setView(view, { section: { offset: +value($event) } })" />
+          <input id="view-section-offset" type="number" step="any" [value]="section.offset" (change)="setView(view, { section: { ...section, offset: +value($event) } })" />
         </label>
+        <label class="check"><input id="view-section-half" type="checkbox" [checked]="!!section.half" (change)="setSection(view, { half: $any($event.target).checked })" /> Half section (right of the centre line)</label>
+        <label class="field">
+          Steps (where:offset; mm from the middle)
+          <input id="view-section-steps" type="text" placeholder="e.g. 10:-5" [value]="stepsText(section)" (change)="setSection(view, { steps: value($event) })" />
+        </label>
+        @if (section.steps?.length) {
+          <label class="field">
+            Steps along
+            <select id="view-section-along" (change)="setSection(view, { along: value($event) })">
+              <option value="u" [selected]="section.along !== 'v'">The view's right</option>
+              <option value="v" [selected]="section.along === 'v'">The view's up</option>
+            </select>
+          </label>
+        }
       }
     }
     <label class="field">
@@ -217,14 +232,67 @@
         Text (empty: the measured value)
         <input id="dimension-text" type="text" [value]="annotation.text ?? ''" (change)="setAnnotation(annotation, { text: value($event) })" />
       </label>
+      @if (annotation.type === 'linear' || annotation.type === 'horizontal' || annotation.type === 'vertical') {
+        <label class="field">
+          Measure along
+          <select id="dimension-axis" (change)="setAnnotation(annotation, { axis: value($event) || null })">
+            <option value="" [selected]="!annotation.axis">As drawn (true length on isometric views)</option>
+            <option value="x" [selected]="annotation.axis === 'x'">The model's X axis</option>
+            <option value="y" [selected]="annotation.axis === 'y'">The model's Y axis</option>
+            <option value="z" [selected]="annotation.axis === 'z'">The model's Z axis</option>
+          </select>
+        </label>
+      }
+      <label class="field">
+        Tolerance
+        <select id="dimension-tolerance" (change)="setTolerance(annotation, value($event))">
+          <option value="" [selected]="!annotation.tolerance">None</option>
+          <option value="symmetric" [selected]="annotation.tolerance?.kind === 'symmetric'">± (symmetric)</option>
+          <option value="deviations" [selected]="annotation.tolerance?.kind === 'deviations'">Deviations</option>
+          <option value="limits" [selected]="annotation.tolerance?.kind === 'limits'">Limits of size</option>
+          <option value="fit" [selected]="annotation.tolerance?.kind === 'fit'">ISO fit (H7, g6, H7/g6)</option>
+        </select>
+      </label>
+      @if (annotation.tolerance; as tolerance) {
+        @switch (tolerance.kind) {
+          @case ('symmetric') {
+            <label class="field">± (mm)<input id="tolerance-value" type="number" step="any" [value]="tolerance.value" (change)="setToleranceValue(annotation, { value: +value($event) })" /></label>
+          }
+          @case ('fit') {
+            <label class="field">Class or fit<input id="tolerance-fit" type="text" [value]="tolerance.fit" (change)="setToleranceValue(annotation, { fit: value($event) })" /></label>
+            <label class="check"><input id="tolerance-deviations" type="checkbox" [checked]="!!tolerance.deviations" (change)="setToleranceValue(annotation, { deviations: $any($event.target).checked })" /> Show its deviations</label>
+          }
+          @default {
+            @if (tolerance.kind === 'deviations' || tolerance.kind === 'limits') {
+              <div class="grid two">
+                <label class="field">Upper (mm)<input id="tolerance-upper" type="number" step="any" [value]="tolerance.upper" (change)="setToleranceValue(annotation, { upper: +value($event) })" /></label>
+                <label class="field">Lower (mm)<input id="tolerance-lower" type="number" step="any" [value]="tolerance.lower" (change)="setToleranceValue(annotation, { lower: +value($event) })" /></label>
+              </div>
+            }
+          }
+        }
+      }
     } @else if (annotation.kind === 'note') {
       <label class="field">
         Text
         <textarea id="note-text" rows="4" [value]="annotation.text" (change)="setAnnotation(annotation, { text: value($event) })"></textarea>
       </label>
+    } @else if (annotation.kind === 'surface-finish') {
+      <label class="field">
+        Process
+        <select id="finish-process" (change)="setAnnotation(annotation, { process: value($event) })">
+          @for (p of processes; track p.value) {
+            <option [value]="p.value" [selected]="p.value === annotation.process">{{ p.label }}</option>
+          }
+        </select>
+      </label>
+      <label class="field">Roughness<input id="finish-roughness" type="text" placeholder="Ra 3.2" [value]="annotation.roughness ?? ''" (change)="setAnnotation(annotation, { roughness: value($event) })" /></label>
+      <label class="field">Method<input id="finish-method" type="text" placeholder="milled" [value]="annotation.method ?? ''" (change)="setAnnotation(annotation, { method: value($event) })" /></label>
+      <p class="hint">Drag it on the sheet to move it.</p>
     } @else {
       <p class="hint">Drag it on the sheet to move it.</p>
     }
+
   } @else if (store.document(); as document) {
     <p class="eyebrow">Drawing</p>
     <h2>{{ document.name }}</h2>

@@ -208,6 +208,10 @@ export interface ThreadMarker {
   /** The thread's major (nominal) diameter. */
   readonly diameter: number;
   readonly internal: boolean;
+  /** The body it is on, so component results carry it for drawings (CAD-166). */
+  readonly body?: string;
+  /** Its groove is cut into the body; `faceLength` is the length of the face it is on, to fill the groove again for drawings. */
+  readonly modelled?: { readonly faceLength: number };
 }
 
 /**

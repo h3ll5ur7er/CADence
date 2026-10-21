@@ -1,5 +1,6 @@
-import { facesOf, find, kernelFailure, type NamedShape, piecesOf, place, type ShapeAccess } from '@core/access/shape';
-import { type BodyMesh, fail, type Matrix4, ok, type PlaneFrame, type Result, type TopologyRef, type Vec2, type Vec3 } from '@core/contracts';
+import { edgesOf, facesOf, find, kernelFailure, type NamedShape, piecesOf, place, type ShapeAccess } from '@core/access/shape';
+import { type BodyMesh, fail, type Matrix4, ok, type PlaneFrame, type Result, type ThreadMarker, type TopologyRef, type Vec2, type Vec3 } from '@core/contracts';
+import { transformPoint } from '@core/utilities/math';
 import { type Edge, type Face, getOC, makeCompound, makeVertex, measureVolume, type Shape3D, Vertex } from 'replicad';
 import { combine, type LoadedBody, renameCopy } from './bodies';
 import { BodyOperationError, combineBodies, splitBody, transformBodies } from './body-operations';
@@ -130,16 +131,28 @@ export class OcctModelingEngine implements ModelingEngine {
     return this.shapes.generation();
   }
 
-  async snapshot(bodies: readonly BodyState[]): Promise<Uint8Array> {
+  async snapshot(bodies: readonly BodyState[], threads: readonly ThreadMarker[] = []): Promise<Uint8Array> {
     await this.shapes.ready();
-    return snapshotOf(this.load(bodies).map((b) => ({ id: b.state.id, named: b.named })));
+    return snapshotOf(this.load(bodies).map((b) => ({ id: b.state.id, named: { ...b.named, threads: threads.filter((t) => t.body === b.state.id) } })));
   }
 
   async snapshotPlaced(parts: readonly { readonly id: string; readonly body: BodyState; readonly transform: Matrix4 }[]): Promise<Uint8Array> {
     await this.shapes.ready();
     const loaded = this.load(parts.map((p) => p.body));
-    // Names stay with the stored shape: placed copies are for drawings, not references.
-    const placed = parts.map(({ id, transform }, i) => ({ id, named: { shape: place((loaded[i] as LoadedBody).named.shape, transform), faces: new Map(), edges: new Map() } }));
+    // Placed copies keep their names in topological order, which a placed copy keeps, so drawings can
+    // dimension each part (CAD-167); their threads move with them (CAD-166).
+    const placed = parts.map(({ id, transform }, i) => {
+      const named = (loaded[i] as LoadedBody).named;
+      const shape = place(named.shape, transform);
+      const rename = <T extends { hashCode: number }>(names: ReadonlyMap<number, string>, from: readonly T[], to: readonly T[]) =>
+        new Map(from.flatMap((item, k) => (names.has(item.hashCode) && to[k] ? [[(to[k] as T).hashCode, names.get(item.hashCode) as string] as const] : [])));
+      const threads = named.threads?.map((t) => {
+        const tip = transformPoint(transform, [t.origin[0] + t.direction[0], t.origin[1] + t.direction[1], t.origin[2] + t.direction[2]]);
+        const origin = transformPoint(transform, t.origin);
+        return { ...t, body: id, origin, direction: normalize3(sub3(tip, origin)) };
+      });
+      return { id, named: { shape, faces: rename(named.faces, facesOf(named.shape), facesOf(shape)), edges: rename(named.edges, edgesOf(named.shape), edgesOf(shape)), ...(threads ? { threads } : {}) } };
+    });
     try {
       return snapshotOf(placed);
     } finally {
@@ -364,13 +377,13 @@ export class OcctModelingEngine implements ModelingEngine {
       const range = `${Math.round(low * 100) / 100} to ${Math.round(high * 100) / 100} mm`;
       throw new FeatureError(`An ${request.size} thread needs a ${place.internal ? 'hole' : 'shaft'} of ${range}; this one is ${Math.round(2 * place.radius * 100) / 100} mm.`);
     }
-    const thread = { feature: request.feature, size: request.size, origin: place.origin, direction: place.direction, radius: place.radius, length, pitch: p, diameter: d, internal: place.internal };
+    const thread: ThreadMarker = { feature: request.feature, size: request.size, origin: place.origin, direction: place.direction, radius: place.radius, length, pitch: p, diameter: d, internal: place.internal, body: body.state.id };
     if (!request.modelled) return { bodies: request.bodies, thread };
     const shape = cut(body.named.shape, threadGroove(thread, place.length));
     if (measureVolume(shape) > measureVolume(body.named.shape) - 1e-3 * thread.pitch ** 3) throw new FeatureError('The thread could not be cut. Try a shorter thread, or start it at the other end.');
     const named = nameShape(shape, namedSurfaces(body.named), () => `f:${request.feature}:flank`, request.feature);
     const state = { id: body.state.id, key: `${request.key}:${body.state.id}` };
-    return { ...this.store({ bodies: bodies.map((b) => (b === body ? state : b.state)), stored: [[state.key, named]] }), thread };
+    return { ...this.store({ bodies: bodies.map((b) => (b === body ? state : b.state)), stored: [[state.key, named]] }), thread: { ...thread, modelled: { faceLength: place.length } } };
   }
 
   private treatEdges(feature: string, key: string, bodies: LoadedBody[], refs: readonly TopologyRef[], size: number, kind: 'fillet' | 'chamfer', endSize?: number): ModelingOutcome {

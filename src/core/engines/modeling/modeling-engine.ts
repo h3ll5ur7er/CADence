@@ -242,8 +242,8 @@ export interface ModelingEngine {
    * (OCCT HLR), a section's cut, and the named points, circles and lines to dimension.
    */
   drawView(bodies: readonly BodyState[], request: ViewRequest): Promise<Result<ViewGeometry>>;
-  /** The bodies' solids and names, for publishing as a component result. */
-  snapshot(bodies: readonly BodyState[]): Promise<Uint8Array>;
+  /** The bodies' solids and names, and the threads on them (CAD-166), for publishing as a component result. */
+  snapshot(bodies: readonly BodyState[], threads?: readonly ThreadMarker[]): Promise<Uint8Array>;
   /**
    * How many times the kernel was started again after a failure (CAD-133): the shapes of earlier
    * generations are gone, so what held them (open documents) reads them again.

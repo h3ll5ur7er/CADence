@@ -284,17 +284,23 @@ interface DrawingView {
   direction: 'front' | 'back' | 'top' | 'bottom' | 'left' | 'right' | 'iso';
   at: Vec2;                                     // the view's middle on the sheet (mm from the bottom left)
   scale?: number; hidden: boolean; label?: string;
-  section?: { offset };                         // a full section across the viewing direction
+  section?: { offset; steps?: { at; offset }[]; along?: 'u' | 'v'; half? };  // a full, offset (stepped) or half section (CAD-164)
   detail?: { of: viewId; center: Vec2; radius };  // a circle of another view, in its model mm
 }
 type DrawingAnnotation =
-  | { kind: 'dimension'; type: 'linear' | 'horizontal' | 'vertical' | 'radius' | 'diameter' | 'angle'; anchors: ViewAnchor[]; offset; angle?; text? }  // anchors: `dimensionAnchors`
+  | { kind: 'dimension'; type: 'linear' | 'horizontal' | 'vertical' | 'radius' | 'diameter' | 'angle'; anchors: ViewAnchor[]; offset; angle?; text?;
+      tolerance?: Tolerance; axis?: 'x' | 'y' | 'z' }   // anchors: `dimensionAnchors`; tolerance and axis: CAD-165
   | { kind: 'note'; at; text; leader? } | { kind: 'center-mark'; circle } | { kind: 'center-line'; a; b }
+  | { kind: 'surface-finish'; at; edge?: ViewAnchor; leader?; process: 'any' | 'removal' | 'no-removal'; roughness?; method? }  // ISO 1302 (CAD-165)
   | { kind: 'callout'; circle; at } | { kind: 'balloon'; view; instance; at } | { kind: 'parts-list'; view; at };
 interface ViewAnchor { view; kind: 'point' | 'circle' | 'line'; name }   // a persistent name of the view's source
+type Tolerance =
+  | { kind: 'symmetric'; value } | { kind: 'deviations' | 'limits'; upper; lower }   // mm; limits are written as the largest and smallest size
+  | { kind: 'fit'; fit: string; deviations? };                                          // ISO 286: 'H7', 'g6', 'H7/g6'
 ```
 
-Besides the source's vertices and edges, a view offers the outlines of cylinders seen from the side (lines `s:<face>:1` and `:2`, points `:a` and `:b` at their ends) and its outermost points seen (`extreme:left`, `right`, `top`, `bottom`). Lengths go between points or circle centres, a diameter of a circle or between two outlines, an angle between two lines. A radius or diameter `angle` is the direction its leader leaves the circle in (degrees; absent: where its text fits on the sheet). The title block's `material` may be empty: the sheet then shows the drawn component's. Drawn views are a cache kept as the drawing's result.
+Besides the source's vertices and edges, a view offers the outlines of cylinders and cones seen from the side (lines `s:<face>:1` and `:2`, points `:a` and `:b` at their ends), of spheres (circles `s:<face>`), the rims of tori seen along their axis (`s:<face>:outer`, `:inner`), the outermost points of other round faces' outlines (`s:<face>:left`, `right`, `top`, `bottom`), threads (circles `thread:<feature>` along their axis, lines `thread:<feature>:1`, `:2` from the side) and its outermost points seen (`extreme:left`, `right`, `top`, `bottom`). In a view of an assembly each part's names are prefixed with its instance (`<instance>/<name>`; `<instance>#<k>/` for its k-th body). A section's `steps` move its cutting plane to another depth from `at` mm (from the model's middle, along the view's right, or up with `along: 'v'`) on; `half` cuts only right of (above) the middle. A length on an isometric view is its length in the model; `axis` measures along a model axis. Lengths go between points or circle centres, a diameter of a circle or between two outlines, an angle between two lines. A radius or diameter `angle` is the direction its leader leaves the circle in (degrees; absent: where its text fits on the sheet). The title block's `material` may be empty: the sheet then shows the drawn component's. Drawn views are a cache kept as the drawing's result. Component results carry the threads on each body (their markers), which drawings draw as ISO 6410 does ([[Architecture/Decisions#ADR-58]]). No schema version changed: every new field is optional.
+
 
 Directions are third-angle names: *front* looks along +Y with Z up, *top* down the Z axis, *right* along −X. Removing a view removes its details and every annotation attached to them.
 

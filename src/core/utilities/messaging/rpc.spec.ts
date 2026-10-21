@@ -54,6 +54,25 @@ describe('rpc', () => {
     started[1]?.port.close();
   });
 
+  it('lets calls take as long as they take without a limit, and stops an idle worker (CAD-168)', async () => {
+    const started: { stopped: boolean }[] = [];
+    const start = (): StoppablePort => {
+      const channel = new MessageChannel();
+      expose(channel.port1, { calculator: { ...calculator, slow: () => new Promise((done) => setTimeout(() => done(7), 80)) } });
+      const worker = { stopped: false };
+      started.push(worker);
+      return Object.assign(channel.port2, { terminate: () => ((worker.stopped = true), channel.port1.close(), channel.port2.close()) });
+    };
+    const client = stoppable<Calculator & { slow(): Promise<number> }>(start, 'calculator', Infinity, { idle: 30 });
+    expect(await client.slow()).toBe(7);
+    expect(started.map((w) => w.stopped)).toEqual([false]);
+    await new Promise((done) => setTimeout(done, 80));
+    expect(started.map((w) => w.stopped)).toEqual([true]);
+    expect(await client.add(1, 1)).toBe(2);
+    expect(started).toHaveLength(2);
+    await new Promise((done) => setTimeout(done, 80));
+  });
+
   it('starts a worker on first use, stops it on demand and starts a new one, counting failures too (CAD-134)', async () => {
     const started: MessagePort[] = [];
     const start = (): StoppablePort => {

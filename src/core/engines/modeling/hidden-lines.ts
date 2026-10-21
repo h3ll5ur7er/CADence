@@ -19,8 +19,8 @@ const resolution = 1600;
  * Hidden lines found from the bodies' triangles (CAD-125): fast on any shape, where the kernel's exact
  * hidden-line removal can take minutes (a modelled thread seen along its axis). A depth picture of
  * the triangles decides, point by point along each edge and outline, whether it is seen. Edges and
- * the outlines of cylinders stay exact where wholly seen or hidden; other outlines come from the
- * triangles. `outlines` gives the outlines a face has exactly (cylinders); `project` an edge as curves.
+ * the outlines of cylinders and cones stay exact where wholly seen or hidden; other outlines come from
+ * the triangles. `outlines` gives the outlines a face has exactly (cylinders, cones); `project` an edge as curves.
  */
 export function meshHiddenLines(
   shapes: readonly Shape3D[],
@@ -90,7 +90,7 @@ export function meshHiddenLines(
     const groups = new Map(mesh.faceGroups.map((g) => [g.faceId, g]));
     for (const face of faces) {
       if (face.geomType === 'PLANE') continue;
-      if (face.geomType === 'CYLINDRE') {
+      if (face.geomType === 'CYLINDRE' || face.geomType === 'CONE') {
         for (const [a, b] of outlines(face)) {
           const n = steps(Math.hypot(...sub3(b, a)));
           sort(Array.from({ length: n + 1 }, (_, i) => [a[0] + ((b[0] - a[0]) * i) / n, a[1] + ((b[1] - a[1]) * i) / n, a[2] + ((b[2] - a[2]) * i) / n] as Vec3));

@@ -43,7 +43,7 @@ The work is planned in phases. Each phase ends with a running demo and visible e
 | 36. Part modeling IV ✅ | Ribs up to the next face and drill points; nested timeline folders and repairs matched by shape; a material per body | [[CAD-156]] [[CAD-157]] [[CAD-158]] |
 | 37. Gears and springs ✅ | Root fillets on ring gears and profile-shifted gears; bevel and worm gears; helices and springs | [[CAD-159]] [[CAD-160]] [[CAD-161]] |
 | 38. Sheet metal II ✅ | Flanges on flanges in the flat pattern and corner reliefs; hems and miter flanges | [[CAD-162]] [[CAD-163]] |
-| 39. Drawings III | Offset and half sections; tolerances, surface finish and true-length dimensions; cosmetic threads; anchors on cones, spheres, free-form faces and assembly parts; exact views finishing in the background | [[CAD-164]] [[CAD-165]] [[CAD-166]] [[CAD-167]] [[CAD-168]] |
+| 39. Drawings III ✅ | Offset and half sections; tolerances, surface finish and true-length dimensions; cosmetic threads; anchors on cones, spheres, free-form faces and assembly parts; exact views finishing in the background | [[CAD-164]] [[CAD-165]] [[CAD-166]] [[CAD-167]] [[CAD-168]] |
 | 40. Import II | Solids from large and broken meshes; circuit boards from KiCad | [[CAD-169]] [[CAD-170]] |
 | 41. Automation III | Whole scripts through MCP; MCP resources and prompts; a script console in the app; plugins | [[CAD-171]] [[CAD-172]] [[CAD-173]] [[CAD-174]] |
 | 42. Versions and collaboration | Comparing versions; three-way merges inside a document; users, sign-in and sharing (a server, decided first); real-time collaboration | [[CAD-175]] [[CAD-176]] [[CAD-177]] [[CAD-178]] |

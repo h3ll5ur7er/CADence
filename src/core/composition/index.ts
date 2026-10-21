@@ -238,7 +238,8 @@ export function createCore(host: Host): Core {
       events,
       clock: systemClock,
       fonts,
-      ...(host.views ? { views: stoppable<ModelingEngine>(host.views, 'modeling', viewTimeLimit) } : {}),
+      // A second views kernel finishes views that ran out of time, without a limit, and stops when idle (CAD-168).
+      ...(host.views ? { views: stoppable<ModelingEngine>(host.views, 'modeling', viewTimeLimit), exact: stoppable<ModelingEngine>(host.views, 'modeling', Infinity, { idle: 60_000 }) } : {}),
     }),
     storage: host.kind,
     // A worker that counts its own restarts and failures is not asked: it may be busy.

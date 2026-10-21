@@ -15,6 +15,7 @@ With nothing selected, the panel on the right shows the component. Choose its **
 | Surface | total surface area, in mm² |
 | Size | the bounding box: width, depth, height in mm |
 | Centre of mass | in world coordinates (mm) |
+| Spring rate | for a spring part made as a body of its own: N/mm (N·mm per degree for a torsion spring) from the material's stiffness, with its free length (inside the hooks for an extension spring), solid length and active turns |
 
 The material is saved with the component and can be undone like any change.
 

@@ -148,7 +148,7 @@ export type CadDocument = ComponentDocument | AssemblyDocument | DrawingDocument
  * configurations, …), so that older apps refuse documents they would show wrongly (CAD-145). Raise it
  * whenever a field is added that an older app must not ignore.
  */
-export const currentSchemaVersion = 3;
+export const currentSchemaVersion = 4;
 
 export function summarize(document: CadDocument): DocumentSummary {
   const { id, projectId, kind, name, createdAt, modifiedAt } = document;

@@ -53,6 +53,7 @@ const featureLabels: Readonly<Record<FeatureType, string>> = {
   scale: 'Scale',
   loft: 'Loft',
   sweep: 'Sweep',
+  helix: 'Helix',
   'path-pattern': 'Path pattern',
   hole: 'Hole',
   thread: 'Thread',

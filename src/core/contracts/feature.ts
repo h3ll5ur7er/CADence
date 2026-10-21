@@ -92,14 +92,32 @@ export interface LoftFeature extends FeatureBase {
   readonly operation: BodyOperation;
 }
 
-/** Sweeps sketch profiles along a path: the curves of another sketch, joined end to end. */
+/** Sweeps sketch profiles along a path: the curves of another sketch, joined end to end, or a helix. */
 export interface SweepFeature extends FeatureBase {
   readonly type: 'sweep';
   readonly sketch: string;
   readonly profiles: readonly string[];
-  /** The sketch whose curves are the path. */
+  /** The sketch whose curves are the path, or a helix feature (CAD-161). */
   readonly path: string;
   readonly operation: BodyOperation;
+}
+
+/**
+ * A helix (CAD-161): a path for sweeps (springs, threads of any profile) about the normal of a plane,
+ * through the plane's origin, starting on its u axis at half the diameter. It rises `pitch` per turn,
+ * for `turns` turns or to `height` (`extent`), widening by the `taper` angle as it rises (narrowing
+ * when negative); right-handed unless `leftHanded`. It makes no body.
+ */
+export interface HelixFeature extends FeatureBase {
+  readonly type: 'helix';
+  readonly plane: PlaneRef;
+  readonly diameter: string;
+  readonly pitch: string;
+  readonly extent: 'turns' | 'height';
+  readonly turns: string;
+  readonly height: string;
+  readonly taper: string;
+  readonly leftHanded: boolean;
 }
 
 /** Repeats the effect of earlier features along a path (the curves of a sketch), evenly spaced. */
@@ -358,6 +376,7 @@ export interface ScaleFeature extends FeatureBase {
 
 export type Feature =
   | PartFeature
+  | HelixFeature
   | InsertFeature
   | BaseFlangeFeature
   | EdgeFlangeFeature

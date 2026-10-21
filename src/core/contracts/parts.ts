@@ -1,7 +1,8 @@
 /**
  * Parts a component can add by size: standard parts from their standards (ISO 4762 screws, ISO 4032
- * nuts, ISO 7089 washers), heat-set inserts, magnets and ball bearings; gears and racks; and parts
- * made for printing (snap fits, pegs, dovetails, living hinges). Lengths are expressions (mm).
+ * nuts, ISO 7089 washers), heat-set inserts, magnets and ball bearings; gears (spur, helical, ring,
+ * bevel, worm and worm wheel) and racks; springs; and parts made for printing (snap fits, pegs,
+ * dovetails, living hinges). Lengths are expressions (mm).
  */
 
 /** How tightly printed parts fit: added to holes and slots, taken off pegs (on the diameter, mm). */
@@ -66,9 +67,31 @@ export type PartSpec =
   /**
    * A spur gear (helical with a helix angle), involute teeth, centred on the point with a tooth along the
    * plane's u axis. `chamfer` bevels the teeth at both ends by that much at the tip (45°), so a helical
-   * tooth ends in no knife edge (CAD-140); none when left out.
+   * tooth ends in no knife edge (CAD-140); none when left out. `shift` is the profile shift coefficient
+   * x (CAD-159): teeth x·module further out and thicker at the root, so few teeth have no undercut
+   * ({@link minimumProfileShift}) and centre distances can be adjusted ({@link centreDistance}); 0 when
+   * left out.
    */
-  | { readonly kind: 'gear'; readonly module: string; readonly teeth: string; readonly width: string; readonly bore: string; readonly pressureAngle: string; readonly helixAngle: string; readonly chamfer?: string }
+  | { readonly kind: 'gear'; readonly module: string; readonly teeth: string; readonly width: string; readonly bore: string; readonly pressureAngle: string; readonly helixAngle: string; readonly chamfer?: string; readonly shift?: string }
+  /**
+   * A straight bevel gear (CAD-160) for a mate of `mateTeeth` at `shaftAngle` (90° by default): its large
+   * end on the plane, the teeth narrowing along the normal towards the apex of its pitch cone, a tooth
+   * along the plane's u axis. `faceWidth` is the teeth's length along the cone. {@link bevelMesh} says
+   * where the mate goes.
+   */
+  | { readonly kind: 'bevel-gear'; readonly module: string; readonly teeth: string; readonly mateTeeth: string; readonly shaftAngle: string; readonly faceWidth: string; readonly bore: string; readonly pressureAngle: string }
+  /**
+   * A worm (CAD-160): `starts` right-hand threads of axial module `module` at `leadAngle` (its pitch
+   * diameter follows: starts × module / tan(lead angle)), centred on the point along the plane's normal,
+   * `length` long, a thread crossing the plane on the u axis. {@link wormMesh} says where its wheel goes.
+   */
+  | { readonly kind: 'worm'; readonly module: string; readonly starts: string; readonly leadAngle: string; readonly length: string; readonly bore: string; readonly pressureAngle: string }
+  /**
+   * A worm wheel (CAD-160) for a worm of `starts` and `leadAngle`: right-hand helical teeth at the lead
+   * angle (a crossed helical gear, touching the worm at points: not throated), standing on the plane
+   * like a gear, a tooth space facing the plane's −u axis halfway up, where the worm goes.
+   */
+  | { readonly kind: 'worm-wheel'; readonly module: string; readonly teeth: string; readonly starts: string; readonly leadAngle: string; readonly width: string; readonly bore: string; readonly pressureAngle: string }
   /**
    * A ring gear: internal involute teeth in a ring of `outside` diameter, centred on the point, a tooth
    * space along the plane's u axis. Planets mesh inside it ({@link ringGearMesh}).
@@ -76,6 +99,16 @@ export type PartSpec =
   | { readonly kind: 'ring-gear'; readonly module: string; readonly teeth: string; readonly width: string; readonly outside: string; readonly pressureAngle: string; readonly helixAngle: string }
   /** A gear rack along the plane's u axis, teeth towards its v axis. */
   | { readonly kind: 'rack'; readonly module: string; readonly teeth: string; readonly width: string; readonly height: string; readonly pressureAngle: string }
+  /**
+   * A helical compression spring (CAD-161) of round wire standing on the plane, its axis along the
+   * normal: `turns` in all, `pitch` apart. Ends: open (plain), closed (the end turns touching) or ground
+   * (closed and ground flat). {@link springProperties} gives its rate and lengths.
+   */
+  | { readonly kind: 'compression-spring'; readonly wire: string; readonly outside: string; readonly pitch: string; readonly turns: string; readonly ends: SpringEnds }
+  /** A helical extension spring: `turns` of coils a wire apart and a loop of the coil's diameter bent up from the last coil at each end (side loops). */
+  | { readonly kind: 'extension-spring'; readonly wire: string; readonly outside: string; readonly turns: string }
+  /** A helical torsion spring: `turns` `pitch` apart and a straight leg `legs` long at each end, along the coil. */
+  | { readonly kind: 'torsion-spring'; readonly wire: string; readonly outside: string; readonly pitch: string; readonly turns: string; readonly legs: string }
   /** A cantilever snap-fit hook standing on the plane, its hook towards the plane's v axis. */
   | { readonly kind: 'snap-fit'; readonly length: string; readonly width: string; readonly thickness: string; readonly hook: string }
   /** A press-fit peg, its diameter less the fit allowance, chamfered at the top. */
@@ -87,6 +120,10 @@ export type PartSpec =
 
 export type PartKind = PartSpec['kind'];
 
+/** How a compression spring ends: plain, with closed end turns, or closed and ground flat. */
+export type SpringEnds = 'open' | 'closed' | 'ground';
+export const springEnds: readonly SpringEnds[] = ['open', 'closed', 'ground'];
+
 export const partLabels: Readonly<Record<PartKind, string>> = {
   screw: 'Screw (ISO 4762)',
   nut: 'Nut (ISO 4032)',
@@ -96,7 +133,13 @@ export const partLabels: Readonly<Record<PartKind, string>> = {
   bearing: 'Ball bearing',
   gear: 'Gear',
   'ring-gear': 'Ring gear (internal)',
+  'bevel-gear': 'Bevel gear',
+  worm: 'Worm',
+  'worm-wheel': 'Worm wheel',
   rack: 'Gear rack',
+  'compression-spring': 'Compression spring',
+  'extension-spring': 'Extension spring',
+  'torsion-spring': 'Torsion spring',
   'snap-fit': 'Snap-fit hook',
   peg: 'Press-fit peg',
   dovetail: 'Dovetail',
@@ -120,8 +163,20 @@ export function defaultPart(kind: PartKind): PartSpec {
       return { kind, module: '1 mm', teeth: '20', width: '6 mm', bore: '5 mm', pressureAngle: '20 deg', helixAngle: '0 deg' };
     case 'ring-gear':
       return { kind, module: '1 mm', teeth: '60', width: '6 mm', outside: '70 mm', pressureAngle: '20 deg', helixAngle: '0 deg' };
+    case 'bevel-gear':
+      return { kind, module: '1 mm', teeth: '20', mateTeeth: '20', shaftAngle: '90 deg', faceWidth: '4 mm', bore: '5 mm', pressureAngle: '20 deg' };
+    case 'worm':
+      return { kind, module: '1 mm', starts: '1', leadAngle: '5 deg', length: '20 mm', bore: '3 mm', pressureAngle: '20 deg' };
+    case 'worm-wheel':
+      return { kind, module: '1 mm', teeth: '30', starts: '1', leadAngle: '5 deg', width: '6 mm', bore: '5 mm', pressureAngle: '20 deg' };
     case 'rack':
       return { kind, module: '1 mm', teeth: '15', width: '6 mm', height: '8 mm', pressureAngle: '20 deg' };
+    case 'compression-spring':
+      return { kind, wire: '1 mm', outside: '10 mm', pitch: '3 mm', turns: '8', ends: 'ground' };
+    case 'extension-spring':
+      return { kind, wire: '1 mm', outside: '8 mm', turns: '12' };
+    case 'torsion-spring':
+      return { kind, wire: '1 mm', outside: '10 mm', pitch: '1.2 mm', turns: '5', legs: '15 mm' };
     case 'snap-fit':
       return { kind, length: '12 mm', width: '6 mm', thickness: '1.6 mm', hook: '1 mm' };
     case 'peg':
@@ -131,26 +186,4 @@ export function defaultPart(kind: PartKind): PartSpec {
     case 'living-hinge':
       return { kind, length: '40 mm', width: '6 mm', depth: '1.6 mm' };
   }
-}
-
-/** The centre distance of two meshing gears of the same module (mm). */
-export const centreDistance = (module: number, teethA: number, teethB: number): number => (module * (teethA + teethB)) / 2;
-
-/** Teeth a ring gear needs more than a planet in it: fewer, and the planet's tips foul the ring's (20° teeth). */
-export const ringGearMinimumDifference = 10;
-
-/** A planet inside a ring gear: where its centre goes (mm from the ring's centre) and whether it fits. */
-export function ringGearMesh(module: number, ring: number, planet: number): { readonly distance: number; readonly fits: boolean } {
-  return { distance: (module * (ring - planet)) / 2, fits: ring - planet >= ringGearMinimumDifference };
-}
-
-/**
- * A planetary gear set with the ring fixed and the sun driving: the carrier turns `carrier` turns per
- * turn of the sun, and each planet `planet` turns about its own pin on the carrier (the other way).
- * The planets have (ring − sun) / 2 teeth.
- */
-export function planetaryRatios(sun: number, ring: number): { readonly carrier: number; readonly planet: number } {
-  const carrier = sun / (sun + ring);
-  const planet = (ring - sun) / 2;
-  return { carrier, planet: planet > 0 ? (-sun / planet) * (1 - carrier) : 0 };
 }

@@ -1,4 +1,4 @@
-import type { BodyMesh, PlaneFrame, SimulationSurface, ThreadMarker, Vec2, Vec3 } from '@core/contracts';
+import { type BodyMesh, type HelixPath, helixPoint, type PlaneFrame, type SimulationSurface, type ThreadMarker, type Vec2, type Vec3 } from '@core/contracts';
 import {
   BackSide,
   BufferAttribute,
@@ -70,6 +70,13 @@ export function threadHelix(thread: ThreadMarker, color: string): LineSegments {
   // Line segments: each from one point of the helix to the next.
   const points = Array.from({ length: steps }, (_, i) => [...at(i), ...at(i + 1)]).flat();
   return lines(points, color, 0.9);
+}
+
+/** A helix feature as a curve: a path for sweeps (CAD-161). */
+export function helixCurve(helix: HelixPath, color: string): LineSegments {
+  const steps = Math.max(48, Math.ceil((helix.height / helix.pitch) * 48));
+  const points = Array.from({ length: steps }, (_, i) => [...helixPoint(helix, i / steps), ...helixPoint(helix, (i + 1) / steps)]).flat();
+  return lines(points, color);
 }
 
 export function lines(points: number[] | Float32Array, color: string, opacity = 1): LineSegments {

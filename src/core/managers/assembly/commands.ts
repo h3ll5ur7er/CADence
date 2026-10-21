@@ -41,7 +41,7 @@ function checkPattern(document: AssemblyDocument, pattern: InstancePattern): str
   return undefined;
 }
 
-const linkLabels: Readonly<Record<MotionLink['kind'], string>> = { gear: 'Gear', rack: 'Rack and pinion', belt: 'Belt', carrier: 'Planet carrier', planet: 'Planet', cam: 'Cam' };
+const linkLabels: Readonly<Record<MotionLink['kind'], string>> = { gear: 'Gear', bevel: 'Bevel gear', worm: 'Worm', rack: 'Rack and pinion', belt: 'Belt', carrier: 'Planet carrier', planet: 'Planet', cam: 'Cam' };
 
 function checkLink(document: AssemblyDocument, link: MotionLink): string | undefined {
   const freedom = (f: MotionLink['driver']) => {

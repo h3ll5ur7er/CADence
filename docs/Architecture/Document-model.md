@@ -163,10 +163,11 @@ Each feature type is its own interface in [[src/core/contracts/feature.ts]]. All
 | `linear-pattern`, `circular-pattern` | extrudes/revolves to repeat, direction / axis | count, spacing / angle (360° spreads evenly) |
 | `mirror` | extrudes/revolves to mirror, plane | |
 | `loft` | sections: a profile of each of two or more sketches, in order | ruled (straight) or smooth; operation |
-| `sweep` | sketch, profile ids, path (a sketch whose curves form one chain) | operation |
+| `sweep` | sketch, profile ids, path (a sketch whose curves form one chain, or a `helix` feature) | operation |
+| `helix` | plane (origin plane, construction plane or flat face): its axis is the normal through the plane's origin, it starts on the u axis | diameter; pitch; `extent` turns or height; taper (angle); left-handed. Makes no body: a path for sweeps ([[CAD-161]]) |
 | `path-pattern` | features to repeat, path (a sketch) | count; align (turn with the path) |
 | `hole` | sketch and its points (centres) | kind (simple, counterbore, countersink); diameter; through or a depth; a drill point below a depth (`drillPoint`, `pointAngle`: 118° when empty); counterbore diameter and depth; countersink diameter and angle; teardrop; bridge; fit (`press`, `snug`, `loose`: widened by `fitAllowance` plus the print profile's hole compensation) |
-| `part` | sketch and its points | `part`: a `PartSpec` ([[src/core/contracts/parts.ts]]): screw, nut, washer, insert, bearing by catalogue size; magnet; gear (helical with a helix angle, its teeth bevelled at both ends by `chamfer`), ring gear, rack; snap-fit, peg, dovetail, living hinge, with expressions; angle; flip; operation |
+| `part` | sketch and its points | `part`: a `PartSpec` ([[src/core/contracts/parts.ts]]): screw, nut, washer, insert, bearing by catalogue size; magnet; gear (helical with a helix angle, its teeth bevelled at both ends by `chamfer`, profile-shifted by `shift`), ring gear (root fillets), bevel gear, worm, worm wheel, rack; compression, extension and torsion springs; snap-fit, peg, dovetail, living hinge, with expressions; angle; flip; operation |
 | `thread` | a round face | ISO metric size (`metricThreads`); length (empty: the whole face); modelled; flip |
 | `draft` | faces, neutral plane | angle |
 | `rib` | sketch (open curves) | thickness; depth, or up to the next face (`extent: 'next'`); direction |
@@ -240,7 +241,7 @@ As implemented in [[src/core/contracts/assembly.ts]]:
 
 ```ts
 interface AssemblyDocument { instances: Instance[]; joints: Joint[]; motionStudies: MotionStudy[]; patterns?: InstancePattern[]; links?: MotionLink[]; explodedViews?: ExplodedView[] }
-interface MotionLink { id; name; kind: 'gear' | 'rack' | 'belt' | 'carrier' | 'planet' | 'cam'; driver: { joint, dof }; driven: { joint, dof }; ratio; offset; profile?: [angle, lift][] }
+interface MotionLink { id; name; kind: 'gear' | 'bevel' | 'worm' | 'rack' | 'belt' | 'carrier' | 'planet' | 'cam'; driver: { joint, dof }; driven: { joint, dof }; ratio; offset; profile?: [angle, lift][] }
 // driven = offset + ratio × driver; a cam: offset + ratio × lift(driver), its profile a monotone cubic over one turn
 interface ExplodedView { id; name; steps: { id; instances: string[]; direction: Vec3; distance; radial?: boolean; origin?: Vec3 }[] }    // steps add up in order; instances may be pattern copies; radial: away from the axis
 // MotionStudy: keys may `ease`; drives: { joint, dof, speed }[] (° or mm per second from the start value)
@@ -303,6 +304,6 @@ Every document carries `schemaVersion`. Document Access runs pure migration func
 | 1 | First schema |
 | 2 | Assemblies get `motionStudies` (empty for older assemblies) |
 | 3 | Nothing to migrate: marks documents an older CADence must not open, since it would ignore their newer fields (`lean`, `anchor`, a gear's `chamfer`) and show them wrongly ([[CAD-145]]) |
-| 4 | Nothing to migrate: marks documents with fields an older CADence would ignore and show wrongly: reference dimensions, sketch blocks and their placements, wraps (phase 35); drill points, ribs up to the next face, nested folders, bodies' own materials (phase 36) |
+| 4 | Nothing to migrate: marks documents with fields an older CADence would ignore and show wrongly: reference dimensions, sketch blocks and their placements, wraps (phase 35); drill points, ribs up to the next face, nested folders, bodies' own materials (phase 36); a gear's `shift`, bevel gears, worms, worm wheels, springs, `helix` features, `bevel` and `worm` links (phase 37) |
 
 A document of a newer schema than the app reads is listed in its project (from its name and kind) but not opened: the app says to update CADence. The version goes up with every field an older app must not ignore.

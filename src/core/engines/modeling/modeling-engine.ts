@@ -3,6 +3,7 @@ import type {
   BodyOperation,
   BodyState,
   FlangeMarker,
+  HelixPath,
   Matrix4,
   PlaneFrame,
   Profile,
@@ -28,6 +29,9 @@ export type PathPiece =
   | { readonly kind: 'line'; readonly start: Vec3; readonly end: Vec3 }
   | { readonly kind: 'arc'; readonly start: Vec3; readonly mid: Vec3; readonly end: Vec3 }
   | { readonly kind: 'bezier'; readonly points: readonly [Vec3, Vec3, Vec3, Vec3] };
+
+/** A helix as a sweep path (CAD-161). */
+export type HelixPiece = { readonly kind: 'helix' } & HelixPath;
 
 /** Where one copy of a pattern goes: turned about an axis (radians), then shifted. */
 export interface Placement {
@@ -154,7 +158,7 @@ export type ModelingRequest = RequestBase &
         readonly type: 'sweep';
         readonly frame: PlaneFrame;
         readonly profiles: readonly Profile[];
-        readonly path: readonly PathPiece[];
+        readonly path: readonly (PathPiece | HelixPiece)[];
         readonly closed: boolean;
         readonly operation: BodyOperation;
       }

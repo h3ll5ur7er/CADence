@@ -15,7 +15,8 @@ export const documentMigrations: Readonly<Record<number, Migration>> = {
   // Fields added since (joint leans, view configurations, …) are optional: nothing to change.
   2: (document) => document,
   // Nothing to change: new, optional fields and kinds an older app would ignore and show wrongly: reference dimensions,
-  // blocks and wraps (phase 35); drill points, ribs up to the next face, nested folders, bodies' own materials (CAD-156 to CAD-158).
+  // blocks and wraps (phase 35); drill points, ribs up to the next face, nested folders, bodies' own materials
+  // (CAD-156 to CAD-158); gear profile shifts, bevel gears, worms, springs, helices and their links (phase 37).
   3: (document) => document,
 };
 

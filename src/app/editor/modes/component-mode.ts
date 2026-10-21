@@ -91,6 +91,7 @@ const featureMenus: readonly { id: string; label: string; icon: IconName; items:
     items: [
       { type: 'loft', icon: 'loft' },
       { type: 'sweep', icon: 'sweep' },
+      { type: 'helix', icon: 'helix' },
       { type: 'hole', icon: 'hole' },
       { type: 'part', icon: 'part' },
       { type: 'rib', icon: 'rib' },
@@ -144,6 +145,7 @@ const itemIcons: Readonly<Record<TimelineItem['type'], IconName>> = {
   scale: 'scale',
   loft: 'loft',
   sweep: 'sweep',
+  helix: 'helix',
   'path-pattern': 'pathPattern',
   hole: 'hole',
   thread: 'thread',
@@ -211,6 +213,8 @@ export class ComponentMode {
   protected readonly unitNames = lengthUnitNames;
   protected readonly unitList = Object.keys(lengthUnitNames) as LengthUnit[];
   protected readonly grams = grams;
+  /** A spring's rate (or turns) to three significant digits. */
+  protected readonly rate = (value: number) => Number(value.toPrecision(3)).toString();
   protected readonly finishes = finishes;
   protected readonly finishLabels: Readonly<Record<Finish, string>> = { matte: 'Matte', plastic: 'Plastic', metal: 'Metal', glass: 'Glass', wood: 'Wood' };
   protected readonly point = point;

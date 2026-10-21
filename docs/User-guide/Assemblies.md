@@ -53,6 +53,8 @@ Select a joint to drag its values with the sliders (or type them), to set **limi
 | Kind | Enter | Ratio |
 | --- | --- | --- |
 | Gears | the teeth of both gears | turns the other way, teeth over teeth (20 driving 10: −2) |
+| Bevel gears | the teeth of both gears | like gears: teeth over teeth, the other way about axes that point to the apex |
+| Worm and wheel | the worm's starts and the wheel's teeth | starts over teeth of the worm's turn (one start, 30 teeth: −1/30); **The other way round** when the wheel turns the wrong way |
 | Rack and pinion | the pinion's pitch diameter | π × ⌀ / 360 mm of rack per degree |
 | Belt or chain | both pulley diameters | turns the same way, diameter over diameter |
 | Sun to planet carrier | the teeth of the sun and of the ring (fixed) | sun ÷ (sun + ring) of the sun's turn (24 and 60: 2/7) |

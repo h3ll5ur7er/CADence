@@ -2,6 +2,7 @@ import {
   asDocumentId,
   type AxisRef,
   bearings,
+  bevelMesh,
   type BodyOperation,
   type ComponentDocument,
   type Dimension,
@@ -10,6 +11,7 @@ import {
   fitAllowance,
   type FlangeMarker,
   generatorOf,
+  type HelixPath,
   isDimension,
   isFontFormat,
   isModelFormat,
@@ -36,15 +38,17 @@ import {
   isCurve,
   sketchOriginId,
   type SketchProjection,
+  type SpringSize,
   type ThreadMarker,
   type TraceSettings,
   type Vec2,
   type Vec3,
+  wormMesh,
 } from '@core/contracts';
 import type { AssetAccess } from '@core/access/asset';
 import type { DocumentAccess } from '@core/access/document';
 import type { DrawingEntities, InterchangeEngine } from '@core/engines/interchange';
-import type { AxisInput, BodyState, ModelingEngine, ModelingRequest, PathPiece, Placement, ToolInput, PartSolid } from '@core/engines/modeling';
+import type { AxisInput, BodyState, HelixPiece, ModelingEngine, ModelingRequest, PathPiece, Placement, ToolInput, PartSolid } from '@core/engines/modeling';
 import type { ParameterEngine, ParameterError, Quantity, ValueKind } from '@core/engines/parameter';
 import { type DragTarget, type FontFiles, measureDimension, placesAlong, type SketchEngine, type SketchPath, sketchPath } from '@core/engines/sketch';
 import { contentHash } from '@core/utilities/identity';
@@ -98,6 +102,10 @@ export interface Derived {
   readonly bodies: readonly BodyState[];
   readonly tools: Map<string, ToolInput>;
   readonly threads: readonly ThreadMarker[];
+  /** The springs made as bodies, by body (CAD-161): their sizes, for their rates. */
+  readonly springs: ReadonlyMap<string, SpringSize>;
+  /** Helix features, by feature (CAD-161): paths for sweeps, shown as curves. */
+  readonly helices: ReadonlyMap<string, HelixPath>;
   /** The component's sheet (its base flange) and edge flanges, for the flat pattern. */
   readonly sheet?: SheetView;
   readonly flanges: readonly FlangeMarker[];
@@ -206,6 +214,9 @@ const dot = (a: Vec3, b: Vec3): number => a[0] * b[0] + a[1] * b[1] + a[2] * b[2
 const length = (a: Vec3): number => Math.hypot(a[0], a[1], a[2]);
 const unit = (a: Vec3): Vec3 => scale(a, 1 / (length(a) || 1));
 
+/** Part sizes that are plain numbers, not lengths: counts and the profile shift coefficient. */
+const scalars = new Set(['teeth', 'mateTeeth', 'starts', 'turns', 'shift']);
+
 /** Runs a component's timeline: parameters, then each sketch and feature in order. */
 export class Regeneration {
   private readonly sketches = new Map<string, SketchView>();
@@ -213,6 +224,8 @@ export class Regeneration {
   private readonly planes = new Map<string, PlaneFrame>();
   private readonly tools = new Map<string, ToolInput>();
   private readonly threads: ThreadMarker[] = [];
+  private readonly springs = new Map<string, SpringSize>();
+  private readonly helices = new Map<string, HelixPath>();
   private readonly flanges: FlangeMarker[] = [];
   private sheet: SheetView | undefined;
   private bodies: readonly BodyState[] = [];
@@ -278,6 +291,8 @@ export class Regeneration {
       bodies: this.bodies,
       tools: this.tools,
       threads: this.threads,
+      springs: this.springs,
+      helices: this.helices,
       ...(this.sheet ? { sheet: this.sheet } : {}),
       flanges: this.flanges,
       parameters,
@@ -454,7 +469,7 @@ export class Regeneration {
     const lengths = (entries: Record<string, string>): Result<Record<string, number>> => {
       const out: Record<string, number> = {};
       for (const [name, expression] of Object.entries(entries)) {
-        const kind = name.endsWith('Angle') || name === 'angle' ? 'angle' : name === 'teeth' ? 'scalar' : 'length';
+        const kind = name.endsWith('Angle') || name === 'angle' ? 'angle' : scalars.has(name) ? 'scalar' : 'length';
         const value = this.value(expression, kind, name);
         if (!value.ok) return value;
         out[name] = value.value;
@@ -492,10 +507,47 @@ export class Regeneration {
         return v.ok ? ok({ kind: 'post', diameter: num(v.value, 'diameter') - fitAllowance[part.fit] - this.compensation, height: num(v.value, 'height'), chamfer: 0.4 }) : v;
       }
       case 'gear': {
-        const v = lengths({ module: part.module, teeth: part.teeth, width: part.width, bore: part.bore, pressureAngle: part.pressureAngle, helixAngle: part.helixAngle, chamfer: part.chamfer ?? '0 mm' });
+        const v = lengths({ module: part.module, teeth: part.teeth, width: part.width, bore: part.bore, pressureAngle: part.pressureAngle, helixAngle: part.helixAngle, chamfer: part.chamfer ?? '0 mm', shift: part.shift ?? '0' });
         if (!v.ok) return v;
         const g = v.value;
-        return ok({ kind: 'gear', module: num(g, 'module'), teeth: num(g, 'teeth'), width: num(g, 'width'), bore: num(g, 'bore'), pressureAngle: num(g, 'pressureAngle'), helixAngle: num(g, 'helixAngle'), chamfer: num(g, 'chamfer') });
+        return ok({ kind: 'gear', module: num(g, 'module'), teeth: num(g, 'teeth'), width: num(g, 'width'), bore: num(g, 'bore'), pressureAngle: num(g, 'pressureAngle'), helixAngle: num(g, 'helixAngle'), chamfer: num(g, 'chamfer'), shift: num(g, 'shift') });
+      }
+      case 'bevel-gear': {
+        const v = lengths({ module: part.module, teeth: part.teeth, mateTeeth: part.mateTeeth, shaftAngle: part.shaftAngle, faceWidth: part.faceWidth, bore: part.bore, pressureAngle: part.pressureAngle });
+        if (!v.ok) return v;
+        const g = v.value;
+        const shaftAngle = num(g, 'shaftAngle');
+        if (!(shaftAngle > 0 && shaftAngle < Math.PI)) return fail({ code: 'invalid-input', message: 'The shaft angle must be between 0° and 180°.' });
+        if (!(num(g, 'mateTeeth') >= 6)) return fail({ code: 'invalid-input', message: 'The mate needs at least 6 teeth.' });
+        const { pitchAngle } = bevelMesh(num(g, 'module'), Math.round(num(g, 'teeth')), Math.round(num(g, 'mateTeeth')), shaftAngle);
+        return ok({ kind: 'bevel-gear', module: num(g, 'module'), teeth: num(g, 'teeth'), pitchAngle, faceWidth: num(g, 'faceWidth'), bore: num(g, 'bore'), pressureAngle: num(g, 'pressureAngle') });
+      }
+      case 'worm':
+      case 'worm-wheel': {
+        const sizes = part.kind === 'worm' ? { length: part.length } : { teeth: part.teeth, width: part.width };
+        const v = lengths({ module: part.module, starts: part.starts, leadAngle: part.leadAngle, bore: part.bore, pressureAngle: part.pressureAngle, ...sizes });
+        if (!v.ok) return v;
+        const g = v.value;
+        const lead = num(g, 'leadAngle');
+        if (!(lead > 0 && lead <= Math.PI / 4)) return fail({ code: 'invalid-input', message: 'The lead angle must be between 0° and 45°.' });
+        return part.kind === 'worm'
+          ? ok({ kind: 'worm', module: num(g, 'module'), starts: num(g, 'starts'), diameter: wormMesh(num(g, 'module'), Math.round(num(g, 'starts')), lead, 1).worm, length: num(g, 'length'), bore: num(g, 'bore'), pressureAngle: num(g, 'pressureAngle') })
+          : ok({ kind: 'worm-wheel', module: num(g, 'module'), teeth: num(g, 'teeth'), leadAngle: lead, width: num(g, 'width'), bore: num(g, 'bore'), pressureAngle: num(g, 'pressureAngle') });
+      }
+      case 'compression-spring':
+      case 'extension-spring':
+      case 'torsion-spring': {
+        const v = lengths({ wire: part.wire, outside: part.outside, turns: part.turns, ...(part.kind === 'extension-spring' ? {} : { pitch: part.pitch }), ...(part.kind === 'torsion-spring' ? { legs: part.legs } : {}) });
+        if (!v.ok) return v;
+        const g = v.value;
+        const [wire, mean, turns] = [num(g, 'wire'), num(g, 'outside') - num(g, 'wire'), num(g, 'turns')];
+        const size: SpringSize =
+          part.kind === 'compression-spring'
+            ? { kind: 'compression', wire, mean, pitch: num(g, 'pitch'), turns, ends: part.ends }
+            : part.kind === 'extension-spring'
+              ? { kind: 'extension', wire, mean, turns }
+              : { kind: 'torsion', wire, mean, pitch: num(g, 'pitch'), turns, legs: num(g, 'legs') };
+        return ok({ kind: 'spring', size });
       }
       case 'ring-gear': {
         const v = lengths({ module: part.module, teeth: part.teeth, width: part.width, outside: part.outside, pressureAngle: part.pressureAngle, helixAngle: part.helixAngle });
@@ -711,10 +763,21 @@ export class Regeneration {
       this.planes.set(feature.id, frame.value);
       return ok(undefined);
     }
+    if (feature.type === 'helix') {
+      const helix = await this.helix(feature);
+      if (!helix.ok) return helix;
+      this.helices.set(feature.id, helix.value);
+      return ok(undefined);
+    }
     const request = await this.request(feature);
     if (!request.ok) return request;
     const outcome = await this.engines.modeling.apply(request.value);
     if (outcome.error) return fail({ code: 'feature-failed', message: outcome.error });
+    // A spring made as a body of its own has a rate (CAD-161).
+    if (request.value.type === 'part' && request.value.solid.kind === 'spring') {
+      const before = new Set(this.bodies.map((b) => b.id));
+      for (const body of outcome.bodies) if (!before.has(body.id)) this.springs.set(body.id, request.value.solid.size);
+    }
     this.bodies = outcome.bodies;
     if (outcome.toolKey && isToolFeature(feature)) {
       this.tools.set(feature.id, { feature: feature.id, toolKey: outcome.toolKey, operation: feature.operation });
@@ -727,7 +790,7 @@ export class Regeneration {
   }
 
   /** The kernel request for a feature, with expressions evaluated and references resolved. */
-  private async request(feature: Exclude<Feature, { type: 'plane' }>): Promise<Result<ModelingRequest>> {
+  private async request(feature: Exclude<Feature, { type: 'plane' | 'helix' }>): Promise<Result<ModelingRequest>> {
     const base = { feature: feature.id, bodies: this.bodies };
     const withKey = (body: WithoutKey<ModelingRequest>): Result<ModelingRequest> =>
       ok({ ...body, key: contentHash({ ...body, bodies: this.bodies.map((b) => b.key) }) } as ModelingRequest);
@@ -848,6 +911,8 @@ export class Regeneration {
         if (profiles.length < feature.profiles.length || profiles.length === 0) {
           return fail({ code: 'missing-input', message: 'Some of its profiles no longer exist. Edit the feature and pick them again.' });
         }
+        const helix = this.helices.get(feature.path);
+        if (helix) return withKey({ ...base, type: 'sweep', frame: view.frame, profiles, path: [{ kind: 'helix', ...helix } satisfies HelixPiece], closed: false, operation: feature.operation });
         const path = this.path(feature.path);
         if (!path.ok) return path;
         return withKey({ ...base, type: 'sweep', frame: view.frame, profiles, path: path.value.pieces, closed: path.value.flat.closed, operation: feature.operation });
@@ -860,6 +925,7 @@ export class Regeneration {
         const count = this.value(feature.count, 'scalar', 'Count');
         if (!count.ok) return count;
         if (!Number.isInteger(count.value) || count.value < 2) return fail({ code: 'invalid-input', message: 'A pattern needs a whole number of at least 2 copies.' });
+        if (this.helices.has(feature.path)) return fail({ code: 'invalid-input', message: 'A pattern runs along the curves of a sketch, not a helix.' });
         const path = this.path(feature.path);
         if (!path.ok) return path;
         return withKey({ ...base, type: 'path-pattern', tools: tools as ToolInput[], placements: placementsAlong(path.value.flat, path.value.frame, count.value, feature.align) });
@@ -1008,6 +1074,29 @@ export class Regeneration {
           : { kind: 'line', start: world(p.start), end: world(p.end) },
     );
     return ok({ flat: path.value, frame: view.frame, pieces });
+  }
+
+  /** A helix feature in space (CAD-161): about its plane's normal through the plane's origin. */
+  private async helix(feature: Extract<Feature, { type: 'helix' }>): Promise<Result<HelixPath>> {
+    const frame = await this.frame(feature.plane);
+    if (!frame.ok) return frame;
+    const diameter = this.value(feature.diameter, 'length', 'Diameter');
+    if (!diameter.ok) return diameter;
+    const pitch = this.value(feature.pitch, 'length', 'Pitch');
+    if (!pitch.ok) return pitch;
+    const taper = this.value(feature.taper || '0 deg', 'angle', 'Taper');
+    if (!taper.ok) return taper;
+    const extent = feature.extent === 'turns' ? this.value(feature.turns, 'scalar', 'Turns') : this.value(feature.height, 'length', 'Height');
+    if (!extent.ok) return extent;
+    const height = feature.extent === 'turns' ? extent.value * pitch.value : extent.value;
+    const radius = diameter.value / 2;
+    if (!(radius > 0)) return fail({ code: 'invalid-input', message: 'The diameter must be greater than zero.' });
+    if (!(pitch.value > 0)) return fail({ code: 'invalid-input', message: 'The pitch must be greater than zero.' });
+    if (!(height > 0)) return fail({ code: 'invalid-input', message: feature.extent === 'turns' ? 'The turns must be more than zero.' : 'The height must be greater than zero.' });
+    if (!(Math.abs(taper.value) < (80 * Math.PI) / 180)) return fail({ code: 'invalid-input', message: 'The taper must be less than 80°.' });
+    if (!(radius + height * Math.tan(taper.value) > 0)) return fail({ code: 'invalid-input', message: 'The helix narrows to nothing before its end: use less taper.' });
+    const { origin, u, v } = frame.value;
+    return ok({ feature: feature.id, origin, axis: cross(u, v), x: u, radius, pitch: pitch.value, height, taper: taper.value, leftHanded: feature.leftHanded });
   }
 
   /** Where a construction plane lies, by its mode. */

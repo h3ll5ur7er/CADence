@@ -1,4 +1,4 @@
-import type { Appearance, BodyMesh, Matrix4 as Placement, PlaneFrame, ThreadMarker, Vec3 } from '@core/contracts';
+import type { Appearance, BodyMesh, HelixPath, Matrix4 as Placement, PlaneFrame, ThreadMarker, Vec3 } from '@core/contracts';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -36,7 +36,7 @@ import type { DragAction, MouseBindings } from '../shared/keymap';
 import { lookOf, type SectionPlane } from './looks';
 import { meshVertices, type Pick, pickAt, type PickKind, pickKey, type TopologyPick } from './picking';
 import type { StressField, SurfaceAnalysis } from './surface-analysis';
-import { createBody, createPlane, createSketch, edgeHighlight, faceHighlight, lines, releaseGeometry, threadHelix, type ViewportTheme } from './scene-content';
+import { createBody, createPlane, createSketch, edgeHighlight, faceHighlight, helixCurve, lines, releaseGeometry, threadHelix, type ViewportTheme } from './scene-content';
 import type { SketchDisplay } from './sketch-display';
 import type { Affine } from './sketch-planes';
 
@@ -120,6 +120,8 @@ export class ViewportScene {
   private readonly annotations = new Group();
   private readonly grid: Group;
   private readonly threads = new Group();
+  /** Helix features, as curves (CAD-161). */
+  private readonly helices = new Group();
   /** Lines from where exploded parts were to where they are. */
   private readonly trails = new Group();
   private readonly parts = new Group();
@@ -178,7 +180,7 @@ export class ViewportScene {
     this.origin = createOrigin(theme);
     this.model.enabled = false;
     this.model.add(this.bodies, this.parts);
-    this.scene.add(this.origin, this.model, this.sketches, this.planes, this.threads, this.trails, this.highlights, this.annotations);
+    this.scene.add(this.origin, this.model, this.sketches, this.planes, this.threads, this.helices, this.trails, this.highlights, this.annotations);
     this.controls.target.copy(homeTarget);
     this.placeCamera(viewDirections.home, homeDistance);
 
@@ -344,6 +346,12 @@ export class ViewportScene {
       return helix;
     });
     this.replace(this.threads, helices);
+    this.requestRender();
+  }
+
+  /** Helix features as curves in the construction colour. */
+  setHelices(helices: readonly HelixPath[]): void {
+    this.replace(this.helices, helices.map((h) => helixCurve(h, this.theme.construction)));
     this.requestRender();
   }
 

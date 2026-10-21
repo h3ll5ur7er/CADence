@@ -9,6 +9,7 @@ export const jointTypes: readonly { readonly type: JointType; readonly label: st
   { type: 'pin-slot', label: 'Pin-slot', description: 'Turns about the axis and slides sideways, like a pin in a slot.', icon: 'joint' },
   { type: 'planar', label: 'Planar', description: 'Slides on the plane and turns about its normal.', icon: 'joint' },
   { type: 'ball', label: 'Ball', description: 'Turns freely about the point, like a ball joint.', icon: 'joint' },
+  { type: 'universal', label: 'Universal', description: 'Tilts about two crossing axes without spinning, like a cardan joint.', icon: 'joint' },
   { type: 'rigid', label: 'Rigid', description: 'Holds the parts together; nothing moves.', icon: 'joint' },
 ];
 

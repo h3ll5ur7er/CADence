@@ -242,3 +242,112 @@ describe('KinematicsEngine motion studies', () => {
     expect(angle(1, 'wheel', [50, 0, 0])).toBeCloseTo(100, 3);
   });
 });
+
+describe('KinematicsEngine: parallel mechanisms, cones and held limits (phase 44)', () => {
+  // A planar platform on three legs (3-RPR): each leg turns on the base, slides, and turns on the plate.
+  const base: Vec3[] = [
+    [0, 0, 0],
+    [100, 0, 0],
+    [50, 80, 0],
+  ];
+  const plate: Vec3[] = [
+    [-20, -10, 0],
+    [20, -10, 0],
+    [0, 15, 0],
+  ];
+  /** A frame whose joint axis is the leg's x: a slider along the leg. */
+  const along: PlaneFrame = { origin: [0, 0, 0], u: [0, 1, 0], v: [0, 0, 1] };
+  /** Every joint's values for the plate at (x, y), turned by `turn` degrees. */
+  function pose(x: number, y: number, turn: number) {
+    const t = (turn * Math.PI) / 180;
+    return base.map((b, i) => {
+      const p = plate[i] as Vec3;
+      const top: Vec3 = [x + p[0] * Math.cos(t) - p[1] * Math.sin(t), y + p[0] * Math.sin(t) + p[1] * Math.cos(t), 0];
+      const angle = (Math.atan2(top[1] - b[1], top[0] - b[0]) * 180) / Math.PI;
+      return { angle, length: Math.hypot(top[0] - b[0], top[1] - b[1]), top: turn - angle };
+    });
+  }
+  function platform(values: ReturnType<typeof pose>, driven = false): KinematicModel {
+    return {
+      instances: [instance('base', true), ...[1, 2, 3].flatMap((n) => [instance(`low${n}`), instance(`up${n}`)]), instance('plate')],
+      joints: values.flatMap((leg, i) => {
+        const n = i + 1;
+        return [
+          joint(`b${n}`, 'revolute', ['base', base[i] as Vec3], [`low${n}`, [0, 0, 0]], [leg.angle]),
+          { id: `s${n}`, type: 'slider' as const, a: { instance: `low${n}`, frame: along }, b: { instance: `up${n}`, frame: along }, flip: false, values: [leg.length], limits: [], ...(driven ? { driven: true } : {}) },
+          joint(`t${n}`, 'revolute', [`up${n}`, [0, 0, 0]], ['plate', plate[i] as Vec3], [leg.top]),
+        ];
+      }),
+    };
+  }
+  const plateAt = (poses: ReadonlyMap<string, Matrix4>) => {
+    const m = poses.get('plate') as Matrix4;
+    return [m[12] as number, m[13] as number, (Math.atan2(m[1] as number, m[0] as number) * 180) / Math.PI];
+  };
+  const strokes = (values: ReadonlyMap<string, readonly number[]>) => [1, 2, 3].map((n) => values.get(`s${n}`)?.[0] as number);
+
+  it('sets a parallel mechanism by all its legs at once, and holds them', () => {
+    const from = pose(50, 30, 0);
+    const to = pose(56, 34, 8);
+    const model = platform(from);
+    const moved = { ...model, joints: model.joints.map((j) => (j.type === 'slider' ? { ...j, values: [to[Number(j.id[1]) - 1]?.length as number] } : j)) };
+    const { poses, values, error } = engine.solve(moved, new Set(['s1', 's2', 's3']));
+    expect(error).toBeUndefined();
+    strokes(values).forEach((s, i) => expect(s).toBeCloseTo(to[i]?.length as number, 6));
+    const [x, y, turn] = plateAt(poses);
+    expect(x).toBeCloseTo(56, 4);
+    expect(y).toBeCloseTo(34, 4);
+    expect(turn).toBeCloseTo(8, 4);
+  });
+
+  it('moves the other legs when one is set alone, unless they are driven', () => {
+    const home = pose(50, 30, 0);
+    const longer = (model: KinematicModel) => ({ ...model, joints: model.joints.map((j) => (j.id === 's1' ? { ...j, values: [(home[0]?.length as number) + 5] } : j)) });
+    const free = engine.solve(longer(platform(home)), new Set(['s1']));
+    expect(strokes(free.values)[0]).toBeCloseTo((home[0]?.length as number) + 5, 6);
+    expect(Math.abs((strokes(free.values)[1] as number) - (home[1]?.length as number))).toBeGreaterThan(0.01);
+    // With every leg an actuator, the others hold: the plate turns and moves to fit them.
+    const held = engine.solve(longer(platform(home, true)), new Set(['s1']));
+    expect(held.error).toBeUndefined();
+    strokes(held.values).forEach((s, i) => expect(s).toBeCloseTo((home[i]?.length as number) + (i === 0 ? 5 : 0), 6));
+  });
+
+  it('keeps a ball joint within its cone and says where a limit held a joint', () => {
+    const model: KinematicModel = {
+      instances: [instance('base', true), instance('rod'), instance('arm')],
+      joints: [
+        joint('ball', 'ball', ['base', [0, 0, 0]], ['rod', [0, 0, 0]], [30, 25, 0], { cone: 15 }),
+        joint('hinge', 'revolute', ['base', [50, 0, 0]], ['arm', [0, 0, 0]], [120], { limits: [{ min: 0, max: 90 }] }),
+      ],
+    };
+    const { poses, values, holds } = engine.solve(model, new Set(['ball', 'hinge']));
+    const tip = transformPoint(poses.get('rod') as Matrix4, [0, 0, 100]);
+    expect((Math.acos((tip[2] as number) / 100) * 180) / Math.PI).toBeCloseTo(15, 4);
+    expect(values.get('ball')?.[0]).toBeCloseTo(30, 6); // the turn about z is free
+    expect(holds).toEqual([
+      { joint: 'ball', dof: 'cone', at: 'cone', value: 15, asked: expect.closeTo(25, 6) },
+      { joint: 'hinge', dof: 0, at: 'max', value: 90, asked: 120 },
+    ]);
+  });
+
+  it('turns a universal joint about x, then y, never about its own axis', () => {
+    const model: KinematicModel = {
+      instances: [instance('base', true), instance('shaft')],
+      joints: [joint('cross', 'universal', ['base', [0, 0, 0]], ['shaft', [0, 0, 0]], [30, 20], { cone: 25 })],
+    };
+    const { poses, values, holds } = engine.solve(model, new Set(['cross']));
+    const [a, b] = values.get('cross') as number[];
+    // Both tilts scaled down together until the shaft is 25° off the axis.
+    expect(((a as number) / (b as number)) * 20).toBeCloseTo(30, 6);
+    const tip = transformPoint(poses.get('shaft') as Matrix4, [0, 0, 100]);
+    expect((Math.acos((tip[2] as number) / 100) * 180) / Math.PI).toBeCloseTo(25, 4);
+    expect(holds?.[0]).toMatchObject({ joint: 'cross', dof: 'cone', value: 25 });
+  });
+
+  it('says when a study first runs into a limit', () => {
+    const arm: KinematicModel = { instances: [instance('base', true), instance('arm')], joints: [joint('hinge', 'revolute', ['base', [0, 0, 0]], ['arm', [0, 0, 0]], [0], { limits: [{ min: 0, max: 45 }] })] };
+    const study = { id: 's', name: 'Too far', duration: 2, keys: [{ time: 0, joint: 'hinge', values: [0] }, { time: 2, joint: 'hinge', values: [90] }] };
+    const { holds } = engine.simulate(arm, study, 10);
+    expect(holds).toEqual([{ joint: 'hinge', dof: 0, at: 'max', value: 45, asked: expect.closeTo(49.5, 6), time: expect.closeTo(1.1, 6) }]);
+  });
+});

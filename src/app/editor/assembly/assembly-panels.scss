@@ -241,3 +241,13 @@ fieldset {
   color: var(--success, var(--text));
   font-size: 12px;
 }
+
+/* Where a limit holds a joint, and keys it holds (CAD-186). */
+.held {
+  color: var(--warning);
+}
+
+.past-limit {
+  color: var(--warning);
+  text-decoration: underline dotted;
+}

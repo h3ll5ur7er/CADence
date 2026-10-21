@@ -1,4 +1,4 @@
-import { appearanceProblem, type AssemblyDocument, type ExplodedView, fail, type Instance, type InstancePattern, isDefaultAppearance, type Joint, jointDofs, type JointType, type MotionLink, ok, type Result } from '@core/contracts';
+import { appearanceProblem, type AssemblyDocument, coneJoints, type ExplodedView, fail, type Instance, type InstancePattern, isDefaultAppearance, type Joint, jointDofs, type JointOffset, type JointType, type MotionLink, type MotionStudy, offsetFields, ok, type Result } from '@core/contracts';
 import type { AssemblyCommand } from './assembly-manager';
 import { copyId, patternTransforms } from './patterns';
 
@@ -7,6 +7,10 @@ export interface Applied {
   readonly document: AssemblyDocument;
   /** The command is refused when this joint cannot hold. */
   readonly joint?: string;
+  /** Joints set together and held while the others follow (CAD-195); refused when they cannot all hold. */
+  readonly joints?: readonly string[];
+  /** What the change does that was not asked for: keys and drives past a joint's limits (CAD-186). */
+  readonly notes?: readonly string[];
 }
 
 const jointLabels: Readonly<Record<JointType, string>> = {
@@ -17,6 +21,7 @@ const jointLabels: Readonly<Record<JointType, string>> = {
   'pin-slot': 'Pin-slot',
   planar: 'Planar',
   ball: 'Ball',
+  universal: 'Universal',
 };
 
 const invalid = (message: string) => fail({ code: 'invalid-command', message });
@@ -66,15 +71,78 @@ function checkLink(document: AssemblyDocument, link: MotionLink): string | undef
   return undefined;
 }
 
+const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+const vector = (value: unknown): boolean => Array.isArray(value) && value.length === 3 && value.every(finite);
+
+/** What is wrong with an offset's numbers (CAD-184): each one a finite number, an axis not of zero length. */
+function offsetProblem(offset: JointOffset | undefined, side: string): string | undefined {
+  if (offset === undefined) return undefined;
+  if (!vector(offset.translate)) return `The ${side} offset's translate needs three numbers (mm); use expressions for parameters.`;
+  for (const field of ['angle', 'lean', 'tilt'] as const) {
+    const value = offset[field];
+    if ((field === 'angle' || value !== undefined) && !finite(value)) return `The ${side} offset's ${field} needs a number (degrees); use expressions for parameters.`;
+  }
+  if (offset.axis !== undefined && (!vector(offset.axis) || !(Math.hypot(...offset.axis) > 1e-9))) return `The ${side} offset's axis needs a direction of three numbers.`;
+  if (offset.xAxis !== undefined && !vector(offset.xAxis)) return `The ${side} offset's x axis needs a direction of three numbers.`;
+  const fields = new Set<string>(offsetFields);
+  for (const [field, expression] of Object.entries(offset.expressions ?? {})) {
+    if (!fields.has(field)) return `Offset expressions are for ${offsetFields.join(', ')}; ${field} is none of them.`;
+    if (typeof expression !== 'string' || !expression.trim()) return `The ${side} offset's ${field} expression needs text.`;
+  }
+  return undefined;
+}
+
 function checkJoint(document: AssemblyDocument, joint: Joint): string | undefined {
   const ids = new Set(document.instances.map((i) => i.id));
   if (!ids.has(joint.a.instance) || !ids.has(joint.b.instance)) return 'A joint connects two instances of this assembly.';
   if (joint.a.instance === joint.b.instance) return 'A joint needs two different instances.';
+  if (!jointDofs[joint.type]) return `There is no ${String(joint.type)} joint; joints are ${Object.keys(jointDofs).join(', ')}.`;
   const dofs = jointDofs[joint.type].length;
-  if (joint.values.length !== dofs) return `A ${jointLabels[joint.type].toLowerCase()} joint has ${dofs} value${dofs === 1 ? '' : 's'}.`;
+  if (!Array.isArray(joint.values) || joint.values.length !== dofs) return `A ${jointLabels[joint.type].toLowerCase()} joint has ${dofs} value${dofs === 1 ? '' : 's'}.`;
+  if (!joint.values.every(finite)) return 'Each degree of freedom needs a number.';
+  if (!Array.isArray(joint.limits) || joint.limits.length > dofs) return `A ${jointLabels[joint.type].toLowerCase()} joint has up to ${dofs} limit${dofs === 1 ? '' : 's'}, one per value (null for none).`;
+  if (joint.limits.some((l) => l !== null && (!finite(l?.min) || !finite(l?.max)))) return 'A limit needs a minimum and a maximum number (null for none).';
   if (joint.limits.some((l) => l && !(l.min <= l.max))) return 'A limit’s minimum must not exceed its maximum.';
+  const problem = offsetProblem(joint.a.offset, 'first') ?? offsetProblem(joint.b.offset, 'second');
+  if (problem) return problem;
+  if (joint.cone !== undefined) {
+    if (!coneJoints.has(joint.type)) return 'Only ball and universal joints have a cone limit.';
+    if (!finite(joint.cone) || joint.cone <= 0 || joint.cone > 180) return 'A cone limit is an angle above 0° and up to 180°.';
+  }
+  if (joint.driven !== undefined && typeof joint.driven !== 'boolean') return 'Driven is true or false.';
   return undefined;
 }
+
+/** Keys and drives of a study that ask more of a joint than its limits allow (CAD-186). */
+function studyNotes(document: AssemblyDocument, study: MotionStudy): string[] {
+  const notes: string[] = [];
+  const named = (id: string) => document.joints.find((j) => j.id === id);
+  for (const key of study.keys) {
+    const joint = named(key.joint);
+    if (!joint) continue;
+    key.values.forEach((value, i) => {
+      const limit = joint.limits[i];
+      const dof = jointDofs[joint.type][i];
+      if (!limit || !dof || (value >= limit.min && value <= limit.max)) return;
+      const held = value < limit.min ? limit.min : limit.max;
+      notes.push(`The key at ${key.time} s asks ${round(value)} of ${joint.name} (${dof.label}); its limit holds it at ${round(held)}.`);
+    });
+  }
+  for (const drive of study.drives ?? []) {
+    const joint = named(drive.joint);
+    const limit = joint?.limits[drive.dof];
+    const dof = joint && jointDofs[joint.type][drive.dof];
+    if (!joint || !limit || !dof || drive.speed === 0) continue;
+    const start = joint.values[drive.dof] ?? 0;
+    const end = start + drive.speed * study.duration;
+    const bound = drive.speed > 0 ? limit.max : limit.min;
+    if ((drive.speed > 0 && end <= bound) || (drive.speed < 0 && end >= bound)) continue;
+    notes.push(`The drive of ${joint.name} (${dof.label}) reaches its limit of ${round(bound)} at ${round((bound - start) / drive.speed)} s and is held there.`);
+  }
+  return notes;
+}
+
+const round = (value: number) => Math.round(value * 1000) / 1000;
 
 /** Pure: applies a command to an assembly document. Component lookups are the manager's job. */
 export function applyCommand(document: AssemblyDocument, command: AssemblyCommand, componentName?: string): Result<Applied> {
@@ -82,6 +150,7 @@ export function applyCommand(document: AssemblyDocument, command: AssemblyComman
   switch (command.type) {
     case 'insert-instance': {
       if (instance(command.instance.id)) return invalid(`Id ${command.instance.id} is already in use.`);
+      if (!Array.isArray(command.instance.transform) || command.instance.transform.length !== 16 || !command.instance.transform.every(finite)) return invalid('A transform is 16 numbers (4 × 4, column-major).');
       const name = command.instance.name.trim() || nextName(document.instances.map((i) => i.name), componentName ?? 'Instance');
       const inserted = { ...document, instances: [...document.instances, { ...command.instance, name }] };
       // Inserted and joined in one change, as a standard part into a hole (CAD-152).
@@ -111,6 +180,7 @@ export function applyCommand(document: AssemblyDocument, command: AssemblyComman
     case 'move-instance':
     case 'ground-instance': {
       if (!instance(command.instanceId)) return invalid(`Instance ${command.instanceId} does not exist.`);
+      if (command.type === 'move-instance' && (!Array.isArray(command.transform) || command.transform.length !== 16 || !command.transform.every(finite))) return invalid('A transform is 16 numbers (4 × 4, column-major).');
       if (command.type === 'rename-instance' && !command.name.trim()) return invalid('A name cannot be empty.');
       const change =
         command.type === 'rename-instance' ? { name: command.name.trim() } : command.type === 'move-instance' ? { transform: command.transform } : { grounded: command.grounded };
@@ -168,6 +238,18 @@ export function applyCommand(document: AssemblyDocument, command: AssemblyComman
       if (command.values.length !== joint.values.length || command.values.some((v) => !Number.isFinite(v))) return invalid('Each degree of freedom needs a number.');
       return ok({ document: { ...document, joints: document.joints.map((j) => (j.id === joint.id ? { ...j, values: command.values } : j)) }, joint: joint.id });
     }
+    case 'set-joints': {
+      if (!command.joints.length) return invalid('Set at least one joint.');
+      const values = new Map<string, readonly number[]>();
+      for (const { jointId, values: given } of command.joints) {
+        const joint = document.joints.find((j) => j.id === jointId);
+        if (!joint) return invalid(`Joint ${jointId} does not exist.`);
+        if (values.has(jointId)) return invalid(`Joint ${jointId} is set twice.`);
+        if (!Array.isArray(given) || given.length !== joint.values.length || !given.every(finite)) return invalid(`Each degree of freedom of ${joint.name} needs a number.`);
+        values.set(jointId, given);
+      }
+      return ok({ document: { ...document, joints: document.joints.map((j) => ({ ...j, values: values.get(j.id) ?? j.values })) }, joints: [...values.keys()] });
+    }
     case 'set-pattern': {
       const problem = checkPattern(document, command.pattern);
       if (problem) return invalid(problem);
@@ -220,7 +302,8 @@ export function applyCommand(document: AssemblyDocument, command: AssemblyComman
       if ((command.study.drives ?? []).some((d) => !joints.has(d.joint) || !Number.isFinite(d.speed))) return invalid('Drives need a joint of this assembly and a speed.');
       const study = { ...command.study, name: command.study.name.trim() || nextName(document.motionStudies.map((s) => s.name), 'Motion study') };
       const motionStudies = exists ? document.motionStudies.map((s) => (s.id === study.id ? study : s)) : [...document.motionStudies, study];
-      return ok({ document: { ...document, motionStudies } });
+      const notes = studyNotes(document, study);
+      return ok({ document: { ...document, motionStudies }, ...(notes.length ? { notes } : {}) });
     }
     case 'remove-study':
       return ok({ document: { ...document, motionStudies: document.motionStudies.filter((s) => s.id !== command.studyId) } });

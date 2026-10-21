@@ -8,6 +8,7 @@ import type {
   InstancePattern,
   Interference,
   Joint,
+  LimitHold,
   Matrix4,
   Measurement,
   MotionFrame,
@@ -40,6 +41,11 @@ export type AssemblyCommand =
   /** Also removes the joint's motion keys. */
   | { readonly type: 'remove-joint'; readonly jointId: string }
   | { readonly type: 'set-joint-values'; readonly jointId: string; readonly values: readonly number[] }
+  /**
+   * Several joints' values at once, solved once and all held while the others follow (CAD-195): a
+   * parallel mechanism's legs. Refused, leaving the assembly as it was, when they cannot all hold.
+   */
+  | { readonly type: 'set-joints'; readonly joints: readonly { readonly jointId: string; readonly values: readonly number[] }[] }
   /** Adds a pattern of instances, or changes one (same id); an empty name gets the next default ("Linear pattern 2"). */
   | { readonly type: 'set-pattern'; readonly pattern: InstancePattern }
   | { readonly type: 'remove-pattern'; readonly patternId: string }
@@ -82,6 +88,10 @@ export interface AssemblyState {
   readonly copies: ReadonlyMap<string, { readonly instance: string; readonly pattern: string }>;
   /** Where each joint is (its frame on instance A, offset included), in assembly coordinates: its free directions are its axes. */
   readonly jointFrames: ReadonlyMap<string, PlaneFrame>;
+  /** Where limits hold joints in this pose (CAD-186). */
+  readonly holds: readonly LimitHold[];
+  /** What the last change did that was not asked for, such as keys past a joint's limits (CAD-186). */
+  readonly notes: readonly string[];
   readonly canUndo: boolean;
   readonly canRedo: boolean;
 }
@@ -114,6 +124,8 @@ export interface CollisionReport {
   readonly collisions: readonly Collision[];
   readonly checked: number;
   readonly moments: number;
+  /** The first moment each limit held a joint while the study played (CAD-186). */
+  readonly holds?: readonly (LimitHold & { readonly time: number })[];
 }
 
 /** A line of the bill of materials: one component (or configuration of it) and how many there are. */

@@ -2,7 +2,7 @@ import type { DrawingCommand } from '@core/managers/drawing';
 import type { Cadence } from '../api';
 import type { DrawingFilter } from '../drawing';
 import { CadenceError } from '../results';
-import { documentArg, number, object, point2, runAll, string, strings, type Tool } from './schema';
+import { documentArg, nothingToUndo, number, object, point2, runAll, string, strings, type Tool } from './schema';
 
 /** A drawing command as an agent may write it: a view without `hidden` shows no hidden edges. */
 function completed(command: DrawingCommand): DrawingCommand {
@@ -69,10 +69,12 @@ export function drawingTools(cadence: Cadence): Tool[] {
     },
     {
       name: 'undo_drawing',
-      description: 'Undoes the last change of a drawing (or redoes it, with redo); answers with what changed.',
+      description: 'Undoes the last change of a drawing this server made (or redoes it, with redo); answers with what changed. Says so when there is nothing to undo; older states are in the version history (versions).',
       inputSchema: object({ document: documentArg, redo: { type: 'boolean', description: 'Redo instead.' } }, ['document']),
       run: async (args) => {
         const script = await drawing(args);
+        const { canUndo, canRedo } = script.state();
+        if (!(args['redo'] ? canRedo : canUndo)) throw new Error(nothingToUndo(args['redo'] === true));
         const before = await script.summary({ names: true, only: ['sheet', 'views', 'annotations'] });
         await (args['redo'] ? script.redo() : script.undo());
         return script.changes(before);

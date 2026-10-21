@@ -36,7 +36,7 @@ const fps = 30;
             <tr>
               <td class="mono">{{ key.time }} s</td>
               <td>{{ jointName(key.joint) }}</td>
-              <td class="mono">{{ key.values.join(', ') }}</td>
+              <td class="mono" [class.past-limit]="!!pastLimit(key)" [attr.title]="pastLimit(key) || null">{{ key.values.join(', ') }}</td>
               <td><input type="checkbox" [attr.aria-label]="'Ease into the key at ' + key.time + ' s'" [checked]="!!key.ease" (change)="ease(study, key, $any($event.target).checked)" /></td>
               <td>
                 <button type="button" class="icon-btn" aria-label="Delete key" (click)="removeKey(study, key)"><cad-icon name="trash" [size]="12" /></button>
@@ -134,6 +134,20 @@ export class MotionPanel {
   protected readonly joints = computed(() => this.store.state()?.document.joints.filter((j) => j.values.length > 0) ?? []);
   protected readonly selectedJoint = computed(() => this.keyJoint() ?? this.joints()[0]?.id);
   protected readonly sortedKeys = computed(() => [...(this.study()?.keys ?? [])].sort((a, b) => a.time - b.time));
+
+  /** Why a key cannot be reached: a value past its joint's limit, which holds it there (CAD-186). */
+  protected pastLimit(key: MotionKey): string {
+    const joint = this.joints().find((j) => j.id === key.joint);
+    if (!joint) return '';
+    return key.values
+      .flatMap((value, i) => {
+        const limit = joint.limits[i];
+        const dof = jointDofs[joint.type][i];
+        if (!limit || !dof || (value >= limit.min && value <= limit.max)) return [];
+        return [`${dof.label} ${value} is past the limit; it is held at ${value < limit.min ? limit.min : limit.max}.`];
+      })
+      .join(' ');
+  }
   /** Every joint freedom a speed can drive. */
   protected readonly freedoms = computed(() =>
     this.joints().flatMap((j) => jointDofs[j.type].map((dof, i) => ({ key: `${j.id}:${i}`, label: `${j.name} · ${dof.label}` }))),

@@ -86,11 +86,11 @@ test('leans a joint offset before tilting it, to point the joint any way (CAD-11
 
   // Leaned a quarter turn, then tilted: the second plate's hinge axis tips over towards the frame's x.
   for (const [field, value] of [['Lean', '90'], ['Tilt', '30']] as const) {
-    await page.getByRole('spinbutton', { name: `${field} offset of stays` }).fill(value);
-    await page.getByRole('spinbutton', { name: `${field} offset of stays` }).press('Tab');
+    await page.getByRole('textbox', { name: `${field} offset of stays` }).fill(value);
+    await page.getByRole('textbox', { name: `${field} offset of stays` }).press('Tab');
   }
-  await expect(page.getByRole('spinbutton', { name: 'Lean offset of stays' })).toHaveValue('90');
-  await expect(page.getByRole('spinbutton', { name: 'Tilt offset of stays' })).toHaveValue('30');
+  await expect(page.getByRole('textbox', { name: 'Lean offset of stays' })).toHaveValue('90');
+  await expect(page.getByRole('textbox', { name: 'Tilt offset of stays' })).toHaveValue('30');
   await expect(page.locator('.item.failed')).toHaveCount(0);
   await standardView(page, 'Front');
   await evidence(page, '97-joint-lean');

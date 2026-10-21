@@ -232,6 +232,7 @@ export function createCore(host: Host): Core {
       externalFiles,
       modeling: geometry.modeling,
       kinematics: createKinematicsEngine(),
+      parameters: createParameterEngine(),
       analysis: geometry.analysis,
       interchange: geometry.interchange,
       events,

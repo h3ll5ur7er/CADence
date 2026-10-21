@@ -83,8 +83,8 @@ test('drags a part, offsets a joint, measures between parts, repeats them and we
   await expect(page.getByRole('list', { name: 'Joints' })).toContainText('Revolute 1');
   await page.getByRole('spinbutton', { name: 'Angle value of Revolute 1' }).fill('60');
   await page.getByRole('spinbutton', { name: 'Angle value of Revolute 1' }).press('Tab');
-  await page.getByRole('spinbutton', { name: 'Z offset of stays' }).fill('10');
-  await page.getByRole('spinbutton', { name: 'Z offset of stays' }).press('Tab');
+  await page.getByRole('textbox', { name: 'Z offset of stays' }).fill('10');
+  await page.getByRole('textbox', { name: 'Z offset of stays' }).press('Tab');
   await expect(page.locator('.item.failed')).toHaveCount(0);
 
   // The gap between the first plate's top and the second's bottom.

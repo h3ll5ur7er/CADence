@@ -25,6 +25,7 @@ import { circleLoop, profile, rectangleLoop } from '@core/contracts/testing/prof
 import { createAnalysisEngine } from '@core/engines/analysis';
 import { createInterchangeEngine } from '@core/engines/interchange';
 import { createKinematicsEngine } from '@core/engines/kinematics';
+import { createParameterEngine } from '@core/engines/parameter';
 import { createModelingEngine } from '@core/engines/modeling';
 import { steppingClock } from '@core/utilities/clock';
 import { identity, transformPoint, translation } from '@core/utilities/math';
@@ -81,6 +82,7 @@ describe('AssemblyManager', () => {
   let files: InMemoryExternalFileAccess;
   let events: EventBus<DomainEvents>;
   let session: AssemblySession;
+  let projects: InMemoryProjectAccess;
   const base = asDocumentId('base');
   const link = asDocumentId('link');
 
@@ -101,6 +103,7 @@ describe('AssemblyManager', () => {
     assets = new InMemoryAssetAccess();
     files = new InMemoryExternalFileAccess();
     events = new EventBus<DomainEvents>();
+    projects = new InMemoryProjectAccess();
     await documents.store(component('base', 'Base'));
     await documents.store({ ...component('link', 'Link'), configurations: [{ id: 'long', name: 'Long', values: {} }] });
     await documents.store({
@@ -124,12 +127,13 @@ describe('AssemblyManager', () => {
       events.publish('componentRegenerated', { documentId, ...(configuration ? { configuration } : {}), ok: documentId === link });
     });
     const manager = createAssemblyManager({
-      projects: new InMemoryProjectAccess(),
+      projects,
       documents,
       assets,
       externalFiles: files,
       modeling,
       kinematics: createKinematicsEngine(),
+      parameters: createParameterEngine(),
       analysis: createAnalysisEngine(shapes),
       interchange: createInterchangeEngine(shapes),
       events,
@@ -545,5 +549,61 @@ describe('AssemblyManager', () => {
     expect(flat).toMatchObject({ ok: false, error: { code: 'joint-failed', message: expect.stringContaining('no longer exists') } });
     const wrongValues = await session.execute({ type: 'add-joint', joint: hinge([0, 1]) });
     expect(wrongValues).toMatchObject({ ok: false, error: { code: 'invalid-command' } });
+  });
+
+  it('refuses joints whose offsets, values or limits are not numbers, and changes nothing (CAD-184)', async () => {
+    await arm([0]);
+    const before = session.state().document;
+    const text = await session.execute({ type: 'edit-joint', joint: hinge([0], { a: { instance: 'b1', ref: holeOf('base'), offset: { translate: ['upper', 0, 0] as unknown as [number, number, number], angle: 0 } } }) });
+    expect(text).toMatchObject({ ok: false, error: { code: 'invalid-command', message: expect.stringContaining('translate needs three numbers') } });
+    const notANumber = await session.execute({ type: 'edit-joint', joint: hinge([Number.NaN]) });
+    expect(notANumber).toMatchObject({ ok: false, error: { message: 'Each degree of freedom needs a number.' } });
+    const limit = await session.execute({ type: 'edit-joint', joint: hinge([0], { limits: [{ min: null, max: 5 } as unknown as { min: number; max: number }] }) });
+    expect(limit).toMatchObject({ ok: false, error: { message: expect.stringContaining('minimum and a maximum') } });
+    const cone = await session.execute({ type: 'edit-joint', joint: hinge([0], { cone: 30 }) });
+    expect(cone).toMatchObject({ ok: false, error: { message: 'Only ball and universal joints have a cone limit.' } });
+    expect(session.state().document).toBe(before);
+  });
+
+  it('moves joint offsets with the project parameters their expressions use (CAD-185)', async () => {
+    await arm([0]);
+    await projects.establish({ id: project, name: 'Arm', createdAt: stamp, modifiedAt: stamp, parameters: [{ id: 'lift', name: 'lift', expression: '10 mm' }] });
+    // Between the parts' origins, so the frames need no component result.
+    const lifted = { translate: [0, 0, 0] as [number, number, number], angle: 0, expressions: { z: 'lift', angle: '45 deg * 2' } };
+    unwrap(await session.execute({ type: 'edit-joint', joint: hinge([0], { a: { instance: 'b1', offset: lifted }, b: { instance: 'l1' } }) }));
+    expect(session.state().document.joints[0]?.a.offset).toMatchObject({ translate: [0, 0, 10], angle: 90 });
+    expect(where('l1', [10, 0, 0])).toEqual([0, 10, 10]);
+    const wrong = await session.execute({ type: 'edit-joint', joint: hinge([0], { a: { instance: 'b1', offset: { ...lifted, expressions: { z: 'nothing' } } }, b: { instance: 'l1' } }) });
+    expect(wrong).toMatchObject({ ok: false, error: { code: 'invalid-command', message: expect.stringContaining('z nothing') } });
+    // The project's parameter changes: the joint follows, and the document keeps where it went.
+    await projects.revise({ ...((await projects.find(project)) as NonNullable<Awaited<ReturnType<typeof projects.find>>>), parameters: [{ id: 'lift', name: 'lift', expression: '30 mm' }] });
+    events.publish('projectParametersChanged', { projectId: project });
+    await until(() => session.state().document.joints[0]?.a.offset?.translate[2] === 30);
+    expect(where('l1', [10, 0, 0])).toEqual([0, 10, 30]);
+  });
+
+  it('points a joint axis along a direction instead of lean and tilt (CAD-185)', () => {
+    const flat = { origin: [0, 0, 0] as const, u: [1, 0, 0] as const, v: [0, 1, 0] as const };
+    const round = (p: readonly number[]) => p.map((x) => Math.round(x * 1e9) / 1e9 + 0);
+    const along = offsetFrame(flat, { translate: [5, 0, 0], angle: 0, axis: [1, 0, 0], xAxis: [0, 0, 1] });
+    // Normal along +x, x along +z, so y = z × x = +y... across: v = n × u.
+    expect([round(along.origin), round(along.u), round(along.v)]).toEqual([[5, 0, 0], [0, 0, 1], [0, -1, 0]]);
+    // Without an x, the picked frame's x where it lies across the axis, else the nearest world axis.
+    expect(round(offsetFrame(flat, { translate: [0, 0, 0], angle: 0, axis: [0, 0, -1] }).u)).toEqual([1, 0, 0]);
+    expect(round(offsetFrame(flat, { translate: [0, 0, 0], angle: 0, axis: [1, 0, 0] }).u)).toEqual([0, 1, 0]);
+  });
+
+  it('sets several joints at once, says where a limit held one, and notes keys past limits (CAD-195, CAD-186)', async () => {
+    await arm([0]);
+    unwrap(await session.execute({ type: 'edit-joint', joint: hinge([0], { limits: [{ min: -45, max: 45 }] }) }));
+    unwrap(await session.execute({ type: 'set-joints', joints: [{ jointId: 'hinge', values: [120] }] }));
+    expect(session.state().document.joints[0]?.values).toEqual([45]);
+    expect(session.state().holds).toEqual([{ joint: 'hinge', dof: 0, at: 'max', value: 45, asked: 120 }]);
+    const unknown = await session.execute({ type: 'set-joints', joints: [{ jointId: 'hinge', values: [0] }, { jointId: 'nope', values: [0] }] });
+    expect(unknown).toMatchObject({ ok: false, error: { message: 'Joint nope does not exist.' } });
+    unwrap(await session.execute({ type: 'add-study', study: { id: 's', name: '', duration: 2, keys: [{ time: 1, joint: 'hinge', values: [90] }], drives: [] } }));
+    expect(session.state().notes).toEqual(['The key at 1 s asks 90 of Revolute 1 (Angle); its limit holds it at 45.']);
+    unwrap(await session.execute({ type: 'edit-study', study: { id: 's', name: 'Swing', duration: 2, keys: [], drives: [{ joint: 'hinge', dof: 0, speed: -60 }] } }));
+    expect(session.state().notes).toEqual(['The drive of Revolute 1 (Angle) reaches its limit of -45 at 1.5 s and is held there.']);
   });
 });

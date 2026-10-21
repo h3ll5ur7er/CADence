@@ -14,7 +14,9 @@ import {
   type Interference,
   type ImportedDocument,
   isModelFormat,
+  type Joint,
   type JointOrigin,
+  type LimitHold,
   type Material,
   materialNames,
   materials,
@@ -22,6 +24,7 @@ import {
   type Measurement,
   type MotionFrame,
   offsetFrame,
+  type OffsetField,
   ok,
   type PlaneFrame,
   type Result,
@@ -32,6 +35,7 @@ import {
 import type { AnalysisEngine } from '@core/engines/analysis';
 import type { InterchangeEngine } from '@core/engines/interchange';
 import type { KinematicJoint, KinematicModel, KinematicsEngine } from '@core/engines/kinematics';
+import type { ParameterEngine } from '@core/engines/parameter';
 import type { ModelingEngine } from '@core/engines/modeling';
 import type { Clock } from '@core/utilities/clock';
 import { compose, fromFrame, invertRigid, transformPoint, translation } from '@core/utilities/math';
@@ -64,6 +68,8 @@ export interface AssemblyManagerDependencies {
   readonly externalFiles: ExternalFileAccess;
   readonly modeling: ModelingEngine;
   readonly kinematics: KinematicsEngine;
+  /** Joint offsets follow expressions of the project's parameters (CAD-185). */
+  readonly parameters: ParameterEngine;
   readonly analysis: AnalysisEngine;
   readonly interchange: InterchangeEngine;
   readonly events: EventBus<DomainEvents>;
@@ -119,6 +125,7 @@ interface Derived {
   readonly errors: ReadonlyMap<string, string>;
   readonly copies: ReadonlyMap<string, { readonly instance: string; readonly pattern: string }>;
   readonly jointFrames: ReadonlyMap<string, PlaneFrame>;
+  readonly holds: readonly LimitHold[];
 }
 
 const defaultMaterial = materials[0] as Material;
@@ -133,7 +140,9 @@ const componentOrigin: PlaneFrame = { origin: [0, 0, 0], u: [1, 0, 0], v: [0, 1,
 const solidTypes: Readonly<Record<AssemblyFormat, string>> = { step: 'model/step', stl: 'model/stl', obj: 'model/obj', '3mf': 'model/3mf' };
 
 class Session implements AssemblySession {
-  private derived: Derived = { poses: new Map(), placed: new Set(), values: new Map(), errors: new Map(), copies: new Map(), jointFrames: new Map() };
+  private derived: Derived = { poses: new Map(), placed: new Set(), values: new Map(), errors: new Map(), copies: new Map(), jointFrames: new Map(), holds: [] };
+  /** What the last change did that was not asked for (CAD-186). */
+  private notes: readonly string[] = [];
   /** By source: a component, or a configuration of it (`sourceKey`). */
   private readonly components = new Map<string, LoadedComponent>();
   private readonly frames = new Map<string, Result<PlaneFrame>>();
@@ -172,8 +181,10 @@ class Session implements AssemblySession {
       events.subscribe('documentChanged', ({ documentId }) => refreshAll(sourcesOf(documentId))),
       events.subscribe('documentRestored', ({ documentId }) => refreshAll(sourcesOf(documentId))),
       events.subscribe('documentDeleted', ({ documentId }) => refreshAll(sourcesOf(documentId))),
-      // New project parameters make the project's component results stale.
-      events.subscribe('projectParametersChanged', ({ projectId }) => (projectId === this.document.projectId ? refreshAll([...this.components.keys()]) : undefined)),
+      // New project parameters make the project's component results stale, and move the joints whose offsets follow them (CAD-185).
+      events.subscribe('projectParametersChanged', ({ projectId }) =>
+        projectId === this.document.projectId ? Promise.all([refreshAll([...this.components.keys()]), this.serialized(() => this.followParameters())]).then(() => undefined) : undefined,
+      ),
     ];
   }
 
@@ -192,6 +203,8 @@ class Session implements AssemblySession {
       jointErrors: this.derived.errors,
       copies: this.derived.copies,
       jointFrames: this.derived.jointFrames,
+      holds: this.derived.holds,
+      notes: this.notes,
       canUndo: this.undoStack.length > 0,
       canRedo: this.redoStack.length > 0,
     };
@@ -247,13 +260,19 @@ class Session implements AssemblySession {
   }
 
   async motion(studyId: string, fps: number): Promise<Result<readonly MotionFrame[]>> {
+    const played = await this.play(studyId, fps);
+    return played.ok ? ok(played.value.frames) : played;
+  }
+
+  /** A study's frames, and where limits held joints while it played (CAD-186). */
+  private async play(studyId: string, fps: number): Promise<Result<{ frames: readonly MotionFrame[]; holds: readonly (LimitHold & { readonly time: number })[] }>> {
     const study = this.document.motionStudies.find((s) => s.id === studyId);
     if (!study) return fail({ code: 'invalid-command', message: `Study ${studyId} does not exist.` });
     const { model } = await this.model(this.document);
-    const { frames, error } = this.deps.kinematics.simulate(model, study, fps);
+    const { frames, error, holds = [] } = this.deps.kinematics.simulate(model, study, fps);
     if (error) return fail({ code: 'motion-failed', message: `At ${error.time.toFixed(2)} s, ${this.jointName(error.joint)}: ${error.message}` });
     // Pattern copies move with their originals in every frame (CAD-115).
-    return ok(frames.map((frame) => ({ ...frame, poses: Object.fromEntries(withCopies(this.document, new Map(Object.entries(frame.poses))).poses) })));
+    return ok({ frames: frames.map((frame) => ({ ...frame, poses: Object.fromEntries(withCopies(this.document, new Map(Object.entries(frame.poses))).poses) })), holds });
   }
 
   async measure(refs: readonly PlacedRef[]): Promise<Result<Measurement>> {
@@ -281,8 +300,9 @@ class Session implements AssemblySession {
   }
 
   async collisions(studyId: string, fps: number, options: CollisionOptions = {}): Promise<Result<CollisionReport>> {
-    const frames = await this.motion(studyId, fps);
-    if (!frames.ok) return frames;
+    const played = await this.play(studyId, fps);
+    if (!played.ok) return played;
+    const frames = { value: played.value.frames };
     const found = new Map<string, Collision>();
     // Pattern copies take part too (CAD-115).
     const ready = this.readyInstances();
@@ -316,7 +336,8 @@ class Session implements AssemblySession {
       }
       options.onProgress?.(++checked, frames.value.length);
     }
-    return ok({ collisions: [...found.values()].sort((x, y) => x.time - y.time), checked, moments: frames.value.length });
+    const holds = played.value.holds;
+    return ok({ collisions: [...found.values()].sort((x, y) => x.time - y.time), checked, moments: frames.value.length, ...(holds.length ? { holds } : {}) });
   }
 
   explode(viewId: string, steps?: number, amount = 1): ReadonlyMap<string, Matrix4> {
@@ -480,17 +501,62 @@ class Session implements AssemblySession {
       const source = sourceKey(instance.component, instance.configuration);
       if (!this.components.has(source)) await this.load(source, 'open');
     }
-    const target = applied.value.joint;
-    const derived = await this.derive(applied.value.document, target ? new Set([target]) : undefined, this.document);
-    const error = target && derived.errors.get(target);
+    const document = await this.resolved(applied.value.document);
+    if (!document.ok) return document;
+    const targets = applied.value.joint ? [applied.value.joint] : (applied.value.joints ?? []);
+    const derived = await this.derive(document.value, targets.length ? new Set(targets) : undefined, this.document);
+    // Joints set together must all hold, and so must every loop they close (CAD-195).
+    const before = new Set(this.derived.errors.keys());
+    const error = targets.map((t) => derived.errors.get(t)).find(Boolean) ?? (applied.value.joints ? [...derived.errors].find(([id]) => !before.has(id))?.[1] : undefined);
     if (error) return fail({ code: 'joint-failed', message: error });
+    // Never a document with poses that are not numbers (CAD-184).
+    if ([...derived.poses.values()].some((m) => m.some((v) => !Number.isFinite(v)))) return fail({ code: 'invalid-command', message: 'The joints would put instances nowhere (positions that are not numbers); nothing was changed.' });
     // Loops and limits may have moved the other joints: the document keeps what was solved.
-    const joints = applied.value.document.joints.map((j) => ({ ...j, values: derived.values.get(j.id) ?? j.values }));
+    const joints = document.value.joints.map((j) => ({ ...j, values: derived.values.get(j.id) ?? j.values }));
     this.undoStack.push(this.document);
     if (this.undoStack.length > historyLimit) this.undoStack.shift();
     this.redoStack.length = 0;
-    await this.commit({ ...applied.value.document, joints, modifiedAt: this.deps.clock().toISOString() }, derived);
+    this.notes = applied.value.notes ?? [];
+    await this.commit({ ...document.value, joints, modifiedAt: this.deps.clock().toISOString() }, derived);
     return ok(undefined);
+  }
+
+  /** The document with its joint offsets' expressions evaluated with the project's parameters (CAD-185). */
+  private async resolved(document: AssemblyDocument): Promise<Result<AssemblyDocument>> {
+    if (!document.joints.some((j) => j.a.offset?.expressions || j.b.offset?.expressions)) return ok(document);
+    const parameters = (await this.deps.projects.find(document.projectId))?.parameters ?? [];
+    const scope = this.deps.parameters.evaluateAll(parameters);
+    if (!scope.ok) return fail({ code: 'invalid-command', message: `The project's parameters do not evaluate: ${scope.error.message}` });
+    const joints: Joint[] = [];
+    for (const joint of document.joints) {
+      const sides: Partial<Record<'a' | 'b', JointOrigin>> = {};
+      for (const side of ['a', 'b'] as const) {
+        const origin = joint[side];
+        const offset = origin.offset;
+        if (!offset?.expressions) continue;
+        const next = { ...offset, translate: [...offset.translate] as [number, number, number] };
+        for (const [field, expression] of Object.entries(offset.expressions) as [OffsetField, string][]) {
+          const kind = field === 'x' || field === 'y' || field === 'z' ? 'length' : 'angle';
+          const value = this.deps.parameters.evaluate(expression, kind, scope.value);
+          if (!value.ok) return fail({ code: 'invalid-command', message: `${joint.name || joint.id}, ${field} ${expression}: ${value.error.message}` });
+          const number = kind === 'angle' ? (value.value * 180) / Math.PI : value.value;
+          if (field === 'x' || field === 'y' || field === 'z') next.translate[{ x: 0, y: 1, z: 2 }[field]] = number;
+          else next[field] = number;
+        }
+        sides[side] = { ...origin, offset: next };
+      }
+      joints.push({ ...joint, ...sides });
+    }
+    return ok({ ...document, joints });
+  }
+
+  /** New project parameters: joints whose offsets follow them move, and the assembly is kept that way. */
+  private async followParameters(): Promise<void> {
+    const document = await this.resolved(this.document);
+    if (!document.ok || JSON.stringify(document.value.joints) === JSON.stringify(this.document.joints)) return;
+    const derived = await this.derive(document.value);
+    const joints = document.value.joints.map((j) => ({ ...j, values: derived.values.get(j.id) ?? j.values }));
+    await this.commit({ ...document.value, joints, modifiedAt: this.deps.clock().toISOString() }, derived);
   }
 
   private async travel(from: AssemblyDocument[], to: AssemblyDocument[]): Promise<void> {
@@ -679,7 +745,7 @@ class Session implements AssemblySession {
       jointFrames.set(joint.id, { origin: [m[12] as number, m[13] as number, m[14] as number], u: [m[0] as number, m[1] as number, m[2] as number], v: [m[4] as number, m[5] as number, m[6] as number] });
     }
     const { poses, copies } = withCopies(document, solution.poses);
-    return { poses, placed: solution.placed, values: solution.values, errors, copies, jointFrames };
+    return { poses, placed: solution.placed, values: solution.values, errors, copies, jointFrames, holds: solution.holds ?? [] };
   }
 
   /** A joint origin's frame in its component's coordinates, cached per component version. */

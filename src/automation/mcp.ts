@@ -13,7 +13,7 @@ import { projectTools } from './tools/projects';
 import { scriptTools } from './tools/scripts';
 import type { ScriptSandbox } from './script';
 import { prompts, resourcesOf, type Resource } from './resources';
-import { type Captioned, documentArg, runAll, number, object, point, type Progress, projectArg, string, strings, type Tool } from './tools/schema';
+import { type Captioned, documentArg, nothingToUndo, runAll, number, object, point, type Progress, projectArg, string, strings, type Tool } from './tools/schema';
 
 /** A JSON-RPC 2.0 message as MCP clients send it (newline-delimited JSON over stdio). */
 export interface JsonRpcMessage {
@@ -353,10 +353,12 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
       },
       {
         name: 'undo_component',
-        description: 'Undoes the last change of a component (or redoes it, with redo); answers with what changed.',
+        description: 'Undoes the last change of a component this server made (or redoes it, with redo); answers with what changed. Says so when there is nothing to undo; older states are in the version history (versions).',
         inputSchema: object({ document: documentArg, redo: { type: 'boolean', description: 'Redo instead.' } }, ['document']),
         run: async (args) => {
           const script = await component(args);
+          const { canUndo, canRedo } = script.state();
+          if (!(args['redo'] ? canRedo : canUndo)) throw new Error(nothingToUndo(args['redo'] === true));
           const before = script.summary({ only: ['parameters', 'timeline', 'sketches', 'faces'] });
           await (args['redo'] ? script.redo() : script.undo());
           return script.changes(before);
@@ -433,10 +435,12 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
       },
       {
         name: 'undo_assembly',
-        description: 'Undoes the last change of an assembly (or redoes it, with redo); answers with what changed.',
+        description: 'Undoes the last change of an assembly this server made (or redoes it, with redo); answers with what changed. Says so when there is nothing to undo; older states are in the version history (versions).',
         inputSchema: object({ document: documentArg, redo: { type: 'boolean', description: 'Redo instead.' } }, ['document']),
         run: async (args) => {
           const script = await assembly(args);
+          const { canUndo, canRedo } = script.state();
+          if (!(args['redo'] ? canRedo : canUndo)) throw new Error(nothingToUndo(args['redo'] === true));
           const before = await script.summary();
           await (args['redo'] ? script.redo() : script.undo());
           return script.changes(before);

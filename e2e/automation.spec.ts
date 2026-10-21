@@ -45,7 +45,7 @@ test('a part made by a script on the command line opens in the app through git',
     await page.getByRole('button', { name: 'Open from git…' }).click();
     await page.getByRole('textbox', { name: 'Repository address' }).fill(url);
     await page.getByRole('button', { name: 'Open project' }).click();
-    await expect(page.getByRole('button', { name: 'Made by a script' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Made by a script', exact: true })).toBeVisible();
     await expect(page.getByTestId('body-size')).toHaveText('80, 40, 5 mm');
     // (80 × 40 − 2 × π × 4²) × 5
     await expect(page.getByTestId('body-volume')).toHaveText('15,497.35 mm³');

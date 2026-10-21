@@ -115,7 +115,7 @@ describe('the MCP server', () => {
     expect(refused.result.isError).toBe(true);
     expect(refused.result.content[0]?.text).toMatch(/^Command 2 \(delete-item\) was refused/);
     expect(JSON.parse(text(await call('get_component', { document }))).timeline[1].name).toBe('Plate');
-    expect(await server.handle({ jsonrpc: '2.0', id: 99, method: 'resources/list' })).toMatchObject({ error: { code: -32601 } });
+    expect(await server.handle({ jsonrpc: '2.0', id: 99, method: 'sampling/createMessage' })).toMatchObject({ error: { code: -32601 } });
 
     // Documents can be renamed and deleted (CAD-108).
     expect(text(await call('rename_document', { document, name: 'Plate' }))).toBe('Renamed to Plate.');

@@ -4,7 +4,7 @@ import { InMemoryExternalFileAccess } from '@core/access/external-file';
 import { InMemoryProjectAccess } from '@core/access/project';
 import { GitVersionAccess } from '@core/access/version';
 import { GitHttpServer } from '@core/access/version/testing/git-http-server';
-import type { DomainEvents, ImportedDocument, ProjectId, Result } from '@core/contracts';
+import type { ComponentDocument, DocumentId, DomainEvents, ImportedDocument, ProjectId, Result, TimelineItem } from '@core/contracts';
 import { createInterchangeEngine } from '@core/engines/interchange';
 import { createParameterEngine } from '@core/engines/parameter';
 import { steppingClock } from '@core/utilities/clock';
@@ -87,11 +87,54 @@ describe('ProjectManager sync (git over HTTP)', { timeout: 30_000 }, () => {
     unwrap(await a.manager.renameDocument(first.id, 'Mine'));
     unwrap(await b.manager.renameDocument(first.id, 'Theirs'));
     unwrap(await b.manager.syncProject(projectB));
-    expect(unwrap(await a.manager.syncProject(projectA))).toEqual({ kind: 'conflicts', conflicts: [{ path: `documents/${first.id}.json`, name: 'Mine' }] });
+    expect(unwrap(await a.manager.syncProject(projectA))).toEqual({
+      kind: 'conflicts',
+      conflicts: [{ path: `documents/${first.id}.json`, name: 'Mine', items: [{ path: 'name', label: 'Name', mine: 'Mine', theirs: 'Theirs' }] }],
+    });
     expect(await a.names(projectA)).toContain('Mine');
     expect(unwrap(await a.manager.syncProject(projectA, undefined, { [`documents/${first.id}.json`]: 'theirs' }))).toEqual({ kind: 'merged' });
     expect(await a.names(projectA)).toContain('Theirs');
     expect(server.log('merging')[0]).toMatch(/^Merged the changes from/);
+  });
+
+  /** Adds timeline items to a component as the editor would store them. */
+  async function addItems(documents: InMemoryDocumentAccess, id: DocumentId, ...items: TimelineItem[]) {
+    const document = (await documents.load(id)) as ComponentDocument;
+    await documents.store({ ...document, timeline: [...document.timeline, ...items] });
+  }
+  const sketch = (id: string): TimelineItem => ({ id, type: 'sketch', name: `Sketch ${id}`, suppressed: false, plane: 'XY', entities: [], constraints: [] });
+  const extrude = (id: string, sketchId: string, distance = '5 mm'): TimelineItem =>
+    ({ id, type: 'extrude', name: `Extrude ${id}`, suppressed: false, sketch: sketchId, profiles: [], distance, direction: 'normal', operation: 'new-body' }) as TimelineItem;
+  const timelineOf = async (documents: InMemoryDocumentAccess, id: DocumentId) => ((await documents.load(id)) as ComponentDocument).timeline.map((i) => i.id);
+
+  it('merges two features added on two devices into one component, and asks per item about one changed on both (CAD-176)', async () => {
+    const { a, b, projectA, projectB, first } = await shared('features');
+    await addItems(a.documents, first.id, sketch('s1'), extrude('e1', 's1'));
+    await addItems(b.documents, first.id, sketch('s2'), extrude('e2', 's2'));
+    expect(unwrap(await a.manager.syncProject(projectA))).toEqual({ kind: 'pushed' });
+    expect(unwrap(await b.manager.syncProject(projectB))).toEqual({ kind: 'merged' });
+    expect(await timelineOf(b.documents, first.id)).toEqual(['s2', 'e2', 's1', 'e1']);
+    expect(unwrap(await a.manager.syncProject(projectA))).toEqual({ kind: 'pulled' });
+    expect(await timelineOf(a.documents, first.id)).toEqual(['s2', 'e2', 's1', 'e1']);
+
+    // The same extrusion made deeper on each side: that one item is asked, the rest merges.
+    const deepen = async (documents: InMemoryDocumentAccess, distance: string, more: TimelineItem[] = []) => {
+      const document = (await documents.load(first.id)) as ComponentDocument;
+      await documents.store({ ...document, timeline: [...document.timeline.map((i) => (i.id === 'e1' ? { ...i, distance } : i)), ...more] as TimelineItem[] });
+    };
+    await deepen(a.documents, '8 mm');
+    await deepen(b.documents, '10 mm', [sketch('s3')]);
+    unwrap(await b.manager.syncProject(projectB));
+    const path = `documents/${first.id}.json`;
+    expect(unwrap(await a.manager.syncProject(projectA))).toEqual({
+      kind: 'conflicts',
+      conflicts: [{ path, name: 'Component 1', items: [{ path: 'timeline/e1', label: 'Extrude e1', mine: 'distance 8 mm', theirs: 'distance 10 mm' }] }],
+    });
+    expect(unwrap(await a.manager.syncProject(projectA, undefined, { [`${path}#timeline/e1`]: 'theirs' }))).toEqual({ kind: 'merged' });
+    const merged = (await a.documents.load(first.id)) as ComponentDocument;
+    expect(merged.timeline.map((i) => i.id)).toEqual(['s2', 'e2', 's1', 'e1', 's3']);
+    expect(merged.timeline.find((i) => i.id === 'e1')).toMatchObject({ distance: '10 mm' });
+    expect(merged.projectId).toBe(projectA);
   });
 
   it('carries imported originals along, and removes documents removed on the other side', async () => {

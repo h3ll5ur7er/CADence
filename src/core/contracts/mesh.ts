@@ -30,6 +30,16 @@ export interface BodyMesh {
   readonly edges: readonly MeshEdge[];
 }
 
+/**
+ * What changed between two versions' bodies (CAD-175): the material only the newer one has (added)
+ * and the material only the older one has (removed), as meshes, with volumes in mm³.
+ */
+export interface BodyDifference {
+  readonly added: readonly BodyMesh[];
+  readonly removed: readonly BodyMesh[];
+  readonly volume: { readonly before: number; readonly after: number; readonly added: number; readonly removed: number };
+}
+
 /** A body in the model: its id (the feature that created it) and the cache key of its shape in the geometry worker. */
 export interface BodyState {
   readonly id: string;

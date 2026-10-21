@@ -230,6 +230,17 @@ export class ComponentMode {
   private readonly noteDialog = viewChild.required(NoteDialog);
 
   protected readonly timeline = computed(() => this.store.state()?.document.timeline ?? []);
+
+  /** How editing live goes, in words (CAD-178). */
+  protected liveLabel(status: 'connecting' | 'live' | 'offline', viewOnly: boolean): string {
+    if (status === 'connecting') return 'Connecting…';
+    if (status === 'offline') return viewOnly ? 'Offline' : 'Offline: changes wait to be sent';
+    return viewOnly ? 'Viewing live' : 'Live';
+  }
+
+  protected itemName(id: string): string {
+    return this.timeline().find((item) => item.id === id)?.name ?? id;
+  }
   protected readonly displays = computed(() => {
     const state = this.store.state();
     if (!state) return [];

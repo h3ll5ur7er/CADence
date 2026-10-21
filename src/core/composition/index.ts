@@ -17,6 +17,7 @@ import {
   InMemoryProjectAccess,
   type ProjectAccess,
 } from '@core/access/project';
+import { HttpServerAccess } from '@core/access/server';
 import { GitVersionAccess, type VersionAccess } from '@core/access/version';
 import type { DomainEvents, TextWeight } from '@core/contracts';
 import type { AnalysisEngine } from '@core/engines/analysis';
@@ -186,6 +187,7 @@ export function createCore(host: Host): Core {
   const fonts = fontSource(host.fontUrls);
   // One sandbox for plugins: features built once per set of values, for every manager.
   const plugins = createPluginEngine();
+  const server = new HttpServerAccess();
   const geometry: Geometry = host.geometry
     ? {
         modeling: remote<ModelingEngine>(host.geometry, 'modeling'),
@@ -202,6 +204,7 @@ export function createCore(host: Host): Core {
       interchange: geometry.interchange,
       parameters: createParameterEngine(),
       versions: host.versions,
+      server,
       events,
       clock: systemClock,
       newId,
@@ -220,6 +223,7 @@ export function createCore(host: Host): Core {
       events,
       clock: systemClock,
       plugins,
+      server,
     }),
     assemblyManager: createAssemblyManager({
       projects,

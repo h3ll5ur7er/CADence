@@ -2,7 +2,7 @@ import { InMemoryAssetAccess } from '@core/access/asset';
 import { InMemoryDocumentAccess } from '@core/access/document';
 import { InMemoryExternalFileAccess } from '@core/access/external-file';
 import { InMemoryProjectAccess } from '@core/access/project';
-import { asDocumentId, asProjectId, type DomainEvents, type ImportedDocument, type Result } from '@core/contracts';
+import { asDocumentId, asProjectId, type ComponentDocument, describeChange, type DomainEvents, type ImportedDocument, type Result } from '@core/contracts';
 import { createInterchangeEngine } from '@core/engines/interchange';
 import { scan, writeStl } from '@core/engines/interchange/testing';
 import { steppingClock } from '@core/utilities/clock';
@@ -141,6 +141,26 @@ describe('ProjectManager', () => {
       expect(await manager.projectHistory(projectId)).not.toEqual([]);
       unwrap(await manager.deleteFromTrash(projectId));
       expect(await manager.projectHistory(projectId)).toEqual([]);
+    });
+
+    it('compares two versions of a document, and a version with the document now (CAD-175)', async () => {
+      const { project, firstDocument } = unwrap(await manager.createProject('Plate'));
+      await manager.recordVersion(project.id);
+      const [first] = await manager.projectHistory(project.id);
+      const document = (await documents.load(firstDocument.id)) as ComponentDocument;
+      const hole = { id: 's1', type: 'sketch', name: 'Hole sketch', suppressed: false, plane: 'XY', entities: [], constraints: [] } as const;
+      await documents.store({ ...document, timeline: [hole], parameters: [{ id: 'p', name: 'width', expression: '60' }] });
+      unwrap(await manager.setProjectParameters(project.id, [{ id: 'w', name: 'wall', expression: '2' }]));
+      await manager.recordVersion(project.id);
+      const [second] = await manager.projectHistory(project.id);
+      const compared = unwrap(await manager.compareVersions(firstDocument.id, first?.id as string, second?.id));
+      expect(compared.changes.map(describeChange)).toEqual(['Added Parameter width', 'Added Hole sketch', 'Added Project parameter wall']);
+      expect(compared.before).toMatchObject({ id: firstDocument.id, projectId: project.id, timeline: [] });
+      expect(compared.projectParameters).toEqual({ before: [], after: [{ id: 'w', name: 'wall', expression: '2' }] });
+      // Without a second version: against the document as it is now.
+      await documents.store({ ...((await documents.load(firstDocument.id)) as ComponentDocument), name: 'Base plate' });
+      expect(unwrap(await manager.compareVersions(firstDocument.id, second?.id as string)).changes.map(describeChange)).toEqual(['Changed Name: Component 1 → Base plate']);
+      expect(await manager.compareVersions(firstDocument.id, 'f'.repeat(40))).toMatchObject({ ok: false });
     });
 
     it('renames a project', async () => {

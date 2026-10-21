@@ -62,7 +62,7 @@ export default async function (cadence, [name]) {
 
 The API ([[src/automation/api.ts]]):
 
-- `cadence.projects`: the whole Project Manager: create, rename and delete projects and documents, import files, project parameters, versions and sync. Methods return results (`{ ok, value }` or `{ ok: false, error }`).
+- `cadence.projects`: the whole Project Manager: create, rename and delete projects and documents, import files, project parameters, versions and sync, sharing on a CADence server. `cadence.compareVersions(document, from, to?)` says what changed between versions in words. Methods return results (`{ ok, value }` or `{ ok: false, error }`).
 - `cadence.project(idOrName)`, `cadence.document(idOrName, project?)`: find them.
 - `cadence.component(documentId)`: a component open for scripting:
   - `run(...commands)` runs design commands in order and throws a `CadenceError` at the first refused one (with the ids involved, such as the constraints of a conflict);
@@ -165,15 +165,13 @@ The server tells the agent how to model when it connects, and offers these tools
 | Tool | What it does |
 | --- | --- |
 | `list_projects`, `create_project`, `create_project_from_template`, `rename_project`, `delete_project` (to the trash), `duplicate` | Projects (and copies of documents) |
-| `list_documents`, `create_document` (component, assembly or drawing), `rename_document`, `delete_document` (to the trash), `import_file` (also in place of an imported document) | Documents |
+| `list_documents`, `create_document` (component, assembly or drawing), `rename_document`, `delete_document` (to the trash), `import_file` (also in place of an imported document; with `triangles`, a mesh is also kept repaired and simplified to about that many triangles; a KiCad board answers with its holes and mounting holes, named for joints) | Documents |
 | `trash` | The trash: list it, restore a project or a document (with its history), delete one for good, empty it |
 | `project_notes` | A project's description (Markdown) and attachments: get, set, attach a file by path or a link, read a file (text files answer their text, others are written to the exports folder), remove |
 | `list_libraries`, `library`, `insert_library_part` | Libraries: the standard parts and the projects marked as libraries, with their parts (`match` filters them); mark a project as a library, list and take updates of the parts a project uses, whether a part follows its library on its own; insert a part into an assembly by designation (`ISO 4762 M3 x 12`) or name, with `at` onto a hole's round face or circular edge |
 | `export_project`, `import_project` | `.cadence` archives, with the version history and the libraries the project uses if asked |
-| `list_projects`, `create_project`, `create_project_from_template`, `rename_project`, `delete_project`, `duplicate` | Projects (and copies of documents) |
-| `list_documents`, `create_document` (component, assembly or drawing), `rename_document`, `delete_document`, `import_file` (also in place of an imported document; with `triangles`, a mesh is also kept repaired and simplified to about that many triangles; a KiCad board answers with its holes and mounting holes, named for joints) | Documents |
-| `versions` | The version history: list (a project's or a document's), record, restore a document, name and unname versions |
-| `sync_project`, `open_git` | Git: a project synced with its repository (conflicts answered with `resolutions`; `libraries` syncs the libraries it uses too), or opened from one; sign-in from `$CADENCE_GIT_USERNAME` and `$CADENCE_GIT_PASSWORD` |
+| `versions` | The version history: list (a project's or a document's), record, restore a document, compare a document in two versions (or one and now) in words, with the volume added and removed for components; name and unname versions |
+| `sync_project`, `open_git` | Git: a project synced with its repository (documents changed on both sides merged item by item; conflicting items answered with `resolutions`, per item `<path>#<item path>` or per document; `libraries` syncs the libraries it uses too), or opened from one; sign-in from `$CADENCE_GIT_USERNAME` and `$CADENCE_GIT_PASSWORD` |
 | `set_project_parameters` | Parameters for every component of a project |
 | `get_component` | The component as data (as `summary()` above), with the same filters; `near` measures to the face or edge itself |
 | `edit_component` | Runs commands in order and answers with what changed: timeline items, sketches and their profiles, the bodies' face counts and new face names; a refused command is reported with its number, reason and the ids involved |
@@ -185,7 +183,6 @@ The server tells the agent how to model when it connects, and offers these tools
 | `get_assembly`, `edit_assembly`, `undo_assembly` (also redo) | An assembly as data; runs assembly commands (instances, joints, links, patterns, motion studies, exploded views) and answers briefly: what the commands created, the joints whose values changed, where instances moved, and which joints fail |
 | `check_assembly`, `assembly_properties`, `export_assembly` | Overlaps now or collisions while a study plays (with progress notifications and `seconds` as a time limit); mass and the bill of materials; STEP, 3MF, STL or OBJ, the bill of materials (CSV), the HTML viewer and build instructions (PDF) from an exploded view |
 | `get_drawing`, `edit_drawing`, `undo_drawing`, `export_drawing` | Technical drawings: the sheet, its views (where they are on the sheet, and how they were drawn when not exactly) and annotations, and how many anchors each view offers. Anchors (points, circles and lines, once per place, with a short `ref`, where they lie on the sheet and in the model) when asked for: by view, kind, a sheet point, a circle diameter, or the outermost points (`extremes`); `only` picks the parts. Annotations attach by `{ "view", "ref" }` or by name (also a surface finish's `edge`). Views take full, offset (`steps`) and half sections; dimensions take tolerances and ISO 286 fits, and `axis` on isometric views; threads offer `thread:<feature>` circles to call out; assembly views name each part's anchors by instance ([[CAD-164]] … [[CAD-167]]). Drawing commands with brief answers; PDF and DXF |
-
 | `render_picture` | A picture returned as an image the agent can look at: of a component or an assembly from a view or a direction, zoomed onto bodies or instances, others hidden or see-through, cut open by a section plane; assemblies also exploded or at a moment of a study; a drawing's sheet as the PDF prints it (or one view of it); an imported 3D file |
 | `animate_study` | A motion study as an animated GIF (its path) and a sheet of moments to look at: one camera for all frames, and moments that show different poses |
 | `command_reference` | The commands and contracts as TypeScript types with their documentation, by `topic`: `commands`, `sketch`, `features` (with the parts: gears, ring gears, bevel gears, worms, springs, screws, bearings …), `document`, `assembly`, `drawing`; each short enough for an agent to read whole |

@@ -37,7 +37,7 @@ import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { png } from '@core/utilities/picture/testing';
 import { readZip } from '@core/utilities/archive';
-import { createDesignManager, type DesignSession } from './index';
+import { createDesignManager, type DesignManager, type DesignSession } from './index';
 
 function unwrap<T>(result: Result<T>): T {
   if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
@@ -78,6 +78,7 @@ describe('DesignManager', () => {
   let events: EventBus<DomainEvents>;
   let projects: InMemoryProjectAccess;
   let session: DesignSession;
+  let manager: DesignManager;
   let documentId: ComponentDocument['id'];
 
   beforeEach(async () => {
@@ -101,7 +102,7 @@ describe('DesignManager', () => {
       timeline: [],
       rollbackIndex: 0,
     });
-    const manager = createDesignManager({
+    manager = createDesignManager({
       projects,
       documents,
       externalFiles: files,
@@ -492,6 +493,26 @@ describe('DesignManager', () => {
       return profile;
     }
     const volume = async () => (await session.properties()).reduce((sum, b) => sum + b.volume, 0);
+
+    it('builds two versions of a plate and compares their bodies: a new hole is removed material (CAD-175)', async () => {
+      await plate();
+      const before = session.state().document;
+      const hole = [
+        { id: 'h:center', kind: 'point', x: 20, y: 15 },
+        { id: 'h', kind: 'circle', center: 'h:center', radius: 4, construction: false },
+      ] as const;
+      unwrap(await session.execute({ type: 'create-sketch', id: 's2', plane: 'XY' }));
+      unwrap(await session.execute({ type: 'add-sketch-geometry', sketchId: 's2', entities: [...hole], constraints: [] }));
+      const circle = session.state().sketches.get('s2')?.profiles[0]?.id as string;
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'e2', type: 'extrude', name: '', suppressed: false, sketch: 's2', profiles: [circle], distance: '6 mm', direction: 'normal', operation: 'cut' } }));
+      const compared = unwrap(await manager.compareBodies(before, session.state().document));
+      expect(compared.before).toHaveLength(1);
+      expect(compared.after).toHaveLength(1);
+      expect(compared.added).toEqual([]);
+      expect(compared.removed).toHaveLength(1);
+      expect(compared.volume.removed).toBeCloseTo(Math.PI * 16 * 6, 0);
+      expect(compared.volume.before).toBeCloseTo(60 * 30 * 6, 0);
+    });
 
     it('turns a feature into another kind, keeping its id (CAD-118)', async () => {
       const profile = await plate();

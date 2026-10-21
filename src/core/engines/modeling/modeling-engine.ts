@@ -1,4 +1,5 @@
 import type {
+  BodyDifference,
   BodyMesh,
   BodyOperation,
   BodyState,
@@ -231,6 +232,11 @@ export interface ModelingEngine {
   /** The plane of a planar face, for sketches and construction planes on faces. */
   planeOf(bodies: readonly BodyState[], face: TopologyRef): Promise<Result<PlaneFrame>>;
   tessellate(bodies: readonly BodyState[]): Promise<BodyMesh[]>;
+  /**
+   * The material added from `before` to `after` (each body of `after` without all of `before`) and
+   * removed (the other way round), as meshes whose body ids are `added:<id>` and `removed:<id>`.
+   */
+  compare(before: readonly BodyState[], after: readonly BodyState[]): Promise<Result<BodyDifference>>;
   /**
    * A joint frame in body coordinates: on a flat face its centre and outward normal; on a cylinder,
    * cone or circular edge a point and direction of its axis; on a straight edge its middle and

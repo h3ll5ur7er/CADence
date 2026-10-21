@@ -85,6 +85,12 @@
         <text [attr.x]="label.x" [attr.y]="label.y">{{ label.text }}</text>
       </g>
     }
+    @for (other of others(); track other.id) {
+      <g class="live-pointer" data-testid="live-pointer" pointer-events="none">
+        <path [attr.d]="'M' + other.x + ' ' + other.y + ' l 0 14 l 4 -4 l 6 0 z'" [attr.fill]="other.color" />
+        <text [attr.x]="other.x + 10" [attr.y]="other.y + 22" [attr.fill]="other.color">{{ other.name }}</text>
+      </g>
+    }
   }
 </svg>
 

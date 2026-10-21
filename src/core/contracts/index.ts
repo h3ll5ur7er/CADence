@@ -12,4 +12,6 @@ export type * from './mesh';
 export type * from './project';
 export { pluginApiVersion, resultStamp, standardLibraryId, trashDays } from './project';
 export * from './result';
+export * from './revision';
+export type * from './sharing';
 export * from './sketch';

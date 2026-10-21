@@ -12,10 +12,11 @@ import { Icon } from '../shared/icon';
 import { AboutDialog } from '../about/about-dialog';
 import { NewProjectDialog, type TemplateEntry } from './new-project-dialog';
 import { OpenRemoteDialog } from './open-remote-dialog';
+import { SharedProjectsDialog } from './shared-projects-dialog';
 
 @Component({
   selector: 'cad-home-page',
-  imports: [RouterLink, Icon, NameDialog, ConfirmDialog, ExportProjectDialog, NewProjectDialog, Thumbnail, OpenRemoteDialog, AboutDialog],
+  imports: [RouterLink, Icon, NameDialog, ConfirmDialog, ExportProjectDialog, NewProjectDialog, Thumbnail, OpenRemoteDialog, SharedProjectsDialog, AboutDialog],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './home-page.html',
   styleUrl: './home-page.scss',

@@ -16,7 +16,7 @@ import type {
   Vec2,
   Vec3,
 } from '@core/contracts';
-import { isDimension, type MotionFrame, sourceKey } from '@core/contracts';
+import { describeChange, isDimension, type MotionFrame, sourceKey } from '@core/contracts';
 import type { AssemblyCommand, AssemblyFormat, AssemblySession, AssemblyState, BomLine, CollisionOptions, CollisionReport, InstructionPicture, PlacedRef } from '@core/managers/assembly';
 import type { BrokenReference, DesignSession, DesignState, DrawingFormat, ExportOptions, SketchView, SolidFormat } from '@core/managers/design';
 import type { ProjectManager } from '@core/managers/project';
@@ -937,6 +937,12 @@ export class AssemblyScript {
   }
 }
 
+/** Two versions of a document compared: its changes in words and, for components, volumes in mm³. */
+export interface VersionsCompared {
+  readonly changes: readonly string[];
+  readonly volume?: { readonly before: number; readonly after: number; readonly added: number; readonly removed: number };
+}
+
 /**
  * The scripting API: the project manager as it is, plus components and assemblies opened for
  * scripting. Projects and documents are found by id or by name.
@@ -991,6 +997,21 @@ export class Cadence {
   /** A technical drawing open for scripting; kept open until closed, and opened again when another process changed it (CAD-123). */
   drawing(documentId: string): Promise<DrawingScript> {
     return this.opened(this.drawings, documentId, async () => new DrawingScript(unwrap(await this.core.drawingManager.open(documentId as DocumentId)), this.exports, () => this.drawings.delete(documentId), () => this.core.settled()));
+  }
+
+  /**
+   * Two versions of a document compared in words (CAD-175): what changed in its timeline, sketches
+   * and parameters and, for components, the volume before and after and how much was added and removed.
+   * Without `to`, `from` is compared with the document as it is now.
+   */
+  async compareVersions(documentId: string, from: string, to?: string): Promise<VersionsCompared> {
+    const compared = unwrap(await this.projects.compareVersions(documentId as DocumentId, from, to));
+    const changes = compared.changes.map(describeChange);
+    if (compared.before.kind !== 'component' || compared.after.kind !== 'component') return { changes };
+    const built = unwrap(await this.core.designManager.compareBodies(compared.before, compared.after, compared.projectParameters));
+    const round = (mm3: number) => Math.round(mm3 * 1000) / 1000;
+    const { before, after, added, removed } = built.volume;
+    return { changes, volume: { before: round(before), after: round(after), added: round(added), removed: round(removed) } };
   }
 
   /** Resolves once the work this process started is done: components rebuilt, results written (CAD-119). */

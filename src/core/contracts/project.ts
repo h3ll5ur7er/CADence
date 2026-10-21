@@ -1,5 +1,7 @@
 import type { CadDocument, DocumentKind, Parameter } from './document';
 import type { AssetId, DocumentId, ProjectId } from './ids';
+import type { ItemConflict } from './revision';
+import type { ProjectRole } from './sharing';
 
 /** ISO 8601 timestamp, e.g. `2026-10-14T18:00:00.000Z`. */
 export type Timestamp = string;
@@ -157,6 +159,14 @@ export interface ProjectRemote {
   readonly url: string;
   /** A CORS proxy for hosts a browser cannot reach directly (e.g. https://cors.isomorphic-git.org). */
   readonly corsProxy?: string;
+  /** When the repository is a project on a CADence server (CAD-177): which, and what this device may do with it. */
+  readonly server?: {
+    readonly url: string;
+    readonly project: string;
+    readonly role: ProjectRole;
+    /** Opened through a link to view: the link, which is also its sign-in. */
+    readonly link?: string;
+  };
 }
 
 /** Sign-in for a remote, asked for when syncing and never stored; an access token goes in `password`. */
@@ -165,11 +175,20 @@ export interface RemoteCredentials {
   readonly password: string;
 }
 
-/** A document (or the project's settings) changed both here and on the remote. */
+/**
+ * A document (or the project's settings) changed both here and on the remote, in ways that do not
+ * merge on their own. Resolutions are given for the whole document by its `path` (`mine` or `theirs`
+ * throughout), or per item by `<path>#<item path>`.
+ */
 export interface SyncConflict {
-  /** Where it is kept in the version history; resolutions are given by it. */
+  /** Where it is kept in the version history. */
   readonly path: string;
   readonly name: string;
+  /**
+   * The items both sides changed differently (CAD-176); everything else of the document merges.
+   * Absent when the document cannot be merged item by item (deleted on one side).
+   */
+  readonly items?: readonly ItemConflict[];
 }
 
 /** Which side of a conflict to keep. */

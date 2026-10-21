@@ -11,6 +11,10 @@
     Open file…
     <input #file type="file" multiple class="visually-hidden" [accept]="accept" (change)="picked(file)" />
   </label>
+  <button type="button" class="btn" (click)="sharedProjects.open()">
+    <cad-icon name="share" />
+    Shared projects…
+  </button>
   <button type="button" class="btn" (click)="openRemote.open()">
     <cad-icon name="sync" />
     Open from git…
@@ -137,3 +141,4 @@
 <cad-export-project-dialog />
 <cad-new-project-dialog />
 <cad-open-remote-dialog #openRemote (opened)="openProject($event)" />
+<cad-shared-projects-dialog #sharedProjects (opened)="openProject($event)" />

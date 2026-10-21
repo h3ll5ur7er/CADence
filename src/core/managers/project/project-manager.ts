@@ -2,7 +2,9 @@ import type {
   Attachment,
   BoardSummary,
   BodyMesh,
+  CadDocument,
   ConflictChoice,
+  DocumentChange,
   CreatableDocumentKind,
   DocumentId,
   DocumentSummary,
@@ -16,10 +18,15 @@ import type {
   ProjectPlugin,
   ProjectRemote,
   ProjectScript,
+  ProjectRole,
   ProjectSummary,
   ProjectTemplate,
   RemoteCredentials,
   Result,
+  ServerInfo,
+  ServerSignIn,
+  ServerUser,
+  SharedProject,
   SketchEntity,
   SyncOutcome,
   TextOutlines,
@@ -95,6 +102,16 @@ export interface SimplifiedImport {
   readonly before: number;
   /** What the original needed to be closed and face outwards. */
   readonly repair: MeshRepair;
+}
+
+/** A document in two versions, and what changed from one to the other (CAD-175). */
+export interface VersionComparison {
+  readonly before: CadDocument;
+  readonly after: CadDocument;
+  /** The project's parameters in each version, which its components use. */
+  readonly projectParameters: { readonly before: readonly Parameter[]; readonly after: readonly Parameter[] };
+  /** What changed from `before` to `after`: in the document, then in the project's parameters. */
+  readonly changes: readonly DocumentChange[];
 }
 
 /** Project and document lifecycle (see docs/Architecture/Components.md#project-manager). */
@@ -186,6 +203,8 @@ export interface ProjectManager {
   projectHistory(id: ProjectId): Promise<Version[]>;
   /** The versions in which a document changed, newest first. */
   documentHistory(id: DocumentId): Promise<Version[]>;
+  /** A document as it was in a version (`from`) beside another version, or beside how it is now (no `to`). */
+  compareVersions(id: DocumentId, from: string, to?: string): Promise<Result<VersionComparison>>;
   /** Brings a document back as it was in a version (a change of its own, recorded as a version). */
   restoreDocument(id: DocumentId, version: string): Promise<Result<void>>;
   /** Names a version (the latest when none is given); a name given again moves. */
@@ -202,6 +221,29 @@ export interface ProjectManager {
   syncProject(id: ProjectId, credentials?: RemoteCredentials, resolutions?: Readonly<Record<string, ConflictChoice>>): Promise<Result<SyncOutcome>>;
   /** A new project holding the latest version of a remote, synced with it from then on. */
   openRemoteProject(remote: ProjectRemote, credentials?: RemoteCredentials): Promise<Result<ProjectSummary>>;
+
+  /** A CADence server's ways to sign in (CAD-177). Signing in with a provider happens in the browser: `<server>/auth/<provider>?return=<app address>`. */
+  serverInfo(server: string): Promise<Result<ServerInfo>>;
+  /** On servers that allow it (on a private network), signing in by name alone. */
+  signInByName(server: string, name: string): Promise<Result<ServerSignIn>>;
+  serverUser(signIn: ServerSignIn): Promise<Result<ServerUser>>;
+  signOut(signIn: ServerSignIn): Promise<void>;
+  /** The projects on a server shared with the one signed in. */
+  sharedProjects(signIn: ServerSignIn): Promise<Result<SharedProject[]>>;
+  /** Puts a project on a CADence server and syncs it there; from then on its members open, sync and edit it together. */
+  shareProject(id: ProjectId, signIn: ServerSignIn): Promise<Result<SharedProject>>;
+  /** A shared project as the server has it: its members and view links. */
+  sharing(id: ProjectId, signIn: ServerSignIn): Promise<Result<SharedProject>>;
+  /** Adds or changes a member (someone who signed in to the server once: by name, e-mail address or id); owners only. */
+  setMember(id: ProjectId, signIn: ServerSignIn, who: string, role: ProjectRole): Promise<Result<SharedProject>>;
+  removeMember(id: ProjectId, signIn: ServerSignIn, userId: string): Promise<Result<SharedProject>>;
+  /** A link anyone can open the project with, to view it; owners only. */
+  addViewLink(id: ProjectId, signIn: ServerSignIn): Promise<Result<SharedProject>>;
+  removeViewLink(id: ProjectId, signIn: ServerSignIn, token: string): Promise<Result<SharedProject>>;
+  /** A project on the server here: opened (and synced) the first time, synced after that. */
+  openShared(signIn: ServerSignIn, serverProject: string): Promise<Result<ProjectSummary>>;
+  /** A project shared through a view link, opened here to view (its syncs only take versions). */
+  openViewLink(server: string, link: string): Promise<Result<ProjectSummary>>;
 
   /** Keeps a picture of a document (PNG), replacing the one before. Unknown documents are ignored. */
   saveThumbnail(id: DocumentId, png: Uint8Array): Promise<void>;

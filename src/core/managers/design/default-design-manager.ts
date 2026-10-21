@@ -2,6 +2,7 @@ import type { AssetAccess } from '@core/access/asset';
 import type { DocumentAccess } from '@core/access/document';
 import type { ProjectAccess } from '@core/access/project';
 import type { ExternalFileAccess } from '@core/access/external-file';
+import type { ServerAccess } from '@core/access/server';
 import {
   bodyMaterial,
   type BodyMesh,
@@ -29,6 +30,8 @@ import {
   type ValidationReport,
   type SketchConstraint,
   type SketchFreedom,
+  type LivePayload,
+  type LiveWhere,
   isFontFormat,
   isModelFormat,
 } from '@core/contracts';
@@ -44,8 +47,10 @@ import type { EventBus } from '@core/utilities/messaging';
 import { type ConfigurationImport, configurationsCsv, readConfigurationsCsv } from './configurations';
 import { type BrokenReference, brokenReferences, elementsOf, lostReferences, shapeKey, topologyRefs, withShapes } from './references';
 import { applyCommand } from './commands';
+import { LiveSession, type LiveTarget } from './live';
 import type {
   BlockSummary,
+  BodyComparison,
   DesignCommand,
   DesignManager,
   DesignSession,
@@ -73,6 +78,8 @@ export interface DesignManagerDependencies {
   readonly clock: Clock;
   /** Builds plugin features and runs plugin exporters (CAD-174); one of the script sandbox by default. */
   readonly plugins?: PluginEngine;
+  /** CADence servers, for editing live with others (CAD-178); absent: no live editing on this host. */
+  readonly server?: ServerAccess;
 }
 
 interface Snapshot {
@@ -102,6 +109,8 @@ class Session implements DesignSession {
   private projectWatch: (() => void) | undefined;
   /** Listening for changes of the components whose blocks this one places. */
   private blockWatch: (() => void)[] | undefined;
+  /** Editing live with others, through the project's CADence server. */
+  private live: LiveSession<Snapshot> | undefined;
 
   constructor(
     private readonly deps: DesignManagerDependencies,
@@ -150,9 +159,56 @@ class Session implements DesignSession {
     return this.serialized(() => this.followProject());
   }
 
+  goLive(target: LiveTarget): Result<void> {
+    if (!this.deps.server) return fail({ code: 'no-server', message: 'This CADence cannot reach CADence servers.' });
+    this.live?.close();
+    this.live = new LiveSession<Snapshot>(this.deps.server, target, this.current.document.id, {
+      run: (from, payload) => this.runLive(from, payload),
+      show: (state) => this.commit(state),
+      current: () => this.current,
+      serialized: (work) => this.serialized(work),
+      changed: () => this.notify(),
+      forgetHistory: () => {
+        this.undoStack.length = 0;
+        this.redoStack.length = 0;
+      },
+    });
+    this.notify();
+    return ok(undefined);
+  }
+
+  leaveLive(): void {
+    this.live?.close();
+    this.live = undefined;
+    this.notify();
+  }
+
+  present(where: LiveWhere): void {
+    this.live?.present(where);
+  }
+
+  /** A change ordered by the relay, run on a state; undefined when it does not apply there (it fails for everyone). */
+  private async runLive(from: Snapshot, payload: LivePayload): Promise<Snapshot | undefined> {
+    if (payload.kind === 'command') {
+      const result = await this.compute(from, payload.command as DesignCommand);
+      return result.ok ? result.value : undefined;
+    }
+    const given = payload.document as ComponentDocument | undefined;
+    if (given?.kind !== 'component') return undefined;
+    const document: ComponentDocument = { ...given, id: from.document.id, projectId: from.document.projectId };
+    const derived = await new Regeneration(this.deps).run(document, this.context);
+    return { document, derived, meshes: await this.meshes(derived) };
+  }
+
+  private notify(): void {
+    const state = this.state();
+    for (const listener of this.listeners) listener(state);
+  }
+
   state(): DesignState {
     const { document, derived, meshes } = this.current;
     return {
+      ...(this.live ? { live: this.live.state() } : {}),
       document,
       sketches: derived.sketches,
       items: derived.items,
@@ -445,10 +501,23 @@ class Session implements DesignSession {
     const { library } = this.current.document;
     if (library) return fail({ code: 'library-part', message: `${this.current.document.name} comes from the library ${library.libraryName}: change it there, then update it here.` });
     const command = await this.shaped(await this.anchored(given));
-    if ((command.type === 'set-appearance' || (command.type === 'set-body-material' && command.material)) && !this.current.derived.bodies.some((b) => b.id === command.body)) {
+    const next = await this.compute(this.current, command);
+    if (!next.ok) return next;
+    this.undoStack.push(this.current);
+    if (this.undoStack.length > historyLimit) this.undoStack.shift();
+    this.redoStack.length = 0;
+    await this.commit(next.value);
+    // Anchored, so the others' sessions run exactly this.
+    this.live?.made({ kind: 'command', command }, next.value);
+    return ok(undefined);
+  }
+
+  /** A command run on a state: checked, regenerated and solved; the state it leads to. */
+  private async compute(from: Snapshot, command: DesignCommand): Promise<Result<Snapshot>> {
+    if ((command.type === 'set-appearance' || (command.type === 'set-body-material' && command.material)) && !from.derived.bodies.some((b) => b.id === command.body)) {
       return fail({ code: 'invalid-command', message: `There is no body ${command.body}.` });
     }
-    const applied = applyCommand(this.current.document, command);
+    const applied = applyCommand(from.document, command);
     if (!applied.ok) return applied;
     const { document, target, drag } = applied.value;
     const derived = await new Regeneration(this.deps, drag).run(document, this.context);
@@ -456,7 +525,7 @@ class Session implements DesignSession {
       if (derived.parameterError) return fail(derived.parameterError);
       // A parameter change must not break anything that worked before.
       for (const [id, status] of derived.items) {
-        if (status.state === 'error' && this.current.derived.items.get(id)?.state === 'ok') {
+        if (status.state === 'error' && from.derived.items.get(id)?.state === 'ok') {
           const item = document.timeline.find((i) => i.id === id);
           return fail({ code: 'breaks-model', message: `${item?.name ?? id} would fail: ${status.error}` });
         }
@@ -465,7 +534,7 @@ class Session implements DesignSession {
     const status = target ? derived.items.get(target) : undefined;
     if (status?.state === 'error') {
       // Contradicting relations point at the ones the sketch had before, so the client can offer to remove one.
-      const before = target ? this.current.derived.sketches.get(target)?.sketch.constraints.map((c) => c.id) : undefined;
+      const before = target ? from.derived.sketches.get(target)?.sketch.constraints.map((c) => c.id) : undefined;
       const view = target ? derived.sketches.get(target) : undefined;
       const involved = view?.conflicting?.filter((id) => view.sketch.constraints.some((c) => c.id === id));
       const related = involved?.filter((id) => before?.includes(id));
@@ -478,11 +547,7 @@ class Session implements DesignSession {
     // Solved positions become the stored ones, so a drag stays where it was dropped.
     const timeline = document.timeline.map((item) => (isSketch(item) ? (derived.sketches.get(item.id)?.error ? item : (derived.sketches.get(item.id)?.sketch ?? item)) : item));
     const next = { ...document, timeline, modifiedAt: this.deps.clock().toISOString() };
-    this.undoStack.push(this.current);
-    if (this.undoStack.length > historyLimit) this.undoStack.shift();
-    this.redoStack.length = 0;
-    await this.commit({ document: next, derived, meshes: await this.meshes(derived) });
-    return ok(undefined);
+    return ok({ document: next, derived, meshes: await this.meshes(derived) });
   }
 
   /** Tessellates only bodies whose shape changed. */
@@ -497,6 +562,8 @@ class Session implements DesignSession {
     if (!target) return;
     to.push(this.current);
     await this.commit(target);
+    // Live, an undo is the whole document again: others' changes since were forgotten from the history.
+    this.live?.made({ kind: 'document', document: target.document }, target);
   }
 
   private async commit(snapshot: Snapshot): Promise<void> {
@@ -597,6 +664,22 @@ export class DefaultDesignManager implements DesignManager {
     const derived = await new Regeneration(this.deps).run(document, context);
     const meshes = derived.bodies.length ? await this.deps.modeling.tessellate(derived.bodies) : [];
     return ok(new Session(this.deps, { document, derived, meshes }, new ResultPublisher(this.deps), context, project.plugins));
+  }
+
+  async compareBodies(
+    before: ComponentDocument,
+    after: ComponentDocument,
+    projectParameters?: { readonly before: readonly Parameter[]; readonly after: readonly Parameter[] },
+  ): Promise<Result<BodyComparison>> {
+    const build = async (document: ComponentDocument, parameters: readonly Parameter[] | undefined) =>
+      (await new Regeneration(this.deps).run(document, { projectParameters: parameters ?? (await projectParametersOf(this.deps, document)) })).bodies;
+    // One after the other: both share the one kernel.
+    const old = await build(before, projectParameters?.before);
+    const now = await build(after, projectParameters?.after);
+    const difference = await this.deps.modeling.compare(old, now);
+    if (!difference.ok) return difference;
+    const meshes = async (bodies: readonly BodyState[]) => (bodies.length ? this.deps.modeling.tessellate(bodies) : []);
+    return ok({ before: await meshes(old), after: await meshes(now), ...difference.value });
   }
 
   /** Answers a queued `regenerateComponent` request (for one configuration) with `componentRegenerated`. */

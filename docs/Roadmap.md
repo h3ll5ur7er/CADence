@@ -46,7 +46,7 @@ The work is planned in phases. Each phase ends with a running demo and visible e
 | 39. Drawings III ✅ | Offset and half sections; tolerances, surface finish and true-length dimensions; cosmetic threads; anchors on cones, spheres, free-form faces and assembly parts; exact views finishing in the background | [[CAD-164]] [[CAD-165]] [[CAD-166]] [[CAD-167]] [[CAD-168]] |
 | 40. Import II ✅ | Solids from large and broken meshes; circuit boards from KiCad | [[CAD-169]] [[CAD-170]] |
 | 41. Automation III ✅ | Whole scripts through MCP; MCP resources and prompts; a script console in the app; plugins | [[CAD-171]] [[CAD-172]] [[CAD-173]] [[CAD-174]] |
-| 42. Versions and collaboration | Comparing versions; three-way merges inside a document; users, sign-in and sharing (a server, decided first); real-time collaboration | [[CAD-175]] [[CAD-176]] [[CAD-177]] [[CAD-178]] |
+| 42. Versions and collaboration ✅ | Comparing versions; three-way merges inside a document; users, sign-in and sharing on a self-hostable CADence server; real-time collaboration through its relay | [[CAD-175]] [[CAD-176]] [[CAD-177]] [[CAD-178]] |
 | 43. Anywhere | A phone-friendly viewer, augmented reality, onboarding | [[CAD-179]] [[CAD-180]] [[CAD-181]] |
 
 The order follows the dependencies: the Sketcher needs the editor shell, Part modeling needs profiles, and Assemblies need regenerated components. Within a phase, tasks are listed in the order they will be done.

@@ -201,7 +201,9 @@ export type CadDocument = ComponentDocument | AssemblyDocument | DrawingDocument
 /**
  * 2: assemblies got motion studies. 3: the fields added by phases 21 to 33 (joint leans, view
  * configurations, …), so that older apps refuse documents they would show wrongly (CAD-145). 4: reference
- * dimensions, block sketches and their placements, and wraps (phase 35). Raise it whenever a field is
+ * dimensions, sketch blocks and wraps (phase 35); drill points, ribs up to the next face, nested folders and
+ * bodies' own materials (phase 36); gear shifts, bevel gears, worms, springs and helices (phase 37); hems,
+ * miter flanges and corner reliefs (phase 38); plugin features (phase 41). Raise it whenever a field is
  * added that an older app must not ignore.
  */
 export const currentSchemaVersion = 4;

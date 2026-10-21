@@ -223,9 +223,15 @@ export interface BaseFlangeFeature extends FeatureBase {
   readonly bendRadius: string;
   /** Where the neutral layer lies in the sheet, from the inside of a bend (0) to the outside (1). */
   readonly kFactor: string;
+  /** The cut where two flanges meet at a corner of the sheet (absent: none). */
+  readonly cornerRelief?: CornerRelief;
+  /** The relief's size: the round's diameter, the square's side, the tear's length. */
+  readonly reliefSize?: string;
 }
 
-/** Flanges bent up from straight edges of the base flange: a bend, then a straight piece. */
+export type CornerRelief = 'round' | 'square' | 'tear';
+
+/** Flanges bent up from straight edges of the sheet (the base flange or a flange): a bend, then a straight piece. */
 export interface EdgeFlangeFeature extends FeatureBase {
   readonly type: 'edge-flange';
   readonly edges: readonly TopologyRef[];
@@ -233,16 +239,77 @@ export interface EdgeFlangeFeature extends FeatureBase {
   readonly angle: string;
 }
 
-/** Where an edge flange stands, for unfolding: its edge, the directions away from and above the sheet. */
+export type HemStyle = 'closed' | 'open' | 'teardrop';
+
+/**
+ * Edges of the sheet folded back onto it: `closed` lies flat on the sheet, `open` leaves `gap` between
+ * them (a half circle of that diameter), `teardrop` bends round a loop of that diameter until its end
+ * comes back down to the sheet. `length` is the straight piece after the bend.
+ */
+export interface HemFeature extends FeatureBase {
+  readonly type: 'hem';
+  readonly edges: readonly TopologyRef[];
+  readonly style: HemStyle;
+  readonly gap: string;
+  readonly length: string;
+}
+
+/**
+ * A flange of several bends along a chain of connected straight edges of one face, mitred where the
+ * edges meet. The profile is a sketch of straight lines drawn square to one of the edges: each line is
+ * a straight piece as long as the line, after a bend of the sheet's radius by the angle the line turns.
+ */
+export interface MiterFlangeFeature extends FeatureBase {
+  readonly type: 'miter-flange';
+  readonly edges: readonly TopologyRef[];
+  readonly sketch: string;
+}
+
+/** One bend of a flange, then a straight piece: by `angle` (radians, positive towards `up`) round an inside `radius`. */
+export interface FlangePiece {
+  readonly angle: number;
+  readonly radius: number;
+  readonly length: number;
+}
+
+/**
+ * Where a flange (edge flange, hem or a piece of a miter flange) stands, for unfolding: its edge on
+ * the face the first bend turns towards, the directions away from the sheet and out of that face, and
+ * its bends and straight pieces from the edge outwards.
+ */
 export interface FlangeMarker {
   readonly feature: string;
   readonly start: Vec3;
   readonly end: Vec3;
   readonly away: Vec3;
   readonly up: Vec3;
-  readonly length: number;
-  /** Radians. */
-  readonly angle: number;
+  readonly pieces: readonly FlangePiece[];
+  /**
+   * Mitred ends (miter flanges): how far the flange reaches past its edge's start and end per
+   * millimetre away from the edge (0: square ends; negative: short of them).
+   */
+  readonly miter?: { readonly start: number; readonly end: number };
+}
+
+/**
+ * Corners where two flanges meet, for relief cuts: an end the two share on the same face, where
+ * neither is mitred and their edges are not in line. `first` and `second` index `markers`.
+ */
+export function flangeCorners(markers: readonly FlangeMarker[]): { readonly at: Vec3; readonly first: number; readonly second: number }[] {
+  const near = (a: Vec3, b: Vec3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < 1e-6;
+  const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const ends = (m: FlangeMarker) => [
+    { at: m.start, square: !m.miter || Math.abs(m.miter.start) < 1e-9 },
+    { at: m.end, square: !m.miter || Math.abs(m.miter.end) < 1e-9 },
+  ];
+  const corners: { at: Vec3; first: number; second: number }[] = [];
+  markers.forEach((m, i) =>
+    markers.forEach((n, j) => {
+      if (j <= i || dot(m.up, n.up) < 1 - 1e-6 || Math.abs(dot(m.away, n.away)) > 1 - 1e-6) return;
+      for (const a of ends(m)) for (const b of ends(n)) if (a.square && b.square && near(a.at, b.at)) corners.push({ at: a.at, first: i, second: j });
+    }),
+  );
+  return corners;
 }
 
 /** Rounds (fillet) or bevels (chamfer) edges. */
@@ -380,6 +447,8 @@ export type Feature =
   | InsertFeature
   | BaseFlangeFeature
   | EdgeFlangeFeature
+  | HemFeature
+  | MiterFlangeFeature
   | DraftFeature
   | RibFeature
   | WrapFeature

@@ -725,6 +725,92 @@ describe('component results and joint frames', () => {
       expect(faces.some((f) => f.startsWith('f:fl:bend:'))).toBe(true);
       expect(faces.some((f) => f.startsWith('f:fl:flange:'))).toBe(true);
     });
+
+    /** The edge of a body whose middle is nearest a point, as a reference. */
+    const edgeAt = (bodies: readonly BodyState[], at: readonly [number, number, number]): TopologyRef => {
+      const named = shapes.get((bodies[0] as BodyState).key) as NamedShape;
+      const distance = (e: (typeof named.shape.edges)[number]) => Math.hypot(...e.pointAt(0.5).toTuple().map((v, i) => v - (at[i] as number)));
+      const edge = [...named.shape.edges].sort((a, b) => distance(a) - distance(b))[0];
+      return { kind: 'edge', body: (bodies[0] as BodyState).id, name: named.edges.get(edge?.hashCode ?? -1) as string, hint: [...at] };
+    };
+    const sheetRules = { thickness: 2, bendRadius: 2 };
+    const flangeVolume = (length: number, edge: number) => ((Math.PI / 4) * (4 * 4 - 2 * 2) + length * 2) * edge;
+
+    it('bends a flange from the top edge of another flange', async () => {
+      const sheet = ok(await plate(2, 'sheet-2'));
+      const first = await engine.apply({ type: 'edge-flange', feature: 'fl', key: 'fl', bodies: sheet, edges: [edgeAt(sheet, [80, 20, 2])], length: 20, angle: Math.PI / 2, ...sheetRules });
+      // The flange stands from x = 82 to 84 up to z = 24; its outer top edge bends out again.
+      const second = await engine.apply({ type: 'edge-flange', feature: 'fl2', key: 'fl2', bodies: ok(first), edges: [edgeAt(ok(first), [84, 20, 24])], length: 10, angle: Math.PI / 2, ...sheetRules, flanges: first.flanges ?? [] });
+      expect((await volume(ok(second))) - 80 * 40 * 2).toBeCloseTo(flangeVolume(20, 40) + flangeVolume(10, 40), 1);
+      expect(second.flanges?.[0]).toMatchObject({ away: [expect.closeTo(0, 9), expect.closeTo(0, 9), expect.closeTo(1, 9)], up: [expect.closeTo(1, 9), expect.closeTo(0, 9), expect.closeTo(0, 9)] });
+    });
+
+    it('cuts round reliefs where the flanges of a box meet', async () => {
+      const sheet = ok(await plate(2, 'sheet-2'));
+      const edges = ([[80, 20, 2], [40, 40, 2], [0, 20, 2], [40, 0, 2]] as const).map((at) => edgeAt(sheet, at));
+      const box = await engine.apply({ type: 'edge-flange', feature: 'fl', key: 'box', bodies: sheet, edges, length: 20, angle: Math.PI / 2, ...sheetRules });
+      const relieved = await engine.apply({ type: 'edge-flange', feature: 'fl', key: 'box-relief', bodies: sheet, edges, length: 20, angle: Math.PI / 2, ...sheetRules, relief: { shape: 'round', size: 4 } });
+      const plain = await volume(ok(box));
+      expect(plain - 80 * 40 * 2).toBeCloseTo(flangeVolume(20, 2 * (80 + 40)), 1);
+      // Each corner loses three quarters of a round of the sheet, and some of the bends beside it.
+      const lost = plain - (await volume(ok(relieved)));
+      expect(lost).toBeGreaterThan(4 * 0.75 * Math.PI * 4 * 2);
+      expect(lost).toBeLessThan(4 * Math.PI * 4 * 4);
+      const faces = (await names(ok(relieved))).faces;
+      expect(['f:fl:relief:1', 'f:fl:relief:2', 'f:fl:relief:3', 'f:fl:relief:4'].every((f) => faces.includes(f))).toBe(true);
+    });
+
+    it('folds hems back over the sheet: closed, open and teardrop', async () => {
+      const sheet = ok(await plate(2, 'sheet-2'));
+      const edges = [edgeAt(sheet, [80, 20, 2])];
+      const hem = (style: 'closed' | 'open' | 'teardrop', gap: number) => engine.apply({ type: 'hem', feature: 'h', key: `hem-${style}-${gap}`, bodies: sheet, edges, style, gap, length: 10, ...sheetRules });
+      // Open: half a ring round half the gap, then 10 mm back over the sheet.
+      const open = await hem('open', 2);
+      expect((await volume(ok(open))) - 80 * 40 * 2).toBeCloseTo(((Math.PI / 2) * (3 * 3 - 1 * 1) + 10 * 2) * 40, 1);
+      expect(open.flanges?.[0]?.pieces).toEqual([{ angle: Math.PI, radius: 1, length: 10 }]);
+      // Closed: half a round of the thickness, the hem lying on the sheet.
+      const closed = await hem('closed', 0);
+      expect((await volume(ok(closed))) - 80 * 40 * 2).toBeCloseTo(((Math.PI / 2) * 2 * 2 + 10 * 2) * 40, 1);
+      expect(ok(closed)).toHaveLength(1);
+      // Teardrop: further than half a turn, its end back down to a tenth of the thickness above the sheet.
+      const teardrop = await hem('teardrop', 4);
+      const [piece] = teardrop.flanges?.[0]?.pieces ?? [];
+      expect(piece?.angle).toBeGreaterThan(Math.PI);
+      expect(2 * (1 - Math.cos(piece?.angle ?? 0)) + 10 * Math.sin(piece?.angle ?? 0)).toBeCloseTo(0.2, 9);
+      expect(ok(teardrop)).toHaveLength(1);
+      expect((await hem('teardrop', 30)).error).toMatch(/longer than half its gap/);
+    });
+
+    it('runs a miter flange along a chain of edges, mitred at the corner', async () => {
+      const sheet = ok(await plate(2, 'sheet-2'));
+      const edges = [edgeAt(sheet, [80, 20, 2]), edgeAt(sheet, [40, 40, 2])];
+      // The profile, drawn on the front face (square to the right edge): 15 mm straight up, then 5 mm inwards.
+      const front = { origin: [0, 0, 0] as const, u: [1, 0, 0] as const, v: [0, 0, 1] as const };
+      const profile = [
+        { kind: 'line' as const, start: [80, 0, 2] as const, end: [80, 0, 17] as const },
+        { kind: 'line' as const, start: [80, 0, 17] as const, end: [75, 0, 17] as const },
+      ];
+      const mitred = await engine.apply({ type: 'miter-flange', feature: 'm', key: 'miter', bodies: sheet, edges, profile, frame: front, ...sheetRules });
+      expect(ok(mitred)).toHaveLength(1);
+      expect(mitred.flanges?.map((f) => f.pieces.map((p) => [p.angle, p.length]))).toEqual([
+        [
+          [expect.closeTo(Math.PI / 2, 9), expect.closeTo(15, 9)],
+          [expect.closeTo(Math.PI / 2, 9), expect.closeTo(5, 9)],
+        ],
+        [
+          [expect.closeTo(Math.PI / 2, 9), expect.closeTo(15, 9)],
+          [expect.closeTo(Math.PI / 2, 9), expect.closeTo(5, 9)],
+        ],
+      ]);
+      // Both pieces reach past the corner they share, as far as they stand away from it.
+      expect(mitred.flanges?.flatMap((f) => [f.start, f.end].map((p, i) => (p[0] === 80 && p[1] === 40 ? (i ? f.miter?.end : f.miter?.start) : 0)))).toEqual(expect.arrayContaining([expect.closeTo(1, 9)]));
+      const straight = await engine.apply({ type: 'miter-flange', feature: 'm', key: 'miter-straight', bodies: sheet, edges: [edges[0] as TopologyRef], profile, frame: front, ...sheetRules });
+      // The corner adds a little to two square-ended pieces: their mitred ends meet.
+      const [one, two] = [(await volume(ok(straight))) - 80 * 40 * 2, (await volume(ok(mitred))) - 80 * 40 * 2];
+      expect(two).toBeGreaterThan(one * 3);
+      const tilted = { origin: [0, 0, 0] as const, u: [1, 0, 0] as const, v: [0, 1, 0] as const };
+      expect((await engine.apply({ type: 'miter-flange', feature: 'm', key: 'miter-tilted', bodies: sheet, edges, profile, frame: tilted, ...sheetRules })).error).toMatch(/square to one of the edges/);
+    });
   });
 });
 

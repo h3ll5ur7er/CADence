@@ -41,6 +41,11 @@ describe('document migrations', () => {
     expect(migrate({ id: 'c', schemaVersion: 3, kind: 'component', timeline })).toEqual({ id: 'c', schemaVersion: 4, kind: 'component', timeline });
   });
 
+  it('reads version 3 documents as they are: sheet metal features came as new, optional ones', () => {
+    const component = { id: 'c', schemaVersion: 3, kind: 'component', timeline: [{ id: 'bf', type: 'base-flange', thickness: '2 mm' }] };
+    expect(migrate(component)).toEqual({ ...component, schemaVersion: 4 });
+  });
+
   it('rejects documents written by a newer app', () => {
     expect(() => migrate({ schemaVersion: 99 })).toThrow(/saved by a newer CADence .*Update CADence to open it/);
   });

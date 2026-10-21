@@ -5,7 +5,7 @@ import { combine, type LoadedBody, renameCopy } from './bodies';
 import { BodyOperationError, combineBodies, splitBody, transformBodies } from './body-operations';
 import { DraftRibError, draftFaces, ribToNext, ribTool } from './draft-rib';
 import { drawingView, type ViewGeometry, type ViewRequest } from './drawing-view';
-import { edgeFlanges, FlangeError } from './flanges';
+import { edgeFlanges, FlangeError, hems, miterFlange } from './flanges';
 import { HoleError, holeTool, threadGroove, threadPlacement } from './holes';
 import { GearError } from './gears';
 import { PartError, partTool } from './parts';
@@ -226,14 +226,22 @@ export class OcctModelingEngine implements ModelingEngine {
           request.type,
           request.endSize === undefined ? undefined : positive(request.endSize, 'end radius'),
         );
-      case 'edge-flange': {
+      case 'edge-flange':
+      case 'hem':
+      case 'miter-flange': {
         if (request.edges.length === 0) throw new FeatureError('Select the edges to put flanges on.');
         const bodyId = (request.edges[0] as TopologyRef).body;
         const body = bodies.find((b) => b.state.id === bodyId);
         if (!body || request.edges.some((r) => r.body !== bodyId)) throw new FeatureError('Select edges of one sheet.');
         const edges = request.edges.map((ref) => ({ ref, edge: this.element(body, ref) as Edge }));
         const rules = { thickness: positive(request.thickness, 'sheet thickness'), bendRadius: request.bendRadius };
-        const { named, markers } = edgeFlanges(request.feature, body.named, edges, rules, positive(request.length, 'flange length'), request.angle);
+        const corners = { ...(request.relief ? { relief: { shape: request.relief.shape, size: positive(request.relief.size, 'relief size') } } : {}), earlier: request.flanges ?? [] };
+        const { named, markers } =
+          request.type === 'edge-flange'
+            ? edgeFlanges(request.feature, body.named, edges, rules, positive(request.length, 'flange length'), request.angle, corners)
+            : request.type === 'hem'
+              ? hems(request.feature, body.named, edges, rules, request.style, request.gap, positive(request.length, 'hem length'), corners)
+              : miterFlange(request.feature, body.named, edges, rules, request.profile, cross3(request.frame.u, request.frame.v), corners);
         const state = { id: body.state.id, key: `${request.key}:${body.state.id}` };
         return { ...this.store({ bodies: bodies.map((b) => (b === body ? state : b.state)), stored: [[state.key, named]] }), flanges: markers };
       }

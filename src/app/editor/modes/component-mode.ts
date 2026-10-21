@@ -99,6 +99,8 @@ const featureMenus: readonly { id: string; label: string; icon: IconName; items:
       { type: 'thread', icon: 'thread' },
       { type: 'base-flange', icon: 'sheet' },
       { type: 'edge-flange', icon: 'flange' },
+      { type: 'hem', icon: 'hem' },
+      { type: 'miter-flange', icon: 'miter' },
       { type: 'insert', icon: 'imported' },
     ],
   },
@@ -154,6 +156,8 @@ const itemIcons: Readonly<Record<TimelineItem['type'], IconName>> = {
   wrap: 'wrap',
   'base-flange': 'sheet',
   'edge-flange': 'flange',
+  hem: 'hem',
+  'miter-flange': 'miter',
 };
 
 const exportFormats: readonly { format: SolidFormat; label: string }[] = [

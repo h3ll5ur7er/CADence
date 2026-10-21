@@ -75,6 +75,8 @@ const paths = {
   sync: 'M4 12a8 8 0 0 1 14-5.3M20 3v4h-4M20 12a8 8 0 0 1-14 5.3M4 21v-4h4',
   history: 'M3 12a9 9 0 1 0 3-6.7M3 4v4h4M12 7v5l3 2',
   flange: 'M3 18h10a4 4 0 0 0 4-4V4M3 21h10a7 7 0 0 0 7-7V4',
+  hem: 'M21 14H8a3 3 0 0 1 0-6h9M21 17H8a6 6 0 0 1 0-12h9',
+  miter: 'M4 20V9l5-5h11M4 9h5V4M9 9l11 11',
   rib: 'M3 20h18M5 20V8M5 8l14 12M8 11v9',
   wrap: 'M6 5h12M6 19h12M6 5c-2 0-2 14 0 14M18 5c2 0 2 14 0 14M9 9h6M12 9v6',
   block: 'M4 4h7v7H4zM13 13h7v7h-7zM11 7.5h4.5V13',

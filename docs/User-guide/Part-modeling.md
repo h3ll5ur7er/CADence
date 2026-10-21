@@ -18,11 +18,13 @@ Click **Parameters** in the browser panel to name values: `thickness = 6 mm`, `h
 
 ## Sheet metal
 
-1. Sketch the flat outline, then **Create → Base flange**. Its **thickness**, **bend radius** (inside) and **K-factor** (where the neutral layer lies, 0.3 to 0.5 for most metals) are the sheet's rules for the whole part.
-2. **Create → Edge flange**: click straight edges of the sheet. Each gets a bend of the sheet's radius and a straight flange of the given length, bent by the angle (90° by default) towards the side of the face the edge is on: pick a top edge to bend up, a bottom edge to bend down.
-3. **Export → Flat pattern (DXF / SVG)** lays the part flat for the laser: each flange is unfolded by the bend allowance, angle × (bend radius + K-factor × thickness), and a bend line marks the middle of every bend. Bend lines are on the layer `BEND` in DXF and blue and dashed in SVG, apart from the outlines to cut.
+1. Sketch the flat outline, then **Create → Base flange**. Its **thickness**, **bend radius** (inside) and **K-factor** (where the neutral layer lies, 0.3 to 0.5 for most metals) are the sheet's rules for the whole part, and so is the **corner relief**: where two flanges meet at a corner, a **round** (the size is its diameter) or a **square** (its side) is cut out of the corner, or a **tear** (a cut of the size's length into the sheet, nothing removed). Its size starts at twice the thickness.
+2. **Create → Edge flange**: click straight edges of the sheet, or of a flange (a lip on top of a wall). Each gets a bend of the sheet's radius and a straight flange of the given length, bent by the angle (90° by default) towards the side of the face the edge is on: pick a top edge to bend up, a bottom edge to bend down, the outer top edge of a wall to bend outwards.
+3. **Create → Hem** folds edges back over the face they are on: **closed** (flat on the sheet), **open** (a **gap** between, a half circle of that diameter) or **teardrop** (a loop of the gap's diameter, bent on until its end comes back down to the sheet). The **length** is the straight piece after the fold.
+4. **Create → Miter flange** runs one flange along a chain of connected straight edges of one face, mitred where they meet. Draw its **profile** first: a sketch of straight lines on a plane square to one of the edges (the YZ plane for edges along X, say), starting near the edge. Each line becomes a straight piece as long as the line, after a bend of the sheet's radius by the angle the line turns: up 20 and then over 5 gives a wall with a lip.
+5. **Export → Flat pattern (DXF / SVG)** lays the part flat for the laser: each flange is unfolded by the bend allowance, angle × (bend radius + K-factor × thickness), flanges on flanges beyond the flange they stand on, miter flanges with their ends cut to the miter, and the corner reliefs cut. A bend line marks the middle of every bend. Bend lines are on the layer `BEND` in DXF and blue and dashed in SVG, apart from the outlines to cut.
 
-Flanges on other flanges cannot be unfolded yet, and corners get no relief cuts.
+In the 3D model, round and square reliefs are cut straight through the sheet and the bends beside the corner; the flat pattern is the one to cut. A flange stands on one flat piece of the sheet, not across a bend.
 
 ## Features
 

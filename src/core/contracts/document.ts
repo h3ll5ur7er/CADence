@@ -205,7 +205,7 @@ export type CadDocument = ComponentDocument | AssemblyDocument | DrawingDocument
  * dimensions, sketch blocks and wraps (phase 35); drill points, ribs up to the next face, nested folders and
  * bodies' own materials (phase 36); gear shifts, bevel gears, worms, springs and helices (phase 37); hems,
  * miter flanges and corner reliefs (phase 38); plugin features (phase 41); universal, driven and cone-limited
- * joints and offsets that follow expressions (phase 44). Raise it whenever a field is added that an older
+ * joints and offsets that follow expressions (phase 44); studies' targets and carried parts (phase 45). Raise it whenever a field is added that an older
  * app must not ignore.
  */
 export const currentSchemaVersion = 4;

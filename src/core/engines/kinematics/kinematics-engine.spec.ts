@@ -300,6 +300,15 @@ describe('KinematicsEngine: parallel mechanisms, cones and held limits (phase 44
     expect(turn).toBeCloseTo(8, 4);
   });
 
+  it('gives the leg lengths for a pose of the plate: inverse kinematics of a closed chain (CAD-188)', () => {
+    const to = pose(56, 34, 8);
+    const turn = (8 * Math.PI) / 180;
+    const { values, miss, error } = engine.reach(platform(pose(50, 30, 0), true), [{ instance: 'plate', at: [56, 34, 0], axis: { local: [0, 0, 1], along: [0, 0, 1] }, xAxis: { local: [1, 0, 0], along: [Math.cos(turn), Math.sin(turn), 0] } }]);
+    expect(error).toBeUndefined();
+    expect(miss?.distance).toBeLessThan(1e-4);
+    strokes(values).forEach((s, i) => expect(s).toBeCloseTo(to[i]?.length as number, 4));
+  });
+
   it('moves the other legs when one is set alone, unless they are driven', () => {
     const home = pose(50, 30, 0);
     const longer = (model: KinematicModel) => ({ ...model, joints: model.joints.map((j) => (j.id === 's1' ? { ...j, values: [(home[0]?.length as number) + 5] } : j)) });
@@ -349,5 +358,115 @@ describe('KinematicsEngine: parallel mechanisms, cones and held limits (phase 44
     const study = { id: 's', name: 'Too far', duration: 2, keys: [{ time: 0, joint: 'hinge', values: [0] }, { time: 2, joint: 'hinge', values: [90] }] };
     const { holds } = engine.simulate(arm, study, 10);
     expect(holds).toEqual([{ joint: 'hinge', dof: 0, at: 'max', value: 45, asked: expect.closeTo(49.5, 6), time: expect.closeTo(1.1, 6) }]);
+  });
+});
+
+describe('KinematicsEngine: reaching targets and carrying parts (phase 45)', () => {
+  // Two links in a plane: shoulder at the origin, elbow 100 mm along the first link, a tip 80 mm along the second.
+  const arm = (shoulder = 10, elbow = 20): KinematicModel => ({
+    instances: [instance('base', true), instance('upper'), instance('fore')],
+    joints: [
+      joint('shoulder', 'revolute', ['base', [0, 0, 0]], ['upper', [0, 0, 0]], [shoulder], { limits: [{ min: -170, max: 170 }] }),
+      joint('elbow', 'revolute', ['upper', [100, 0, 0]], ['fore', [0, 0, 0]], [elbow]),
+    ],
+  });
+
+  it('puts a link’s point where it should be, and says how far off one out of reach stays (CAD-188)', () => {
+    const { poses, values, miss } = engine.reach(arm(), [{ instance: 'fore', point: [80, 0, 0], at: [60, 120, 0] }]);
+    expect(where(poses, 'fore', [80, 0, 0]).map((v) => Math.round(v * 1000) / 1000)).toEqual([60, 120, 0]);
+    expect(miss?.distance).toBeLessThan(1e-4);
+    // The elbow bends the way it started: up.
+    expect(values.get('elbow')?.[0]).toBeGreaterThan(0);
+    const far = engine.reach(arm(), [{ instance: 'fore', point: [80, 0, 0], at: [400, 0, 0] }]);
+    expect(far.error).toBeUndefined();
+    expect(far.miss?.distance).toBeCloseTo(220, 2);
+  });
+
+  it('points a direction of the instance as well, and holds the joints it is told to', () => {
+    // Tip at (100, 80) with the forearm pointing straight up: shoulder 0°, elbow 90°.
+    const { values, miss } = engine.reach(arm(), [{ instance: 'fore', point: [80, 0, 0], at: [100, 80, 0], axis: { local: [1, 0, 0], along: [0, 1, 0] } }]);
+    expect(values.get('shoulder')?.[0]).toBeCloseTo(0, 4);
+    expect(values.get('elbow')?.[0]).toBeCloseTo(90, 4);
+    expect(miss?.angle).toBeLessThan(1e-3);
+    const held = engine.reach(arm(30), [{ instance: 'fore', point: [80, 0, 0], at: [100, 80, 0] }], new Set(['shoulder']));
+    expect(held.values.get('shoulder')).toEqual([30]);
+    expect(held.miss?.distance).toBeGreaterThan(1);
+  });
+
+  it('carries a part from one moment to another, and lets it go where it is then (CAD-187)', () => {
+    const model: KinematicModel = { ...arm(0, 0), instances: [...arm().instances, instance('cube', true, translation([180, 0, 0]))] };
+    const study = {
+      id: 's',
+      name: 'Pick',
+      duration: 2,
+      keys: [
+        { time: 0, joint: 'shoulder', values: [0] },
+        { time: 2, joint: 'shoulder', values: [90] },
+      ],
+      carries: [{ instance: 'cube', by: 'fore', from: 0.5, until: 1.5 }],
+    };
+    const { frames } = engine.simulate(model, study, 4);
+    const cube = (time: number) => {
+      const frame = frames.find((f) => Math.abs(f.time - time) < 1e-9) as (typeof frames)[number];
+      return transformPoint(frame.poses['cube'] as Matrix4, [0, 0, 0]).map((v) => Math.round(v * 1e3) / 1e3 + 0);
+    };
+    expect(cube(0.25)).toEqual([180, 0, 0]); // not picked up yet
+    expect(cube(1)).toEqual([166.298, 68.883, 0]); // picked up at 22.5°, turned with the arm to 45°: 22.5° more
+    const letGo = cube(1.25);
+    expect(cube(1.75)).toEqual(letGo); // stays where it was let go
+    expect(cube(2)).toEqual(letGo);
+    expect(frames[4]?.values?.['shoulder']?.[0]).toBeCloseTo(45, 6);
+  });
+
+  it('follows targets keyed in a study along a straight line', () => {
+    const study = {
+      id: 's',
+      name: 'Line',
+      duration: 1,
+      keys: [],
+      targets: [
+        { time: 0, instance: 'fore', point: [80, 0, 0] as const, at: [150, 50, 0] as const },
+        { time: 1, instance: 'fore', point: [80, 0, 0] as const, at: [50, 150, 0] as const },
+      ],
+    };
+    const { frames, error } = engine.simulate(arm(), study, 4);
+    expect(error).toBeUndefined();
+    for (const frame of frames) {
+      const tip = transformPoint(frame.poses['fore'] as Matrix4, [80, 0, 0]);
+      expect((tip[0] as number) + (tip[1] as number)).toBeCloseTo(200, 3); // on the line x + y = 200
+    }
+  });
+});
+
+
+describe('KinematicsEngine: what the joints must hold (CAD-189)', () => {
+  // A level arm: a shoulder turning about y, 300 mm to a 2 kg mass, an elbow halfway with 1 kg on it.
+  const level = (driven = false): KinematicModel => ({
+    instances: [instance('base', true), instance('upper'), instance('fore')],
+    joints: [
+      { id: 'shoulder', type: 'revolute', a: { instance: 'base', frame: { origin: [0, 0, 0], u: [1, 0, 0], v: [0, 0, 1] } }, b: { instance: 'upper', frame: { origin: [0, 0, 0], u: [1, 0, 0], v: [0, 0, 1] } }, flip: false, values: [0], limits: [], ...(driven ? { driven } : {}) },
+      { id: 'elbow', type: 'revolute', a: { instance: 'upper', frame: { origin: [150, 0, 0], u: [1, 0, 0], v: [0, 0, 1] } }, b: { instance: 'fore', frame: { origin: [0, 0, 0], u: [1, 0, 0], v: [0, 0, 1] } }, flip: false, values: [0], limits: [] },
+    ],
+  });
+  const masses = [
+    { instance: 'upper', mass: 1, center: [150, 0, 0] as const },
+    { instance: 'fore', mass: 2, center: [150, 0, 0] as const },
+  ];
+
+  it('gives each joint of an open chain the torque gravity puts on it', () => {
+    const { loads, error } = engine.loads(level(), masses, [0, 0, -9.81]);
+    expect(error).toBeUndefined();
+    // Shoulder: 1 kg at 0.15 m and 2 kg at 0.3 m; elbow: 2 kg at 0.15 m. The frames turn about −y, lifting the arm.
+    const of = (id: string) => Math.abs(loads.find((l) => l.joint === id)?.load as number);
+    expect(of('shoulder')).toBeCloseTo(9.81 * (1 * 0.15 + 2 * 0.3), 3);
+    expect(of('elbow')).toBeCloseTo(9.81 * 2 * 0.15, 3);
+  });
+
+  it('adds what the masses’ accelerations take, and loads only the actuators when there are any', () => {
+    const speeding = masses.map((m) => ({ ...m, acceleration: [0, 0, 9.81] as const }));
+    const doubled = engine.loads(level(), speeding, [0, 0, -9.81]).loads.find((l) => l.joint === 'shoulder')?.load as number;
+    expect(Math.abs(doubled)).toBeCloseTo(2 * 9.81 * (0.15 + 0.6), 3);
+    const only = engine.loads(level(true), masses, [0, 0, -9.81]);
+    expect(only.loads.map((l) => l.joint)).toEqual(['shoulder']);
   });
 });

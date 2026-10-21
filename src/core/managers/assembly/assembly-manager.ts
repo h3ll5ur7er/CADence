@@ -15,6 +15,7 @@ import type {
   MotionLink,
   MotionStudy,
   PlaneFrame,
+  ReachTarget,
   Result,
   TopologyRef,
   Vec3,
@@ -46,6 +47,12 @@ export type AssemblyCommand =
    * parallel mechanism's legs. Refused, leaving the assembly as it was, when they cannot all hold.
    */
   | { readonly type: 'set-joints'; readonly joints: readonly { readonly jointId: string; readonly values: readonly number[] }[] }
+  /**
+   * Sets the joints so the targets are met (inverse kinematics, CAD-188): the joints leading to their
+   * instances (and closing loops on the way) move, starting from their values, within limits; those in
+   * `hold` keep theirs. A target out of reach gives the nearest pose and a note of how far off it is.
+   */
+  | { readonly type: 'reach'; readonly targets: readonly ReachTarget[]; readonly hold?: readonly string[] }
   /** Adds a pattern of instances, or changes one (same id); an empty name gets the next default ("Linear pattern 2"). */
   | { readonly type: 'set-pattern'; readonly pattern: InstancePattern }
   | { readonly type: 'remove-pattern'; readonly patternId: string }
@@ -128,6 +135,48 @@ export interface CollisionReport {
   readonly holds?: readonly (LimitHold & { readonly time: number })[];
 }
 
+/** An assembly at a moment of a study (CAD-196). */
+export interface StudyMoment {
+  readonly time: number;
+  readonly poses: ReadonlyMap<string, Matrix4>;
+  readonly values: ReadonlyMap<string, readonly number[]>;
+}
+
+/** Joint values that meet targets (CAD-188), and how far the worst target stays off. */
+export interface Reached {
+  readonly values: ReadonlyMap<string, readonly number[]>;
+  readonly poses: ReadonlyMap<string, Matrix4>;
+  readonly miss: { readonly distance: number; readonly angle: number };
+}
+
+/** What `loads` takes into account (CAD-189). */
+export interface LoadOptions {
+  /** m/s²; straight down along −z at 9.81 by default. */
+  readonly gravity?: Vec3;
+  /** Masses carried at points of instances (kg, mm in the instance's coordinates): a payload. */
+  readonly payloads?: readonly { readonly instance: string; readonly point: Vec3; readonly mass: number }[];
+  /** Over this study's moments instead of the pose the assembly stands in. */
+  readonly study?: string;
+  readonly fps?: number;
+  /** With the study: the parts' accelerations too (their centres', not their spin). */
+  readonly dynamic?: boolean;
+}
+
+/** A load on a joint's freedom: N·m for a turn, N for a slide; over a study, the largest and when. */
+export interface LoadLine {
+  readonly joint: string;
+  readonly dof: number;
+  readonly load: number;
+  readonly unit: 'N·m' | 'N';
+  readonly time?: number;
+}
+
+export interface LoadReport {
+  readonly loads: readonly LoadLine[];
+  /** Over a study: how many moments were weighed. */
+  readonly moments?: number;
+}
+
 /** A line of the bill of materials: one component (or configuration of it) and how many there are. */
 export interface BomLine {
   readonly component: string;
@@ -167,10 +216,16 @@ export interface AssemblySession {
   previewJoint(jointId: string, values: readonly number[]): Promise<Result<ReadonlyMap<string, Matrix4>>>;
   /** The frames of a motion study, `fps` per second. */
   motion(studyId: string, fps: number): Promise<Result<readonly MotionFrame[]>>;
-  /** Area, length, radius, distance and angle of faces, edges and vertices of instances, where they are. */
-  measure(refs: readonly PlacedRef[]): Promise<Result<Measurement>>;
+  /** Area, length, radius, distance and angle of faces, edges and vertices of instances, where they stand or at a moment of a study (CAD-196). */
+  measure(refs: readonly PlacedRef[], moment?: { readonly study: string; readonly time: number }): Promise<Result<Measurement>>;
   /** Total mass, volume and centre of mass of the shown instances and copies. */
   properties(): Promise<AssemblyProperties>;
+  /** Every instance's place and every joint's values at a moment of a study (CAD-196); pattern copies included. */
+  at(studyId: string, time: number): Promise<Result<StudyMoment>>;
+  /** The joint values that meet the targets, without changing the document (CAD-188). */
+  reach(targets: readonly ReachTarget[], hold?: readonly string[]): Promise<Result<Reached>>;
+  /** What each actuator must hold, as the assembly stands or over a study (CAD-189). */
+  loads(options?: LoadOptions): Promise<Result<LoadReport>>;
   /**
    * Where instances and pattern copies hit while a motion study plays (sampled `fps` times a second):
    * the first moment for each pair. Pairs that keep their relative position are tested once.

@@ -606,4 +606,41 @@ describe('AssemblyManager', () => {
     unwrap(await session.execute({ type: 'edit-study', study: { id: 's', name: 'Swing', duration: 2, keys: [], drives: [{ joint: 'hinge', dof: 0, speed: -60 }] } }));
     expect(session.state().notes).toEqual(['The drive of Revolute 1 (Angle) reaches its limit of -45 at 1.5 s and is held there.']);
   });
+
+  it('gives a study’s moment as numbers, reaches a target, and measures at a moment (CAD-196, CAD-188)', async () => {
+    await arm([0]);
+    unwrap(await session.execute({ type: 'add-study', study: { id: 's', name: 'Swing', duration: 2, keys: [{ time: 0, joint: 'hinge', values: [0] }, { time: 2, joint: 'hinge', values: [90] }] } }));
+    const moment = unwrap(await session.at('s', 1));
+    expect(moment.values.get('hinge')?.[0]).toBeCloseTo(45, 6);
+    expect(await session.at('s', 3)).toMatchObject({ ok: false, error: { message: 'A moment of Swing is from 0 to 2 s.' } });
+    // Where the link's far end is at 90°, then reached from 0°.
+    unwrap(await session.execute({ type: 'set-joint-values', jointId: 'hinge', values: [90] }));
+    const far = where('l1', [35, 5, 2.5]) as unknown as [number, number, number];
+    unwrap(await session.execute({ type: 'set-joint-values', jointId: 'hinge', values: [0] }));
+    const reached = unwrap(await session.reach([{ instance: 'l1', point: [35, 5, 2.5], at: far }]));
+    expect(reached.miss.distance).toBeLessThan(1e-4);
+    expect(session.state().document.joints[0]?.values).toEqual([0]); // asked, not changed
+    unwrap(await session.execute({ type: 'reach', targets: [{ instance: 'l1', point: [35, 5, 2.5], at: far }] }));
+    expect(session.state().document.joints[0]?.values[0]).toBeCloseTo(90, 4);
+    unwrap(await session.execute({ type: 'reach', targets: [{ instance: 'l1', point: [35, 5, 2.5], at: [500, 0, 0] }] }));
+    expect(session.state().notes[0]).toMatch(/^The targets are out of reach: the nearest pose is [\d.]+ mm off\.$/);
+    const between = unwrap(await session.measure([{ instance: 'b1', ...holeOf('base') }, { instance: 'l1', kind: 'face', body: 'link', name: 'f:link:end' }], { study: 's', time: 0 }));
+    expect(between).toBeDefined();
+  });
+
+  it('weighs what a joint must hold against gravity, and refuses to carry a part a joint holds (CAD-189, CAD-187)', async () => {
+    await arm([0]);
+    // The hinge turns about z: gravity along −y turns the link about it.
+    const report = unwrap(await session.loads({ gravity: [0, -9.81, 0] }));
+    const line = report.loads.find((l) => l.joint === 'hinge');
+    const link = (await session.properties()).parts.find((p) => p.instance === 'l1')?.mass as number;
+    // The link's centre: a 40 × 10 plate with a ⌀6 hole at (5, 5).
+    const hole = Math.PI * 9;
+    const centre = (400 * 20 - hole * 5) / (400 - hole);
+    const lever = Math.abs((where('l1', [centre, 5, 2.5])[0] as number) - 10) / 1000;
+    expect(line?.unit).toBe('N·m');
+    expect(Math.abs(line?.load as number)).toBeCloseTo((link / 1000) * 9.81 * lever, 6);
+    const carry = await session.execute({ type: 'add-study', study: { id: 'c', name: '', duration: 1, keys: [], carries: [{ instance: 'l1', by: 'b1', from: 0 }] } });
+    expect(carry).toMatchObject({ ok: false, error: { message: 'l1 is held by a joint; only parts no joint holds can be carried.' } });
+  });
 });

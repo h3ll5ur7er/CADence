@@ -45,3 +45,41 @@ test('moves a joint by a parameter, says where its limit holds it, and marks it 
   await page.getByRole('checkbox', { name: 'Driven (an actuator)' }).check();
   await expect(page.getByRole('checkbox', { name: 'Driven (an actuator)' })).toBeChecked();
 });
+
+test('carries a part through a motion study, and lets it go (CAD-187)', async ({ page }) => {
+  await plateProject(page, 'Pick and place');
+  await setThickness(page, '4 mm');
+  await cutHole(page);
+  await page.getByRole('button', { name: 'Assembly', exact: true }).click();
+  for (const expected of ['1', '2', '3']) {
+    await page.getByRole('button', { name: 'Insert', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Component 1' }).click();
+    await expect(page.getByTestId('instance-count')).toHaveText(expected);
+  }
+  await expect(page.getByRole('list', { name: 'Instances' })).not.toContainText('loading');
+  await hinge(page, 0, 1);
+  await expect(page.getByRole('list', { name: 'Joints' })).toContainText('Revolute 1');
+
+  // The arm turns from 0° to 90° in two seconds, and picks up the third plate on the way.
+  await page.getByRole('button', { name: 'Motion', exact: true }).click();
+  await page.getByRole('button', { name: 'Select Revolute 1' }).click();
+  await page.getByRole('spinbutton', { name: 'Angle value of Revolute 1' }).fill('90');
+  await page.getByRole('spinbutton', { name: 'Angle value of Revolute 1' }).press('Tab');
+  await page.getByRole('button', { name: 'Select Motion study 1' }).click();
+  await page.locator('#key-time').fill('2');
+  await page.locator('#key-time').press('Tab');
+  await page.getByRole('button', { name: 'Key at current values' }).click();
+  await expect(page.getByRole('table', { name: 'Keys' })).toContainText('90');
+  await page.getByRole('combobox', { name: 'Part to carry' }).selectOption({ label: 'Component 1 3' });
+  await page.getByRole('combobox', { name: 'Carried by' }).selectOption({ label: 'Component 1 2' });
+  await page.getByRole('spinbutton', { name: 'Carried from' }).fill('0.5');
+  await page.getByRole('spinbutton', { name: 'Carried from' }).press('Tab');
+  await page.getByRole('spinbutton', { name: 'Carried until' }).fill('1.5');
+  await page.getByRole('spinbutton', { name: 'Carried until' }).press('Tab');
+  await page.getByRole('button', { name: 'Carry', exact: true }).click();
+  await expect(page.getByTestId('carry')).toHaveText(/Component 1 3 by Component 1 2, 0.5–1.5 s/);
+  await page.getByRole('slider', { name: 'Time' }).fill('1');
+  await expect(page.getByTestId('motion-time')).toHaveText('1.00 s');
+  await standardView(page, 'Top');
+  await evidence(page, '101-carried-part');
+});

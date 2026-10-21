@@ -1,4 +1,4 @@
-import { jointDofs, type LimitHold, type Matrix4, type PlaneFrame } from '@core/contracts';
+import { jointDofs, type LimitHold, type Matrix4, type PlaneFrame, type ReachTarget } from '@core/contracts';
 import {
   compose,
   fromFrame,
@@ -6,6 +6,7 @@ import {
   rotation,
   rotationVector,
   translation,
+  transformPoint,
   translationOf,
   type Vec3,
 } from '@core/utilities/math';
@@ -103,23 +104,73 @@ export class KinematicSolver {
   private readonly tree: TreeStep[] = [];
   private readonly loops: KinematicJoint[] = [];
   private readonly roots = new Map<string, Matrix4>();
+  /** The tree step that places each instance, to follow an instance back to the ground. */
+  private readonly placing = new Map<string, TreeStep>();
   private error: KinematicSolution['error'];
 
   constructor(
     private readonly model: KinematicModel,
     private readonly driven: ReadonlySet<string>,
+    private readonly targets: readonly ReachTarget[] = [],
   ) {
     this.span();
   }
 
   solve(): KinematicSolution {
     const values = new Map(this.model.joints.map((j) => [j.id, clamp(j, j.values)]));
-    if (this.loops.length && !this.error) this.closeLoops(values);
+    if ((this.loops.length || this.targets.length) && !this.error) this.closeLoops(values);
     const poses = this.poses(values);
     for (const joint of this.loops) values.set(joint.id, this.loopValues(joint, poses));
     const placed = new Set(this.tree.map((s) => (s.forward ? s.joint.b.instance : s.joint.a.instance)));
     const held = holds(this.model.joints, values, this.driven);
-    return { poses, values, placed, ...(held.length ? { holds: held } : {}), ...(this.error ? { error: this.error } : {}) };
+    return { poses, values, placed, ...(held.length ? { holds: held } : {}), ...(this.targets.length ? { miss: this.miss(poses) } : {}), ...(this.error ? { error: this.error } : {}) };
+  }
+
+  /** The tree joints between the ground and these instances: those a target can move. */
+  private chainTo(instances: Iterable<string>): Set<string> {
+    const joints = new Set<string>();
+    for (let instance of instances) {
+      for (let step = this.placing.get(instance), guard = 0; step && guard <= this.tree.length; step = this.placing.get(instance), guard++) {
+        joints.add(step.joint.id);
+        instance = step.forward ? step.joint.a.instance : step.joint.b.instance;
+      }
+    }
+    return joints;
+  }
+
+  /** How far each target is (mm, and its directions weighed like rotations). */
+  private targetResidual(poses: ReadonlyMap<string, Matrix4>, directions = true): number[] {
+    return this.targets.flatMap((target) => {
+      const pose = poses.get(target.instance);
+      if (!pose) return [];
+      const point = transformPoint(pose, target.point ?? [0, 0, 0]);
+      const direction = (pair: ReachTarget['axis']) => {
+        if (!pair || !directions) return [];
+        const got = unitOf(transformPoint(pose, pair.local).map((v, i) => v - (pose[12 + i] as number)));
+        const want = unitOf(pair.along);
+        return got.map((v, i) => (v - (want[i] as number)) * rotationWeight);
+      };
+      return [...point.map((v, i) => v - (target.at[i] as number)), ...direction(target.axis), ...direction(target.xAxis)];
+    });
+  }
+
+  /** The worst target's distance (mm) and the angle (degrees) its directions are off. */
+  private miss(poses: ReadonlyMap<string, Matrix4>): { distance: number; angle: number } {
+    let [distance, angle] = [0, 0];
+    for (const target of this.targets) {
+      const pose = poses.get(target.instance);
+      if (!pose) continue;
+      const point = transformPoint(pose, target.point ?? [0, 0, 0]);
+      distance = Math.max(distance, Math.hypot(...point.map((v, i) => v - (target.at[i] as number))));
+      for (const pair of [target.axis, target.xAxis]) {
+        if (!pair) continue;
+        const got = unitOf(transformPoint(pose, pair.local).map((v, i) => v - (pose[12 + i] as number)));
+        const want = unitOf(pair.along);
+        const cos = got.reduce((sum, v, i) => sum + v * (want[i] as number), 0);
+        angle = Math.max(angle, Math.acos(Math.max(-1, Math.min(1, cos))) / degree);
+      }
+    }
+    return { distance, angle };
   }
 
   /** Breadth first from the grounded instances, then from the first instance of each unconnected group. */
@@ -147,7 +198,9 @@ export class KinematicSolver {
             this.loops.push(joint);
             continue;
           }
-          this.tree.push({ joint, forward: joint.a.instance === current });
+          const step = { joint, forward: joint.a.instance === current };
+          this.tree.push(step);
+          this.placing.set(other, step);
           known.add(other);
           queue.push(other);
         }
@@ -215,10 +268,17 @@ export class KinematicSolver {
     return jointDofs[joint.type].map((dof) => (dof.kind === 'translate' ? (t[dof.axis] as number) : (euler[dof.axis] as number) / degree));
   }
 
-  /** Damped least squares (Levenberg–Marquardt) over the free values of the tree joints. */
+  /**
+   * Damped least squares (Levenberg–Marquardt) over the free values of the tree joints, closing the
+   * loops and, with targets, meeting them: then only the joints leading to the targets' instances and
+   * to the loops move.
+   */
   private closeLoops(values: Map<string, readonly number[]>): void {
+    const movable = this.targets.length
+      ? this.chainTo([...this.targets.map((t) => t.instance), ...this.loops.flatMap((j) => [j.a.instance, j.b.instance])])
+      : undefined;
     const unknowns = this.tree.flatMap(({ joint }) =>
-      this.driven.has(joint.id) ? [] : jointDofs[joint.type].map((dof, index) => ({ joint, index, scale: dof.kind === 'rotate' ? 1 / degree : 1 })),
+      this.driven.has(joint.id) || (movable && !movable.has(joint.id)) ? [] : jointDofs[joint.type].map((dof, index) => ({ joint, index, scale: dof.kind === 'rotate' ? 1 / degree : 1 })),
     );
     const read = () => unknowns.map((u) => ((values.get(u.joint.id) ?? [])[u.index] ?? 0) / u.scale);
     const write = (x: readonly number[]) =>
@@ -227,16 +287,61 @@ export class KinematicSolver {
         next[u.index] = (x[k] as number) * u.scale;
         values.set(u.joint.id, clamp(u.joint, next));
       });
+    let directions = true;
     const residuals = () => {
       const poses = this.poses(values);
-      return this.loops.flatMap((joint) => this.residual(joint, poses));
+      return [...this.loops.flatMap((joint) => this.residual(joint, poses)), ...this.targetResidual(poses, directions)];
     };
     const norm = (r: readonly number[]) => Math.hypot(...r);
+    // Far targets are reached in two stages: their points first, then their directions as well, so
+    // the directions do not pull the joints into a corner on the way (CAD-188).
+    const run = () => {
+      if (this.targets.some((t) => t.axis || t.xAxis)) {
+        directions = false;
+        this.minimize(unknowns, read, write, residuals, norm, 300);
+        directions = true;
+      }
+      this.minimize(unknowns, read, write, residuals, norm, this.targets.length ? 500 : 200);
+    };
+    const start = read();
+    run();
+    // A target missed from where the joints are (an arm held straight bends the wrong way first) is
+    // tried again from a few nearby starts: every joint 20° (or 20 mm) one way, the other, alternating.
+    if (this.targets.length && norm(residuals()) > 1e-6) {
+      let best = { x: read(), score: norm(residuals()) };
+      const seeds: ((k: number) => number)[] = [() => 1, () => -1, (k) => (k % 2 ? -1 : 1), (k) => (k % 2 ? 1 : -1)];
+      for (const seed of seeds) {
+        write(start.map((v, k) => v + seed(k) * ((unknowns[k] as { scale: number }).scale === 1 ? 20 : 20 * degree)));
+        run();
+        const score = norm(residuals());
+        if (score < best.score - 1e-9) best = { x: read(), score };
+        if (best.score <= 1e-6) break;
+      }
+      write(best.x);
+    }
+    // Targets may stay out of reach (the nearest pose is the answer); only loops that stay open fail.
+    const open = this.loops.length ? norm(this.loops.flatMap((joint) => this.residual(joint, this.poses(values)))) : 0;
+    if (open > 1e-4) {
+      const worst = this.loops.find((joint) => norm(this.residual(joint, this.poses(values))) > 1e-4) ?? this.loops[0];
+      // How far it stays open: mm, with rotations weighed as mm.
+      const gap = worst ? norm(this.residual(worst, this.poses(values))) : 0;
+      if (worst) this.error = { joint: worst.id, message: `The joints cannot all hold: this loop does not close with these values and limits (it stays ${gap < 0.01 ? gap.toExponential(1) : gap.toFixed(2)} mm open).` };
+    }
+  }
 
+  /** Damped least squares from the values as they are, for at most `iterations` steps. */
+  private minimize(
+    unknowns: readonly { readonly scale: number }[],
+    read: () => number[],
+    write: (x: readonly number[]) => void,
+    residuals: () => number[],
+    norm: (r: readonly number[]) => number,
+    iterations: number,
+  ): void {
     let x = read();
     let r = residuals();
     let damping = 1e-3;
-    for (let iteration = 0; iteration < 200 && norm(r) > tolerance && unknowns.length; iteration++) {
+    for (let iteration = 0; iteration < iterations && norm(r) > tolerance && unknowns.length; iteration++) {
       const jacobian = unknowns.map((_, k) => {
         const step = 1e-6;
         const probe = [...x];
@@ -251,11 +356,15 @@ export class KinematicSolver {
       const jtj = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => dotRows(jacobian[i] as number[], jacobian[j] as number[])));
       const jtr = Array.from({ length: n }, (_, i) => -dotRows(jacobian[i] as number[], r));
       const delta = solveLinear(
-        jtj.map((row, i) => row.map((v, j) => (i === j ? v + damping * (v + 1e-9) : v))),
+        // A joint that does not move the residuals (a gripper turning about the target point) must not make it singular.
+        jtj.map((row, i) => row.map((v, j) => (i === j ? v + damping * v + 1e-9 : v))),
         jtr,
       );
       if (!delta) break;
-      const candidate = x.map((v, k) => v + (delta[k] as number));
+      // A step turns a joint at most 0.2 rad (11°) or moves it 20 mm, so a pose near a singular one
+      // (an arm held straight) walks towards a far target instead of leaping into its limits.
+      const largest = Math.max(1, ...delta.map((d, k) => Math.abs(d) / ((unknowns[k] as { scale: number }).scale === 1 ? 20 : 0.2)));
+      const candidate = x.map((v, k) => v + (delta[k] as number) / largest);
       write(candidate);
       const next = residuals();
       if (norm(next) < norm(r)) {
@@ -268,14 +377,13 @@ export class KinematicSolver {
         if (damping > 1e8) break;
       }
     }
-    if (norm(r) > 1e-4) {
-      const worst = this.loops.find((joint) => norm(this.residual(joint, this.poses(values))) > 1e-4) ?? this.loops[0];
-      // How far it stays open: mm, with rotations weighed as mm.
-      const gap = worst ? norm(this.residual(worst, this.poses(values))) : 0;
-      if (worst) this.error = { joint: worst.id, message: `The joints cannot all hold: this loop does not close with these values and limits (it stays ${gap < 0.01 ? gap.toExponential(1) : gap.toFixed(2)} mm open).` };
-    }
   }
 }
+
+const unitOf = (v: readonly number[]): number[] => {
+  const length = Math.hypot(...v) || 1;
+  return v.map((x) => x / length);
+};
 
 const dotRows = (a: readonly number[], b: readonly number[]) => a.reduce((sum, v, i) => sum + v * (b[i] as number), 0);
 

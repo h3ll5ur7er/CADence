@@ -239,6 +239,17 @@ describe('the MCP server', () => {
     await call('edit_assembly', { document: linkage, commands: [{ type: 'edit-joint', joint: limited }] });
     const held = JSON.parse(text(await call('edit_assembly', { document: linkage, commands: [{ type: 'set-joints', joints: [{ jointId: 'hinge', values: [75] }] }] }))) as { limits?: string[] };
     expect(held.limits).toEqual([expect.stringMatching(/is held at its maximum, 30° \(asked 75°\)\.$/)]);
+
+    // A study's moments as numbers (CAD-196); a target reached (CAD-188); what the hinge holds (CAD-189).
+    const moments = JSON.parse(text(await call('get_assembly', { document: linkage, study: 'swing', times: [0, 0.5], joints: ['hinge'], instances: ['arm'] }))) as { moments: { time: number; joints: { id: string; values: number[] }[]; instances: { id: string }[] }[] };
+    expect(moments.moments.map((m) => [m.time, m.joints.map((j) => j.id), m.instances.map((i) => i.id)])).toEqual([
+      [0, ['hinge'], ['arm']],
+      [0.5, ['hinge'], ['arm']],
+    ]);
+    const reached = JSON.parse(text(await call('reach', { document: linkage, targets: [{ instance: 'arm', at: [0, 0, 0] }] }))) as { miss: { distance: number }; reached: boolean };
+    expect(reached).toMatchObject({ reached: expect.any(Boolean), miss: { distance: expect.any(Number) } });
+    const loads = JSON.parse(text(await call('joint_loads', { document: linkage, gravity: [0, -9.81, 0] }))) as { loads: { joint: string; unit: string; name: string }[] };
+    expect(loads.loads.find((l) => l.joint === 'hinge')).toMatchObject({ unit: 'N·m', name: expect.any(String) });
   });
 });
 

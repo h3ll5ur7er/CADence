@@ -16,11 +16,20 @@ export function modelTools(cadence: Cadence): Tool[] {
       name: 'measure',
       description:
         'Area, length, radius, distance and angle of faces, edges and vertices: of a component ({"kind":"face","body":"<body>","name":"<face>"}), or of instances of an assembly (the same with "instance"), where they are. One element gives its size; two, their distance and angle.',
-      inputSchema: object({ document: documentArg, refs: { type: 'array', items: { type: 'object' }, description: 'One or two faces, edges or vertices.' } }, ['document', 'refs']),
+      inputSchema: object(
+        {
+          document: documentArg,
+          refs: { type: 'array', items: { type: 'object' }, description: 'One or two faces, edges or vertices.' },
+          study: { type: 'string', description: 'Assemblies: a motion study, to measure at a moment of it (with time).' },
+          time: { type: 'number', description: 'With study: the moment, seconds.' },
+        },
+        ['document', 'refs'],
+      ),
       run: async (args) => {
         const document = await cadence.document(String(args['document']));
         const refs = args['refs'] as readonly (TopologyRef & { instance?: string })[];
-        if (document.kind === 'assembly') return (await cadence.assembly(document.id)).measure(refs as readonly PlacedRef[]);
+        const moment = args['study'] === undefined ? undefined : { study: String(args['study']), time: Number(args['time'] ?? 0) };
+        if (document.kind === 'assembly') return (await cadence.assembly(document.id)).measure(refs as readonly PlacedRef[], moment);
         return (await component(args)).measure(refs);
       },
     },

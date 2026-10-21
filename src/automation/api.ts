@@ -9,6 +9,7 @@ import type {
   Matrix4,
   Measurement,
   ProjectSummary,
+  ReachTarget,
   Result,
   SimulationResult,
   SketchConstraint,
@@ -19,7 +20,7 @@ import type {
   Vec3,
 } from '@core/contracts';
 import { describeChange, isDimension, jointDofs, type MotionFrame, sourceKey } from '@core/contracts';
-import type { AssemblyCommand, AssemblyFormat, AssemblySession, AssemblyState, BomLine, CollisionOptions, CollisionReport, InstructionPicture, PlacedRef } from '@core/managers/assembly';
+import type { AssemblyCommand, AssemblyFormat, AssemblySession, AssemblyState, BomLine, CollisionOptions, CollisionReport, InstructionPicture, LoadOptions, PlacedRef } from '@core/managers/assembly';
 import type { BrokenReference, DesignSession, DesignState, DrawingFormat, ExportOptions, SketchView, SolidFormat } from '@core/managers/design';
 import type { ProjectManager } from '@core/managers/project';
 import { deflate, encodeGif, encodePng, type Pixels } from '@core/utilities/picture';
@@ -861,10 +862,59 @@ export class AssemblyScript {
     return this.delivered(options.to, () => this.session.exportAssembly(format));
   }
 
-  /** Area, length, radius, distance and angle of faces, edges and vertices of instances, where they are. */
-  async measure(refs: readonly PlacedRef[]): Promise<Measurement> {
+  /** Area, length, radius, distance and angle of faces, edges and vertices of instances, where they are or at a moment of a study (CAD-196). */
+  async measure(refs: readonly PlacedRef[], moment?: { readonly study: string; readonly time: number }): Promise<Measurement> {
     await this.loaded();
-    return unwrap(await this.session.measure(refs));
+    return unwrap(await this.session.measure(refs, moment));
+  }
+
+  /**
+   * The assembly at moments of a study (CAD-196): where each instance (and pattern copy) is and every
+   * joint's values, only the instances and joints asked for when given.
+   */
+  async moments(studyId: string, times: readonly number[], only: { readonly instances?: readonly string[]; readonly joints?: readonly string[] } = {}) {
+    await this.ready();
+    const wanted = (list: readonly string[] | undefined, id: string) => !list?.length || list.includes(id);
+    const moments = [];
+    for (const time of times) {
+      const moment = unwrap(await this.session.at(studyId, time));
+      moments.push({
+        time,
+        instances: [...moment.poses].filter(([id]) => wanted(only.instances, id)).map(([id, transform]) => ({ id, origin: originOf(transform), transform: roundAll(transform) })),
+        joints: [...moment.values].filter(([id]) => wanted(only.joints, id)).map(([id, values]) => ({ id, values: roundAll(values) })),
+      });
+    }
+    return { study: studyId, moments };
+  }
+
+  /** Joint values that meet targets (CAD-188); with `apply`, set as one change. */
+  async reach(targets: readonly ReachTarget[], options: { readonly hold?: readonly string[]; readonly apply?: boolean } = {}) {
+    await this.loaded();
+    const reached = unwrap(await this.session.reach(targets, options.hold));
+    const { document } = this.session.state();
+    const joints = document.joints.flatMap((joint) => {
+      const values = reached.values.get(joint.id);
+      return values && JSON.stringify(values) !== JSON.stringify(joint.values) ? [{ id: joint.id, values: roundAll(values) }] : [];
+    });
+    const answer = { joints, miss: { distance: round(reached.miss.distance), angle: round(reached.miss.angle) }, reached: reached.miss.distance <= 0.01 && reached.miss.angle <= 0.01 };
+    if (!options.apply) return answer;
+    const before = await this.summary();
+    unwrap(await this.session.execute({ type: 'reach', targets, ...(options.hold ? { hold: options.hold } : {}) }));
+    return { ...answer, applied: await this.changes(before) };
+  }
+
+  /** What each actuator must hold (CAD-189), with each joint's name and freedom. */
+  async loads(options: LoadOptions = {}) {
+    await this.loaded();
+    const report = unwrap(await this.session.loads(options));
+    const { document } = this.session.state();
+    return {
+      ...report,
+      loads: report.loads.map((line) => {
+        const joint = document.joints.find((j) => j.id === line.joint);
+        return { ...line, name: joint?.name ?? line.joint, freedom: joint ? jointDofs[joint.type][line.dof]?.label : undefined, load: Math.round(line.load * 1e6) / 1e6 };
+      }),
+    };
   }
 
   /** The bill of materials as CSV; returns the path. */

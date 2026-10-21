@@ -417,9 +417,65 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
       },
       {
         name: 'get_assembly',
-        description: 'An assembly as data: its components, instances (with their transforms and origins), pattern copies, joints (with why they fail), motion links, patterns, motion studies and exploded views.',
-        inputSchema: object({ document: documentArg }, ['document']),
-        run: async (args) => (await assembly(args)).summary(),
+        description:
+          'An assembly as data: its components, instances (with their transforms and origins), pattern copies, joints (with why they fail, where they are and where a limit holds them), motion links, patterns, motion studies and exploded views. With study and time (or times): the assembly at those moments of the study instead, as numbers: every instance’s place and every joint’s values (only the instances and joints listed, when given).',
+        inputSchema: object(
+          {
+            document: documentArg,
+            study: string('A motion study id: the assembly at moments of it.'),
+            time: number('With study: the moment, seconds.'),
+            times: { type: 'array', items: { type: 'number' }, description: 'With study: several moments, seconds (up to 50).' },
+            instances: strings('With study: only these instances.'),
+            joints: strings('With study: only these joints.'),
+          },
+          ['document'],
+        ),
+        run: async (args) => {
+          const script = await assembly(args);
+          if (args['study'] === undefined) return script.summary();
+          const times = (args['times'] as number[] | undefined) ?? [Number(args['time'] ?? 0)];
+          if (times.length > 50) throw new Error('Ask for up to 50 moments at a time.');
+          return script.moments(String(args['study']), times, { ...(args['instances'] ? { instances: args['instances'] as string[] } : {}), ...(args['joints'] ? { joints: args['joints'] as string[] } : {}) });
+        },
+      },
+      {
+        name: 'reach',
+        description:
+          'Inverse kinematics: the joint values that put a point of an instance at a place (and its directions along others), for open chains (a robot arm) and closed ones (a Stewart platform’s plate, whose legs it gives). Targets: [{"instance":"gripper","point":[0,0,85],"at":[-300,120,5],"axis":{"local":[0,0,1],"along":[0,0,-1]},"xAxis":{"local":[1,0,0],"along":[1,0,0]}}]. The joints leading to the instance (and closing loops on the way) move from their values, within limits; hold keeps joints as they are. Answers with the joints’ new values and how far off the targets stay (miss); with apply, sets them as one change.',
+        inputSchema: object(
+          {
+            document: documentArg,
+            targets: { type: 'array', items: { type: 'object' }, description: 'Where instances should be: instance, point (its coordinates), at (assembly coordinates), optional axis and xAxis ({local, along}).' },
+            hold: strings('Joints that keep their values.'),
+            apply: { type: 'boolean', description: 'Set the values (one change, undoable).' },
+          },
+          ['document', 'targets'],
+        ),
+        run: async (args) => (await assembly(args)).reach(args['targets'] as never, { ...(args['hold'] ? { hold: args['hold'] as string[] } : {}), apply: args['apply'] === true }),
+      },
+      {
+        name: 'joint_loads',
+        description:
+          'What each actuator must hold, from the parts’ weight (their materials) and payloads: N·m for a turning joint, N for a sliding one, as the assembly stands or the largest over a motion study and when (with dynamic: their accelerations too). Actuators are the driven joints; without any, every joint of an open chain. For choosing motors and gearboxes.',
+        inputSchema: object(
+          {
+            document: documentArg,
+            gravity: point('m/s² (default [0, 0, -9.81]).'),
+            payloads: { type: 'array', items: { type: 'object' }, description: 'Masses carried: [{"instance":"gripper","point":[0,0,85],"mass":1}] (kg, the instance’s mm).' },
+            study: string('A motion study: the largest load of each joint over it, and when.'),
+            fps: number('With study: moments per second (10 by default).'),
+            dynamic: { type: 'boolean', description: 'With study: add what the parts’ accelerations take.' },
+          },
+          ['document'],
+        ),
+        run: async (args) =>
+          (await assembly(args)).loads({
+            ...(args['gravity'] ? { gravity: args['gravity'] as unknown as Vec3 } : {}),
+            ...(args['payloads'] ? { payloads: args['payloads'] as never } : {}),
+            ...(args['study'] !== undefined ? { study: String(args['study']) } : {}),
+            ...(args['fps'] !== undefined ? { fps: Number(args['fps']) } : {}),
+            dynamic: args['dynamic'] === true,
+          }),
       },
       {
         name: 'edit_assembly',

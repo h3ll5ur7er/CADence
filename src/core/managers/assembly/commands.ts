@@ -1,4 +1,4 @@
-import { appearanceProblem, type AssemblyDocument, coneJoints, type ExplodedView, fail, type Instance, type InstancePattern, isDefaultAppearance, type Joint, jointDofs, type JointOffset, type JointType, type MotionLink, type MotionStudy, offsetFields, ok, type Result } from '@core/contracts';
+import { appearanceProblem, type AssemblyDocument, coneJoints, type ExplodedView, fail, type Instance, type InstancePattern, isDefaultAppearance, type Joint, jointDofs, type JointOffset, type JointType, type MotionCarry, type MotionLink, type MotionStudy, offsetFields, ok, type ReachTarget, type Result } from '@core/contracts';
 import type { AssemblyCommand } from './assembly-manager';
 import { copyId, patternTransforms } from './patterns';
 
@@ -143,6 +143,25 @@ function studyNotes(document: AssemblyDocument, study: MotionStudy): string[] {
 }
 
 const round = (value: number) => Math.round(value * 1000) / 1000;
+
+/** What is wrong with a target (CAD-188): an instance of the assembly, and points and directions of three numbers. */
+export function reachProblem(document: AssemblyDocument, target: ReachTarget): string | undefined {
+  if (!document.instances.some((i) => i.id === target.instance)) return `A target needs an instance of this assembly; ${String(target.instance)} is none.`;
+  if (!vector(target.at) || (target.point !== undefined && !vector(target.point))) return 'A target needs a point "at" (and its own "point") of three numbers.';
+  for (const pair of [target.axis, target.xAxis]) {
+    if (pair !== undefined && (!vector(pair.local) || !vector(pair.along) || !(Math.hypot(...pair.local) > 1e-9) || !(Math.hypot(...pair.along) > 1e-9))) return 'A target direction needs "local" and "along", each three numbers, not zero.';
+  }
+  return undefined;
+}
+
+/** What is wrong with a carry (CAD-187): two instances, a carried one no joint places, times within the study. */
+function carryCheck(document: AssemblyDocument, carry: MotionCarry, duration: number): string | undefined {
+  const ids = new Set(document.instances.map((i) => i.id));
+  if (!ids.has(carry.instance) || !ids.has(carry.by) || carry.instance === carry.by) return 'A carry needs an instance and another instance that carries it.';
+  if (document.joints.some((j) => j.a.instance === carry.instance || j.b.instance === carry.instance)) return `${carry.instance} is held by a joint; only parts no joint holds can be carried.`;
+  if (!finite(carry.from) || carry.from < 0 || carry.from > duration || (carry.until !== undefined && (!finite(carry.until) || carry.until <= carry.from || carry.until > duration))) return 'A carry starts within the study and ends after it starts.';
+  return undefined;
+}
 
 /** Pure: applies a command to an assembly document. Component lookups are the manager's job. */
 export function applyCommand(document: AssemblyDocument, command: AssemblyCommand, componentName?: string): Result<Applied> {
@@ -300,11 +319,18 @@ export function applyCommand(document: AssemblyDocument, command: AssemblyComman
         return invalid('Keys need a joint of this assembly and a time within the study.');
       }
       if ((command.study.drives ?? []).some((d) => !joints.has(d.joint) || !Number.isFinite(d.speed))) return invalid('Drives need a joint of this assembly and a speed.');
+      const targetProblem = (command.study.targets ?? []).map((t) => (!finite(t.time) || t.time < 0 || t.time > command.study.duration ? 'Targets need a time within the study.' : reachProblem(document, t))).find(Boolean);
+      if (targetProblem) return invalid(targetProblem);
+      const carryProblem = (command.study.carries ?? []).map((c) => carryCheck(document, c, command.study.duration)).find(Boolean);
+      if (carryProblem) return invalid(carryProblem);
       const study = { ...command.study, name: command.study.name.trim() || nextName(document.motionStudies.map((s) => s.name), 'Motion study') };
       const motionStudies = exists ? document.motionStudies.map((s) => (s.id === study.id ? study : s)) : [...document.motionStudies, study];
       const notes = studyNotes(document, study);
       return ok({ document: { ...document, motionStudies }, ...(notes.length ? { notes } : {}) });
     }
+    case 'reach':
+      // Worked out by the manager, which has the kinematics (CAD-188).
+      return invalid('Reaching needs the assembly’s joints solved; the Assembly Manager does that.');
     case 'remove-study':
       return ok({ document: { ...document, motionStudies: document.motionStudies.filter((s) => s.id !== command.studyId) } });
   }

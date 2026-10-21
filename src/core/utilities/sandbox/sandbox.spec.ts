@@ -52,7 +52,8 @@ describe('the sandbox', () => {
     expect(await runSandboxed('const a = 1;\nnull.size;')).toMatchObject({ ok: false, reason: 'error', error: expect.stringMatching(/TypeError: .*\(line 2\)/) });
     expect(await runSandboxed('const a = [];\nwhile (true) a.push("x".repeat(1000));', { memoryLimit: 8 * 1024 * 1024 })).toMatchObject({ ok: false, reason: 'memory' });
     expect(await runSandboxed('return 3;')).toMatchObject({ ok: true, value: 3 });
-  });
+    // Filling 8 MB takes about five seconds on CI runners.
+  }, 30_000);
 });
 
 describe('the sandbox in a worker', () => {

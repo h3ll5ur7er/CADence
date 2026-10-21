@@ -78,7 +78,8 @@ export class Store {
   }
 
   endSession(token: string): void {
-    delete this.data.sessions[digest(token)];
+    const { [digest(token)]: _, ...rest } = this.data.sessions;
+    this.data.sessions = rest;
     this.save();
   }
 

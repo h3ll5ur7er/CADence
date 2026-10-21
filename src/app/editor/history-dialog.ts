@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, type ElementRef, inject, output, signal, viewChild } from '@angular/core';
+import { ChangeDetectionStrategy, Component, type ElementRef, inject, output, signal, viewChild } from '@angular/core';
 import type { DocumentSummary, Version } from '@core/contracts';
 import { PROJECT_MANAGER } from '../core.providers';
 import { relativeTime } from '../shared/format';

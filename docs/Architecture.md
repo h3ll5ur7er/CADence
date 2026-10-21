@@ -89,6 +89,8 @@ Clients enter through one manager each: Home and the Imported viewer use the **P
 | **Analysis Engine** | | | | | | | | | | ● | |
 | **Interchange Engine** | | | | | | | | | | ● | |
 
+The **Revision Engine** (versions compared and merged by their items, [[Architecture/Decisions#ADR-61]]) serves the Project Manager (git sync, comparing versions) and the Design Manager (live editing). **Server Access** reaches a CADence server ([[Architecture/Server]]): the Project Manager shares projects there, the Design Manager edits live through its relay.
+
 Project Access, Document Access and Asset Access read and write the project store and asset store. Shape Access works on the in-worker shape cache, and External File Access on the host's file pickers, downloads and dialogs.
 
 ## Call rules
@@ -165,12 +167,13 @@ src/
   core/
     contracts/            Data contracts: document model, DTOs, commands, events
     managers/             project/  design/  assembly/
-    engines/              sketch/  parameter/  modeling/  kinematics/  analysis/  interchange/
-    access/               project/  document/  asset/  shape/  external-file/
+    engines/              sketch/  parameter/  modeling/  kinematics/  analysis/  interchange/  revision/ …
+    access/               project/  document/  asset/  shape/  external-file/  version/  server/
     utilities/            messaging/  diagnostics/  math/  identity/
     composition/          composition roots: createBrowserCore, createDesktopCore, createInMemoryCore; node.ts: createNodeCore
   workers/                geometry.worker.ts (hosts the kernel-bound engines)
   automation/             Client in Node: scripting API, command line, MCP server (built by tools/automation/build.mjs)
+server/                   The CADence server: accounts, shared projects as git repositories, the live relay (built by tools/server/build.mjs)
 src-tauri/                Desktop shell (Rust)
 e2e/                      Playwright specs and evidence screenshots
 tools/architecture/       The architecture test (call rules over the import graph)

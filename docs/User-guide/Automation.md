@@ -61,7 +61,7 @@ export default async function (cadence, [name]) {
 
 The API ([[src/automation/api.ts]]):
 
-- `cadence.projects`: the whole Project Manager: create, rename and delete projects and documents, import files, project parameters, versions and sync. Methods return results (`{ ok, value }` or `{ ok: false, error }`).
+- `cadence.projects`: the whole Project Manager: create, rename and delete projects and documents, import files, project parameters, versions and sync, sharing on a CADence server. `cadence.compareVersions(document, from, to?)` says what changed between versions in words. Methods return results (`{ ok, value }` or `{ ok: false, error }`).
 - `cadence.project(idOrName)`, `cadence.document(idOrName, project?)`: find them.
 - `cadence.component(documentId)`: a component open for scripting:
   - `run(...commands)` runs design commands in order and throws a `CadenceError` at the first refused one (with the ids involved, such as the constraints of a conflict);
@@ -117,8 +117,8 @@ The server tells the agent how to model when it connects, and offers these tools
 | `list_projects`, `create_project`, `create_project_from_template`, `rename_project`, `delete_project`, `duplicate` | Projects (and copies of documents) |
 | `list_documents`, `create_document` (component, assembly or drawing), `rename_document`, `delete_document`, `import_file` (also in place of an imported document) | Documents |
 | `export_project`, `import_project` | `.cadence` archives, with the version history if asked |
-| `versions` | The version history: list (a project's or a document's), record, restore a document, name and unname versions |
-| `sync_project`, `open_git` | Git: a project synced with its repository (conflicts answered with `resolutions`), or opened from one; sign-in from `$CADENCE_GIT_USERNAME` and `$CADENCE_GIT_PASSWORD` |
+| `versions` | The version history: list (a project's or a document's), record, restore a document, compare a document in two versions (or one and now) in words, with the volume added and removed for components; name and unname versions |
+| `sync_project`, `open_git` | Git: a project synced with its repository (documents changed on both sides merged item by item; conflicting items answered with `resolutions`, per item `<path>#<item path>` or per document), or opened from one; sign-in from `$CADENCE_GIT_USERNAME` and `$CADENCE_GIT_PASSWORD` |
 | `set_project_parameters` | Parameters for every component of a project |
 | `get_component` | The component as data (as `summary()` above), with the same filters; `near` measures to the face or edge itself |
 | `edit_component` | Runs commands in order and answers with what changed: timeline items, sketches and their profiles, the bodies' face counts and new face names; a refused command is reported with its number, reason and the ids involved |

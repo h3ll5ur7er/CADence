@@ -18,6 +18,7 @@ How to run, test and build CADence. The rules for code and the definition of don
 | `npm run desktop` | Desktop app (Tauri) in development mode; starts `npm start` itself, so stop any running dev server first |
 | `npm run desktop:build` | Release build of the desktop app with installers in `src-tauri/target/release/bundle/` (`npx tauri build --no-bundle` builds only the executable) |
 | `npm run build:binary` | The command line and MCP server as one self-contained executable, `dist/binary/cadence-cli.exe` (Node single executable application with the kernels and fonts inside, [[Architecture/Decisions#ADR-50]]); with `-- --sidecar` also copied to `src-tauri/binaries/` for the installers |
+| `npm run build:server` | The CADence server, `dist/server/server.mjs`; run it with `npm run server` (configured by the environment, [[Architecture/Server]]); `server/Dockerfile` builds it as a container |
 | `npm run build:automation` | The command line and MCP server, `dist/automation/cadence.mjs` (esbuild; packages load from `node_modules`); run it with `npm run cadence -- --help` ([[User-guide/Automation]]) |
 
 Add `?webgl` to the URL to force the WebGL 2 renderer instead of WebGPU. The status bar shows which backend runs.

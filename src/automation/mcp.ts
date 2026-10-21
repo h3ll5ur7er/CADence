@@ -377,11 +377,11 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
       {
         name: 'export_component',
         description:
-          'Writes a component to a file: its bodies as STEP, STL, OBJ or 3MF; a sketch, or the flat pattern of a sheet metal part, as DXF or SVG; html: a viewer for people without CADence; csv: the configuration table; plugin: with a plugin exporter of its project (exporter "<plugin id>/<exporter>", list_scripts). Returns the path.',
+          'Writes a component to a file: its bodies as STEP, STL, OBJ or 3MF; a sketch, or the flat pattern of a sheet metal part, as DXF or SVG; html: a viewer for people without CADence; glb (glTF) or usdz: for other viewers and augmented reality, in metres; csv: the configuration table; plugin: with a plugin exporter of its project (exporter "<plugin id>/<exporter>", list_scripts). Returns the path.',
         inputSchema: object(
           {
             document: documentArg,
-            format: { type: 'string', enum: ['step', 'stl', 'obj', '3mf', 'dxf', 'svg', 'html', 'csv', 'plugin'] },
+            format: { type: 'string', enum: ['step', 'stl', 'obj', '3mf', 'dxf', 'svg', 'html', 'glb', 'usdz', 'csv', 'plugin'] },
             exporter: string('For plugin: "<plugin id>/<exporter>".'),
             sketch: string('For DXF and SVG: the sketch id.'),
             flatPattern: { type: 'boolean', description: 'For DXF and SVG: the flat pattern instead of a sketch.' },
@@ -393,7 +393,7 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
           const script = await component(args);
           const format = String(args['format']);
           const to = args['path'] === undefined ? {} : { to: String(args['path']) };
-          if (format === 'html') return script.exportViewer(to);
+          if (format === 'html' || format === 'glb' || format === 'usdz') return script.exportViewer({ ...to, format });
           if (format === 'csv') return script.exportConfigurations(to);
           if (format === 'plugin') {
             const exporter = String(args['exporter'] ?? '');
@@ -476,11 +476,11 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
       {
         name: 'export_assembly',
         description:
-          'Writes an assembly to a file: STEP (one named solid per instance), 3MF, STL or OBJ; csv: the bill of materials; html: a viewer for people without CADence (turn, measure, hide, explode); pdf: build instructions from an exploded view (explode), the parts list and a page per step. Returns the path.',
+          'Writes an assembly to a file: STEP (one named solid per instance), 3MF, STL or OBJ; csv: the bill of materials; html: a viewer for people without CADence (turn, measure, hide, explode); glb (glTF) or usdz: for other viewers and augmented reality, in metres; pdf: build instructions from an exploded view (explode), the parts list and a page per step. Returns the path.',
         inputSchema: object(
           {
             document: documentArg,
-            format: { type: 'string', enum: ['step', '3mf', 'stl', 'obj', 'csv', 'html', 'pdf'] },
+            format: { type: 'string', enum: ['step', '3mf', 'stl', 'obj', 'csv', 'html', 'glb', 'usdz', 'pdf'] },
             explode: string('For pdf: the exploded view whose steps the instructions follow.'),
             path: string('Where to write the file (default: the exports folder).'),
           },
@@ -491,7 +491,7 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
           const to = args['path'] === undefined ? {} : { to: String(args['path']) };
           const format = String(args['format']);
           if (format === 'csv') return script.exportBillOfMaterials(to);
-          if (format === 'html') return script.exportViewer(to);
+          if (format === 'html' || format === 'glb' || format === 'usdz') return script.exportViewer({ ...to, format });
           if (format === 'pdf') {
             if (args['explode'] === undefined) throw new CadenceError('usage', 'Build instructions follow an exploded view: give its id as explode.');
             return script.exportInstructions(String(args['explode']), to);

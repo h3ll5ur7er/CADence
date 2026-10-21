@@ -23,6 +23,7 @@ import {
 import { PROJECT_MANAGER, STORAGE_KIND } from '../core.providers';
 import { ConfirmDialog, NameDialog } from '../shared/dialogs';
 import { Icon } from '../shared/icon';
+import { Layout } from '../shared/layout';
 import { SettingsDialog } from '../shared/settings-dialog';
 import { DocumentsPanel } from './documents-panel';
 import { EditorStatus } from './editor-status';
@@ -49,6 +50,7 @@ const storageLabels = { browser: 'This browser', 'project-folders': 'Project fol
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './editor-page.html',
   styleUrl: './editor-page.scss',
+  host: { '[attr.data-layout]': 'layout.phone() ? "phone" : null', '[attr.data-drawer]': 'layout.phone() && layout.drawer() ? "open" : null' },
 })
 export class EditorPage {
   /** Route parameters (bound by the router). */
@@ -56,6 +58,8 @@ export class EditorPage {
   readonly documentId = input<string>();
 
   protected readonly status = inject(EditorStatus);
+  /** The phone layout: a viewer, the documents in a drawer (CAD-179). */
+  protected readonly layout = inject(Layout);
   protected readonly thumbnails = inject(ThumbnailSaver);
   /** A document's picture, for the documents panel. */
   protected readonly thumbnailOf = (id: DocumentId) => this.projectManager.thumbnail(id);
@@ -243,6 +247,7 @@ export class EditorPage {
   }
 
   private open(document: DocumentSummary, replaceUrl = false): Promise<boolean> {
+    this.layout.drawer.set(false);
     return this.router.navigate(['/projects', document.projectId, 'documents', document.id], { replaceUrl });
   }
 

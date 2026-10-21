@@ -8,6 +8,7 @@
   }
   <cad-viewport
     #viewport
+    [compact]="layout.phone()"
     (thumbnail)="thumbnails.save($event)"
     [showOrigin]="originVisible()"
     [sketches]="displays()"
@@ -259,7 +260,7 @@
     } @else {
       <div class="model-bar" role="toolbar" aria-label="Model tools">
         <div class="menu">
-          <button type="button" class="btn btn-primary" aria-haspopup="menu" [attr.aria-expanded]="menu() === 'sketch'" (click)="toggleMenu('sketch')">
+          <button type="button" class="btn btn-primary" aria-haspopup="menu" data-tour="new-sketch" [attr.aria-expanded]="menu() === 'sketch'" (click)="toggleMenu('sketch')">
             <cad-icon name="sketch" /> New sketch
           </button>
           @if (menu() === 'sketch') {
@@ -278,7 +279,7 @@
         </div>
         <span class="divider"></span>
         @for (tool of featureTools; track tool.type) {
-          <button type="button" class="icon-btn tool" [attr.aria-label]="featureLabels[tool.type]" [title]="featureLabels[tool.type]" (click)="startFeature(tool.type)">
+          <button type="button" class="icon-btn tool" [attr.aria-label]="featureLabels[tool.type]" [attr.data-tour]="tool.type === 'extrude' ? 'extrude' : null" [title]="featureLabels[tool.type]" (click)="startFeature(tool.type)">
             <cad-icon [name]="tool.icon" [size]="18" />
           </button>
         }
@@ -308,7 +309,7 @@
         </button>
         <span class="divider"></span>
         <div class="menu">
-          <button type="button" class="btn" aria-haspopup="menu" [attr.aria-expanded]="menu() === 'export'" [disabled]="bodies().length === 0" (click)="toggleMenu('export')">
+          <button type="button" class="btn" aria-haspopup="menu" data-tour="export" [attr.aria-expanded]="menu() === 'export'" [disabled]="bodies().length === 0" (click)="toggleMenu('export')">
             <cad-icon name="download" /> Export
           </button>
           @if (menu() === 'export') {
@@ -317,6 +318,8 @@
                 <button type="button" role="menuitem" (click)="exportAs(f.format)">{{ f.label }}</button>
               }
               <button type="button" role="menuitem" (click)="menu.set(undefined); store.exportViewer()">Viewer (HTML, to share)</button>
+              <button type="button" role="menuitem" (click)="menu.set(undefined); store.exportViewer('glb')">glTF (GLB, viewers and AR)</button>
+              <button type="button" role="menuitem" (click)="menu.set(undefined); store.exportViewer('usdz')">USDZ (AR on iPhone and iPad)</button>
               <button type="button" role="menuitem" (click)="menu.set(undefined); pictureDialog().ask(viewport, document().name)">Picture or turntable…</button>
               <button type="button" role="menuitem" (click)="openExport()">With options…</button>
               @if (store.state()?.sheetMetal) {
@@ -397,6 +400,10 @@
         <button type="button" class="icon-btn" aria-label="Dismiss" (click)="store.error.set(undefined); store.conflict.set(undefined)">×</button>
       </div>
     }
+  }
+
+  @if (layout.phone()) {
+    <cad-phone-bar [viewport]="viewport" [measurable]="true" [measuring]="store.panel() === 'measure'" [arFile]="arFile" (measure)="togglePanel('measure')" />
   }
 </div>
 

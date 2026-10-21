@@ -37,6 +37,7 @@ import type {
   LiveWhere,
 } from '@core/contracts';
 
+import type { ViewerFormat } from '@core/utilities/scene';
 import type { ConfigurationImport } from './configurations';
 import type { LiveState, LiveTarget } from './live';
 import type { BrokenReference } from './references';
@@ -263,8 +264,13 @@ export interface DesignSession {
   exportConfigurations(): Promise<Result<void>>;
   /** Reads a configuration table from CSV and checks it; apply it with `set-configurations`. */
   readConfigurations(csv: string): Result<ConfigurationImport>;
-  /** The shown bodies as one HTML file with a viewer (turn, measure, hide), for people without CADence. */
-  exportViewer(): Promise<Result<void>>;
+  /**
+   * The shown bodies to share: one HTML file with a viewer (turn, measure, hide) for people without
+   * CADence, or glTF or USDZ for other viewers and augmented reality (CAD-180), at real size.
+   */
+  exportViewer(format?: ViewerFormat): Promise<Result<void>>;
+  /** The file `exportViewer` delivers, for the app to show itself (augmented reality). */
+  viewerFile(format: ViewerFormat): Promise<Result<{ readonly name: string; readonly mediaType: string; readonly bytes: Uint8Array }>>;
   /** The shown bodies as a file a plugin's exporter writes from their triangles (CAD-174). */
   exportWith(plugin: string, exporter: string): Promise<Result<void>>;
   /** Area, length, radius, distance and angle of picked faces and edges. */

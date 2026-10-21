@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, DestroyRef, type ElementR
 import { type ControlScheme, controlSchemes, keysFor, mouseBindings, type ShortcutCommand, shortcutCommands, type ShortcutScope } from './keymap';
 import { Shortcuts } from './shortcuts';
 import { UserSettings } from './user-settings';
+import { HelpLink } from './help';
 
 const groups: readonly { readonly title: string; readonly scopes: readonly ShortcutScope[] }[] = [
   { title: 'General', scopes: ['app', 'document'] },
@@ -13,11 +14,12 @@ const groups: readonly { readonly title: string; readonly scopes: readonly Short
 /** Settings of how CADence is worked: control scheme and camera, with the reference of every shortcut. Opens with "?". */
 @Component({
   selector: 'cad-settings-dialog',
+  imports: [HelpLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <dialog #dialog class="dialog settings" aria-labelledby="settings-heading">
       <header>
-        <h2 id="settings-heading">Settings</h2>
+        <h2 id="settings-heading">Settings <cad-help topic="shortcuts" /></h2>
         <button type="button" class="icon-btn" aria-label="Close settings" (click)="close()">×</button>
       </header>
       <div class="choices">

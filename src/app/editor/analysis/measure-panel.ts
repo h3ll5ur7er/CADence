@@ -3,19 +3,24 @@ import { Icon } from '../../shared/icon';
 import { bodyNames } from '../modeling/body-names';
 import { DesignStore } from '../sketch/design-store';
 import { degrees, lengthIn } from './units';
+import { HelpLink } from '../../shared/help';
+import { Layout } from '../../shared/layout';
 
 /** The measure tool: picks faces and edges in the 3D view and shows what lies between them. */
 @Component({
   selector: 'cad-measure-panel',
-  imports: [Icon],
+  imports: [HelpLink, Icon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <p class="eyebrow">Inspect</p>
     <div class="head">
       <h2>Measure</h2>
+      <cad-help topic="measure" />
       <button type="button" class="icon-btn" aria-label="Close measure" (click)="store.openPanel(undefined)">×</button>
     </div>
-    <p class="hint">Click faces, edges and corners in the view. One pick gives its size; two give the distance and angle between them.</p>
+    @if (!layout.phone() || picks().length === 0) {
+      <p class="hint">{{ layout.phone() ? 'Tap' : 'Click' }} faces, edges and corners in the view. One pick gives its size; two give the distance and angle between them.</p>
+    }
     @if (picks().length) {
       <ul class="picks" aria-label="Measured elements">
         @for (pick of picks(); track pick.key) {
@@ -73,6 +78,7 @@ import { degrees, lengthIn } from './units';
 })
 export class MeasurePanel {
   protected readonly store = inject(DesignStore);
+  protected readonly layout = inject(Layout);
   protected readonly mm = (value: number, power: 1 | 2 | 3 = 1) => lengthIn(this.store.units(), value, power);
   protected readonly deg = degrees;
 

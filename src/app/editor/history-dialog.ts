@@ -3,6 +3,7 @@ import type { DocumentSummary, Version } from '@core/contracts';
 import { PROJECT_MANAGER } from '../core.providers';
 import { relativeTime } from '../shared/format';
 import type { CompareRequest } from './compare-view';
+import { HelpLink } from '../shared/help';
 
 /**
  * A document's version history: when it changed and what changed, the names of versions, and
@@ -10,12 +11,13 @@ import type { CompareRequest } from './compare-view';
  */
 @Component({
   selector: 'cad-history-dialog',
+  imports: [HelpLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   styleUrl: '../shared/dialogs.scss',
   template: `
     <dialog #dialog class="dialog history" aria-labelledby="history-heading" (close)="document.set(undefined)">
       @if (document(); as doc) {
-        <h2 id="history-heading">History of {{ doc.name }}</h2>
+        <h2 id="history-heading">History of {{ doc.name }} <cad-help topic="versions" /></h2>
         <p class="hint">Versions are recorded a few seconds after changes. Name one to find it again; restoring keeps the history. Tick two versions (or one, to compare it with now) to compare them.</p>
         <ol class="versions" aria-label="Versions">
           @for (version of versions(); track version.id; let latest = $first) {

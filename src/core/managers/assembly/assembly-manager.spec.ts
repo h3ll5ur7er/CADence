@@ -250,6 +250,19 @@ describe('AssemblyManager', () => {
     expect(files.delivered[1]).toMatchObject({ name: 'Arm - Swing.webm', mediaType: 'video/webm' });
   });
 
+  it('shares the assembly as glTF and USDZ at real size, its parts placed (CAD-180)', async () => {
+    await arm([0]);
+    unwrap(await session.exportViewer('glb'));
+    expect(files.delivered.at(-1)).toMatchObject({ name: 'Arm.glb', mediaType: 'model/gltf-binary' });
+    const bytes = files.delivered.at(-1)?.bytes as Uint8Array;
+    const json = JSON.parse(new TextDecoder().decode(bytes.subarray(20, 20 + new DataView(bytes.buffer, bytes.byteOffset).getUint32(12, true)))) as { nodes: { name: string }[]; accessors: { max?: number[] }[] };
+    expect(json.nodes.map((n) => n.name)).toEqual(['Base 1', 'Link 1']);
+    // Metres: the parts are tens of millimetres long.
+    expect(Math.max(...json.accessors.flatMap((a) => a.max ?? []))).toBeLessThan(0.2);
+    const file = unwrap(await session.viewerFile('usdz'));
+    expect(file).toMatchObject({ name: 'Arm.usdz', mediaType: 'model/vnd.usdz+zip' });
+  });
+
   it('removes joints and their motion keys with an instance, and marks deleted components missing', async () => {
     await arm([0]);
     unwrap(await session.execute({ type: 'add-study', study: { id: 's1', name: 'Swing', duration: 1, keys: [{ time: 0, joint: 'hinge', values: [0] }] } }));

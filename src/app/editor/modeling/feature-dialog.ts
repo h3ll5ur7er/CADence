@@ -31,6 +31,7 @@ import { Icon } from '../../shared/icon';
 import { bodyNames } from './body-names';
 import { DesignStore } from '../sketch/design-store';
 import { featureLabels, holePoints, type PickTarget } from './feature-drafts';
+import { HelpLink } from '../../shared/help';
 
 /** An angle typed in degrees ("20 deg", "20"), in radians. */
 const degrees = (expression: string) => ((parseFloat(expression) || 20) * Math.PI) / 180;
@@ -77,7 +78,7 @@ const hints: Readonly<Record<Feature['type'], string>> = {
 /** Creates or edits one feature. Values are expressions; references are picked in the 3D view. */
 @Component({
   selector: 'cad-feature-dialog',
-  imports: [Icon],
+  imports: [HelpLink, Icon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './feature-dialog.html',
   styleUrl: './feature-dialog.scss',

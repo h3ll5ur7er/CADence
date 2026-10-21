@@ -8,8 +8,8 @@ The responsibilities and service contracts of every component in [[Architecture]
 
 | Client | Responsibility |
 | --- | --- |
-| **Home** | Lists projects with their documents and thumbnails; creates, renames, deletes and opens projects and documents; imports files. |
-| **Editor shell** | Routes to the mode matching the document kind; hosts toolbars, the feature/document tree, the properties panel and the viewport. |
+| **Home** | Lists projects with their documents and thumbnails; creates, renames, deletes and opens projects and documents; imports files; lists the samples (the shipped templates) and starts the tour of a first part ([[Architecture/Decisions#ADR-62]]). |
+| **Editor shell** | Routes to the mode matching the document kind; hosts toolbars, the feature/document tree, the properties panel and the viewport. On small screens it is a viewer: the documents in a drawer, the modes' modelling tools left out, a bar of touch tools (fit, home, measure, augmented reality) instead ([[Architecture/Decisions#ADR-62]]). |
 | **Component editor** | Sketch tools, feature dialogs, timeline, parameters table, measure and validation panels. Translates user gestures into **Design commands**. |
 | **Assembly editor** | Instance tree, joint tools, motion-study timeline and playback. Translates gestures into **Assembly commands**. |
 | **Imported viewer** | Shows imported geometry and metadata; offers conversion and export. |
@@ -227,4 +227,5 @@ Utilities are generic enough to be used by any system.
 | **Text** | The bundled font (Inter, regular and bold) loaded once per weight, and text laid out as outlines: lines and cubic Béziers at a given cap height, position and angle. |
 | **Identity** | Id generation and content hashing (used for caching). |
 | **Sandbox** | Runs JavaScript others wrote (scripts, plugins) in QuickJS compiled to WebAssembly, with only the globals given to it, a memory and a time limit, calls out to a host as JSON, and Stop; `workerSandbox` and `serveSandbox` run each script in a worker of its own ([[src/core/utilities/sandbox/index.ts]], [[Architecture/Decisions#ADR-60]]). |
+| **Viewer and Scene** | A model (parts with meshes, colours and transforms) as one self-contained HTML viewer, as binary glTF or as USDZ, at real size in metres with Y up ([[Architecture/Decisions#ADR-33]], [[Architecture/Decisions#ADR-62]]). |
 | **Picture and Raster** | PNG and JPEG reading, PNG and animated GIF writing, tracing outlines; a software renderer (depth buffer, shading, edges, framing chosen meshes, see-through meshes) for pictures without a GPU. |

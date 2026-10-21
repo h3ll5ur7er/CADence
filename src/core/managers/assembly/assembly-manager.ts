@@ -18,6 +18,7 @@ import type {
   TopologyRef,
   Vec3,
 } from '@core/contracts';
+import type { ViewerFormat } from '@core/utilities/scene';
 
 /** Every change to an assembly is one of these commands; ids come from the caller. */
 export type AssemblyCommand =
@@ -179,8 +180,13 @@ export interface AssemblySession {
   interference(options?: { readonly onProgress?: (done: number, total: number) => void }): Promise<Interference[]>;
   /** STEP keeps one named solid per instance; mesh formats get one object per instance. */
   exportAssembly(format: AssemblyFormat): Promise<Result<void>>;
-  /** The assembly as one HTML file with a viewer (turn, measure, hide, explode), for people without CADence. */
-  exportViewer(): Promise<Result<void>>;
+  /**
+   * The assembly to share: one HTML file with a viewer (turn, measure, hide, explode) for people
+   * without CADence, or glTF or USDZ for other viewers and augmented reality (CAD-180), at real size.
+   */
+  exportViewer(format?: ViewerFormat): Promise<Result<void>>;
+  /** The file `exportViewer` delivers, for the app to show itself (augmented reality). */
+  viewerFile(format: ViewerFormat): Promise<Result<{ readonly name: string; readonly mediaType: string; readonly bytes: Uint8Array }>>;
   /** Hands a recorded animation to the user (a download or a save dialog). */
   saveRecording(bytes: Uint8Array, studyName: string): Promise<void>;
   /**

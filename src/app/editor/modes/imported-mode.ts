@@ -6,10 +6,13 @@ import { byteSize, relativeTime } from '../../shared/format';
 import { Icon } from '../../shared/icon';
 import { sketchDisplay } from '../../viewport/sketch-display';
 import { Viewport } from '../../viewport/viewport';
+import { Layout } from '../../shared/layout';
+import { PhoneBar } from '../phone-bar';
 import { pictureUrl } from '../../shared/picture-url';
 import { grams, millimetres, point } from '../analysis/units';
 import { EditorStatus } from '../editor-status';
 import { ThumbnailSaver } from '../thumbnail-saver';
+import { HelpLink } from '../../shared/help';
 
 const modelFormats: readonly { format: ImportFormat; label: string }[] = [
   { format: 'step', label: 'STEP' },
@@ -25,11 +28,11 @@ const drawingFormats: readonly { format: ImportFormat; label: string }[] = [
 /** An imported file: its geometry, what it holds, and conversion to other formats. */
 @Component({
   selector: 'cad-imported-mode',
-  imports: [Viewport, Icon],
+  imports: [HelpLink, Viewport, Icon, PhoneBar],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="stage">
-      <cad-viewport [bodies]="meshes()" [sketches]="drawing()" [fit]="extent()" (backendReady)="status.renderer.set($event)" (thumbnail)="thumbnails.save($event)" />
+      <cad-viewport #viewport [compact]="layout.phone()" [bodies]="meshes()" [sketches]="drawing()" [fit]="extent()" (backendReady)="status.renderer.set($event)" (thumbnail)="thumbnails.save($event)" />
       @if (pictureUrl(); as url) {
         <img class="picture" [src]="url" [alt]="document().name" data-testid="imported-picture" />
       }
@@ -76,10 +79,13 @@ const drawingFormats: readonly { format: ImportFormat; label: string }[] = [
           }}
         </p>
       }
+      @if (layout.phone()) {
+        <cad-phone-bar [viewport]="viewport" />
+      }
     </div>
     <aside class="properties" aria-label="Properties">
       <p class="eyebrow">Imported file</p>
-      <h2>{{ document().name }}</h2>
+      <h2>{{ document().name }} <cad-help topic="imported" /></h2>
       @if (view.value(); as file) {
         <dl>
           <dt>File</dt>
@@ -160,6 +166,7 @@ const drawingFormats: readonly { format: ImportFormat; label: string }[] = [
     </aside>
   `,
   styleUrls: ['./mode-layout.scss', './editor-tools.scss'],
+  host: { '[attr.data-layout]': 'layout.phone() ? "phone" : null' },
   styles: `
     .format { text-transform: uppercase; }
     .top-tools { left: 264px; }
@@ -173,6 +180,8 @@ export class ImportedMode {
   readonly document = input.required<DocumentSummary>();
   /** A file this view made (a simplified mesh), for the editor to list and open. */
   readonly created = output<DocumentSummary>();
+  /** The phone layout: a viewer with touch tools (CAD-179). */
+  protected readonly layout = inject(Layout);
   protected readonly status = inject(EditorStatus);
   protected readonly thumbnails = inject(ThumbnailSaver);
   private readonly projectManager = inject(PROJECT_MANAGER);

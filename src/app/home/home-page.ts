@@ -10,13 +10,16 @@ import { plural, relativeTime } from '../shared/format';
 import { Thumbnail } from '../shared/thumbnail';
 import { Icon } from '../shared/icon';
 import { AboutDialog } from '../about/about-dialog';
-import { NewProjectDialog, type TemplateEntry } from './new-project-dialog';
+import { HelpLink } from '../shared/help';
+import { Layout } from '../shared/layout';
+import { Tour } from '../shared/tour';
+import { NewProjectDialog, templatePicture, type TemplateEntry } from './new-project-dialog';
 import { OpenRemoteDialog } from './open-remote-dialog';
 import { SharedProjectsDialog } from './shared-projects-dialog';
 
 @Component({
   selector: 'cad-home-page',
-  imports: [RouterLink, Icon, NameDialog, ConfirmDialog, ExportProjectDialog, NewProjectDialog, Thumbnail, OpenRemoteDialog, SharedProjectsDialog, AboutDialog],
+  imports: [RouterLink, Icon, NameDialog, ConfirmDialog, ExportProjectDialog, NewProjectDialog, Thumbnail, OpenRemoteDialog, SharedProjectsDialog, AboutDialog, HelpLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './home-page.html',
   styleUrl: './home-page.scss',
@@ -40,7 +43,18 @@ export class HomePage {
   protected readonly trashOpen = signal(false);
   protected readonly kinds = { component: 'component', assembly: 'assembly', drawing: 'drawing', imported: 'imported file' } as const;
 
+  /** The sample projects (the templates the app ships), to open as projects of one's own (CAD-181). */
+  protected readonly samples = resource({ loader: () => this.templates() });
+  protected readonly picture = templatePicture;
+  /** A sample is being made into a project. */
+  protected readonly opening = signal(false);
+  protected readonly tour = inject(Tour);
+  /** Phones view; the tour of modelling is left out there (CAD-179). */
+  protected readonly layout = inject(Layout);
+
   constructor() {
+    // The first start offers the tour of a first part.
+    this.tour.offer();
     // Projects other windows and programs (an agent's MCP server) change show here too (CAD-150).
     const stop = this.projectManager.watch(() => this.reload());
     inject(DestroyRef).onDestroy(stop);
@@ -89,6 +103,21 @@ export class HomePage {
     if (!result.ok) return this.failed(result.error.message);
     const { project, firstDocument } = result.value;
     await this.router.navigate(['/projects', project.id, 'documents', firstDocument.id]);
+  }
+
+  /** Makes a project of a sample, named after it, and opens it. */
+  protected async openSample(sample: TemplateEntry): Promise<void> {
+    this.opening.set(true);
+    try {
+      const result = await this.projectManager.createFromTemplate({ ...(await this.fetchJson<ProjectTemplate>(`templates/${sample.id}.json`)), name: sample.name });
+      if (!result.ok) return this.failed(result.error.message);
+      const { project, firstDocument } = result.value;
+      await this.router.navigate(['/projects', project.id, 'documents', firstDocument.id]);
+    } catch (error) {
+      this.failed(error instanceof Error ? error.message : String(error));
+    } finally {
+      this.opening.set(false);
+    }
   }
 
   /** The templates the app ships (public/templates, made by src/automation/templates.ts). */

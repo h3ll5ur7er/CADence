@@ -49,6 +49,8 @@ import { Icon, type IconName } from '../../shared/icon';
 import { Shortcuts } from '../../shared/shortcuts';
 import { sketchDisplay } from '../../viewport/sketch-display';
 import { Viewport } from '../../viewport/viewport';
+import { Layout } from '../../shared/layout';
+import { type ArFile, PhoneBar } from '../phone-bar';
 import { EditorStatus } from '../editor-status';
 import { ThumbnailSaver } from '../thumbnail-saver';
 import { bodyNames } from '../modeling/body-names';
@@ -171,11 +173,12 @@ const exportFormats: readonly { format: SolidFormat; label: string }[] = [
 /** Part modeling mode: sketches, features, parameters and bodies. */
 @Component({
   selector: 'cad-component-mode',
-  imports: [ChangedElsewhereNotice, Viewport, PictureDialog, Icon, SketchEditor, SketchToolbar, NameDialog, FolderDialog, NoteDialog, FeatureDialog, ParametersPanel, MeasurePanel, CheckPanel, SimulatePanel, RepairPanel],
+  imports: [ChangedElsewhereNotice, Viewport, PictureDialog, Icon, SketchEditor, SketchToolbar, NameDialog, FolderDialog, NoteDialog, FeatureDialog, ParametersPanel, MeasurePanel, CheckPanel, SimulatePanel, RepairPanel, PhoneBar],
   providers: [DesignStore],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './component-mode.html',
   styleUrls: ['./mode-layout.scss', './editor-tools.scss', './component-mode.scss'],
+  host: { '[attr.data-layout]': 'layout.phone() ? "phone" : null', '[attr.data-sheet]': 'layout.phone() && store.panel() === "measure" ? "open" : null' },
 })
 export class ComponentMode {
   /** Opens the document again, with what another program changed (CAD-150). */
@@ -185,6 +188,9 @@ export class ComponentMode {
   }
 
   readonly document = input.required<DocumentSummary>();
+  /** The phone layout: a viewer with touch tools (CAD-179). */
+  protected readonly layout = inject(Layout);
+  protected readonly arFile: ArFile = (format) => this.store.viewerFile(format);
   protected readonly status = inject(EditorStatus);
   protected readonly thumbnails = inject(ThumbnailSaver);
   private readonly unitsInStatus = effect(() => this.status.units.set(this.store.units()));

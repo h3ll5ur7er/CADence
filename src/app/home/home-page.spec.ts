@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { TestBed } from '@angular/core/testing';
-import { provideRouter } from '@angular/router';
+import { provideRouter, Router } from '@angular/router';
 import { createInMemoryCore } from '@core/composition';
 import type { ProjectManager } from '@core/managers/project';
 import { PROJECT_MANAGER } from '../core.providers';
@@ -39,6 +41,21 @@ describe('HomePage', () => {
     expect(cards).toHaveLength(2);
     expect(cards.find((c) => c?.includes('Desk organizer'))).toContain('2 documents');
     expect(cards.find((c) => c?.includes('Filament clip'))).toContain('1 document');
+  });
+
+  it('lists the samples and makes a project of the one opened (CAD-181)', async () => {
+    const folder = join(process.cwd(), 'public', 'templates');
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => new Response(readFileSync(join(folder, String(url).split('/templates/')[1] as string))));
+    const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
+    const page = await render();
+    await vi.waitFor(() => expect(page.querySelectorAll('[aria-label="Samples"] .sample')).toHaveLength(3));
+    expect(page.querySelector('[aria-label="Samples"]')?.textContent).toContain('Box with lid');
+    page.querySelector<HTMLButtonElement>('button[aria-label="Open sample Wall bracket"]')?.click();
+    await vi.waitFor(() => expect(navigate).toHaveBeenCalled());
+    const [project] = await manager.listProjects();
+    expect(project?.name).toBe('Wall bracket');
+    expect(navigate.mock.calls[0]?.[0]).toEqual(['/projects', project?.id, 'documents', expect.any(String)]);
+    vi.restoreAllMocks();
   });
 
   it('links each project to its editor', async () => {

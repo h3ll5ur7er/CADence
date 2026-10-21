@@ -3,6 +3,7 @@ import { type Joint, jointDofs, type JointLimit, type JointOffset, type JointOri
 import { Icon } from '../../shared/icon';
 import { AssemblyStore } from './assembly-store';
 import { jointLabel } from './joint-types';
+import { HelpLink } from '../../shared/help';
 
 /** An offset field: along X, Y or the normal (0–2), the turn (3), the tilt (4) or the lean (5). */
 type OffsetIndex = 0 | 1 | 2 | 3 | 4 | 5;
@@ -10,13 +11,14 @@ type OffsetIndex = 0 | 1 | 2 | 3 | 4 | 5;
 /** A selected joint: drag its values, set limits, turn it over, delete it. */
 @Component({
   selector: 'cad-joint-properties',
-  imports: [Icon],
+  imports: [HelpLink, Icon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (joint(); as joint) {
       <p class="eyebrow">{{ label(joint) }} joint</p>
       <div class="head">
         <h2>{{ joint.name }}</h2>
+        <cad-help topic="joints" />
         <button type="button" class="icon-btn" [attr.aria-label]="'Delete ' + joint.name" title="Delete" (click)="remove(joint)">
           <cad-icon name="trash" [size]="14" />
         </button>

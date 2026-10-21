@@ -3,6 +3,7 @@ import { type DocumentId, isCurve, lengthUnitSize, type SketchEntity, sketchOrig
 import type { BlockSummary, DrawingFormat } from '@core/managers/design';
 import { newId } from '@core/utilities/identity';
 import { Icon, type IconName } from '../../shared/icon';
+import { HelpLink } from '../../shared/help';
 import { Shortcuts } from '../../shared/shortcuts';
 import { DesignStore } from './design-store';
 import { linearPatternCommand } from './sketch-patterns';
@@ -93,7 +94,7 @@ const hints: Readonly<Record<Tool, string>> = {
 /** Tools, constraints and actions of the sketch being edited. */
 @Component({
   selector: 'cad-sketch-toolbar',
-  imports: [Icon],
+  imports: [Icon, HelpLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './sketch-toolbar.html',
   styleUrl: './sketch-toolbar.scss',

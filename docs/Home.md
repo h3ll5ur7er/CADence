@@ -9,7 +9,8 @@ CADence is a parametric 3D CAD application for makers. It covers the things you 
   - **Component**: parametric part modeling. You draw 2D sketches on planes or faces, then extrude, revolve, fillet, shell, pattern and so on, all driven by variables, constraints and dimensions.
   - **Assembly**: components placed with joints, which can be animated and simulated.
   - **Imported**: files brought in from elsewhere (STEP, STL, OBJ, DXF, SVG and others).
-- **Export**: STEP, STL, OBJ (and 3MF) for 3D models; DXF and SVG for sketches and 2D drawings.
+- **Export**: STEP, STL, OBJ (and 3MF) for 3D models; DXF and SVG for sketches and 2D drawings; an HTML viewer, glTF and USDZ to share and to see in augmented reality.
+- **On phones** the editor is a viewer: turn, pinch and measure by touch, and see parts at real size in the room ([[User-guide/Viewing-and-controls#on-a-phone-or-tablet]]). New users get a tour of a first part and samples to open ([[User-guide/Getting-started]]).
 
 ## Where to read next
 

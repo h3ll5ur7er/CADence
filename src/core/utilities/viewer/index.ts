@@ -1,6 +1,7 @@
 /**
  * A model as one self-contained HTML file: its meshes and a small WebGL viewer (turn, zoom, pan,
  * measure, show and hide parts, explode), for people without CADence. No network, no libraries.
+ * On phones it is touched: one finger turns, two pan and pinch to zoom, a tap measures (CAD-179).
  */
 
 /** One part of the model: a body, or an instance of a component's body in an assembly. */
@@ -58,6 +59,7 @@ export function viewerHtml(model: ViewerModel): string {
 <title>${escapeHtml(model.title)}</title>
 <style>
   html, body { height: 100%; margin: 0; font: 13px system-ui, sans-serif; color: #1d2a30; background: #eef2f3; }
+  [hidden] { display: none !important; }
   canvas { display: block; width: 100%; height: 100%; touch-action: none; }
   .panel { position: fixed; top: 12px; left: 12px; max-width: 260px; max-height: calc(100% - 24px); overflow: auto; padding: 10px 12px; border-radius: 8px; background: rgba(255,255,255,.92); box-shadow: 0 2px 10px rgba(0,0,0,.12); }
   h1 { margin: 0 0 6px; font-size: 15px; }
@@ -67,19 +69,22 @@ export function viewerHtml(model: ViewerModel): string {
   button { font: inherit; padding: 3px 8px; border: 1px solid #b9c6cb; border-radius: 5px; background: #fff; cursor: pointer; }
   button[aria-pressed="true"] { background: #0f766e; border-color: #0f766e; color: #fff; }
   #measure-result { margin-top: 6px; font-variant-numeric: tabular-nums; }
+  summary { cursor: pointer; color: #5b6b71; }
   .hint { margin-top: 8px; color: #5b6b71; font-size: 11px; }
   .made { position: fixed; right: 12px; bottom: 10px; color: #5b6b71; font-size: 11px; }
+  @media (pointer: coarse) { button { padding: 8px 14px; } label { margin: 6px 0; } }
+  @media (max-width: 600px) { .panel { top: auto; bottom: 28px; left: 8px; right: 8px; max-width: none; max-height: 45%; } .made { bottom: 6px; } }
 </style>
 </head>
 <body>
 <canvas id="view" aria-label="${escapeHtml(model.title)}"></canvas>
 <div class="panel">
   <h1>${escapeHtml(model.title)}</h1>
-  <div id="parts"></div>
+  <details id="parts-box" open><summary>Parts</summary><div id="parts"></div></details>
   <label id="explode-row" hidden>Explode <input id="explode" type="range" min="0" max="1" step="0.01" value="0"></label>
   <div class="row"><button id="fit" type="button">Fit</button><button id="measure" type="button" aria-pressed="false">Measure</button></div>
   <div id="measure-result" role="status"></div>
-  <div class="hint">Drag to turn, right-drag or Shift-drag to pan, wheel to zoom. Lengths in millimetres.</div>
+  <div class="hint" id="hint">Drag to turn, right-drag or Shift-drag to pan, wheel to zoom. Lengths in millimetres.</div>
 </div>
 <div class="made">Made with CADence</div>
 <script id="model" type="application/json">${json}</script>
@@ -215,7 +220,9 @@ function runViewer(data: { title: string; parts: EncodedPart[] }): void {
   const size = Math.max(length(sub(box.max, box.min)), 1);
 
   // Camera: turns about the target, Z up.
-  const view = { yaw: -0.8, pitch: 0.6, distance: size * 1.6, target: center };
+  // Far enough that the model fits across the narrower side of the view (a phone held upright).
+  const fitDistance = () => size * 1.6 * Math.max(1, canvas.clientHeight / Math.max(canvas.clientWidth, 1));
+  const view = { yaw: -0.8, pitch: 0.6, distance: fitDistance(), target: center };
   const eye = (): Vec3 => add(view.target, scale([Math.cos(view.pitch) * Math.cos(view.yaw), Math.cos(view.pitch) * Math.sin(view.yaw), Math.sin(view.pitch)], view.distance));
   const matrices = () => {
     const e = eye();
@@ -351,51 +358,89 @@ function runViewer(data: { title: string; parts: EncodedPart[] }): void {
   });
   (document.getElementById('fit') as HTMLElement).addEventListener('click', () => {
     view.target = center;
-    view.distance = size * 1.6;
+    view.distance = fitDistance();
     draw();
   });
+  // Touch screens are tapped, not clicked; small screens start with the parts folded away.
+  const touch = window.matchMedia('(pointer: coarse)').matches;
+  const tap = touch ? 'Tap' : 'Click';
+  if (touch) (document.getElementById('hint') as HTMLElement).textContent = 'Drag to turn, two fingers to pan, pinch to zoom. Lengths in millimetres.';
+  if (window.matchMedia('(max-width: 600px)').matches) (document.getElementById('parts-box') as HTMLDetailsElement).open = false;
   const measureButton = document.getElementById('measure') as HTMLButtonElement;
   const result = document.getElementById('measure-result') as HTMLElement;
   measureButton.addEventListener('click', () => {
     const on = measureButton.getAttribute('aria-pressed') !== 'true';
     measureButton.setAttribute('aria-pressed', String(on));
     measured.length = 0;
-    result.textContent = on ? 'Click two points on the model.' : '';
+    result.textContent = on ? `${tap} two points on the model.` : '';
     draw();
   });
 
-  let drag: { x: number; y: number; button: number; shift: boolean; moved: boolean } | undefined;
+  const panBy = (dx: number, dy: number) => {
+    const m = matrices();
+    const per = (view.distance * 0.9) / canvas.clientHeight;
+    view.target = add(view.target, add(scale(m.right, -dx * per), scale(m.up, dy * per)));
+  };
+  // The pointers on the view: one drags (turns, or pans), two pan by their middle and zoom by their spread.
+  const pointers = new Map<number, { x: number; y: number }>();
+  const spread = () => {
+    const [a, b] = [...pointers.values()] as [{ x: number; y: number }, { x: number; y: number }];
+    return { distance: Math.hypot(a.x - b.x, a.y - b.y), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  };
+  let drag: { button: number; shift: boolean; moved: boolean } | undefined;
+  let pinch: { distance: number; x: number; y: number } | undefined;
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('pointerdown', (e) => {
-    drag = { x: e.clientX, y: e.clientY, button: e.button, shift: e.shiftKey, moved: false };
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     canvas.setPointerCapture(e.pointerId);
+    if (pointers.size === 1) drag = { button: e.button, shift: e.shiftKey, moved: false };
+    else {
+      // A second finger makes it a pan and pinch, never a tap.
+      if (drag) drag.moved = true;
+      pinch = spread();
+    }
   });
   canvas.addEventListener('pointermove', (e) => {
+    const last = pointers.get(e.pointerId);
+    if (!last) return;
+    const dx = e.clientX - last.x;
+    const dy = e.clientY - last.y;
+    last.x = e.clientX;
+    last.y = e.clientY;
+    if (pinch && pointers.size >= 2) {
+      const now = spread();
+      view.distance = Math.max(size * 0.05, view.distance * (pinch.distance / Math.max(now.distance, 1)));
+      panBy(now.x - pinch.x, now.y - pinch.y);
+      pinch = now;
+      draw();
+      return;
+    }
     if (!drag) return;
-    const dx = e.clientX - drag.x;
-    const dy = e.clientY - drag.y;
     if (Math.abs(dx) + Math.abs(dy) > 2) drag.moved = true;
-    drag.x = e.clientX;
-    drag.y = e.clientY;
-    if (drag.button === 2 || drag.shift) {
-      const m = matrices();
-      const per = (view.distance * 0.9) / canvas.clientHeight;
-      view.target = add(view.target, add(scale(m.right, -dx * per), scale(m.up, dy * per)));
-    } else {
+    if (drag.button === 2 || drag.shift) panBy(dx, dy);
+    else {
       view.yaw -= dx * 0.008;
       view.pitch = Math.max(-1.5, Math.min(1.5, view.pitch + dy * 0.008));
     }
     draw();
   });
-  canvas.addEventListener('pointerup', (e) => {
-    const click = drag && !drag.moved && drag.button === 0;
+  /** A pointer lifted: true when it ends a click or tap. */
+  const lift = (e: PointerEvent) => {
+    pointers.delete(e.pointerId);
+    pinch = pointers.size >= 2 ? spread() : undefined;
+    if (pointers.size > 0) return false;
+    const click = drag !== undefined && !drag.moved && drag.button === 0;
     drag = undefined;
-    if (!click || measureButton.getAttribute('aria-pressed') !== 'true') return;
+    return click;
+  };
+  canvas.addEventListener('pointercancel', lift);
+  canvas.addEventListener('pointerup', (e) => {
+    if (!lift(e) || measureButton.getAttribute('aria-pressed') !== 'true') return;
     const point = pick(e.clientX, e.clientY);
     if (!point) return;
     if (measured.length === 2) measured.length = 0;
     measured.push(point);
-    result.textContent = measured.length === 2 ? `Distance ${length(sub(measured[1] as Vec3, measured[0] as Vec3)).toFixed(2)} mm` : 'Click a second point.';
+    result.textContent = measured.length === 2 ? `Distance ${length(sub(measured[1] as Vec3, measured[0] as Vec3)).toFixed(2)} mm` : `${tap} a second point.`;
     draw();
   });
   canvas.addEventListener('wheel', (e) => {

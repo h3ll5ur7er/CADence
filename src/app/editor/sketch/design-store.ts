@@ -30,6 +30,7 @@ import {
 } from '@core/contracts';
 import type { BlockSummary, BrokenReference, ConfigurationImport, DesignCommand, DesignSession, DesignState, DrawingFormat, ExportOptions, InsertDrawingOptions, SketchView, SolidFormat } from '@core/managers/design';
 import { newId } from '@core/utilities/identity';
+import type { ViewerFormat } from '@core/utilities/scene';
 import { DESIGN_MANAGER, PROJECT_MANAGER } from '../../core.providers';
 import { pictureUrl } from '../../shared/picture-url';
 import { ServerAccounts } from '../../shared/server-accounts';
@@ -461,10 +462,17 @@ export class DesignStore {
     return result?.ok ? result.value : undefined;
   }
 
-  /** The model as one HTML file with a viewer, to share. */
-  async exportViewer(): Promise<void> {
-    const result = await this.session?.exportViewer();
+  /** The model to share: one HTML file with a viewer, or glTF or USDZ (CAD-180). */
+  async exportViewer(format: ViewerFormat = 'html'): Promise<void> {
+    const result = await this.session?.exportViewer(format);
     if (result && !result.ok) this.error.set(result.error.message);
+  }
+
+  /** The model as a file to show in augmented reality; `undefined` (with the error shown) when there is nothing to show. */
+  async viewerFile(format: ViewerFormat): Promise<{ readonly name: string; readonly bytes: Uint8Array } | undefined> {
+    const result = await this.session?.viewerFile(format);
+    if (result && !result.ok) this.error.set(result.error.message);
+    return result?.ok ? result.value : undefined;
   }
 
   /** Opens a side panel (or closes it with `undefined`), leaving sketches and dialogs. */

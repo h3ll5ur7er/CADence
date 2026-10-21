@@ -4,6 +4,7 @@ import type { InstructionPicture } from '@core/managers/assembly';
 import { newId } from '@core/utilities/identity';
 import { Icon } from '../../shared/icon';
 import { AssemblyStore } from './assembly-store';
+import { HelpLink } from '../../shared/help';
 
 const directions: readonly { readonly label: string; readonly direction: Vec3 }[] = [
   { label: '+X', direction: [1, 0, 0] },
@@ -17,13 +18,14 @@ const directions: readonly { readonly label: string; readonly direction: Vec3 }[
 /** A selected exploded view: its steps, how far it is shown, and build instructions from it. */
 @Component({
   selector: 'cad-explode-panel',
-  imports: [Icon],
+  imports: [HelpLink, Icon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (view(); as view) {
       <p class="eyebrow">Exploded view</p>
       <div class="head">
         <h2>{{ view.name }}</h2>
+        <cad-help topic="explode" />
         <button type="button" class="icon-btn" [attr.aria-label]="'Delete ' + view.name" title="Delete" (click)="remove(view)">
           <cad-icon name="trash" [size]="14" />
         </button>

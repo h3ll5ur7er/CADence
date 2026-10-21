@@ -1308,6 +1308,21 @@ describe('DesignManager', () => {
       expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining('deleted or is not a 3D file') } });
     });
 
+    it('shares the bodies as an HTML viewer, glTF or USDZ (CAD-180)', async () => {
+      await plate();
+      unwrap(await session.exportViewer());
+      expect(files.delivered.at(-1)).toMatchObject({ name: 'Component 1.html', mediaType: 'text/html' });
+      unwrap(await session.exportViewer('glb'));
+      expect(files.delivered.at(-1)).toMatchObject({ name: 'Component 1.glb', mediaType: 'model/gltf-binary' });
+      const usdz = unwrap(await session.viewerFile('usdz'));
+      expect(usdz.name).toBe('Component 1.usdz');
+      expect(new TextDecoder().decode(usdz.bytes)).toContain('def Mesh "Extrude_1_1"');
+    });
+
+    it('has nothing to share before there are bodies', async () => {
+      expect(await session.viewerFile('glb')).toMatchObject({ ok: false, error: { code: 'nothing-to-export' } });
+    });
+
     it('exports the bodies as STEP', async () => {
       await plate();
       unwrap(await session.exportBodies('step'));

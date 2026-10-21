@@ -22,6 +22,7 @@ import { Icon } from '../../shared/icon';
 import { Shortcuts } from '../../shared/shortcuts';
 import { DrawingStore, type DrawingTool } from '../drawing/drawing-store';
 import { ChangedElsewhereNotice } from '../changed-elsewhere';
+import { HelpLink } from '../../shared/help';
 
 const directionLabels: Readonly<Record<ViewDirection, string>> = { front: 'Front', top: 'Top', right: 'Right', left: 'Left', back: 'Back', bottom: 'Bottom', iso: 'Isometric' };
 const dimensionLabels: Readonly<Record<DimensionType, string>> = { linear: 'Aligned', horizontal: 'Horizontal', vertical: 'Vertical', radius: 'Radius', diameter: 'Diameter', angle: 'Angle' };
@@ -43,7 +44,7 @@ const arrowPoints = (tip: Vec2, d: Vec2): Vec2[] => [tip, [tip[0] - d[0] * 3 - d
 /** Drawing mode: a sheet with views of components and assemblies, dimensions and notes; exported as PDF and DXF. */
 @Component({
   selector: 'cad-drawing-mode',
-  imports: [ChangedElsewhereNotice, Icon],
+  imports: [HelpLink, ChangedElsewhereNotice, Icon],
   providers: [DrawingStore],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './drawing-mode.html',

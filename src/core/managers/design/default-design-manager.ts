@@ -44,6 +44,7 @@ import { flatPattern } from '@core/engines/sheet-metal';
 import { inferRelations, type SketchEngine } from '@core/engines/sketch';
 import type { Clock } from '@core/utilities/clock';
 import type { EventBus } from '@core/utilities/messaging';
+import type { ViewerFormat } from '@core/utilities/scene';
 import { type ConfigurationImport, configurationsCsv, readConfigurationsCsv } from './configurations';
 import { type BrokenReference, brokenReferences, elementsOf, lostReferences, shapeKey, topologyRefs, withShapes } from './references';
 import { applyCommand } from './commands';
@@ -405,7 +406,14 @@ class Session implements DesignSession {
     return ok(undefined);
   }
 
-  async exportViewer(): Promise<Result<void>> {
+  async exportViewer(format: ViewerFormat = 'html'): Promise<Result<void>> {
+    const file = await this.viewerFile(format);
+    if (!file.ok) return file;
+    await this.deps.externalFiles.deliver(file.value);
+    return ok(undefined);
+  }
+
+  async viewerFile(format: ViewerFormat): Promise<Result<{ readonly name: string; readonly mediaType: string; readonly bytes: Uint8Array }>> {
     const { document } = this.current;
     const names = new Map(this.namedBodies(this.current.derived).map((b) => [b.id, b.name]));
     const parts = this.state()
@@ -415,11 +423,9 @@ class Session implements DesignSession {
         return { name: names.get(body.body) ?? body.body, ...(look?.color ? { color: look.color } : {}), opacity: look?.opacity ?? 1, positions: body.positions, normals: body.normals, indices: body.indices, edges: body.edgePositions };
       });
     if (parts.length === 0) return fail({ code: 'nothing-to-export', message: 'There are no bodies to show yet.' });
-    // Loaded when needed: the viewer page is large and rarely made.
-    const { viewerHtml } = await import('@core/utilities/viewer');
-    const bytes = new TextEncoder().encode(viewerHtml({ title: document.name, parts }));
-    await this.deps.externalFiles.deliver({ name: `${document.name}.html`, mediaType: 'text/html', bytes });
-    return ok(undefined);
+    // Loaded when needed: the files are rarely made.
+    const { viewerFile } = await import('@core/utilities/scene');
+    return ok(await viewerFile({ title: document.name, parts }, format));
   }
 
   async exportBodies(format: SolidFormat, options: ExportOptions = {}): Promise<Result<void>> {

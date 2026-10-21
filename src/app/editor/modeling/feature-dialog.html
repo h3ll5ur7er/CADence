@@ -1,7 +1,7 @@
 @if (feature(); as f) {
   <form class="dialog" (submit)="$event.preventDefault(); store.commitDraft()">
     <p class="eyebrow">Feature</p>
-    <h2>{{ title() }}</h2>
+    <h2>{{ title() }} <cad-help [topic]="f.type === 'hole' ? 'holes' : 'features'" /></h2>
     <p class="hint" [class.waiting]="draft()?.target">{{ hint() }}</p>
 
     @switch (f.type) {

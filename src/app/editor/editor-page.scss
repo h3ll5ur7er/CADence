@@ -181,3 +181,53 @@
   font-size: 11px;
   font-weight: 600;
 }
+
+/* The phone layout (CAD-179): the model fills the screen; the documents slide in over it. */
+:host([data-layout='phone']) {
+  grid-template:
+    'top' auto
+    'main' minmax(0, 1fr) / minmax(0, 1fr);
+  height: 100dvh;
+
+  .topbar {
+    gap: var(--space-2);
+    padding: 0 var(--space-2);
+  }
+
+  .crumbs > a,
+  .crumbs > a + cad-icon,
+  .mode-chip,
+  .statusbar {
+    display: none;
+  }
+
+  .crumb-button {
+    max-width: 30vw;
+  }
+
+  .sidebar {
+    position: fixed;
+    inset: 44px auto 0 0;
+    z-index: 20;
+    width: min(300px, 85vw);
+    box-shadow: var(--shadow);
+    transform: translateX(-100%);
+    visibility: hidden;
+    transition:
+      transform 0.2s ease,
+      visibility 0.2s;
+  }
+}
+
+:host([data-layout='phone'][data-drawer='open']) .sidebar {
+  transform: none;
+  visibility: visible;
+}
+
+.scrim {
+  position: fixed;
+  inset: 44px 0 0 0;
+  z-index: 19;
+  border: 0;
+  background: rgb(10 16 20 / 30%);
+}

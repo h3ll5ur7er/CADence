@@ -25,5 +25,6 @@ CADence is a parametric 3D CAD application for makers. It covers the things you 
 - [[Roadmap]]: the phases and their tasks
 - [[Open points]]: what the phases left out, to choose the next work from
 - [[Magnum opus]]: a nine-cylinder radial engine modelled by an AI agent to find CADence's limits, with its findings
+- [[Robot arm]]: a six-axis robot arm with a gripper, the second stress test through the MCP server
 - [[Development]]: run, test and build the web and desktop apps
 - [[Conventions]]: code, testing, git and the definition of done

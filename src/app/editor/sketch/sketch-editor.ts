@@ -218,7 +218,11 @@ export class SketchEditor {
     if (!at) return;
     const target = this.targetOf(event);
     const tool = this.store.tool();
-    if (target?.kind === 'dimension') return this.openInline(target.id);
+    if (target?.kind === 'dimension') {
+      // A reference shows what is measured: it is selected (to name it or make it driving), not typed into.
+      const dimension = this.sketch().constraints.find((c) => c.id === target.id);
+      return dimension && isDimension(dimension) && dimension.reference ? this.store.select([target.id]) : this.openInline(target.id);
+    }
     if (tool === 'select') {
       // Generated points follow their projection or drawing; a drawing moves by its handles.
       if (target?.kind === 'point' && target.id !== sketchOriginId && !generatorOf(this.sketch(), target.id)) {
@@ -238,6 +242,8 @@ export class SketchEditor {
     if (tool === 'move' || tool === 'rotate') return void this.transformClick(tool, this.snapRef(at));
     if (tool === 'mirror' || tool === 'circular-pattern') return void this.copyClick(tool, target);
     if (tool === 'dimension') return void this.dimensionClick(target);
+    if (tool === 'block-base') return void this.blockBase(this.snapRef(at));
+    if (tool === 'place-block') return void this.placeBlock(this.snapRef(at));
     if (isEditTool(tool)) return void this.editClick(tool, target, at);
     void this.toolClick(this.snapRef(at));
   }
@@ -465,11 +471,40 @@ export class SketchEditor {
     }
     this.picked.set([]);
     const id = newId();
-    const dimension = dimensionFor(selection, id, this.sketch(), this.store.units());
-    if (!dimension) return;
+    const drawn = dimensionFor(selection, id, this.sketch(), this.store.units());
+    if (!drawn) return;
+    const reference = this.store.referenceDimensions();
+    const dimension = reference ? { ...drawn, reference } : drawn;
     if (await this.store.run({ type: 'add-constraint', sketchId: this.sketch().id, constraint: dimension })) {
-      this.openInline(id);
+      if (!reference) this.openInline(id);
     }
+  }
+
+  /** The selection becomes a block whose origin is the clicked point; it stays placed where it was. */
+  private async blockBase(at: PointRef): Promise<void> {
+    const ids = this.store.selection().filter((id) => id !== sketchOriginId);
+    if (!ids.length) return void this.store.tool.set('select');
+    const block = newId();
+    if (await this.store.run({ type: 'make-block', sketchId: this.sketch().id, block, ids, base: at.at, insertion: newId() })) {
+      this.store.select([]);
+      this.store.tool.set('select');
+    }
+  }
+
+  /** Places the chosen block with its origin on the clicked point (a new point there, or the one clicked). */
+  private async placeBlock(at: PointRef): Promise<void> {
+    const block = this.store.blockToPlace();
+    if (!block) return void this.store.tool.set('select');
+    const [point, insertion] = [at.id ?? newId(), newId()];
+    await this.store.run({
+      type: 'add-sketch-geometry',
+      sketchId: this.sketch().id,
+      entities: [
+        ...(at.id ? [] : [{ id: point, kind: 'point' as const, x: at.at[0], y: at.at[1] }]),
+        { id: insertion, kind: 'block', block: block.sketch, ...(block.document ? { document: block.document } : {}), origin: point, angle: '0 deg', scale: '1', construction: false },
+      ],
+      constraints: [],
+    });
   }
 
   private originEntity(id: string): SketchEntity | undefined {

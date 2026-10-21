@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, DestroyRef, inject, signal } from '@angular/core';
 import { type DocumentId, isCurve, lengthUnitSize, type SketchEntity, sketchOriginId } from '@core/contracts';
-import type { DrawingFormat } from '@core/managers/design';
+import type { BlockSummary, DrawingFormat } from '@core/managers/design';
 import { newId } from '@core/utilities/identity';
 import { Icon, type IconName } from '../../shared/icon';
 import { Shortcuts } from '../../shared/shortcuts';
@@ -85,7 +85,9 @@ const hints: Readonly<Record<Tool, string>> = {
   rotate: 'With geometry selected: click the centre, then a direction, then the direction to turn it to.',
   mirror: 'With geometry selected: click the line to mirror it across. The mirror image follows the original.',
   'circular-pattern': 'With geometry selected: set the number of copies, then click the centre point.',
-  dimension: 'Click a line, circle or arc, or two items, then type the value.',
+  dimension: 'Click a line, circle or arc, or two items, then type the value. Tick Reference to show a measured value (in brackets) that drives nothing.',
+  'block-base': 'Click the block’s insertion point: the selection becomes a block, placed where it was.',
+  'place-block': 'Click where the block’s insertion point goes. Select a placed block to turn, scale or explode it.',
 };
 
 /** Tools, constraints and actions of the sketch being edited. */
@@ -102,7 +104,27 @@ export class SketchToolbar {
   protected readonly shapeTools = shapeTools;
   protected readonly modifyTools = modifyTools;
   /** The open tool menu. */
-  protected readonly menu = signal<'shapes' | 'modify' | undefined>(undefined);
+  protected readonly menu = signal<'shapes' | 'modify' | 'blocks' | undefined>(undefined);
+  /** The project's blocks, read when the Blocks menu opens. */
+  protected readonly blocks = signal<readonly BlockSummary[]>([]);
+
+  protected async openBlocks(): Promise<void> {
+    if (this.menu() === 'blocks') return this.menu.set(undefined);
+    this.menu.set('blocks');
+    const sketch = this.view()?.sketch.id;
+    this.blocks.set((await this.store.blocks()).filter((b) => b.document || b.sketch !== sketch));
+  }
+
+  protected placeBlock(block: BlockSummary): void {
+    this.menu.set(undefined);
+    this.store.blockToPlace.set(block);
+    this.choose('place-block');
+  }
+
+  protected makeBlock(): void {
+    this.menu.set(undefined);
+    this.choose('block-base');
+  }
   /** The tool of a menu that is active, shown on the menu's button. */
   protected readonly activeShape = computed(() => shapeTools.find((t) => t.tool === this.store.tool()));
   protected readonly activeModify = computed(() => modifyTools.find((t) => t.tool === this.store.tool()));

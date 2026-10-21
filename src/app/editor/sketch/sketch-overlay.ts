@@ -94,6 +94,8 @@ export interface ScreenLabel {
   readonly y: number;
   /** Optional leader line from the measured geometry, in pixels. */
   readonly line?: readonly [Vec2, Vec2];
+  /** A reference dimension: it shows a measured value (ADR-54). */
+  readonly reference?: boolean;
 }
 
 const degrees = (radians: number) => (radians * 180) / Math.PI;
@@ -213,7 +215,7 @@ export function dimensionLabels(sketch: Sketch, values: ReadonlyMap<string, numb
     const normal: Vec2 = [-(sb[1] - sa[1]) / len, (sb[0] - sa[0]) / len];
     return [(sa[0] + sb[0]) / 2 + normal[0] * offset, (sa[1] + sb[1]) / 2 + normal[1] * offset];
   };
-  return sketch.constraints.filter(isDimension).map((d: Dimension): ScreenLabel => {
+  const label = (d: Dimension): ScreenLabel => {
     const value = values.get(d.id) ?? 0;
     const title = `${d.expression}`;
     switch (d.kind) {
@@ -221,7 +223,8 @@ export function dimensionLabels(sketch: Sketch, values: ReadonlyMap<string, numb
       case 'horizontal-distance':
       case 'vertical-distance': {
         const [a, b] = [at(d.points[0]), at(d.points[1])];
-        const [x, y] = besides(a, b);
+        // A reference goes on the other side, clear of a driving dimension of the same points.
+        const [x, y] = besides(a, b, d.reference ? -16 : 16);
         const prefix = d.kind === 'horizontal-distance' ? '↔ ' : d.kind === 'vertical-distance' ? '↕ ' : '';
         return { id: d.id, text: prefix + formatLength(value), title, x, y, line: [screen(a), screen(b)] };
       }
@@ -260,6 +263,11 @@ export function dimensionLabels(sketch: Sketch, values: ReadonlyMap<string, numb
         return { id: d.id, text: `${formatLength(degrees(value))}°`, title, x: x + 24, y: y - 18 };
       }
     }
+  };
+  // A reference dimension shows what is measured, in brackets (ADR-54).
+  return sketch.constraints.filter(isDimension).map((d) => {
+    const shown = label(d);
+    return d.reference ? { ...shown, text: `(${shown.text})`, title: d.name ? `Reference ${d.name}` : 'Reference (measured)', reference: true } : shown;
   });
 }
 

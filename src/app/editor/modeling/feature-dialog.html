@@ -750,6 +750,41 @@
           </select>
         </label>
       }
+      @case ('wrap') {
+        <label class="field">
+          Sketch
+          <select id="feature-sketch" [value]="f.sketch" (change)="set({ sketch: value($event), profiles: [] })">
+            @for (s of sketches(); track s.id) {
+              <option [value]="s.id">{{ s.name }}</option>
+            }
+          </select>
+        </label>
+        <p class="count" data-testid="profile-selection">{{ f.profiles.length }} profile{{ f.profiles.length === 1 ? '' : 's' }} selected</p>
+        <div class="row two">
+          <p class="count" data-testid="face-selection">{{ f.face.name ? '1 face' : 'No face' }} to wrap onto</p>
+          <button type="button" class="btn" id="feature-pick-face" [class.active]="draft()?.target === 'face'" (click)="set({}, 'face')">Pick the face</button>
+        </div>
+        <label class="field">
+          How
+          <select id="feature-method" [value]="f.method" (change)="set({ method: $any(value($event)) })">
+            <option value="wrap">Wrapped round (cylinders, cones)</option>
+            <option value="project">Projected along the sketch’s normal</option>
+          </select>
+        </label>
+        <div class="row two">
+          <label class="field">
+            Depth
+            <input id="feature-depth" autocomplete="off" [value]="f.depth" (change)="set({ depth: length($event) })" />
+          </label>
+          <label class="field">
+            Operation
+            <select id="feature-wrap-operation" [value]="f.operation" (change)="set({ operation: $any(value($event)) })">
+              <option value="emboss">Emboss (raised)</option>
+              <option value="engrave">Engrave (cut in)</option>
+            </select>
+          </label>
+        </div>
+      }
       @case ('thread') {
         <p class="count" data-testid="face-selection">{{ f.face.name ? '1 round face' : 'No face' }} selected</p>
         <label class="field">

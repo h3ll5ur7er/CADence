@@ -56,6 +56,7 @@ const hints: Readonly<Record<Feature['type'], string>> = {
   thread: 'Click the wall of a hole or a shaft. A thread is shown on the face; modelled threads are cut.',
   draft: 'Click the faces to taper. They lean away from the pull direction (the neutral plane\'s normal) by the angle.',
   rib: 'The open curves of a sketch, thickened and extruded along its normal: stiffeners for walls and floors.',
+  wrap: 'Click the profiles (letters, a scale, a logo), then the face. Wrapped onto a cylinder or cone, lengths stay as drawn; projected, they land straight along the sketch’s normal.',
   'base-flange': 'Click the profiles of the flat sheet. The sheet rules here hold for the whole part: its edge flanges and its flat pattern.',
   'edge-flange': 'Click straight edges of the sheet; each gets a bend and a flange, bent towards the side of the face the edge is on.',
 };
@@ -82,6 +83,7 @@ export class FeatureDialog {
     if (!draft) return '';
     if (draft.target === 'axis') return 'Click a straight edge in the view.';
     if (draft.target === 'plane' || draft.target === 'second') return 'Click a flat face in the view.';
+    if (draft.target === 'face') return 'Click the face to wrap onto in the view.';
     if (draft.feature.type === 'plane' && draft.feature.mode === 'points') return 'Click three vertices (corners) in the view.';
     return hints[draft.feature.type];
   });

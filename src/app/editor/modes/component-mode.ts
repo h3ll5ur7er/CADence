@@ -26,6 +26,9 @@ import {
   type MeshQuality,
   materials,
   type PlaneRef,
+  type Dimension,
+  isDimension,
+  type SketchInsertion,
   type SketchText,
   type TextPath,
   folderItems,
@@ -88,6 +91,7 @@ const featureMenus: readonly { id: string; label: string; icon: IconName; items:
       { type: 'hole', icon: 'hole' },
       { type: 'part', icon: 'part' },
       { type: 'rib', icon: 'rib' },
+      { type: 'wrap', icon: 'wrap' },
       { type: 'thread', icon: 'thread' },
       { type: 'base-flange', icon: 'sheet' },
       { type: 'edge-flange', icon: 'flange' },
@@ -142,6 +146,7 @@ const itemIcons: Readonly<Record<TimelineItem['type'], IconName>> = {
   thread: 'thread',
   draft: 'draft',
   rib: 'rib',
+  wrap: 'wrap',
   'base-flange': 'sheet',
   'edge-flange': 'flange',
 };
@@ -211,8 +216,9 @@ export class ComponentMode {
     const state = this.store.state();
     if (!state) return [];
     const editing = this.store.editing();
+    // Blocks are placed by other sketches; they are not drawn in the model themselves.
     return [...state.sketches.values()]
-      .filter((v) => v.sketch.id !== editing && !v.error && state.items.get(v.sketch.id)?.state === 'ok')
+      .filter((v) => v.sketch.id !== editing && !v.sketch.block && !v.error && state.items.get(v.sketch.id)?.state === 'ok')
       .map((v) => sketchDisplay(v.sketch, v.profiles, v.frame, v.texts));
   });
   protected readonly planeFrames = computed(() => [...(this.store.state()?.planes.values() ?? [])]);
@@ -295,6 +301,60 @@ export class ComponentMode {
   protected readonly pi = Math.PI;
   protected readonly round = (v: number) => Math.round(v * 100) / 100;
   /** The one text selected in the sketch being edited, for its properties. */
+  /** The one dimension selected in the edited sketch. */
+  protected readonly selectedDimension = computed(() => {
+    const selection = this.store.selection();
+    const view = this.editedSketch();
+    const found = selection.length === 1 ? view?.sketch.constraints.find((c) => c.id === selection[0]) : undefined;
+    return found && isDimension(found) ? { dimension: found, value: view?.values.get(found.id) } : undefined;
+  });
+
+  /** A dimension's value as shown: lengths in the component's unit, angles in degrees. */
+  protected dimensionValue(selected: { dimension: Dimension; value: number | undefined }): string {
+    if (selected.value === undefined) return '—';
+    return selected.dimension.kind === 'angle' ? `${this.round((selected.value * 180) / Math.PI)}°` : this.mm(selected.value);
+  }
+
+  protected setReference(dimension: Dimension, reference: boolean, name?: string): void {
+    const sketchId = this.store.editing();
+    if (!sketchId) return;
+    const named = name?.trim();
+    void this.store.run({ type: 'set-dimension-reference', sketchId, constraintId: dimension.id, reference, ...(named ? { name: named } : {}) });
+  }
+
+  /** The placed block selected (or a piece of it) in the edited sketch, with the name of its block. */
+  protected readonly selectedBlock = computed(() => {
+    const selection = this.store.selection();
+    const sketch = this.editedSketch()?.sketch;
+    if (!sketch || selection.length !== 1) return undefined;
+    const id = selection[0] as string;
+    const owner = generatorOf(sketch, id);
+    const found = owner?.kind === 'block' ? owner : sketch.entities.find((e) => e.id === id);
+    if (found?.kind !== 'block') return undefined;
+    const own = found.document ? undefined : this.timeline().find((i) => i.id === found.block);
+    return { insertion: found, name: own?.name ?? 'A block of another component', editable: !!own };
+  });
+
+  protected setBlock(insertion: SketchInsertion, change: { angle?: string; scale?: string }): void {
+    const sketchId = this.store.editing();
+    if (!sketchId) return;
+    void this.store.run({ type: 'set-block', sketchId, insertion: insertion.id, angle: change.angle ?? insertion.angle, scale: change.scale ?? insertion.scale });
+  }
+
+  protected explodeBlock(insertion: SketchInsertion): void {
+    const sketchId = this.store.editing();
+    if (sketchId) void this.store.run({ type: 'explode-block', sketchId, insertion: insertion.id });
+  }
+
+  /** Opens the block sketch to edit it: every placement follows. */
+  protected editBlock(insertion: SketchInsertion): void {
+    this.store.edit(insertion.block);
+  }
+
+  protected setSketchBlock(sketchId: string, block: boolean): void {
+    void this.store.run({ type: 'set-sketch-block', sketchId, block });
+  }
+
   protected readonly selectedText = computed(() => {
     const selection = this.store.selection();
     const sketch = this.editedSketch()?.sketch;

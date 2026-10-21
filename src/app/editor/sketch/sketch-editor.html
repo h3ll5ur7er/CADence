@@ -80,8 +80,8 @@
       </g>
     }
     @for (label of dimensions(); track label.id) {
-      <g class="dimension" data-kind="dimension" [attr.data-id]="label.id" [class.selected]="highlighted().has(label.id)">
-        <title>{{ label.title }} · click to edit</title>
+      <g class="dimension" data-kind="dimension" [attr.data-id]="label.id" [class.selected]="highlighted().has(label.id)" [class.reference]="label.reference">
+        <title>{{ label.title }} · click to {{ label.reference ? 'select' : 'edit' }}</title>
         <text [attr.x]="label.x" [attr.y]="label.y">{{ label.text }}</text>
       </g>
     }

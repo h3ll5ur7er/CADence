@@ -64,7 +64,10 @@ Will the bracket hold? Click the bent beam in the toolbar (**Check strength**). 
 1. With **Hold fixed** chosen, click the faces that are held: screwed down, glued, clamped. Click a face again to release it.
 2. Choose **Load** and click the faces that are pushed or pulled. Each load starts as 100 N into its face. Change it to:
    - a **Force** in N, spread over the face, into the face or along an axis (down is −Z);
-   - a **Pressure** in MPa (N/mm²), pushing on the face wherever it faces.
+   - a **Pressure** in MPa (N/mm²), pushing on the face wherever it faces;
+   - a **Moment** in N·m about an axis, as a motor's torque turns a shaft.
+
+   Tick **Their own weight** to add the part's weight from its material, straight down. Agents can also put a *remote load* on a face: a force (and a moment) acting at a point away from it, carried to the face as a rigid connection would, like the weight of an arm hanging from an axle.
 3. Click **Run**. A few seconds later the panel shows:
 
 | Value | Meaning |
@@ -72,9 +75,10 @@ Will the bracket hold? Click the bent beam in the toolbar (**Check strength**). 
 | Largest stress | the highest von Mises stress, in MPa |
 | Largest deflection | how far the part moves at most, in mm |
 | Safety factor | the material's yield strength over the largest stress: below 1 it bends for good or breaks, below 2 it is close |
-| Elements | how many pieces the part was split into |
+| Elements | how many pieces the part was split into, and their size |
+| Coarser | the largest stress with elements half as large again: when it differs by more than 10 %, the answer is not settled and says so |
 
-The part is coloured by stress, from blue (none) to red (the largest), and drawn bent, exaggerated so you can see how. Untick **Show the bent shape** to see it straight. **Element size** (mm) makes the calculation finer or coarser; it is chosen from the part's size when left empty. Smaller elements take longer.
+The part is coloured by stress, from blue (none) to red (the largest), and drawn bent, exaggerated so you can see how. Untick **Show the bent shape** to see it straight. **Element size** (mm) makes the calculation finer or coarser. Left empty, it is chosen from the part's size and from its held and loaded faces: at least three elements across the smallest of them, so a small axle that holds the part is not one element thick. Smaller elements take longer. When the largest stress sits in a small spot, far above the stress a little away from it, the panel says so: at a sharp inside corner the stress has no finite value, and finer elements only show more of it. Round the corner for a figure to trust.
 
 The fixed faces and loads are saved with the component; run the check again after a change.
 

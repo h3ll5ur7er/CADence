@@ -41,6 +41,33 @@ describe('springs and helices', () => {
     expect((twist?.box.max[1] ?? 0) - (twist?.box.min[1] ?? 0)).toBeGreaterThan(2 * 12);
   }, 60_000);
 
+  it('sweeps a cable along a path in space, straight or smooth (CAD-192)', async () => {
+    // Up 40 mm, then 30 mm along x and 20 mm along y: a path no sketch plane holds.
+    const points = [{ at: ['0', '0', '0'] }, { at: ['0', '0', '40'] }, { at: ['30', '20', '40'] }] as const;
+    await t.add({ id: 'route', type: 'path', name: '', suppressed: false, points, smooth: false });
+    expect(t.session.state().items.get('route')).toEqual({ state: 'ok' });
+    expect(t.session.state().bodies).toHaveLength(0);
+    // A ⌀4 cable section where the path starts, across it (on XY).
+    unwrap(await t.session.execute({ type: 'create-sketch', id: 'c', plane: 'XY' }));
+    unwrap(await t.session.execute({ type: 'add-sketch-geometry', sketchId: 'c', entities: [{ id: 'o', kind: 'point', x: 0, y: 0 }, { id: 'r', kind: 'circle', center: 'o', radius: 2, construction: false }], constraints: [] }));
+    const profile = t.session.state().sketches.get('c')?.profiles[0]?.id as string;
+    await t.add({ id: 'cable', type: 'sweep', name: '', suppressed: false, sketch: 'c', profiles: [profile], path: 'route', operation: 'new-body' });
+    expect(t.session.state().items.get('cable')).toEqual({ state: 'ok' });
+    const [body] = await t.session.properties();
+    // The end cap stands across the last segment: 30 + 2 · sin of its turn from x.
+    expect(body?.box.max[0]).toBeCloseTo(30 + 2 * (20 / Math.hypot(30, 20)), 2);
+    expect(body?.box.max[1]).toBeGreaterThan(20);
+    // Smooth through the same points, leaving straight up and arriving along x.
+    unwrap(await t.session.execute({ type: 'edit-feature', feature: { id: 'route', type: 'path', name: 'Path in space 1', suppressed: false, points, smooth: true, startTangent: [0, 0, 1], endTangent: [1, 0, 0] } }));
+    expect(t.session.state().items.get('cable')).toEqual({ state: 'ok' });
+    // Longer than the straight line from start to end, and no wild loop.
+    const smooth = await t.volume();
+    expect(smooth).toBeGreaterThan(Math.PI * 4 * Math.hypot(30, 20, 40));
+    expect(smooth).toBeLessThan(Math.PI * 4 * 100);
+    const short = await t.session.execute({ type: 'edit-feature', feature: { id: 'route', type: 'path', name: 'Path in space 1', suppressed: false, points: [{ at: ['0', '0', '0'] }], smooth: true } });
+    expect(short).toMatchObject({ ok: false, error: { message: expect.stringContaining('A path needs at least two points.') } });
+  }, 60_000);
+
   it('sweeps a profile along a helix feature, tapered too (CAD-161)', async () => {
     await t.add({ id: 'h', type: 'helix', name: '', suppressed: false, plane: 'XY', diameter: '20 mm', pitch: '5 mm', extent: 'turns', turns: '3', height: '', taper: '0 deg', leftHanded: false });
     expect(t.session.state().items.get('h')).toEqual({ state: 'ok' });
@@ -65,7 +92,7 @@ describe('springs and helices', () => {
     // Patterns run along sketches only.
     expect(await t.session.execute({ type: 'add-feature', feature: { id: 'pp', type: 'path-pattern', name: '', suppressed: false, features: ['coil'], path: 'h', count: '3', align: false } })).toMatchObject({
       ok: false,
-      error: { message: expect.stringContaining('A pattern runs along the curves of a sketch, not a helix.') },
+      error: { message: expect.stringContaining('A pattern runs along the curves of a sketch, not a helix or a path in space.') },
     });
   }, 60_000);
 });

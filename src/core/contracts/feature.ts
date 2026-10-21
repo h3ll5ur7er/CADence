@@ -92,12 +92,12 @@ export interface LoftFeature extends FeatureBase {
   readonly operation: BodyOperation;
 }
 
-/** Sweeps sketch profiles along a path: the curves of another sketch, joined end to end, or a helix. */
+/** Sweeps sketch profiles along a path: the curves of another sketch, joined end to end, a helix, or a path in space. */
 export interface SweepFeature extends FeatureBase {
   readonly type: 'sweep';
   readonly sketch: string;
   readonly profiles: readonly string[];
-  /** The sketch whose curves are the path, or a helix feature (CAD-161). */
+  /** The sketch whose curves are the path, a helix feature (CAD-161), or a path feature (CAD-192). */
   readonly path: string;
   readonly operation: BodyOperation;
 }
@@ -118,6 +118,23 @@ export interface HelixFeature extends FeatureBase {
   readonly height: string;
   readonly taper: string;
   readonly leftHanded: boolean;
+}
+
+/** A point of a path in space: three expressions (the component's coordinates), or a point of a sketch. */
+export type PathPoint = { readonly at: readonly [string, string, string] } | { readonly sketch: string; readonly point: string };
+
+/**
+ * A path in space (CAD-192): straight lines between its points, or a smooth curve through them, for
+ * sweeps that leave one plane (a cable through a part, a pipe). Smooth paths leave the first point and
+ * reach the last along `startTangent` and `endTangent` (absent: towards their neighbours). It makes no
+ * body.
+ */
+export interface PathFeature extends FeatureBase {
+  readonly type: 'path';
+  readonly points: readonly PathPoint[];
+  readonly smooth: boolean;
+  readonly startTangent?: Vec3;
+  readonly endTangent?: Vec3;
 }
 
 /** Repeats the effect of earlier features along a path (the curves of a sketch), evenly spaced. */
@@ -466,6 +483,7 @@ export type Feature =
   | PluginFeature
   | PartFeature
   | HelixFeature
+  | PathFeature
   | InsertFeature
   | BaseFlangeFeature
   | EdgeFlangeFeature

@@ -183,6 +183,7 @@ export function applyCommand(document: AssemblyDocument, command: AssemblyComman
       const patterns = document.patterns?.map((p) => ({ ...p, instances: p.instances.filter((id) => id !== command.instanceId) })).filter((p) => p.instances.length);
       const links = document.links?.filter((l) => kept.has(l.driver.joint) && kept.has(l.driven.joint));
       const explodedViews = document.explodedViews?.map((v) => ({ ...v, steps: v.steps.map((s) => ({ ...s, instances: s.instances.filter((id) => id !== command.instanceId) })).filter((s) => s.instances.length) }));
+      const cables = document.cables?.map((c) => ({ ...c, points: c.points.filter((p) => p.instance !== command.instanceId) })).filter((c) => c.points.length >= 2);
       return ok({
         document: {
           ...document,
@@ -190,6 +191,7 @@ export function applyCommand(document: AssemblyDocument, command: AssemblyComman
           ...(patterns ? { patterns } : {}),
           ...(links ? { links } : {}),
           ...(explodedViews ? { explodedViews } : {}),
+          ...(cables ? { cables } : {}),
           joints,
           motionStudies: document.motionStudies.map((s) => ({ ...s, keys: s.keys.filter((k) => kept.has(k.joint)), ...(s.drives ? { drives: s.drives.filter((d) => kept.has(d.joint)) } : {}) })),
         },
@@ -328,6 +330,23 @@ export function applyCommand(document: AssemblyDocument, command: AssemblyComman
       const notes = studyNotes(document, study);
       return ok({ document: { ...document, motionStudies }, ...(notes.length ? { notes } : {}) });
     }
+    case 'set-cable': {
+      const { cable } = command;
+      const ids = new Set(document.instances.map((i) => i.id));
+      if (!finite(cable.diameter) || cable.diameter <= 0) return invalid('A cable needs a diameter above zero (mm).');
+      if (!Array.isArray(cable.points) || cable.points.length < 2) return invalid('A cable runs through at least two points.');
+      if (cable.points.some((p) => !ids.has(p.instance) || !vector(p.point) || (p.direction !== undefined && (!vector(p.direction) || !(Math.hypot(...p.direction) > 1e-9))))) {
+        return invalid('Each cable point needs an instance of this assembly, a point of three numbers and maybe a direction.');
+      }
+      if (cable.minBendRadius !== undefined && (!finite(cable.minBendRadius) || cable.minBendRadius <= 0)) return invalid('A minimum bend radius is above zero (mm).');
+      const existing = document.cables?.find((c) => c.id === cable.id);
+      const named = { ...cable, name: cable.name.trim() || existing?.name || nextName((document.cables ?? []).map((c) => c.name), 'Cable') };
+      const cables = existing ? (document.cables ?? []).map((c) => (c.id === named.id ? named : c)) : [...(document.cables ?? []), named];
+      return ok({ document: { ...document, cables } });
+    }
+    case 'remove-cable':
+      if (!document.cables?.some((c) => c.id === command.cableId)) return invalid('That cable does not exist.');
+      return ok({ document: { ...document, cables: document.cables.filter((c) => c.id !== command.cableId) } });
     case 'reach':
       // Worked out by the manager, which has the kinematics (CAD-188).
       return invalid('Reaching needs the assembly’s joints solved; the Assembly Manager does that.');

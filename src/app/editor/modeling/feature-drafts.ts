@@ -27,6 +27,7 @@ export interface FeatureDraft {
 
 export const featureLabels: Readonly<Record<FeatureType, string>> = {
   plugin: 'Plugin feature',
+  path: 'Path in space',
   insert: 'Insert body',
   extrude: 'Extrude',
   revolve: 'Revolve',
@@ -148,12 +149,14 @@ export function defaultFeature(type: FeatureType, id: string, state: DesignState
     }
     case 'sweep': {
       // The profiles of the latest sketch with profiles, along the latest helix or else the curves of the latest other sketch.
-      const helix = active.filter((i) => !isSketch(i) && i.type === 'helix').at(-1);
+      const helix = active.filter((i) => !isSketch(i) && (i.type === 'helix' || i.type === 'path')).at(-1);
       const path = helix ?? active.filter(isSketch).filter((s) => s.id !== sketch?.id).at(-1);
       return { ...base, type, sketch: sketch?.id ?? '', profiles, path: path?.id ?? '', operation };
     }
     case 'helix':
       return { ...base, type, plane: 'XY', diameter: '20', pitch: '5', extent: 'turns', turns: '5', height: '25', taper: '0 deg', leftHanded: false };
+    case 'path':
+      return { ...base, type, points: [{ at: ['0', '0', '0'] }, { at: ['0', '0', '50'] }, { at: ['30', '0', '80'] }], smooth: true };
     case 'path-pattern': {
       const path = active.filter(isSketch).at(-1);
       return { ...base, type, features: tools, path: path?.id ?? '', count: '4', align: false };
@@ -281,6 +284,8 @@ export function selectionOf(draft: FeatureDraft): Pick[] {
     case 'split':
     case 'helix':
       return planeFace(f.plane);
+    case 'path':
+      return [];
     case 'move':
       return f.axis.kind === 'edge' ? [pickOf(f.axis.edge)] : [];
     case 'base-flange':

@@ -87,8 +87,9 @@ class Room {
   }
 }
 
-/** Server-sent events: one JSON event per message. */
+/** Server-sent events: one JSON event per message; none to a listener whose connection has just closed. */
 function send(response: ServerResponse, event: LiveEvent): void {
+  if (response.writableEnded || response.destroyed) return;
   response.write(`data: ${JSON.stringify(event)}\n\n`);
 }
 

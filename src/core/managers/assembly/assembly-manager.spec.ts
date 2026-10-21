@@ -643,4 +643,25 @@ describe('AssemblyManager', () => {
     const carry = await session.execute({ type: 'add-study', study: { id: 'c', name: '', duration: 1, keys: [], carries: [{ instance: 'l1', by: 'b1', from: 0 }] } });
     expect(carry).toMatchObject({ ok: false, error: { message: 'l1 is held by a joint; only parts no joint holds can be carried.' } });
   });
+
+  it('runs a cable between parts that follows the joints, lists it with its length and checks it over a study (CAD-192)', async () => {
+    await arm([0]);
+    const cable = { id: 'c', name: '', diameter: 4, points: [{ instance: 'b1', point: [50, 10, 5] as const, direction: [0, 0, 1] as const }, { instance: 'l1', point: [35, 5, 5] as const, direction: [0, 0, 1] as const }], minBendRadius: 5 };
+    unwrap(await session.execute({ type: 'set-cable', cable }));
+    const now = session.state().cables[0];
+    expect(session.state().document.cables?.[0]?.name).toBe('Cable 1');
+    expect(now?.length).toBeGreaterThan(Math.hypot(...[50 - 40, 10 - 10, 0]));
+    // Turned, the link takes its end of the cable along: it gets longer.
+    unwrap(await session.execute({ type: 'set-joint-values', jointId: 'hinge', values: [180] }));
+    expect(session.state().cables[0]?.length).toBeGreaterThan(now?.length as number);
+    const bom = await session.billOfMaterials();
+    expect(bom.find((line) => line.component === 'Cable 1 (⌀4 mm)')?.length).toBeCloseTo(session.state().cables[0]?.length as number, 0);
+    unwrap(await session.execute({ type: 'add-study', study: { id: 's', name: 'Swing', duration: 1, keys: [{ time: 0, joint: 'hinge', values: [0] }, { time: 1, joint: 'hinge', values: [180] }] } }));
+    const report = unwrap(await session.collisions('s', 10));
+    expect(report.cables?.[0]).toMatchObject({ cable: 'c', longest: { time: 1 } });
+    expect(await session.execute({ type: 'set-cable', cable: { ...cable, points: cable.points.slice(0, 1) } })).toMatchObject({ ok: false, error: { message: 'A cable runs through at least two points.' } });
+    // The link goes: the cable has one point left, and goes too.
+    unwrap(await session.execute({ type: 'remove-instance', instanceId: 'l1' }));
+    expect(session.state().document.cables).toEqual([]);
+  });
 });

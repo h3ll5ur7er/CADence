@@ -166,9 +166,16 @@ test('embosses text wrapped round a cylinder', async ({ page }) => {
   await fromModelMenu(page, 'Create', 'Wrap');
   await expect(page.getByTestId('profile-selection')).not.toHaveText('0 profiles selected');
   await page.getByRole('button', { name: 'Pick the face' }).click();
-  const side = await screenPositionOf(page, 'face', ':side:');
-  await page.mouse.click(side.x, side.y);
-  await expect(page.getByTestId('face-selection')).toHaveText('1 face to wrap onto');
+  // Under load the view may still be settling when the face is first clicked: click until it is picked.
+  const picked = page.getByTestId('face-selection');
+  await expect(async () => {
+    // A second click would take the face back off: click only while none is picked.
+    if ((await picked.textContent())?.trim() !== '1 face to wrap onto') {
+      const side = await screenPositionOf(page, 'face', ':side:');
+      await page.mouse.click(side.x, side.y);
+    }
+    await expect(picked).toHaveText('1 face to wrap onto', { timeout: 3_000 });
+  }).toPass({ timeout: 20_000 });
   await page.locator('#feature-depth').fill('0.8');
   await page.locator('#feature-depth').press('Tab');
   await page.getByRole('button', { name: 'OK' }).click();

@@ -22,6 +22,7 @@ import {
   isToolFeature,
   lengthExpression,
   metricThreads,
+  type PathPoint,
   type PlaneRef,
   type SpringSize,
   springProperties,
@@ -62,6 +63,7 @@ const hints: Readonly<Record<Feature['type'], string>> = {
   loft: 'Click one profile in each sketch, in order; the loft blends through their outlines.',
   sweep: 'Click the profiles to sweep; the path is the curves of another sketch or a helix, starting at the profile.',
   helix: 'A helix about the plane\'s normal through its origin, starting on its X axis: a path for sweeps such as springs and threads.',
+  path: 'A path in space through points (x, y, z a line, in mm or expressions): straight between them or smooth, for sweeps that leave one plane, such as a cable through a part.',
   'path-pattern': 'Repeats the selected features along the curves of a sketch, evenly spaced.',
   part: 'Parts go at the points of a sketch (drawn with the Point tool), standing on its plane. Flip puts them on the other side.',
   hole: 'Holes go at the points of a sketch (drawn with the Point tool), into the material below it.',
@@ -115,7 +117,7 @@ export class FeatureDialog {
   /** Helix features before the marker, as sweep paths (CAD-161). */
   protected readonly helixFeatures = computed(() => {
     const document = this.store.state()?.document;
-    return (document?.timeline ?? []).slice(0, (document?.timeline.length ?? 0) - (document?.rollbackIndex ?? 0)).filter((i) => !isSketch(i) && i.type === 'helix');
+    return (document?.timeline ?? []).slice(0, (document?.timeline.length ?? 0) - (document?.rollbackIndex ?? 0)).filter((i) => !isSketch(i) && (i.type === 'helix' || i.type === 'path'));
   });
 
   /** A loft section as a label: its sketch's name and which of its profiles. */
@@ -268,6 +270,25 @@ export class FeatureDialog {
   protected setPluginParameter(name: string, expression: string): void {
     const f = this.feature();
     if (f?.type === 'plugin') this.store.updateDraft({ ...f, parameters: { ...f.parameters, [name]: expression } });
+  }
+
+  /** A path's points as the dialog shows them: x, y, z a line, or `sketch.point` for a sketch's point (CAD-192). */
+  protected pathText(points: readonly PathPoint[]): string {
+    return points.map((p) => ('at' in p ? p.at.join(', ') : `${p.sketch}.${p.point}`)).join('\n');
+  }
+
+  protected setPathPoints(text: string): void {
+    const points = text
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line): PathPoint => {
+        const parts = line.split(',').map((part) => part.trim());
+        if (parts.length === 3) return { at: parts as [string, string, string] };
+        const [sketch, point] = line.split('.');
+        return { sketch: sketch ?? '', point: point ?? '' };
+      });
+    this.set({ points } as Partial<Feature>);
   }
 
   protected set(changes: Partial<Feature>, target?: PickTarget): void {

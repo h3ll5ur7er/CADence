@@ -4,6 +4,9 @@ import { type AssemblyManagerDependencies, DefaultAssemblyManager } from './defa
 export type { AssemblyManagerDependencies } from './default-assembly-manager';
 export type {
   AssemblyCommand,
+  CableHit,
+  CableReport,
+  CableState,
   AssemblyFormat,
   BomLine,
   Collision,
@@ -22,6 +25,8 @@ export type {
   AssemblyState,
   ComponentView,
 } from './assembly-manager';
+
+export { cableMesh, cableRoute } from './cables';
 
 export function createAssemblyManager(dependencies: AssemblyManagerDependencies): AssemblyManager {
   return new DefaultAssemblyManager(dependencies);

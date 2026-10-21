@@ -718,19 +718,20 @@ describe('the built command line', () => {
     send({ id: 4, method: 'tools/call', params: { name: 'command_reference', arguments: { topic: 'features' } } });
     send({ id: 5, method: 'tools/call', params: { name: 'command_reference', arguments: { topic: 'assembly' } } });
     send({ id: 6, method: 'tools/call', params: { name: 'command_reference', arguments: { topic: 'parts' } } });
+    send({ id: 7, method: 'tools/call', params: { name: 'command_reference', arguments: { topic: 'joints' } } });
     child.stdin.end();
     const code = await new Promise<number | null>((resolve) => child.on('close', resolve));
     expect(code).toBe(0);
     // Answered side by side (CAD-134): in the order they finish, so by id here.
     responses.sort((a, b) => Number(a['id']) - Number(b['id']));
-    expect(responses.map((r) => r['id'])).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(responses.map((r) => r['id'])).toEqual([1, 2, 3, 4, 5, 6, 7]);
     expect(text(responses[1])).toContain('"name": "Over stdio"');
     // The embedded reference holds the command, feature, part and assembly types, by topic, each short enough to read whole (CAD-111).
     expect(text(responses[2])).toContain("readonly type: 'add-feature'");
     expect(text(responses[3])).toContain('export interface ExtrudeFeature');
     expect(text(responses[5])).toContain("readonly kind: 'ring-gear'");
     expect(text(responses[4])).toContain('export type AssemblyCommand');
-    expect(text(responses[4])).toContain('export interface Joint');
+    expect(text(responses[6])).toContain('export interface Joint');
     for (const response of responses.slice(2)) expect(text(response).length).toBeLessThan(30_000);
   });
 });

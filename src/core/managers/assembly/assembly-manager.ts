@@ -3,6 +3,7 @@ import type {
   AssemblyDocument,
   ExplodedView,
   BodyMesh,
+  Cable,
   DocumentId,
   Instance,
   InstancePattern,
@@ -62,6 +63,9 @@ export type AssemblyCommand =
   /** Adds an exploded view, or changes one (same id). */
   | { readonly type: 'set-exploded-view'; readonly view: ExplodedView }
   | { readonly type: 'remove-exploded-view'; readonly viewId: string }
+  /** Adds a cable or hose (CAD-192), or changes one (same id); an empty name gets the next default ("Cable 2"). */
+  | { readonly type: 'set-cable'; readonly cable: Cable }
+  | { readonly type: 'remove-cable'; readonly cableId: string }
   | { readonly type: 'add-study'; readonly study: MotionStudy }
   | { readonly type: 'edit-study'; readonly study: MotionStudy }
   | { readonly type: 'remove-study'; readonly studyId: string };
@@ -99,6 +103,8 @@ export interface AssemblyState {
   readonly holds: readonly LimitHold[];
   /** What the last change did that was not asked for, such as keys past a joint's limits (CAD-186). */
   readonly notes: readonly string[];
+  /** Each cable where the poses put it (CAD-192): its length and tightest bend, and a tube to draw. */
+  readonly cables: readonly CableState[];
   readonly canUndo: boolean;
   readonly canRedo: boolean;
 }
@@ -133,6 +139,34 @@ export interface CollisionReport {
   readonly moments: number;
   /** The first moment each limit held a joint while the study played (CAD-186). */
   readonly holds?: readonly (LimitHold & { readonly time: number })[];
+  /** Where cables run through parts, and how long and how tightly bent they get (CAD-192). */
+  readonly cableHits?: readonly CableHit[];
+  readonly cables?: readonly CableReport[];
+}
+
+/** A cable in a pose (CAD-192): mm. */
+export interface CableState {
+  readonly id: string;
+  readonly length: number;
+  readonly bendRadius: number;
+  /** Where it bends tighter than its minimum radius allows. */
+  readonly tooTight?: Vec3;
+  readonly mesh: BodyMesh;
+}
+
+/** Where a cable runs through a part while a study plays (CAD-192): the first moment. */
+export interface CableHit {
+  readonly cable: string;
+  readonly instance: string;
+  readonly time: number;
+  readonly at: Vec3;
+}
+
+/** A cable over a study (CAD-192): its longest and its tightest moment. */
+export interface CableReport {
+  readonly cable: string;
+  readonly longest: { readonly length: number; readonly time: number };
+  readonly tightest: { readonly radius: number; readonly time: number };
 }
 
 /** An assembly at a moment of a study (CAD-196). */
@@ -183,6 +217,8 @@ export interface BomLine {
   readonly configuration?: string;
   readonly count: number;
   readonly material: string;
+  /** Cables (CAD-192): how long, mm, as the assembly stands. */
+  readonly length?: number;
   /** Grams, each. */
   readonly mass: number;
   /** The instances (and copies) it covers. */

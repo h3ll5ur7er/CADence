@@ -97,6 +97,11 @@ export class AssemblyMode {
   protected readonly patterns = computed(() => this.store.state()?.document.patterns ?? []);
   protected readonly links = computed(() => this.store.state()?.document.links ?? []);
   protected readonly views = computed(() => this.store.state()?.document.explodedViews ?? []);
+  /** Cables and how long they are now (CAD-192). */
+  protected readonly cables = computed(() => {
+    const state = this.store.state();
+    return (state?.document.cables ?? []).map((cable) => ({ cable, now: state?.cables.find((c) => c.id === cable.id) }));
+  });
   /** Joints with freedoms, which links can connect. */
   protected readonly linkable = computed(() => this.joints().filter((j) => j.values.length > 0).length);
   /** A picture of the view for build instructions, once it shows what was just set. */

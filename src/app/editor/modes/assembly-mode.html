@@ -116,6 +116,25 @@
           </ul>
         </li>
       }
+      @if (cables().length) {
+        <li>
+          <div class="node"><cad-icon name="spline" /> Cables <span class="count">{{ cables().length }}</span></div>
+          <ul aria-label="Cables">
+            @for (row of cables(); track row.cable.id) {
+              <li class="node item" [class.failed]="!!row.now?.tooTight" [attr.title]="row.now?.tooTight ? 'Bent tighter than its minimum radius' : null">
+                <span class="item-main">
+                  <cad-icon name="spline" />
+                  <span class="item-name">{{ row.cable.name }}</span>
+                  @if (row.now; as now) {
+                    <span class="count" data-testid="cable-length">{{ now.length.toFixed(1) }} mm</span>
+                  }
+                </span>
+                <button type="button" class="icon-btn" [attr.aria-label]="'Delete ' + row.cable.name" (click)="store.run({ type: 'remove-cable', cableId: row.cable.id })"><cad-icon name="trash" [size]="12" /></button>
+              </li>
+            }
+          </ul>
+        </li>
+      }
       <li>
         <div class="node"><cad-icon name="film" /> Motion studies <span class="count">{{ studies().length }}</span></div>
         <ul aria-label="Motion studies">

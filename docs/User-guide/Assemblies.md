@@ -80,6 +80,10 @@ Choose the driving and the driven joint (and which of their freedoms), or type t
 
 **What the joints hold:** for choosing motors and gearboxes, agents ask `joint_loads` for the torque (N·m) or force (N) each actuator must hold against the parts' weight and payloads, as the assembly stands or the largest over a study (with `dynamic`, the parts' accelerations too). Actuators are the joints marked driven; in an open chain without any, every joint.
 
+## Cables
+
+Cables and hoses run through points of instances, in a smooth curve between them that follows the parts as joints move and while a study plays (agents add them with `set-cable`: a diameter, the points with the direction the cable leaves each, and the tightest bend it takes). The browser lists each cable with its length now; one bent tighter than its minimum radius is flagged. Checking a study's collisions also tells where a cable runs through a part (away from the parts it is fastened to), how long it gets and how tightly it bends. The bill of materials lists each cable with its length.
+
 ## Motion studies
 
 Click **Motion** to start a study. It has a duration and *keys*: a joint's values at a moment.

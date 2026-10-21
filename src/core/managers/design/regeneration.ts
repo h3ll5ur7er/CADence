@@ -294,6 +294,8 @@ export class Regeneration {
   private readonly threads: ThreadMarker[] = [];
   private readonly springs = new Map<string, SpringSize>();
   private readonly helices = new Map<string, HelixPath>();
+  /** Paths in space (CAD-192): their pieces, in world coordinates. */
+  private readonly spacePaths = new Map<string, readonly PathPiece[]>();
   private readonly flanges: FlangeMarker[] = [];
   private sheet: SheetView | undefined;
   private bodies: readonly BodyState[] = [];
@@ -841,6 +843,12 @@ export class Regeneration {
       this.helices.set(feature.id, helix.value);
       return ok(undefined);
     }
+    if (feature.type === 'path') {
+      const pieces = this.spacePath(feature);
+      if (!pieces.ok) return pieces;
+      this.spacePaths.set(feature.id, pieces.value);
+      return ok(undefined);
+    }
     const request = await this.request(feature);
     if (!request.ok) return request;
     const outcome = await this.engines.modeling.apply(request.value);
@@ -920,7 +928,7 @@ export class Regeneration {
   }
 
   /** The kernel request for a feature, with expressions evaluated and references resolved. */
-  private async request(feature: Exclude<Feature, { type: 'plane' | 'helix' | 'plugin' }>): Promise<Result<ModelingRequest>> {
+  private async request(feature: Exclude<Feature, { type: 'plane' | 'helix' | 'path' | 'plugin' }>): Promise<Result<ModelingRequest>> {
     const base = { feature: feature.id, bodies: this.bodies };
     const withKey = (body: WithoutKey<ModelingRequest>): Result<ModelingRequest> =>
       ok({ ...body, key: contentHash({ ...body, bodies: this.bodies.map((b) => b.key) }) } as ModelingRequest);
@@ -1060,6 +1068,8 @@ export class Regeneration {
         }
         const helix = this.helices.get(feature.path);
         if (helix) return withKey({ ...base, type: 'sweep', frame: view.frame, profiles, path: [{ kind: 'helix', ...helix } satisfies HelixPiece], closed: false, operation: feature.operation });
+        const inSpace = this.spacePaths.get(feature.path);
+        if (inSpace) return withKey({ ...base, type: 'sweep', frame: view.frame, profiles, path: inSpace, closed: false, operation: feature.operation });
         const path = this.path(feature.path);
         if (!path.ok) return path;
         return withKey({ ...base, type: 'sweep', frame: view.frame, profiles, path: path.value.pieces, closed: path.value.flat.closed, operation: feature.operation });
@@ -1072,7 +1082,7 @@ export class Regeneration {
         const count = this.value(feature.count, 'scalar', 'Count');
         if (!count.ok) return count;
         if (!Number.isInteger(count.value) || count.value < 2) return fail({ code: 'invalid-input', message: 'A pattern needs a whole number of at least 2 copies.' });
-        if (this.helices.has(feature.path)) return fail({ code: 'invalid-input', message: 'A pattern runs along the curves of a sketch, not a helix.' });
+        if (this.helices.has(feature.path) || this.spacePaths.has(feature.path)) return fail({ code: 'invalid-input', message: 'A pattern runs along the curves of a sketch, not a helix or a path in space.' });
         const path = this.path(feature.path);
         if (!path.ok) return path;
         return withKey({ ...base, type: 'path-pattern', tools: tools as ToolInput[], placements: placementsAlong(path.value.flat, path.value.frame, count.value, feature.align) });
@@ -1226,6 +1236,55 @@ export class Regeneration {
           : { kind: 'line', start: world(p.start), end: world(p.end) },
     );
     return ok({ flat: path.value, frame: view.frame, pieces });
+  }
+
+  /**
+   * A path in space (CAD-192): lines between its points, or a smooth curve through them (cubic pieces
+   * whose tangents run from each point's neighbour to the next, or along the given ends).
+   */
+  private spacePath(feature: Extract<Feature, { type: 'path' }>): Result<readonly PathPiece[]> {
+    const points: Vec3[] = [];
+    for (const [n, point] of feature.points.entries()) {
+      if ('at' in point) {
+        const xyz: number[] = [];
+        for (const [k, expression] of point.at.entries()) {
+          const value = this.value(expression, 'length', `Point ${n + 1} ${'xyz'[k]}`);
+          if (!value.ok) return value;
+          xyz.push(value.value);
+        }
+        points.push(xyz as unknown as Vec3);
+        continue;
+      }
+      const view = this.sketches.get(point.sketch);
+      const entity = view?.sketch.entities.find((e) => e.id === point.point);
+      if (!view || view.error || !entity || entity.kind !== 'point') return fail({ code: 'missing-input', message: `Point ${n + 1} is a point of a sketch that is missing, later in the timeline or does not have it.` });
+      const { origin, u, v } = view.frame;
+      points.push([0, 1, 2].map((k) => (origin[k] as number) + (u[k] as number) * entity.x + (v[k] as number) * entity.y) as unknown as Vec3);
+    }
+    if (points.length < 2) return fail({ code: 'invalid-input', message: 'A path needs at least two points.' });
+    if (points.some((p, i) => i > 0 && Math.hypot(...p.map((c, k) => c - ((points[i - 1] as Vec3)[k] as number))) < 1e-6)) return fail({ code: 'invalid-input', message: 'Two points of the path in a row are the same.' });
+    const minus = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    const step = (a: Vec3, d: Vec3, s: number): Vec3 => [a[0] + d[0] * s, a[1] + d[1] * s, a[2] + d[2] * s];
+    if (!feature.smooth) return ok(points.slice(1).map((end, i) => ({ kind: 'line' as const, start: points[i] as Vec3, end })));
+    const last = points.length - 1;
+    const along = (given: Vec3 | undefined, fallback: Vec3) => {
+      if (!given) return fallback;
+      const scale = Math.hypot(...fallback) / (Math.hypot(...given) || 1);
+      return [given[0] * scale, given[1] * scale, given[2] * scale] as Vec3;
+    };
+    const tangents = points.map((p, i) =>
+      i === 0
+        ? along(feature.startTangent, minus(points[1] as Vec3, p))
+        : i === last
+          ? along(feature.endTangent, minus(p, points[last - 1] as Vec3))
+          : (minus(points[i + 1] as Vec3, points[i - 1] as Vec3).map((c) => c / 2) as unknown as Vec3),
+    );
+    return ok(
+      points.slice(1).map((end, i) => ({
+        kind: 'bezier' as const,
+        points: [points[i] as Vec3, step(points[i] as Vec3, tangents[i] as Vec3, 1 / 3), step(end, tangents[i + 1] as Vec3, -1 / 3), end] as const,
+      })),
+    );
   }
 
   /** A helix feature in space (CAD-161): about its plane's normal through the plane's origin. */

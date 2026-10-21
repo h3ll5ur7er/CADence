@@ -101,13 +101,14 @@ test('bends a box with corner reliefs and a flange on a flange, and lays it flat
 
   // A lip on top of one wall: an edge flange on the wall's outer top edge, bent outwards.
   await fromModelMenu(page, 'Create', 'Edge flange');
+  // The walls' edges, once the view shows the flanged body; of those at the top, the one furthest left (the left wall's outer edge).
+  await expect.poll(async () => (await edgesOf(page, ':flange:')).length, { timeout: 30_000 }).toBeGreaterThan(0);
   const walls = await edgesOf(page, ':flange:');
   const height = Math.max(...walls.map((e) => e.middle[2] ?? 0));
-  const rim = walls.filter((e) => Math.abs((e.middle[2] ?? 0) - height) < 1e-3 && e.middle[0] === Math.min(...walls.filter((w) => Math.abs((w.middle[2] ?? 0) - height) < 1e-3).map((w) => w.middle[0] ?? 0)));
-  expect(rim.length).toBeGreaterThan(0);
-  await page.mouse.move((rim[0] as EdgeOnScreen).x, (rim[0] as EdgeOnScreen).y);
+  const rim = walls.filter((e) => (e.middle[2] ?? 0) > height - 1e-3).reduce((a, b) => ((a.middle[0] ?? 0) <= (b.middle[0] ?? 0) ? a : b));
+  await page.mouse.move(rim.x, rim.y);
   await page.waitForTimeout(250);
-  await page.mouse.click((rim[0] as EdgeOnScreen).x, (rim[0] as EdgeOnScreen).y);
+  await page.mouse.click(rim.x, rim.y);
   await expect(page.getByTestId('edge-selection')).toHaveText('1 edge selected');
   await page.getByRole('textbox', { name: 'Length' }).fill('8');
   await page.getByRole('button', { name: 'OK' }).click();

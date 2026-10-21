@@ -188,6 +188,8 @@ export class ComponentMode {
   }
 
   readonly document = input.required<DocumentSummary>();
+  /** Changes when the document is to be read again: a script of this window changed it, or it was shared. */
+  readonly readAgain = input(0);
   /** The phone layout: a viewer with touch tools (CAD-179). */
   protected readonly layout = inject(Layout);
   protected readonly arFile: ArFile = (format) => this.store.viewerFile(format);
@@ -295,6 +297,7 @@ export class ComponentMode {
   constructor() {
     effect(() => {
       const { id, projectId } = this.document();
+      this.readAgain();
       untracked(() => void this.store.open(id, projectId));
     });
     const shortcuts = inject(Shortcuts);

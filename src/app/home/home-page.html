@@ -17,9 +17,9 @@
     <span class="label">Open file…</span>
     <input #file type="file" multiple class="visually-hidden" [accept]="accept" (change)="picked(file)" />
   </label>
-  <button type="button" class="btn" (click)="sharedProjects.open()">
+  <button type="button" class="btn" title="Projects shared with you on a CADence server" (click)="sharedProjects.open()">
     <cad-icon name="share" />
-    Shared projects…
+    <span class="label">Shared projects…</span>
   </button>
   <button type="button" class="btn" (click)="openRemote.open()">
     <cad-icon name="sync" />

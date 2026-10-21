@@ -78,7 +78,7 @@
     @switch (doc.kind) {
       @case ('component') {
         @defer (on immediate) {
-          <cad-component-mode [document]="doc" />
+          <cad-component-mode [document]="doc" [readAgain]="readsAgain()" />
         }
       }
       @case ('assembly') {
@@ -126,5 +126,5 @@
 <cad-history-dialog #historyDialog (restored)="documents.reload(); project.reload()" (compare)="compare($event)" />
 <cad-sync-dialog (synced)="refresh()" />
 <cad-project-dialog (changed)="project.reload()" />
-<cad-scripts-dialog (changed)="refresh()" />
-<cad-share-dialog (changed)="refresh()" />
+<cad-scripts-dialog (changed)="readAgain()" />
+<cad-share-dialog (changed)="readAgain()" />

@@ -69,6 +69,8 @@ export class EditorPage {
   protected readonly emptySet: ReadonlySet<string> = new Set();
   /** Two versions of a document shown in place of its editor (CAD-175). */
   protected readonly comparing = signal<CompareRequest | undefined>(undefined);
+  /** Changes when the open component is to be read again (`readAgain`). */
+  protected readonly readsAgain = signal(0);
   private readonly projectManager = inject(PROJECT_MANAGER);
   private readonly router = inject(Router);
   private readonly nameDialog = viewChild.required(NameDialog);
@@ -254,5 +256,15 @@ export class EditorPage {
   protected refresh(): void {
     this.documents.reload();
     this.project.reload();
+  }
+
+  /**
+   * The open component is read again: a script or plugin of the console changed it through a session
+   * of its own in this window, which the editor does not hear (CAD-150, CAD-173), or the project was
+   * shared, and the editor goes live (CAD-178).
+   */
+  protected readAgain(): void {
+    this.refresh();
+    this.readsAgain.update((reads) => reads + 1);
   }
 }

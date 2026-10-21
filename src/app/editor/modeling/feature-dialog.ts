@@ -25,6 +25,7 @@ import { Icon } from '../../shared/icon';
 import { bodyNames } from './body-names';
 import { DesignStore } from '../sketch/design-store';
 import { featureLabels, holePoints, type PickTarget } from './feature-drafts';
+import { HelpLink } from '../../shared/help';
 
 const operations: readonly { value: BodyOperation; label: string }[] = [
   { value: 'new-body', label: 'New body' },
@@ -63,7 +64,7 @@ const hints: Readonly<Record<Feature['type'], string>> = {
 /** Creates or edits one feature. Values are expressions; references are picked in the 3D view. */
 @Component({
   selector: 'cad-feature-dialog',
-  imports: [Icon],
+  imports: [HelpLink, Icon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './feature-dialog.html',
   styleUrl: './feature-dialog.scss',

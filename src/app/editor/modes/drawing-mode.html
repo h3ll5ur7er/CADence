@@ -226,7 +226,7 @@
     }
   } @else if (store.document(); as document) {
     <p class="eyebrow">Drawing</p>
-    <h2>{{ document.name }}</h2>
+    <h2>{{ document.name }} <cad-help topic="drawings" /></h2>
     @if (layout()?.lost?.length) {
       <p class="error" role="alert">{{ layout()?.lost?.length }} annotation(s) lost their geometry after a model change.</p>
     }

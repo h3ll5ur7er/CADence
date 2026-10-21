@@ -4,16 +4,18 @@ import type { ConfigurationImport } from '@core/managers/design';
 import { newId } from '@core/utilities/identity';
 import { Icon } from '../../shared/icon';
 import { DesignStore } from '../sketch/design-store';
+import { HelpLink } from '../../shared/help';
 
 /** The component's parameters: names usable in every dimension and feature value. */
 @Component({
   selector: 'cad-parameters-panel',
-  imports: [Icon],
+  imports: [HelpLink, Icon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <p class="eyebrow">Component</p>
     <div class="head">
       <h2>Parameters</h2>
+      <cad-help topic="parameters" />
       <button type="button" class="icon-btn" aria-label="Close parameters" (click)="store.openPanel(undefined)">×</button>
     </div>
     <p class="hint">Use the names in any dimension or feature value, e.g. <code>wall * 2</code>. Units: mm, cm, in, deg.</p>

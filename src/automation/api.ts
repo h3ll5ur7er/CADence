@@ -22,6 +22,7 @@ import type { BrokenReference, DesignSession, DesignState, DrawingFormat, Export
 import type { ProjectManager } from '@core/managers/project';
 import { deflate, encodeGif, encodePng, type Pixels } from '@core/utilities/picture';
 import { boundsOf, type RasterMesh, rasterize, type RasterView, rasterViews, type Vec3 as RasterVec3 } from '@core/utilities/raster';
+import type { ViewerFormat } from '@core/utilities/scene';
 import { DrawingScript } from './drawing';
 import { CadenceError, type ExportTarget, unwrap } from './results';
 import { expandShape, roughValue, type ScriptCommand } from './shapes';
@@ -380,9 +381,9 @@ export class ComponentScript {
     return this.delivered(options.to, () => this.session.exportConfigurations());
   }
 
-  /** The shown bodies as one HTML file with a viewer, for people without CADence; returns the path. */
-  exportViewer(options: { readonly to?: string } = {}): Promise<string> {
-    return this.delivered(options.to, () => this.session.exportViewer());
+  /** The shown bodies as one HTML file with a viewer, for people without CADence, or as glTF or USDZ (augmented reality); returns the path. */
+  exportViewer(options: { readonly to?: string; readonly format?: ViewerFormat } = {}): Promise<string> {
+    return this.delivered(options.to, () => this.session.exportViewer(options.format));
   }
 
   /** Rough values of expressions from the parameters' values, for where shorthands start their points. */
@@ -829,10 +830,10 @@ export class AssemblyScript {
     return this.delivered(options.to, () => this.session.exportBillOfMaterials());
   }
 
-  /** The assembly as one HTML file with a viewer (turn, measure, hide, explode); returns the path. */
-  async exportViewer(options: { readonly to?: string } = {}): Promise<string> {
+  /** The assembly as one HTML file with a viewer (turn, measure, hide, explode), or as glTF or USDZ (augmented reality); returns the path. */
+  async exportViewer(options: { readonly to?: string; readonly format?: ViewerFormat } = {}): Promise<string> {
     await this.loaded();
-    return this.delivered(options.to, () => this.session.exportViewer());
+    return this.delivered(options.to, () => this.session.exportViewer(options.format));
   }
 
   /**

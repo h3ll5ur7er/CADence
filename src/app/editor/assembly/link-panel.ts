@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, input, signal } f
 import { type JointFreedom, jointDofs, linkedValue, type MotionLink, planetaryRatios } from '@core/contracts';
 import { Icon } from '../../shared/icon';
 import { AssemblyStore } from './assembly-store';
+import { HelpLink } from '../../shared/help';
 
 const kindLabels: Readonly<Record<MotionLink['kind'], string>> = {
   gear: 'Gears',
@@ -36,13 +37,14 @@ const reverses = (kind: MotionLink['kind']) => kind === 'gear' || kind === 'plan
 /** A selected motion link: which joint drives which, and by how much (from teeth or diameters). */
 @Component({
   selector: 'cad-link-panel',
-  imports: [Icon],
+  imports: [HelpLink, Icon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (link(); as link) {
       <p class="eyebrow">Motion link</p>
       <div class="head">
         <h2>{{ link.name }}</h2>
+        <cad-help topic="motion-links" />
         <button type="button" class="icon-btn" [attr.aria-label]="'Delete ' + link.name" title="Delete" (click)="remove(link)">
           <cad-icon name="trash" [size]="14" />
         </button>

@@ -12,7 +12,8 @@ export function crc32(bytes: Uint8Array): number {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-export function zip(files: readonly { name: string; bytes: Uint8Array }[]): Uint8Array {
+/** `align`: each file's data starts at a multiple of it (USDZ packages need 64), padded in the local header's extra field. */
+export function zip(files: readonly { name: string; bytes: Uint8Array }[], options: { readonly align?: number } = {}): Uint8Array {
   const encoder = new TextEncoder();
   const local: Uint8Array[] = [];
   const central: Uint8Array[] = [];
@@ -20,6 +21,7 @@ export function zip(files: readonly { name: string; bytes: Uint8Array }[]): Uint
   for (const file of files) {
     const name = encoder.encode(file.name);
     const crc = crc32(file.bytes);
+    const padding = options.align ? (options.align - ((offset + 30 + name.length) % options.align)) % options.align : 0;
     const header = new DataView(new ArrayBuffer(30));
     header.setUint32(0, 0x04034b50, true);
     header.setUint16(4, 20, true); // version needed
@@ -27,7 +29,8 @@ export function zip(files: readonly { name: string; bytes: Uint8Array }[]): Uint
     header.setUint32(18, file.bytes.length, true);
     header.setUint32(22, file.bytes.length, true);
     header.setUint16(26, name.length, true);
-    local.push(new Uint8Array(header.buffer), name, file.bytes);
+    header.setUint16(28, padding, true);
+    local.push(new Uint8Array(header.buffer), name, new Uint8Array(padding), file.bytes);
 
     const entry = new DataView(new ArrayBuffer(46));
     entry.setUint32(0, 0x02014b50, true);
@@ -39,7 +42,7 @@ export function zip(files: readonly { name: string; bytes: Uint8Array }[]): Uint
     entry.setUint16(28, name.length, true);
     entry.setUint32(42, offset, true);
     central.push(new Uint8Array(entry.buffer), name);
-    offset += 30 + name.length + file.bytes.length;
+    offset += 30 + name.length + padding + file.bytes.length;
   }
   const centralSize = central.reduce((n, b) => n + b.length, 0);
   const end = new DataView(new ArrayBuffer(22));

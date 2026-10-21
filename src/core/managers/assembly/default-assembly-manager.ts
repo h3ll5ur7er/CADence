@@ -34,6 +34,7 @@ import type { Clock } from '@core/utilities/clock';
 import { compose, fromFrame, invertRigid, transformPoint, translation } from '@core/utilities/math';
 import { toCsv } from '@core/utilities/csv';
 import type { EventBus } from '@core/utilities/messaging';
+import type { ViewerFormat } from '@core/utilities/scene';
 import type {
   AssemblyCommand,
   AssemblyFormat,
@@ -391,7 +392,14 @@ class Session implements AssemblySession {
     }
   }
 
-  async exportViewer(): Promise<Result<void>> {
+  async exportViewer(format: ViewerFormat = 'html'): Promise<Result<void>> {
+    const file = await this.viewerFile(format);
+    if (!file.ok) return file;
+    await this.deps.externalFiles.deliver(file.value);
+    return ok(undefined);
+  }
+
+  async viewerFile(format: ViewerFormat): Promise<Result<{ readonly name: string; readonly mediaType: string; readonly bytes: Uint8Array }>> {
     await this.loaded();
     const parts = this.readyInstances()
       .filter(({ instance }) => !instance.appearance?.hidden)
@@ -411,10 +419,8 @@ class Session implements AssemblySession {
         }),
       );
     if (parts.length === 0) return fail({ code: 'nothing-to-export', message: 'Insert components with bodies first.' });
-    const { viewerHtml } = await import('@core/utilities/viewer');
-    const bytes = new TextEncoder().encode(viewerHtml({ title: this.document.name, parts }));
-    await this.deps.externalFiles.deliver({ name: `${this.document.name}.html`, mediaType: 'text/html', bytes });
-    return ok(undefined);
+    const { viewerFile } = await import('@core/utilities/scene');
+    return ok(await viewerFile({ title: this.document.name, parts }, format));
   }
 
   async saveRecording(bytes: Uint8Array, studyName: string): Promise<void> {

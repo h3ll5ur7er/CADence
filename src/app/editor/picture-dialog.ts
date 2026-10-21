@@ -2,15 +2,17 @@ import { ChangeDetectionStrategy, Component, type ElementRef, inject, signal, vi
 import { PROJECT_MANAGER } from '../core.providers';
 import { ModalDialog } from '../shared/dialogs';
 import type { Viewport } from '../viewport/viewport';
+import { HelpLink } from '../shared/help';
 
 /** Saves a picture of the view at any size (on white or transparent), or a turntable video (CAD-90). */
 @Component({
   selector: 'cad-picture-dialog',
+  imports: [HelpLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <dialog #dialog class="dialog" aria-labelledby="picture-heading" (close)="finish(undefined)">
       <form (submit)="$event.preventDefault(); picture()">
-        <h2 id="picture-heading">Picture or turntable</h2>
+        <h2 id="picture-heading">Picture or turntable <cad-help topic="looks" /></h2>
         <p class="hint">The view as it is now, without grid and origin. Realistic lighting (the sun button) adds reflections and shadows.</p>
         <div class="row">
           <label class="field">Width (px)<input id="picture-width" type="number" min="16" max="8000" [value]="width()" (change)="width.set(+$any($event.target).value)" /></label>

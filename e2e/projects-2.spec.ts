@@ -48,7 +48,7 @@ test('opens and drops files, duplicates documents and replaces an imported file'
 test('starts a project from a template, duplicates it, and moves it as one file', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'New project' }).first().click();
-  await page.getByText('Box with lid', { exact: true }).click();
+  await page.getByRole('dialog').getByText('Box with lid', { exact: true }).click();
   await expect(page.getByRole('textbox', { name: 'Name' })).toHaveValue('Box with lid');
   await evidence(page, '65-templates');
   await page.getByRole('button', { name: 'Create project' }).click();
@@ -75,7 +75,7 @@ test('starts a project from a template, duplicates it, and moves it as one file'
 test('shares an assembly as one HTML file that shows, measures and explodes it', async ({ page, context }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'New project' }).first().click();
-  await page.getByText('Box with lid', { exact: true }).click();
+  await page.getByRole('dialog').getByText('Box with lid', { exact: true }).click();
   await page.getByRole('button', { name: 'Create project' }).click();
   await page.getByRole('navigation', { name: 'Project documents' }).getByRole('link', { name: 'Box with lid' }).click();
   await expect(page.getByTestId('mode')).toHaveText('Assembly');

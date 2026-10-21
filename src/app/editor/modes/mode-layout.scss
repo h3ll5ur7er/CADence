@@ -127,3 +127,38 @@ cad-viewport {
     overflow-wrap: anywhere;
   }
 }
+
+/*
+ * The phone layout (CAD-179): the model fills the screen, the modelling tools and the browser are
+ * left out, and a measurement shows in a sheet over the bottom of the model.
+ */
+:host([data-layout='phone']) {
+  position: relative;
+  grid-template-columns: minmax(0, 1fr);
+
+  .browser,
+  .top-tools,
+  .notice {
+    display: none;
+  }
+
+  .properties {
+    display: none;
+  }
+
+  .toast {
+    bottom: 96px;
+  }
+}
+
+:host([data-layout='phone'][data-sheet='open']) .properties {
+  position: absolute;
+  inset: auto 0 84px 0;
+  z-index: 1;
+  display: grid;
+  max-height: 50%;
+  margin: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+}

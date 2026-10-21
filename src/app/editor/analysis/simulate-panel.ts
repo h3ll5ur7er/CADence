@@ -4,6 +4,7 @@ import { Icon } from '../../shared/icon';
 import { bodyNames } from '../modeling/body-names';
 import { DesignStore } from '../sketch/design-store';
 import { lengthIn } from './units';
+import { HelpLink } from '../../shared/help';
 
 /** Directions a force can push in, besides into its face. */
 const axes: readonly { readonly label: string; readonly direction: Vec3 }[] = [
@@ -21,12 +22,13 @@ const mpa = (value: number) => `${Number(value.toPrecision(3)).toLocaleString('e
 /** A linear static strength check (CAD-93): fixed faces, loads, and the stresses and deflection they cause. */
 @Component({
   selector: 'cad-simulate-panel',
-  imports: [Icon],
+  imports: [HelpLink, Icon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <p class="eyebrow">Inspect</p>
     <div class="head">
       <h2>Strength</h2>
+      <cad-help topic="strength" />
       <button type="button" class="icon-btn" aria-label="Close strength check" (click)="store.openPanel(undefined)">×</button>
     </div>
     <p class="hint">Click faces in the view to hold them fixed or to load them, then run the check.</p>

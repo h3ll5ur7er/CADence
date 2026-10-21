@@ -44,6 +44,8 @@ ${webView2Report()}`);
   page = connected.contexts()[0]?.pages()[0] as Page;
   // Remote debugging can answer before the app's page has loaded (about:blank).
   await expect.poll(() => page.url(), { timeout: 60_000 }).toMatch(/^(https?|tauri):/);
+  // A person's first start shows the tour (CAD-181); the checks start where it has been seen.
+  await page.evaluate(() => localStorage.setItem('cadence.tour', 'skipped'));
 }
 
 /** What WebView2 was started with, what listens, and the Edge/WebView2 policies: why remote debugging may be off. */

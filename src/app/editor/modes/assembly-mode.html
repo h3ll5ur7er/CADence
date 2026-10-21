@@ -1,6 +1,7 @@
 <div class="stage">
   <cad-viewport
     #viewport
+    [compact]="layout.phone()"
     (thumbnail)="thumbnails.save($event)"
     [parts]="store.parts()"
     [pickable]="store.pickable()"
@@ -191,6 +192,8 @@
               <button type="button" role="menuitem" (click)="exportAs(f.format)">{{ f.label }}</button>
             }
             <button type="button" role="menuitem" (click)="menu.set(undefined); store.exportViewer()">Viewer (HTML, to share)</button>
+            <button type="button" role="menuitem" (click)="menu.set(undefined); store.exportViewer('glb')">glTF (GLB, viewers and AR)</button>
+            <button type="button" role="menuitem" (click)="menu.set(undefined); store.exportViewer('usdz')">USDZ (AR on iPhone and iPad)</button>
             <button type="button" role="menuitem" (click)="menu.set(undefined); pictureDialog().ask(viewport, document().name)">Picture or turntable…</button>
           </div>
         }
@@ -211,6 +214,10 @@
         <button type="button" class="icon-btn" aria-label="Dismiss" (click)="store.error.set(undefined)">×</button>
       </p>
     }
+  }
+
+  @if (layout.phone()) {
+    <cad-phone-bar [viewport]="viewport" [measurable]="true" [measuring]="store.panel() === 'measure'" [arFile]="arFile" (measure)="store.toggleMeasure()" />
   }
 </div>
 
@@ -250,6 +257,7 @@
     <p class="eyebrow">Inspect</p>
     <div class="head">
       <h2>Measure</h2>
+      <cad-help topic="assembly-measure" />
       <button type="button" class="icon-btn" aria-label="Close measure" (click)="store.toggleMeasure()">×</button>
     </div>
     <p class="hint">Click faces, edges and corners of any instances. One gives its size; two give the distance and angle between them.</p>

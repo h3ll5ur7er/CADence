@@ -3,6 +3,7 @@ import { type DocumentId, type DocumentSummary, type ExplodedView, type Instance
 import type { AssemblyCommand, AssemblyFormat, AssemblyProperties, AssemblySession, AssemblyState, BomLine, Collision, InstructionPicture, PlacedRef } from '@core/managers/assembly';
 import { newId } from '@core/utilities/identity';
 import { compose, fromFrame, invertRigid, rotationVector, transformPoint, translation, translationOf } from '@core/utilities/math';
+import type { ViewerFormat } from '@core/utilities/scene';
 import { ASSEMBLY_MANAGER, PROJECT_MANAGER } from '../../core.providers';
 import type { Pick } from '../../viewport/picking';
 import type { MoveHandle, PartDisplay } from '../../viewport/viewport-scene';
@@ -475,10 +476,17 @@ export class AssemblyStore {
     if (result && !result.ok) this.error.set(result.error.message);
   }
 
-  /** The assembly as one HTML file with a viewer, to share. */
-  async exportViewer(): Promise<void> {
-    const result = await this.session?.exportViewer();
+  /** The assembly to share: one HTML file with a viewer, or glTF or USDZ (CAD-180). */
+  async exportViewer(format: ViewerFormat = 'html'): Promise<void> {
+    const result = await this.session?.exportViewer(format);
     if (result && !result.ok) this.error.set(result.error.message);
+  }
+
+  /** The assembly as a file to show in augmented reality; `undefined` (with the error shown) when there is nothing to show. */
+  async viewerFile(format: ViewerFormat): Promise<{ readonly name: string; readonly bytes: Uint8Array } | undefined> {
+    const result = await this.session?.viewerFile(format);
+    if (result && !result.ok) this.error.set(result.error.message);
+    return result?.ok ? result.value : undefined;
   }
 
   async saveRecording(bytes: Uint8Array, studyName: string): Promise<void> {

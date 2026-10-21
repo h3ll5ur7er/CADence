@@ -138,6 +138,9 @@ export class ViewportScene {
   private transition: { from: Quaternion; to: Quaternion; start: number; distance: number } | undefined;
   private initialized = false;
   private pressed: { x: number; y: number } | undefined;
+  /** Fingers on the view: a gesture of two (pan, pinch) picks nothing when they lift. */
+  private readonly touching = new Set<number>();
+  private gesture = false;
   private handle: { readonly controls: TransformControls; readonly proxy: Object3D } | undefined;
   /** Faces coloured by a surface analysis instead of their looks. */
   private analysis: SurfaceAnalysis | undefined;
@@ -185,6 +188,7 @@ export class ViewportScene {
     eventTarget.addEventListener('pointermove', this.hover);
     eventTarget.addEventListener('pointerdown', this.press);
     eventTarget.addEventListener('pointerup', this.release);
+    eventTarget.addEventListener('pointercancel', this.cancel);
   }
 
   async init(): Promise<RendererBackend> {
@@ -497,6 +501,7 @@ export class ViewportScene {
     this.eventTarget.removeEventListener('pointermove', this.hover);
     this.eventTarget.removeEventListener('pointerdown', this.press);
     this.eventTarget.removeEventListener('pointerup', this.release);
+    this.eventTarget.removeEventListener('pointercancel', this.cancel);
     this.setHandle(undefined);
     this.controls.dispose();
     disposeTree(this.scene);
@@ -581,12 +586,26 @@ export class ViewportScene {
   };
 
   private readonly press = (event: PointerEvent): void => {
-    this.pressed = event.button === 0 ? { x: event.clientX, y: event.clientY } : undefined;
+    if (event.pointerType === 'touch') {
+      this.touching.add(event.pointerId);
+      // The first finger starts a gesture afresh; a second makes it a pan or pinch.
+      this.gesture = this.touching.size > 1;
+    } else {
+      this.gesture = false;
+    }
+    this.pressed = event.button === 0 && !this.gesture ? { x: event.clientX, y: event.clientY } : undefined;
+  };
+
+  private readonly cancel = (event: PointerEvent): void => {
+    this.touching.delete(event.pointerId);
+    this.pressed = undefined;
   };
 
   private readonly release = (event: PointerEvent): void => {
     const pressed = this.pressed;
     this.pressed = undefined;
+    this.touching.delete(event.pointerId);
+    if (this.gesture) return;
     // A press on the move handle drags it; it picks nothing.
     if (this.handleDragging) return;
     if (!pressed || Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) > clickTolerance) return;
@@ -811,7 +830,10 @@ export class ViewportScene {
   private frameBox(box: Box3, direction: Vector3): void {
     const center = box.getCenter(new Vector3());
     const radius = Math.max(1, box.max.distanceTo(box.min) / 2);
-    const distance = (radius / Math.sin((fov * Math.PI) / 360)) * 1.15;
+    // The narrower of the two angles of view: on a phone held upright, the width (CAD-179).
+    const vertical = (fov * Math.PI) / 360;
+    const horizontal = Math.atan(Math.tan(vertical) * (this.size.width / Math.max(this.size.height, 1)));
+    const distance = (radius / Math.sin(Math.min(vertical, horizontal))) * 1.15;
     this.perspective.near = Math.max(0.01, distance / 2000);
     this.perspective.far = distance * 100;
     this.perspective.updateProjectionMatrix();

@@ -28,6 +28,9 @@
   </button>
 </header>
 
+@if (layout.phone() && layout.drawer()) {
+  <button type="button" class="scrim" aria-label="Close documents" (click)="layout.drawer.set(false)"></button>
+}
 <aside class="sidebar" aria-label="Project">
   <cad-documents-panel
     [documents]="documents.value() ?? []"

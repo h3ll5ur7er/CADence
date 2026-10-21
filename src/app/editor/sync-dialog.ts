@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, type ElementRef, computed, inject, 
 import type { ConflictChoice, ProjectSummary, SyncConflict, SyncOutcome } from '@core/contracts';
 import { PROJECT_MANAGER } from '../core.providers';
 import { credentialsOf, RemoteFields, RemoteSignIns } from '../shared/remote-fields';
+import { HelpLink } from '../shared/help';
 
 const outcomes: Readonly<Record<Exclude<SyncOutcome['kind'], 'conflicts'>, string>> = {
   'up-to-date': 'Up to date: this project and the repository hold the same versions.',
@@ -13,13 +14,13 @@ const outcomes: Readonly<Record<Exclude<SyncOutcome['kind'], 'conflicts'>, strin
 /** Shares a project's versions with a git repository: where, the sign-in, and choices for conflicts. */
 @Component({
   selector: 'cad-sync-dialog',
-  imports: [RemoteFields],
+  imports: [HelpLink, RemoteFields],
   changeDetection: ChangeDetectionStrategy.OnPush,
   styleUrl: '../shared/dialogs.scss',
   template: `
     <dialog #dialog class="dialog sync" aria-labelledby="sync-heading">
       <form (submit)="$event.preventDefault(); sync()">
-        <h2 id="sync-heading">Sync with git</h2>
+        <h2 id="sync-heading">Sync with git <cad-help topic="sync" /></h2>
         <p class="hint">Exchanges this project's versions with a git repository, so other devices and people can work on it too.</p>
         <cad-remote-fields [(url)]="url" [(corsProxy)]="corsProxy" [(username)]="username" [(password)]="password" />
         @if (conflicts().length) {

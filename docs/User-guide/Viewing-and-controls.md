@@ -24,6 +24,28 @@ The buttons under the view cube:
 
 Click a face of the view cube to look straight at the model from that side.
 
+## On a phone or tablet
+
+On a small screen (a phone, or a tablet held upright in a narrow window) the editor is a **viewer**: the model fills the screen, and the modelling tools, the browser and the properties panel give way to a bar of touch tools along the bottom:
+
+| | Touch |
+| --- | --- |
+| Turn | Drag with one finger |
+| Pan | Drag with two fingers |
+| Zoom | Pinch |
+| Measure | **Measure**, then tap faces, edges or corners: one gives its size, two what lies between them, in a sheet over the bottom of the model |
+
+**Documents** slides the project's documents in from the left; tap one to open it, or tap beside the list to close it. **Fit** and **Home** frame the model and look at it from the front right. Projects come to the phone like to any device: as a `.cadence` file (**Open file…**), through git (**Open from git…**), or as one of the samples. To model, use a larger screen.
+
+### Augmented reality
+
+Where the phone or tablet can show models in the room, the bar has an **AR** button. The model appears at its real size:
+
+- **iPhone and iPad** (Safari): the model opens in Quick Look as a USDZ file. Point the camera at the floor or a table, and the model stands on it; Quick Look keeps it at real size.
+- **Android** (Chrome, with Google Play Services for AR) and headsets with WebXR: a ring shows where the camera finds a surface; tap to set the model down there. **Exit AR** ends it.
+
+The same files can be saved with **Export → glTF** or **USDZ** ([[User-guide/Projects-and-versions#share-a-model]]).
+
 ## How bodies look
 
 In a component, each body is listed under **Bodies** in the browser. The eye hides or shows it. In the panel on the right, each body has a **colour** and an **opacity** slider; **Reset** returns it to the default. Hidden bodies are not drawn or picked, but they still count for mass and are still exported.

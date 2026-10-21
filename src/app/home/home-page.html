@@ -6,18 +6,24 @@
   <button type="button" class="icon-btn about" aria-label="About CADence" title="About CADence" (click)="about.open()">
     <cad-icon name="info" />
   </button>
+  @if (!layout.phone()) {
+    <button type="button" class="btn" title="A short tour of a first part: sketch, extrude, export" (click)="tour.start()">
+      <cad-icon name="help" />
+      <span class="label">Take the tour</span>
+    </button>
+  }
   <label class="btn" title="Open a project archive (.cadence), or start a project from STEP, STL, OBJ, 3MF, DXF or SVG files">
     <cad-icon name="upload" />
-    Open file…
+    <span class="label">Open file…</span>
     <input #file type="file" multiple class="visually-hidden" [accept]="accept" (change)="picked(file)" />
   </label>
   <button type="button" class="btn" (click)="openRemote.open()">
     <cad-icon name="sync" />
-    Open from git…
+    <span class="label">Open from git…</span>
   </button>
-  <button type="button" class="btn btn-primary" (click)="createProject()">
+  <button type="button" class="btn btn-primary" data-tour="new-project" (click)="createProject()">
     <cad-icon name="plus" />
-    New project
+    <span class="label">New project</span>
   </button>
 </header>
 
@@ -90,6 +96,31 @@
     }
   } @else if (projects.error()) {
     <p class="error" role="alert">Projects could not be loaded. Reload the page to try again.</p>
+  }
+
+  @if (samples.value(); as list) {
+    @if (list.length > 0) {
+      <section class="samples" aria-labelledby="samples-heading">
+        <div class="heading">
+          <h2 id="samples-heading">Samples</h2>
+          <cad-help topic="new-project" />
+        </div>
+        <p class="lead">Finished projects to look around in and change. Opening one makes a project of your own from it.</p>
+        <ul class="grid" aria-label="Samples">
+          @for (sample of list; track sample.id) {
+            <li class="card sample">
+              <button type="button" class="card-link" [attr.aria-label]="'Open sample ' + sample.name" [disabled]="opening()" (click)="openSample(sample)">
+                <span class="thumb" aria-hidden="true">
+                  <svg viewBox="0 0 64 48"><path [attr.d]="picture(sample.id)" /></svg>
+                </span>
+                <span class="name">{{ sample.name }}</span>
+                <span class="meta">{{ sample.description }}</span>
+              </button>
+            </li>
+          }
+        </ul>
+      </section>
+    }
   }
 </main>
 

@@ -7,6 +7,7 @@
         [class.active]="store.tool() === t.tool"
         [attr.aria-pressed]="store.tool() === t.tool"
         [attr.aria-label]="t.label"
+        [attr.data-tour]="t.tool === 'rectangle' ? 'rectangle' : null"
         [title]="t.key ? t.label + ' (' + t.key + ')' : t.label"
         (click)="choose(t.tool)"
       >
@@ -232,9 +233,10 @@
         <cad-icon name="download" /> DXF −kerf
       </button>
     }
-    <button type="button" class="btn btn-primary" (click)="store.finishEditing()">
+    <button type="button" class="btn btn-primary" data-tour="finish-sketch" (click)="store.finishEditing()">
       <cad-icon name="check" /> Finish sketch
     </button>
+    <cad-help topic="sketching" />
   </div>
 </div>
 <p class="hint">{{ hint() }}</p>

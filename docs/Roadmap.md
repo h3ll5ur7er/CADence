@@ -47,7 +47,7 @@ The work is planned in phases. Each phase ends with a running demo and visible e
 | 40. Import II | Solids from large and broken meshes; circuit boards from KiCad | [[CAD-169]] [[CAD-170]] |
 | 41. Automation III | Whole scripts through MCP; MCP resources and prompts; a script console in the app; plugins | [[CAD-171]] [[CAD-172]] [[CAD-173]] [[CAD-174]] |
 | 42. Versions and collaboration | Comparing versions; three-way merges inside a document; users, sign-in and sharing (a server, decided first); real-time collaboration | [[CAD-175]] [[CAD-176]] [[CAD-177]] [[CAD-178]] |
-| 43. Anywhere | A phone-friendly viewer, augmented reality, onboarding | [[CAD-179]] [[CAD-180]] [[CAD-181]] |
+| 43. Anywhere ✅ | A phone-friendly viewer (touch to turn, pinch, measure by tapping; shared viewers too), augmented reality (glTF and USDZ, WebXR and Quick Look), onboarding (a tour of a first part, samples on the home page, help links to this guide) | [[CAD-179]] [[CAD-180]] [[CAD-181]] |
 
 The order follows the dependencies: the Sketcher needs the editor shell, Part modeling needs profiles, and Assemblies need regenerated components. Within a phase, tasks are listed in the order they will be done.
 

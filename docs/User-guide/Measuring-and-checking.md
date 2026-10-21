@@ -18,6 +18,8 @@ With nothing selected, the panel on the right shows the component. Choose its **
 
 The material is saved with the component and can be undone like any change.
 
+**A body of another material:** each body has a **Material** of its own under its values, *As the component* until you choose one, say a steel shaft in a PLA housing. Its mass, the strength check, the bill of materials of assemblies and parts lists of drawings (which name every material of a part: *PLA, Steel*) and 3MF and OBJ exports use it. Choosing *As the component* again makes it follow the component's material.
+
 ## Measure
 
 Click the ruler in the toolbar (or press **M**), then click faces, edges and corners in the view. Corners light up as the pointer comes near them. Click a picked element again to drop it; **Clear** starts over.
@@ -78,7 +80,7 @@ The fixed faces and loads are saved with the component; run the check again afte
 > [!WARNING]
 > This is a quick check, not an engineering approval. It is linear and static and uses the solid material's stiffness and strength. 3D-printed parts are weaker, above all across their layers, and sharp inside corners show more stress than they really carry. Treat safety factors below 2 with care.
 
-Bodies are checked one by one: a body needs a fixed face of its own, and bodies do not hold each other up. Each material in the list knows its stiffness (Young's modulus), Poisson's ratio and yield strength.
+Bodies are checked one by one: a body needs a fixed face of its own, and bodies do not hold each other up. Each body is checked in its own material, and the safety factor is the smallest of the bodies'. Each material in the list knows its stiffness (Young's modulus), Poisson's ratio and yield strength.
 
 ## Export for the laser with kerf compensation
 

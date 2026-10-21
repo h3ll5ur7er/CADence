@@ -12,8 +12,7 @@ import {
   type DrawingDocument,
   type DrawingView,
   fail,
-  type Material,
-  materials,
+  materialNames,
   ok,
   type Parameter,
   type Result,
@@ -66,7 +65,6 @@ type Drawn = ViewGeometry | { readonly error: string };
 
 const historyLimit = 200;
 const maxRequests = 3;
-const defaultMaterial = materials[0] as Material;
 /**
  * Drawn views are kept as the drawing's result (CAD-125), so other processes need not draw them
  * again. The stamp changes when what a drawn view holds changes.
@@ -142,7 +140,7 @@ class Session implements DrawingSession {
   private material(): string | undefined {
     for (const view of this.document.views) {
       const source = this.sources.get(sourceKey(view.source, view.configuration))?.document;
-      if (source?.kind === 'component') return (source.material ?? defaultMaterial).name;
+      if (source?.kind === 'component') return materialNames(source);
     }
     return undefined;
   }
@@ -398,7 +396,7 @@ class Session implements DrawingSession {
         const component = await this.deps.documents.load(instance.component);
         const configuration = component?.kind === 'component' && instance.configuration ? component.configurations?.find((c) => c.id === instance.configuration)?.name : undefined;
         const name = `${component?.name ?? 'Missing component'}${configuration ? ` (${configuration})` : ''}`;
-        const material = component?.kind === 'component' ? (component.material ?? defaultMaterial).name : '';
+        const material = component?.kind === 'component' ? materialNames(component) : '';
         row = { item: rows.length + 1, name, count: 0, material, key };
         rows.push(row);
       }

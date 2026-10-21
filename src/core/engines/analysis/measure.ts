@@ -1,4 +1,4 @@
-import type { Measurement, Vec3 } from '@core/contracts';
+import type { Measurement, RefShape, Vec3 } from '@core/contracts';
 import { type Edge, type Face, getOC, measureArea, measureLength, Vertex } from 'replicad';
 
 type Element = Face | Edge | Vertex;
@@ -10,6 +10,13 @@ const unit = (a: Vec3): Vec3 => {
   const length = Math.hypot(...a) || 1;
   return [a[0] / length, a[1] / length, a[2] / length];
 };
+
+/** A face's or edge's kind of surface or curve, size and radius (CAD-157). */
+export function shapeOf(element: Face | Edge): RefShape {
+  const type = element.geomType === 'CYLINDRE' ? 'cylinder' : element.geomType.toLowerCase();
+  const radius = radiusOf(element);
+  return { type, size: isFace(element) ? measureArea(element) : measureLength(element), ...(radius === undefined ? {} : { radius }) };
+}
 
 /** Everything that can be measured on the picked elements: totals for one or many, relations for two. */
 export function measureElements(elements: readonly Element[]): Measurement {

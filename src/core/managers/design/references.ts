@@ -1,11 +1,18 @@
-import type { BodyMesh, TimelineItem, TopologyRef, Vec3 } from '@core/contracts';
+import type { BodyMesh, RefShape, TimelineItem, TopologyRef, Vec3 } from '@core/contracts';
 
-/** A face, edge or vertex a timeline item refers to that the bodies before it no longer have, and the nearest of the same kind that they do. */
+/** A face, edge or vertex a timeline item refers to that the bodies before it no longer have, and the ones of the same kind most like it that they do. */
 export interface BrokenReference {
   readonly ref: TopologyRef;
-  /** Nearest first (to where the lost one was picked); none when it was picked without a position. */
-  readonly candidates: readonly { readonly ref: TopologyRef; readonly distance: number }[];
+  /**
+   * Best first: by shape (the same kind of surface or curve, size and radius as the lost one had,
+   * when it was recorded) and by distance (to where it was picked); none for vertices, or when
+   * neither shape nor position is known (CAD-157).
+   */
+  readonly candidates: readonly { readonly ref: TopologyRef; readonly distance?: number; readonly sameShape?: boolean }[];
 }
+
+/** Where a face or edge's shape is kept: by body and name. */
+export const shapeKey = (ref: Pick<TopologyRef, 'body' | 'name'>) => `${ref.body}|${ref.name}`;
 
 const isRef = (value: unknown): value is TopologyRef => {
   const v = value as Partial<TopologyRef> | null;
@@ -13,8 +20,8 @@ const isRef = (value: unknown): value is TopologyRef => {
 };
 const same = (a: TopologyRef, b: TopologyRef) => a.kind === b.kind && a.body === b.body && a.name === b.name;
 
-/** Every face, edge and vertex the item refers to, once each. */
-export function topologyRefs(item: TimelineItem): TopologyRef[] {
+/** Every face, edge and vertex the item (or a command) refers to, once each. */
+export function topologyRefs(item: unknown): TopologyRef[] {
   const found: TopologyRef[] = [];
   const visit = (value: unknown): void => {
     if (isRef(value)) {
@@ -24,6 +31,20 @@ export function topologyRefs(item: TimelineItem): TopologyRef[] {
   };
   visit(item);
   return found;
+}
+
+/** The value with the shapes (by `shapeKey`) recorded in the face and edge references that have none. */
+export function withShapes<T>(value: T, shapes: ReadonlyMap<string, RefShape>): T {
+  const record = (v: unknown): unknown => {
+    if (isRef(v)) {
+      const shape = v.shape ? undefined : shapes.get(shapeKey(v));
+      return shape ? { ...v, shape } : v;
+    }
+    if (Array.isArray(v)) return v.map(record);
+    if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, record(x)]));
+    return v;
+  };
+  return record(value) as T;
 }
 
 /** The item with `from` replaced by `to` wherever it refers to it. */
@@ -37,8 +58,13 @@ export function replaceReference(item: TimelineItem, from: TopologyRef, to: Topo
   return replace(item) as TimelineItem;
 }
 
-/** The references of `item` that `meshes` (the bodies before it) do not have, with candidates to replace them. */
-export function brokenReferences(item: TimelineItem, meshes: readonly BodyMesh[], limit = 5): BrokenReference[] {
+/** The references of `item` that `meshes` (the bodies before it) do not have, with candidates to replace them, given the shapes of the faces and edges there (by `shapeKey`). */
+export function brokenReferences(item: TimelineItem, meshes: readonly BodyMesh[], shapes: ReadonlyMap<string, RefShape> = new Map(), limit = 5): BrokenReference[] {
+  return lostReferences(item, meshes).map((ref) => ({ ref, candidates: ref.kind === 'vertex' || (!ref.hint && !ref.shape) ? [] : ranked(ref, meshes, shapes).slice(0, limit) }));
+}
+
+/** The references of `item` that `meshes` do not have. */
+export function lostReferences(item: TimelineItem, meshes: readonly BodyMesh[]): TopologyRef[] {
   const exists = (ref: TopologyRef): boolean => {
     const mesh = meshes.find((m) => m.body === ref.body);
     if (!mesh) return false;
@@ -48,9 +74,39 @@ export function brokenReferences(item: TimelineItem, meshes: readonly BodyMesh[]
     const edges = ref.name.replace(/^v:/, '').split('&');
     return edges.every((name) => mesh.edges.some((e) => e.name === name));
   };
-  return topologyRefs(item)
-    .filter((ref) => !exists(ref))
-    .map((ref) => ({ ref, candidates: ref.hint && ref.kind !== 'vertex' ? nearest(ref.kind, ref.hint, meshes).slice(0, limit) : [] }));
+  return topologyRefs(item).filter((ref) => !exists(ref));
+}
+
+/** Every face or edge of the bodies as a reference, at its middle: what candidates' shapes are asked for. */
+export function elementsOf(kind: 'face' | 'edge', meshes: readonly BodyMesh[]): TopologyRef[] {
+  return meshes.flatMap((mesh): TopologyRef[] => (kind === 'face' ? mesh.faces.map((f) => ({ kind, body: mesh.body, name: f.name, hint: f.center })) : mesh.edges.map((e) => ({ kind, body: mesh.body, name: e.name }))));
+}
+
+/** How unlike two shapes are: 1 for another kind, plus the relative difference of size and of radius. */
+function unlikeness(a: RefShape, b: RefShape): number {
+  const relative = (x: number, y: number) => Math.abs(x - y) / (Math.max(Math.abs(x), Math.abs(y)) || 1);
+  const radius = a.radius !== undefined && b.radius !== undefined ? relative(a.radius, b.radius) : a.radius === b.radius ? 0 : 1;
+  return (a.type === b.type ? 0 : 1) + relative(a.size, b.size) + radius;
+}
+
+/**
+ * The faces or edges of the lost reference's kind, best first: unlikeness in shape counts twice as
+ * much as distance across the whole model, so one of the same shape anywhere beats a nearer one of
+ * another (a fillet's lost edge finds the edge of the same size, not the nearest one).
+ */
+function ranked(ref: TopologyRef, meshes: readonly BodyMesh[], shapes: ReadonlyMap<string, RefShape>): { ref: TopologyRef; distance?: number; sameShape?: boolean }[] {
+  const kind = ref.kind === 'face' ? 'face' : 'edge';
+  const placed = ref.hint ? nearest(kind, ref.hint, meshes) : elementsOf(kind, meshes).map((c) => ({ ref: c, distance: undefined }));
+  const span = Math.max(1e-9, ...placed.map((c) => c.distance ?? 0));
+  const lost = ref.shape;
+  return placed
+    .map((c) => {
+      const shape = shapes.get(shapeKey(c.ref));
+      const unlike = lost && shape ? unlikeness(lost, shape) : lost ? 3 : 0;
+      return { ...c, unlike, score: 2 * unlike + (c.distance ?? 0) / span, ...(lost && shape ? { sameShape: unlike < 0.01 } : {}) };
+    })
+    .sort((a, b) => a.score - b.score)
+    .map(({ ref: candidate, distance, sameShape }) => ({ ref: candidate, ...(distance === undefined ? {} : { distance }), ...(sameShape === undefined ? {} : { sameShape }) }));
 }
 
 /** Faces or edges of all bodies by their distance from `point`. */

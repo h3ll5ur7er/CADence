@@ -10,6 +10,7 @@ import type {
   Material,
   Measurement,
   Profile,
+  RefShape,
   Result,
   SimulationResult,
   SimulationSetup,
@@ -51,8 +52,10 @@ export interface AnalysisEngine {
   measure(bodies: readonly BodyState[], refs: readonly TopologyRef[]): Promise<Result<Measurement>>;
   /** Like `measure`, between faces, edges and vertices of placed parts (each reference names its part's instance). */
   measurePlaced(parts: readonly PlacedPart[], refs: readonly (TopologyRef & { readonly instance: string })[]): Promise<Result<Measurement>>;
-  /** Volume, area, mass (density in g/cm³), centre of mass and bounding box of each body. */
-  properties(bodies: readonly BodyState[], density: number): Promise<BodyProperties[]>;
+  /** The shape of each face or edge (undefined for vertices and those not found): what repairs match lost references by (CAD-157). */
+  shapesOf(bodies: readonly BodyState[], refs: readonly TopologyRef[]): Promise<(RefShape | undefined)[]>;
+  /** Volume, area, mass (density in g/cm³; `densities` by body where a body has its own), centre of mass and bounding box of each body. */
+  properties(bodies: readonly BodyState[], density: number, densities?: Readonly<Record<string, number>>): Promise<BodyProperties[]>;
   /** The manufacturability rules of the profile's process, applied to the bodies and sketches. */
   validate(subject: ValidationSubject, profile: ManufacturingProfile): Promise<Check[]>;
   /**
@@ -61,8 +64,8 @@ export interface AnalysisEngine {
    * part's volume (a pin in a hole of its size) is the kernel's rounding, not interference (CAD-112).
    */
   interference(parts: readonly PlacedPart[], pairs?: readonly (readonly [string, string])[]): Promise<Interference[]>;
-  /** A linear static strength check of the bodies (their display meshes) under the setup's loads (CAD-93). */
-  simulate(meshes: readonly BodyMesh[], setup: SimulationSetup, material: Material): Promise<Result<SimulationResult>>;
+  /** A linear static strength check of the bodies (their display meshes) under the setup's loads (CAD-93), each of its own material in `byBody`, else of `material` (CAD-158). */
+  simulate(meshes: readonly BodyMesh[], setup: SimulationSetup, material: Material, byBody?: Readonly<Record<string, Material>>): Promise<Result<SimulationResult>>;
 }
 
 export function createAnalysisEngine(shapes: ShapeAccess): AnalysisEngine {

@@ -82,7 +82,10 @@ export type TimelineItem = Sketch | Feature;
 
 export const isSketch = (item: TimelineItem): item is Sketch => item.type === 'sketch';
 
-/** A group of consecutive timeline items, from `first` to `last` in timeline order; folders do not nest. */
+/**
+ * A group of consecutive timeline items, from `first` to `last` in timeline order. Folders nest: two
+ * folders are apart or one holds the other (of two with the same items, the earlier one).
+ */
 export interface TimelineFolder {
   readonly id: string;
   readonly name: string;
@@ -95,6 +98,36 @@ export interface TimelineFolder {
 export function folderItems(folder: TimelineFolder, timeline: readonly TimelineItem[]): string[] {
   const [from, to] = [timeline.findIndex((i) => i.id === folder.first), timeline.findIndex((i) => i.id === folder.last)];
   return from < 0 || to < from ? [] : timeline.slice(from, to + 1).map((i) => i.id);
+}
+
+/** A folder where it is: its items' places in the timeline, and the folder it is in (none: at the top). */
+export interface PlacedFolder {
+  readonly folder: TimelineFolder;
+  readonly from: number;
+  readonly to: number;
+  readonly parent?: string;
+  /** How many folders hold it. */
+  readonly depth: number;
+}
+
+/** The folders that have items, each with the folder it is in (CAD-157), outer ones before the ones they hold. */
+export function nestFolders(folders: readonly TimelineFolder[], timeline: readonly TimelineItem[]): PlacedFolder[] {
+  const placed = folders.flatMap((folder, order) => {
+    const [from, to] = [timeline.findIndex((i) => i.id === folder.first), timeline.findIndex((i) => i.id === folder.last)];
+    return from < 0 || to < from ? [] : [{ folder, from, to, order }];
+  });
+  // Outer first: earlier start, then later end, then the order they were made in.
+  placed.sort((a, b) => a.from - b.from || b.to - a.to || a.order - b.order);
+  const result: PlacedFolder[] = [];
+  const open: PlacedFolder[] = [];
+  for (const { folder, from, to } of placed) {
+    while (open.length && !((open.at(-1) as PlacedFolder).to >= to && (open.at(-1) as PlacedFolder).from <= from)) open.pop();
+    const parent = open.at(-1);
+    const entry: PlacedFolder = { folder, from, to, depth: open.length, ...(parent ? { parent: parent.folder.id } : {}) };
+    result.push(entry);
+    open.push(entry);
+  }
+  return result;
 }
 
 /** A named variant of a component: other values for some of its (or its project's) parameters. */
@@ -121,8 +154,10 @@ export interface ComponentDocument extends DocumentBase {
    * items are inserted before them. 0 puts the rollback marker at the end.
    */
   readonly rollbackIndex: number;
-  /** For mass; `materials[0]` when absent. */
+  /** For mass; `materials[0]` when absent. The default of every body without one of its own. */
   readonly material?: Material;
+  /** What bodies are made of, by body id, where it is not the component's material (CAD-158). */
+  readonly bodyMaterials?: Readonly<Record<string, Material>>;
   /** The machine the component is made on, for validation; `manufacturingProfiles[0]` when absent. */
   readonly process?: ManufacturingProfile;
   /** How bodies are shown, by body id; bodies without an entry use the defaults. */

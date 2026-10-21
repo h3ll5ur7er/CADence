@@ -38,8 +38,8 @@ The toolbar above the view has buttons for the everyday features (extrude, revol
 | Construction plane | a flat face, or choose a plane; three vertices for *through three points* | offset; or an axis in the base plane and an angle; or a second, parallel plane (midway) |
 | **Create →** Loft | one profile in each of two or more sketches, in order | smooth or straight between the sections; operation. Sections are lined up first: each runs the same way round as the one before and starts where it matches it best, so a loft from a round shank into blade sections does not twist |
 | **Create →** Sweep | profiles; the path is the curves of another sketch, starting at the profile | operation |
-| **Create →** Hole | (choose the sketch with the hole points) | simple, counterbored or countersunk; diameter; through all or to a depth; teardrop and bridge layer for printing |
-| **Create →** Rib | (choose the sketch with an open line or curve) | thickness, depth, direction |
+| **Create →** Hole | (choose the sketch with the hole points) | simple, counterbored or countersunk; diameter; through all or to a depth, with a drill point; teardrop and bridge layer for printing |
+| **Create →** Rib | (choose the sketch with an open line or curve) | thickness; to a depth or up to the next face; direction |
 | **Create →** Wrap | profiles (letters, a scale, a logo), then **Pick the face** and click it | wrapped round or projected; depth; emboss or engrave |
 | **Create →** Thread | the wall of a hole or a shaft | ISO metric size; length; shown or modelled; start at the other end |
 | **Create →** Insert body | (choose an imported 3D file) | |
@@ -60,6 +60,9 @@ Draw the hole centres with the **Point** tool in a sketch on the face, then **Cr
 - **Bridge layer** leaves one printer layer (the profile's layer height) over a counterbored hole, so the counterbore's floor prints as a bridge; drill it out after printing.
 - **For a screw** fills in the diameter of a clearance hole (ISO 273 medium), a tapping hole or a heat-set insert's hole for M2 to M10.
 - **Fit for printing** widens the hole so a part fits as designed: *press* by nothing, *snug* by 0.15 mm, *loose* by 0.3 mm, each plus the printer's **hole compensation** (set it under **Check manufacturability** with the other printer values; measure it once by printing a test hole).
+- **Drill point** ends a hole that goes to a depth in the cone a twist drill leaves, 118° unless you set another **point angle**. The depth is to the full diameter, as drawings give it; the point goes below it.
+
+A **rib** thickens the open lines of its sketch and extrudes them along the sketch's normal, reversed or both ways. **Up to the next face** runs it until it meets the part, whatever the shape of the face it meets: sketch the rib on the inside of one wall and it fills the gap to the opposite wall. A rib that meets nothing in its direction says so.
 
 A **thread** goes on the wall of a hole or a shaft and starts at its open end. ISO metric coarse sizes M2 to M20 are offered; the hole must be between the thread's minor and major diameter (a 5 mm hole for M6), the shaft about its major diameter. A thread is shown as a helix on the face. **Model the thread** cuts the 60° groove into the body instead: slower, but printable. The groove stops half a groove short of the face's far end, so a thread up to a shoulder (a hex, a flange) is cut too; a thread that would cut nothing is refused.
 
@@ -102,8 +105,9 @@ Click a sketch or feature to edit it. The eye button suppresses it (the model is
 - **Roll back:** drag the **rollback marker** (the bar below the last item) up the timeline, or focus it and use the arrow keys. Items below it are greyed out and not built, and new sketches and features are inserted at the marker. Editing a rolled-back item rolls forward to it.
 - **Reorder:** drag an item to another place, or focus it and press Alt+↑ or Alt+↓. An item cannot move above something it uses (its sketch, plane or the feature that made the faces it refers to); the reason is shown.
 - **Folders:** the folder button next to *Timeline* groups consecutive items (from one item to another) under a name, with a note. A folder opens and closes with its arrow, suppresses all its items at once, rolls the model back to its end, and can be removed (its items stay). An item dragged between a folder's items joins it; one dragged out leaves it.
+- **Folders in folders:** a folder may hold other folders whole, never part of one; each level is indented further. Closing a folder hides the folders in it too. Drag a folder (or focus it and press Alt+↑ or Alt+↓) to move it with everything in it; dropped between another folder's items, it goes into that folder.
 - **Notes:** the note button of an item says why it is there; the note shows when you hover the item.
-- **Repair:** a feature that failed because a face, edge or corner it used is gone (after an earlier change) gets a repair button. It rolls the model back to just before the feature and lists what was lost, where it was, and the nearest faces or edges of the same kind, highlighted in the view. Click a replacement in the view or choose one from the list; **Done** rolls forward again.
+- **Repair:** a feature that failed because a face, edge or corner it used is gone (after an earlier change) gets a repair button. It rolls the model back to just before the feature and lists what was lost, where it was, and the faces or edges most like it, highlighted in the view: those of the same shape first (the same kind of surface or curve, the same size and radius, marked *same-shaped*), then the nearest. So a fillet whose hole moved finds that hole's edge, not the edge of the smaller hole next to where it was. Click a replacement in the view or choose one from the list; **Done** rolls forward again.
 
 Undo and redo with Ctrl+Z and Ctrl+Y.
 

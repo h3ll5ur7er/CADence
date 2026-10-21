@@ -171,7 +171,11 @@
             {
               "kind": "face",
               "body": "box",
-              "name": "f:box:end"
+              "name": "f:box:end",
+              "shape": {
+                "type": "plane",
+                "size": 4799.999999999999
+              }
             }
           ],
           "thickness": "wall"

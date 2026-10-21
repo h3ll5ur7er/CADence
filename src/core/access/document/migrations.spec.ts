@@ -19,8 +19,8 @@ describe('document migrations', () => {
     expect(migrate({ id: 'c', schemaVersion: 1, kind: 'component' })).toEqual({ id: 'c', schemaVersion: 4, kind: 'component' });
   });
 
-  it('takes components of version 3 as they are: reference dimensions, blocks and wraps are new fields (phase 35)', () => {
-    const component = { id: 'c', schemaVersion: 3, kind: 'component', timeline: [{ id: 's', type: 'sketch', entities: [], constraints: [] }] };
+  it('keeps version 3 documents as they are: version 4 only marks the newer fields (phases 35 to 41)', () => {
+    const component = { id: 'c', schemaVersion: 3, kind: 'component', material: { name: 'PLA', density: 1.24 }, timeline: [{ id: 's', type: 'sketch', entities: [], constraints: [] }] };
     expect(migrate(component)).toEqual({ ...component, schemaVersion: 4 });
   });
 

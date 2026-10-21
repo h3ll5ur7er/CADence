@@ -20,7 +20,8 @@
 }
 
 #component-units,
-.material select {
+.material select,
+.bodies .body-material {
   height: 30px;
   padding: 0 var(--space-1);
   border: 1px solid var(--border);
@@ -55,6 +56,11 @@
   dd {
     text-align: right;
     font-variant-numeric: tabular-nums;
+  }
+
+  .body-material {
+    max-width: 100%;
+    height: 24px;
   }
 }
 
@@ -108,6 +114,7 @@
 /* CAD-75: timeline folders and notes. */
 .folder {
   padding: 0 0 0 2px;
+  margin-left: calc(var(--space-3) * var(--depth, 0));
 
   &:hover .item-actions,
   &:focus-within .item-actions {
@@ -133,7 +140,7 @@
 }
 
 .item.in-folder {
-  margin-left: var(--space-3);
+  margin-left: calc(var(--space-3) * var(--depth, 1));
 }
 
 .has-note {
@@ -146,7 +153,8 @@
   height: 24px;
 }
 
-.item[hidden] {
+.item[hidden],
+.folder[hidden] {
   display: none;
 }
 

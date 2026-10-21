@@ -84,7 +84,8 @@ export type ModelingRequest = RequestBase &
         readonly frame: PlaneFrame;
         readonly path: readonly PathPiece[];
         readonly thickness: number;
-        readonly depth: number;
+        /** `next`: up to the next face of the bodies in its direction. */
+        readonly depth: number | 'next';
         readonly direction: 'normal' | 'reverse' | 'symmetric';
       }
     | { readonly type: 'shell'; readonly faces: readonly TopologyRef[]; readonly thickness: number }

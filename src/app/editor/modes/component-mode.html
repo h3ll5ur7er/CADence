@@ -76,14 +76,29 @@
               <span class="marker-line"></span>
             </li>
             }
-            @if (folderStartingAt(item); as folder) {
-              <li class="node folder" [class.suppressed]="folderSuppressed(folder)" [attr.title]="folder.note ?? null">
+            @for (placed of foldersStartingAt(item); track placed.folder.id) {
+              @let folder = placed.folder;
+              <li
+                class="node folder"
+                draggable="true"
+                [hidden]="folderHidden(placed)"
+                [style.--depth]="placed.depth"
+                [class.suppressed]="folderSuppressed(folder)"
+                [class.dragging]="dragging() === 'folder:' + folder.id"
+                [attr.title]="folder.note ?? null"
+                (dragstart)="startDrag($event, 'folder:' + folder.id)"
+                (dragend)="dragging.set(undefined)"
+                (dragover)="$event.preventDefault()"
+                (drop)="dropAt($event, placed.from)"
+              >
                 <button
                   type="button"
                   class="item-main"
                   [attr.aria-expanded]="!collapsed().has(folder.id)"
                   [attr.aria-label]="(collapsed().has(folder.id) ? 'Open ' : 'Close ') + folder.name"
+                  [attr.aria-keyshortcuts]="'Alt+ArrowUp Alt+ArrowDown'"
                   (click)="toggleFolder(folder)"
+                  (keydown)="folderKey($event, placed)"
                 >
                   <cad-icon name="chevronRight" [size]="14" class="chevron" [class.open]="!collapsed().has(folder.id)" />
                   <cad-icon name="folder" />
@@ -119,6 +134,7 @@
               draggable="true"
               [hidden]="inClosedFolder(item)"
               [class.in-folder]="folderOf().has(item.id)"
+              [style.--depth]="depthOf(item)"
               [class.active]="store.editing() === item.id || store.draft()?.feature?.id === item.id"
               [class.suppressed]="item.suppressed"
               [class.failed]="itemStatus?.state === 'error'"
@@ -530,6 +546,15 @@
               <dl>
                 <dt>Volume</dt>
                 <dd class="mono" data-testid="body-volume">{{ mm(p.volume, 3) }}</dd>
+                <dt>Material</dt>
+                <dd>
+                  <select class="body-material" [attr.aria-label]="'Material of ' + body.name" (change)="setBodyMaterial(body.id, $any($event.target).value)">
+                    <option value="" [selected]="!body.material">As the component ({{ material().name }})</option>
+                    @for (m of materials; track m.name) {
+                      <option [value]="m.name" [selected]="m.name === body.material?.name">{{ m.name }} · {{ m.density }} g/cm³</option>
+                    }
+                  </select>
+                </dd>
                 <dt>Mass</dt>
                 <dd class="mono" data-testid="body-mass">{{ grams(p.mass) }}</dd>
                 <dt>Surface</dt>

@@ -17,6 +17,18 @@ export interface TopologyRef {
   readonly body: string;
   readonly name: string;
   readonly hint?: Vec3;
+  /** What it was like when it was picked (recorded by the Design Manager): repairs look for its like (CAD-157). */
+  readonly shape?: RefShape;
+}
+
+/**
+ * The shape of a face or edge: its kind of surface or curve (`plane`, `cylinder`, `line`, `circle`, …),
+ * its size (area in mm², length in mm) and, for round ones, its radius.
+ */
+export interface RefShape {
+  readonly type: string;
+  readonly size: number;
+  readonly radius?: number;
 }
 
 /** The persistent name of a vertex: the names of the edges that meet there, in a fixed order. */
@@ -120,6 +132,9 @@ export interface HoleFeature extends FeatureBase {
   readonly bridge: boolean;
   /** How tightly what goes in fits: its allowance (and the printer's hole compensation) widens the hole. */
   readonly fit?: FitClass;
+  /** Blind holes: a drill point (a cone of `pointAngle`, 118° when empty) below the depth instead of a flat floor. */
+  readonly drillPoint?: boolean;
+  readonly pointAngle?: string;
 }
 
 /** A part (standard, gear or for printing) at points of a sketch, on its plane (contracts/parts.ts). */
@@ -236,6 +251,8 @@ export interface RibFeature extends FeatureBase {
   readonly thickness: string;
   readonly depth: string;
   readonly direction: 'normal' | 'reverse' | 'symmetric';
+  /** `next`: up to the next face in its direction (each way when symmetric), `depth` unused; absent: `depth`. */
+  readonly extent?: 'depth' | 'next';
 }
 
 /**

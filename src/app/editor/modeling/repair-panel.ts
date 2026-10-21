@@ -14,7 +14,7 @@ import { bodyNames } from './body-names';
       <h2>{{ item()?.name }}</h2>
       <button type="button" class="icon-btn" aria-label="Close repair" (click)="store.openPanel(undefined)">×</button>
     </div>
-    <p class="hint">The model is rolled back to just before it. For each lost reference, click its replacement in the view (the nearest ones are highlighted) or choose one below.</p>
+    <p class="hint">The model is rolled back to just before it. For each lost reference, click its replacement in the view (the likeliest ones are highlighted) or choose one below: those of the same kind and size first, then the nearest.</p>
     <ul class="lost" aria-label="Lost references">
       @for (b of store.broken(); track b.ref.name; let i = $index) {
         <li [class.current]="i === store.repairTarget()">
@@ -25,8 +25,8 @@ import { bodyNames } from './body-names';
             }
           </button>
           @for (c of b.candidates; track c.ref.name; let n = $index) {
-            <button type="button" class="btn candidate" (click)="store.replaceReference(b.ref, c.ref)">
-              Use the {{ n === 0 ? 'nearest' : 'next' }} {{ c.ref.kind }} ({{ mm(c.distance) }} away)
+            <button type="button" class="btn candidate" [class.same]="c.sameShape" (click)="store.replaceReference(b.ref, c.ref)">
+              Use the {{ n === 0 ? '' : 'next ' }}{{ c.sameShape ? 'same-shaped' : n === 0 ? 'nearest' : '' }} {{ c.ref.kind }}{{ c.distance === undefined ? '' : ' (' + mm(c.distance) + ' away)' }}
             </button>
           }
         </li>
@@ -42,10 +42,11 @@ import { bodyNames } from './body-names';
     h2 { font-size: 15px; }
     .hint { margin: 0; color: var(--text-muted); font-size: 12px; }
     .lost { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; font-size: 13px; }
-    .lost li { display: grid; gap: var(--space-1); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius); }
+    .lost li { display: grid; min-width: 0; gap: var(--space-1); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius); }
     .lost li.current { border-color: var(--accent); background: var(--accent-soft); }
     .target { display: grid; gap: 2px; padding: 0; border: 0; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
-    .candidate { justify-self: start; }
+    .candidate { justify-self: start; max-width: 100%; height: auto; min-height: 32px; padding-block: var(--space-1); white-space: normal; text-align: left; }
+    .candidate.same { border-color: var(--accent); }
     .muted, .none { color: var(--text-muted); font-size: 12px; }
     .btn-primary { justify-self: start; }
   `,

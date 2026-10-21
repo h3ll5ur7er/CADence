@@ -572,6 +572,17 @@ describe('component results and joint frames', () => {
       expect((await names(sunk)).faces).toContain('f:h:sink:p1');
     });
 
+    it('ends blind holes in a 118° drill point (CAD-156)', async () => {
+      const bodies = ok(await plate());
+      const angle = (118 * Math.PI) / 180;
+      const pointed = ok(await hole(bodies, 'h-point', [{ id: 'p1', at: [10, 10] }], { depth: 3, point: angle }));
+      const tip = 2.5 / Math.tan(angle / 2);
+      expect(await volume(pointed)).toBeCloseTo(plain - Math.PI * 6.25 * 3 - (Math.PI * 6.25 * tip) / 3, 2);
+      const faces = (await names(pointed)).faces;
+      expect(faces).toEqual(expect.arrayContaining(['f:h:wall:p1', 'f:h:point:p1']));
+      expect(faces).not.toContain('f:h:floor:p1');
+    });
+
     it('drills teardrop holes on their side, pointing up', async () => {
       const bodies = ok(await plate());
       const front = { origin: [0, 0, 0] as const, u: [1, 0, 0] as const, v: [0, 0, 1] as const }; // facing -Y: into the plate is +Y
@@ -662,6 +673,41 @@ describe('component results and joint frames', () => {
       const added = (await volume(ribbed)) - 80 * 40 * 5;
       expect(added).toBeGreaterThan(40 * 2 * 10 - 1e-6);
       expect(added).toBeLessThan((40 + 2) * 2 * 10 + 1e-6);
+    });
+
+    describe('up to the next face (CAD-156)', () => {
+      // A plate with a 30 mm wall at each end: x 0 to 5 and 75 to 80.
+      const walls = async () => {
+        const base = ok(await plate());
+        const top: PlaneFrame = { ...XY, origin: [0, 0, 5] };
+        const wall = (key: string, x: number, bodies: readonly BodyState[]) =>
+          engine.apply({ type: 'extrude', feature: key, key: `walls-${key}`, bodies, frame: top, profiles: [profile(rectangleLoop(x, 0, 5, 40, key))], distance: 30, direction: 'normal', operation: 'join' });
+        return ok(await wall('wb', 75, ok(await wall('wa', 0, base))));
+      };
+      const upright = (x: number): PlaneFrame => ({ origin: [x, 0, 0], u: [0, 1, 0], v: [0, 0, 1] }); // normal +X
+      const line = (x: number) => [{ kind: 'line' as const, start: [x, 20, 5] as const, end: [x, 20, 35] as const }];
+      const rib = (bodies: readonly BodyState[], key: string, x: number, direction: 'normal' | 'reverse' | 'symmetric') =>
+        engine.apply({ type: 'rib', feature: 'rib', key, bodies, frame: upright(x), path: line(x), thickness: 2, depth: 'next', direction });
+
+      it('runs from one wall to the next', async () => {
+        const bodies = await walls();
+        const before = await volume(bodies);
+        const ribbed = ok(await rib(bodies, 'rib-next', 5, 'normal'));
+        expect(ribbed.map((b) => b.id)).toEqual(['plate']);
+        expect((await volume(ribbed)) - before).toBeCloseTo(70 * 2 * 30, 3);
+        expect((await names(ribbed)).faces.some((f) => f.startsWith('f:rib:side'))).toBe(true);
+      });
+
+      it('runs both ways from a plane between the walls', async () => {
+        const bodies = await walls();
+        const ribbed = ok(await rib(bodies, 'rib-both', 40, 'symmetric'));
+        expect((await volume(ribbed)) - (await volume(bodies))).toBeCloseTo(70 * 2 * 30, 3);
+      });
+
+      it('says when nothing is in its way', async () => {
+        const outcome = await rib(await walls(), 'rib-out', 5, 'reverse');
+        expect(outcome.error).toBe('The rib meets no face in its direction: give it a depth instead.');
+      });
     });
   });
 

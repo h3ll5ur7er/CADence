@@ -3,6 +3,7 @@ import type { DocumentAccess } from '@core/access/document';
 import type { ProjectAccess } from '@core/access/project';
 import type { ExternalFileAccess } from '@core/access/external-file';
 import {
+  bodyMaterial,
   type BodyMesh,
   type BodyProperties,
   type BodyState,
@@ -38,7 +39,7 @@ import { inferRelations, type SketchEngine } from '@core/engines/sketch';
 import type { Clock } from '@core/utilities/clock';
 import type { EventBus } from '@core/utilities/messaging';
 import { type ConfigurationImport, configurationsCsv, readConfigurationsCsv } from './configurations';
-import { type BrokenReference, brokenReferences } from './references';
+import { type BrokenReference, brokenReferences, elementsOf, lostReferences, shapeKey, topologyRefs, withShapes } from './references';
 import { applyCommand } from './commands';
 import type {
   BlockSummary,
@@ -301,7 +302,13 @@ class Session implements DesignSession {
     if (!item) return fail({ code: 'invalid-command', message: `Item ${itemId} does not exist.` });
     // The bodies as they are just before the item.
     const before = await new Regeneration(this.deps).run({ ...document, rollbackIndex: Math.max(document.rollbackIndex, document.timeline.length - index) }, this.context);
-    return ok(brokenReferences(item, await this.meshes(before)));
+    const meshes = await this.meshes(before);
+    // Lost references whose shape was recorded are matched with faces and edges of the same shape (CAD-157).
+    const kinds = new Set(lostReferences(item, meshes).flatMap((r) => (r.shape && r.kind !== 'vertex' ? [r.kind] : [])));
+    const elements = [...kinds].flatMap((kind) => elementsOf(kind, meshes));
+    const found = elements.length ? await this.deps.analysis.shapesOf(before.bodies, elements) : [];
+    const shapes = new Map(elements.flatMap((ref, i) => (found[i] ? [[shapeKey(ref), found[i]] as const] : [])));
+    return ok(brokenReferences(item, meshes, shapes));
   }
 
   async exportConfigurations(): Promise<Result<void>> {
@@ -337,7 +344,9 @@ class Session implements DesignSession {
     // Another configuration is built for the export only; the session keeps showing its own.
     const other = options.configuration !== undefined && options.configuration !== (document.configuration ?? '');
     const derived = other ? await new Regeneration(this.deps).run(document, { ...this.context, configuration: options.configuration }) : this.current.derived;
-    const bodies = this.namedBodies(derived).filter((b) => !options.bodies || options.bodies.includes(b.id));
+    const bodies = this.namedBodies(derived)
+      .filter((b) => !options.bodies || options.bodies.includes(b.id))
+      .map((b) => ({ ...b, material: bodyMaterial(document, b.id).name }));
     if (derived.bodies.length === 0) return fail({ code: 'nothing-to-export', message: 'There are no bodies to export yet.' });
     if (bodies.length === 0) return fail({ code: 'nothing-to-export', message: 'Select at least one body to export.' });
     const variant = document.configurations?.find((c) => c.id === (other ? options.configuration : document.configuration))?.name;
@@ -354,8 +363,11 @@ class Session implements DesignSession {
     return this.deps.analysis.measure(this.current.derived.bodies, refs);
   }
 
-  properties(): Promise<BodyProperties[]> {
-    return this.deps.analysis.properties(this.current.derived.bodies, materialOf(this.current.document).density);
+  async properties(): Promise<BodyProperties[]> {
+    const { document, derived } = this.current;
+    const own = Object.fromEntries(Object.entries(document.bodyMaterials ?? {}).map(([body, m]) => [body, m.density]));
+    const found = await this.deps.analysis.properties(derived.bodies, materialOf(document).density, own);
+    return found.map((p) => ({ ...p, material: bodyMaterial(document, p.body).name }));
   }
 
   async validate(): Promise<ValidationReport> {
@@ -371,11 +383,11 @@ class Session implements DesignSession {
     const { document, derived } = this.current;
     if (!document.simulation) return fail({ code: 'not-fixed', message: 'Hold at least one face fixed.' });
     // Materials saved before strength checks have no stiffness: those of the catalogue's namesake stand in.
-    const material = materialOf(document);
-    const known = materials.find((m) => m.name === material.name);
+    const stiff = (material: Material): Material => ({ ...materials.find((m) => m.name === material.name), ...material });
     // Copies: buffers sent to the geometry worker move there, and the view keeps drawing these meshes.
     const meshes = (await this.meshes(derived)).map((m) => ({ ...m, positions: m.positions.slice(), normals: m.normals.slice(), indices: m.indices.slice(), edgePositions: m.edgePositions.slice() }));
-    return this.deps.analysis.simulate(meshes, document.simulation, { ...known, ...material });
+    const byBody = Object.fromEntries(Object.entries(document.bodyMaterials ?? {}).map(([body, m]) => [body, stiff(m)]));
+    return this.deps.analysis.simulate(meshes, document.simulation, stiff(materialOf(document)), byBody);
   }
 
   /** Bodies with the names of the features that made them. */
@@ -384,12 +396,22 @@ class Session implements DesignSession {
     return derived.bodies.map((b) => ({ ...b, name: document.timeline.find((item) => item.id === b.id)?.name ?? b.id }));
   }
 
+  /** The command with the shape of each face and edge it names recorded, as the bodies are now, so a repair can find its like (CAD-157). */
+  private async shaped(command: DesignCommand): Promise<DesignCommand> {
+    const refs = topologyRefs(command).filter((r) => r.kind !== 'vertex' && !r.shape);
+    if (!refs.length || !this.current.derived.bodies.length) return command;
+    // Recording what they are like never stops a command.
+    const found = await this.deps.analysis.shapesOf(this.current.derived.bodies, refs).catch(() => []);
+    const shapes = new Map(refs.flatMap((ref, i) => (found[i] ? [[shapeKey(ref), found[i]] as const] : [])));
+    return shapes.size ? withShapes(command, shapes) : command;
+  }
+
   private async apply(given: DesignCommand): Promise<Result<void>> {
     // A library's part is kept as the library had it; it changes there, and comes here with an update (CAD-151).
     const { library } = this.current.document;
     if (library) return fail({ code: 'library-part', message: `${this.current.document.name} comes from the library ${library.libraryName}: change it there, then update it here.` });
-    const command = await this.anchored(given);
-    if (command.type === 'set-appearance' && !this.current.derived.bodies.some((b) => b.id === command.body)) {
+    const command = await this.shaped(await this.anchored(given));
+    if ((command.type === 'set-appearance' || (command.type === 'set-body-material' && command.material)) && !this.current.derived.bodies.some((b) => b.id === command.body)) {
       return fail({ code: 'invalid-command', message: `There is no body ${command.body}.` });
     }
     const applied = applyCommand(this.current.document, command);

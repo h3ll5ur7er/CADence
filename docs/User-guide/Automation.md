@@ -28,7 +28,7 @@ That builds `dist/automation/cadence.mjs`. Run it with `npm run cadence -- <comm
 | `documents <project>` | Lists a project's documents |
 | `export <project> <document> <format>` | Exports a component: `step`, `stl`, `obj`, `3mf`; `dxf` or `svg` of a sketch (`--sketch <id>`) or of the flat pattern (`--flat-pattern`: flanges, flanges on flanges, hems and miter flanges unfolded, corner reliefs cut) |
 | `picture <project> <document> <file>` | A PNG of a component or an assembly: `--view iso` (default), `front`, `back`, `top`, `bottom`, `left` or `right`, or `--direction x,y,z` (towards the camera) with `--up x,y,z`; `--width`, `--height` (800 × 600); `--white` for a white background; `--focus`, `--hide`, `--ghost` with body or instance ids (`a,b`) to zoom onto, leave out or show see-through; assemblies also `--explode <view>` (with `--steps n`) or `--study <id> --time <seconds>` |
-| `convert <input> <output>` | Converts a file, formats from the extensions: `bracket.step` to `bracket.stl`, `logo.svg` to `logo.dxf` |
+| `convert <input> <output>` | Converts a file, formats from the extensions: `bracket.step` to `bracket.stl`, `logo.svg` to `logo.dxf`, a KiCad board `board.kicad_pcb` to `board.step` |
 | `run <script> [arguments]` | Runs a script (below) |
 | `open-git <url>` | Opens a project from a git repository (`--cors-proxy <url>` if needed) |
 | `sync <project>` | Syncs a project with its repository; conflicts are left for the app |
@@ -126,6 +126,8 @@ The server tells the agent how to model when it connects, and offers these tools
 | `project_notes` | A project's description (Markdown) and attachments: get, set, attach a file by path or a link, read a file (text files answer their text, others are written to the exports folder), remove |
 | `list_libraries`, `library`, `insert_library_part` | Libraries: the standard parts and the projects marked as libraries, with their parts (`match` filters them); mark a project as a library, list and take updates of the parts a project uses, whether a part follows its library on its own; insert a part into an assembly by designation (`ISO 4762 M3 x 12`) or name, with `at` onto a hole's round face or circular edge |
 | `export_project`, `import_project` | `.cadence` archives, with the version history and the libraries the project uses if asked |
+| `list_projects`, `create_project`, `create_project_from_template`, `rename_project`, `delete_project`, `duplicate` | Projects (and copies of documents) |
+| `list_documents`, `create_document` (component, assembly or drawing), `rename_document`, `delete_document`, `import_file` (also in place of an imported document; with `triangles`, a mesh is also kept repaired and simplified to about that many triangles; a KiCad board answers with its holes and mounting holes, named for joints) | Documents |
 | `versions` | The version history: list (a project's or a document's), record, restore a document, name and unname versions |
 | `sync_project`, `open_git` | Git: a project synced with its repository (conflicts answered with `resolutions`; `libraries` syncs the libraries it uses too), or opened from one; sign-in from `$CADENCE_GIT_USERNAME` and `$CADENCE_GIT_PASSWORD` |
 | `set_project_parameters` | Parameters for every component of a project |

@@ -38,3 +38,27 @@ export interface BodyState {
 
 /** How finely solids are turned into triangles for STL, 3MF and OBJ: deviation from the true surface. */
 export type MeshQuality = 'draft' | 'normal' | 'fine';
+
+/** What repairing a triangle mesh changed before it became a solid (CAD-169). */
+export interface MeshRepair {
+  /** Corners merged with another at the same place. */
+  readonly mergedVertices: number;
+  /** Triangles dropped: repeated, or with two corners at one place. */
+  readonly removedTriangles: number;
+  /** Triangles turned to face the same way as their neighbours, and outwards. */
+  readonly flippedTriangles: number;
+  /** Openings closed with new triangles. */
+  readonly closedHoles: number;
+}
+
+/** What a circuit board was made into (CAD-170). */
+export interface BoardSummary {
+  readonly thickness: number;
+  /** Drilled holes, named for joints (`hole:<reference>`, `hole:<reference>:<pad>`). */
+  readonly holes: number;
+  /** The holes of parts that are nothing but a hole. */
+  readonly mountingHoles: readonly string[];
+  readonly parts: number;
+  /** Parts shown as their STEP models; the others are boxes of their courtyard. */
+  readonly models: number;
+}

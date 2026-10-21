@@ -1,5 +1,6 @@
 import type {
   Attachment,
+  BoardSummary,
   BodyMesh,
   ConflictChoice,
   CreatableDocumentKind,
@@ -9,6 +10,7 @@ import type {
   LibraryLink,
   LibraryPart,
   LibrarySummary,
+  MeshRepair,
   Parameter,
   ProjectId,
   ProjectRemote,
@@ -55,6 +57,8 @@ export type ImportedContent =
       readonly max: Vec3;
       /** Whether components and assemblies can use it as a solid (meshes up to a size). */
       readonly usableAsSolid: boolean;
+      /** A circuit board: its holes and parts (CAD-170). */
+      readonly board?: BoardSummary;
     }
   /** A drawing's sketch entities, with the outlines of its texts. */
   | { readonly kind: 'drawing'; readonly entities: readonly SketchEntity[]; readonly texts: TextOutlines; readonly min: Vec3; readonly max: Vec3 }
@@ -80,6 +84,15 @@ export interface LibraryUpdate {
   readonly link: LibraryLink;
   /** The library's latest version. */
   readonly latest: string;
+}
+
+/** A mesh simplified for use as a solid, to look at before keeping it (CAD-169). */
+export interface SimplifiedImport {
+  readonly content: Extract<ImportedContent, { readonly kind: 'model' }>;
+  /** Triangles of the original. */
+  readonly before: number;
+  /** What the original needed to be closed and face outwards. */
+  readonly repair: MeshRepair;
 }
 
 /** Project and document lifecycle (see docs/Architecture/Components.md#project-manager). */
@@ -187,6 +200,13 @@ export interface ProjectManager {
   openImported(id: DocumentId): Promise<ImportedView | undefined>;
   /** Reads an imported file for the viewer. */
   previewImported(id: DocumentId): Promise<Result<ImportedContent>>;
+  /**
+   * A mesh file (STL, OBJ, 3MF) repaired and simplified by quadric error to about `triangles`
+   * triangles, for the viewer to show before it is kept (CAD-169).
+   */
+  previewSimplified(id: DocumentId, triangles: number): Promise<Result<SimplifiedImport>>;
+  /** Keeps the simplified mesh as a new imported file of the same format, "<name> (simplified)", next to the original. */
+  simplifyImported(id: DocumentId, triangles: number): Promise<Result<DocumentSummary>>;
   /** Hands the imported file to the user in another format (drawings as drawings, 3D files as 3D files). */
   exportImported(id: DocumentId, format: ImportFormat): Promise<Result<void>>;
   /** Hands a file the editor made (a picture, a video) to the user: a download or a save dialog. */

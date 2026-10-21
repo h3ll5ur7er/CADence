@@ -8,7 +8,7 @@
   <button type="button" class="btn" (click)="create.emit('drawing')">
     <cad-icon name="drawing" /> Drawing
   </button>
-  <label class="btn import" title="Import STEP, STL, OBJ, 3MF, DXF or SVG">
+  <label class="btn import" title="Import STEP, STL, OBJ, 3MF, KiCad boards, DXF or SVG">
     <cad-icon name="upload" /> Import
     <input #file type="file" class="visually-hidden" [accept]="accept" (change)="picked(file)" />
   </label>

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { InMemoryAssetAccess } from '@core/access/asset';
 import { InMemoryDocumentAccess } from '@core/access/document';
 import { InMemoryProjectAccess } from '@core/access/project';
@@ -271,6 +272,30 @@ describe('AssemblyManager', () => {
     // Without its instance, the file is no component of the assembly any more (CAD-135).
     unwrap(await session.execute({ type: 'remove-instance', instanceId: 'c1' }));
     expect(session.state().components.has(asDocumentId('cube'))).toBe(false);
+  });
+
+  it('places an enclosure on a circuit board by a mounting hole the board names (CAD-170)', async () => {
+    const bytes = new Uint8Array(readFileSync(new URL('../../../../e2e/fixtures/sensor-board.kicad_pcb', import.meta.url)));
+    await assets.keep({ id: asAssetId('board-asset'), projectId: project, name: 'sensor-board.kicad_pcb', byteLength: bytes.length, bytes });
+    const board = asDocumentId('board');
+    await documents.store({ id: board, projectId: project, kind: 'imported', name: 'Sensor board', createdAt: stamp, modifiedAt: stamp, schemaVersion: currentSchemaVersion, assetId: asAssetId('board-asset'), format: 'kicad_pcb', fileName: 'sensor-board.kicad_pcb', byteLength: bytes.length });
+    unwrap(await insert('pcb', board, identity(), true));
+    const loaded = session.state().components.get(board);
+    expect(loaded).toMatchObject({ status: 'ready' });
+    // The board and its parts; the board's hole walls by the holes' names.
+    expect(loaded?.bodies.map((b) => b.body)).toEqual(['import', 'import:2']);
+    expect(loaded?.bodies[0]?.faces.map((f) => f.name)).toEqual(expect.arrayContaining(['hole:H1', 'hole:H2', 'hole:H3', 'hole:H4', 'board:top', 'board:bottom']));
+    // The enclosure (a plate with a hole, here) sits with its hole on the board's mounting hole H3.
+    unwrap(await insert('case', base, translation([0, 80, 0])));
+    unwrap(
+      await session.execute({
+        type: 'add-joint',
+        joint: { id: 'screw', name: '', type: 'rigid', a: { instance: 'pcb', ref: { kind: 'face', body: 'import', name: 'hole:H3' } }, b: { instance: 'case', ref: holeOf('base') }, flip: false, values: [], limits: [] },
+      }),
+    );
+    expect(session.state().jointErrors.get('screw')).toBeUndefined();
+    // H3 is 4 mm in from the board's right and top edges: (56, 4) from its lower left corner, halfway up its 1.6 mm.
+    expect(where('case', [10, 10, 2.5])).toEqual([56, 4, 0.8]);
   });
 
   it('tilts joint frames about their x axis (CAD-113)', () => {

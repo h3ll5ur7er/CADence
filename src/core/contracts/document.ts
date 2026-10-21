@@ -28,11 +28,12 @@ export function lengthExpression(typed: string, unit: LengthUnit): string {
   const text = typed.trim();
   return unit !== 'mm' && /^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(text) ? `${text} ${unit}` : text;
 }
-export type ImportFormat = 'step' | 'stl' | 'obj' | '3mf' | 'dxf' | 'svg' | 'png' | 'jpg' | 'ttf' | 'otf' | 'woff';
+export type ImportFormat = 'step' | 'stl' | 'obj' | '3mf' | 'kicad_pcb' | 'dxf' | 'svg' | 'png' | 'jpg' | 'ttf' | 'otf' | 'woff';
 
-/** 3D files: what components insert as bodies and assemblies as parts. */
-export type ModelFormat = 'step' | 'stl' | 'obj' | '3mf';
-export const isModelFormat = (format: ImportFormat | undefined): format is ModelFormat => format === 'step' || format === 'stl' || format === 'obj' || format === '3mf';
+/** 3D files: what components insert as bodies and assemblies as parts; KiCad boards are made into solids (CAD-170). */
+export type ModelFormat = 'step' | 'stl' | 'obj' | '3mf' | 'kicad_pcb';
+export const isModelFormat = (format: ImportFormat | undefined): format is ModelFormat =>
+  format === 'step' || format === 'stl' || format === 'obj' || format === '3mf' || format === 'kicad_pcb';
 
 export interface DocumentSummary {
   readonly id: DocumentId;

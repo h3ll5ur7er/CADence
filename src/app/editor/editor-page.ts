@@ -153,6 +153,13 @@ export class EditorPage {
     await this.open(result.value);
   }
 
+  /** A document a mode made (a simplified mesh): listed and opened. */
+  protected async opened(document: DocumentSummary): Promise<void> {
+    this.message.set(undefined);
+    this.refresh();
+    await this.open(document);
+  }
+
   protected async duplicate(document: DocumentSummary): Promise<void> {
     const result = await this.projectManager.duplicateDocument(document.id);
     if (!result.ok) return this.message.set(result.error.message);

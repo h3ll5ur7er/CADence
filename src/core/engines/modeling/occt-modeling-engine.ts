@@ -465,7 +465,8 @@ export class OcctModelingEngine implements ModelingEngine {
       const imported = this.shapes.get(source);
       if (!imported) throw new FeatureError('The imported file has to be read again.');
       const id = i === 0 ? feature : `${feature}:${i + 1}`;
-      return [`${key}:${id}`, nameShape(imported.shape.clone(), [], () => undefined, feature)];
+      // Faces the file named (a circuit board's holes, CAD-170) keep their names; the others are named by position.
+      return [`${key}:${id}`, nameShape(imported.shape.clone(), namedSurfaces(imported), () => undefined, feature)];
     });
     const added = stored.map(([storedKey], i) => ({ id: i === 0 ? feature : `${feature}:${i + 1}`, key: storedKey }));
     return this.store({ bodies: [...bodies, ...added], stored });

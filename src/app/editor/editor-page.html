@@ -79,7 +79,7 @@
       }
       @case ('imported') {
         @defer (on immediate) {
-          <cad-imported-mode [document]="doc" />
+          <cad-imported-mode [document]="doc" (created)="opened($event)" />
         }
       }
     }

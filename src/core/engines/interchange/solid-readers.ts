@@ -1,5 +1,5 @@
 import { adopt, type NamedShape, type ShapeAccess } from '@core/access/shape';
-import type { BodyMesh } from '@core/contracts';
+import type { BodyMesh, BoardSummary } from '@core/contracts';
 import { getOC, importSTEP, makeCompound, measureVolume, type Shape3D } from 'replicad';
 import { read3mf, readObj, readStl, type ReadMesh } from './mesh-readers';
 import { meshVolume, writeStl } from './solids';
@@ -70,13 +70,16 @@ function explore(shape: Shape3D['wrapped'], type: 'TopAbs_SOLID' | 'TopAbs_SHELL
 /** Up to this many solids of a file become a body each; more become one body (CAD-135). */
 export const maxSeparateSolids = 50;
 
-/** Stores solids without names (the Modeling Engine names them when a feature inserts them). */
-export function store(shapes: ShapeAccess, key: string, read: readonly Shape3D[]): string[] {
+/**
+ * Stores solids; their faces are named only where `faces` names them (a board's holes), the Modeling
+ * Engine names the rest when a feature inserts them.
+ */
+export function store(shapes: ShapeAccess, key: string, read: readonly Shape3D[], faces: readonly ReadonlyMap<number, string>[] = []): string[] {
   // A file of many solids (a circuit board with its parts' models: 669 in one) is one body made of
   // them all: as many shapes would not fit the store, nor make a usable part (CAD-135).
   const solids = read.length > maxSeparateSolids ? [makeCompound([...read]) as unknown as Shape3D] : read;
   return solids.map((shape, i) => {
-    const named: NamedShape = { shape, faces: new Map(), edges: new Map() };
+    const named: NamedShape = { shape, faces: (solids === read && faces[i]) || new Map(), edges: new Map() };
     shapes.put(`${key}:${i}`, named);
     return `${key}:${i}`;
   });
@@ -91,7 +94,10 @@ export interface MeshImport {
   readonly max: readonly [number, number, number];
   /** Whether `readSolids` can turn it into solids (meshes up to `solidTriangleLimit` triangles). */
   readonly usableAsSolid: boolean;
+  /** A circuit board: what was made of it (CAD-170). */
+  readonly board?: BoardSummary;
 }
+
 
 const foldCosine = Math.cos((30 * Math.PI) / 180);
 

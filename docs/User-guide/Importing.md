@@ -14,6 +14,7 @@ Click **Import** in the documents panel, or drop files onto it. The original fil
 | --- | --- |
 | STEP (`.step`, `.stp`) | Exact solids, as made in CAD programs |
 | STL, OBJ, 3MF | Triangle meshes, as used for 3D printing (3MF: every object, with its units and placement) |
+| KiCad board (`.kicad_pcb`) | A circuit board with its holes and parts, to design an enclosure around ([[#Circuit boards]]) |
 | DXF, SVG | 2D drawings: lines, arcs, circles, ellipses, splines, polylines and paths, text; DXF blocks and hatches |
 | PNG, JPEG | Pictures: to draw over in sketches, or to trace into curves ([[User-guide/Sketching#Pictures]]) |
 | TTF, OTF, WOFF | Fonts for sketch texts ([[User-guide/Sketching#Text]]) |
@@ -24,8 +25,17 @@ Opening an imported file shows it in 3D (drawings lie on the XY plane), framed t
 
 **Export as** converts it: models to STEP, STL, 3MF or OBJ, drawings to DXF or SVG. A mesh converts to STEP as a faceted solid.
 
-> [!NOTE]
-> Meshes with more than 100,000 triangles can be viewed and converted between mesh formats, but not used as solids or saved as STEP. Simplify them in your slicer or mesh editor first.
+Meshes are repaired before they become solids: corners at the same place are merged, repeated triangles removed, triangles turned to face outwards, and openings closed. So an open or broken mesh (a scan, a download) can still be used in a component or an assembly.
+
+### Simplify a large mesh
+
+Meshes with more than 100,000 triangles can be viewed and converted between mesh formats, but not used as solids or saved as STEP as they are. Simplify them under **Simplify** in the properties:
+
+1. Enter how many **Triangles** the mesh should keep (up to 100,000 can become a solid; fewer is faster).
+2. **Preview** shows the repaired and simplified mesh in place of the original, with its triangles, volume, and what was repaired (openings closed, triangles turned, duplicates removed).
+3. **Keep as new file** adds it to the project as "<name> (simplified)", in the original's format, and opens it. Use that one with Insert body or in assemblies; the original stays as it is.
+
+Simplifying keeps the shape where it matters: flat and gently curved areas lose triangles first, and the edges of openings stay where they are.
 
 ## Use a model in a component
 
@@ -34,6 +44,15 @@ Choose **Insert body** in the component toolbar and pick the imported file. Its 
 ## Use a model in an assembly
 
 Imported 3D files appear in the assembly's **Insert** menu next to the project's components. Joints attach to their faces and edges like to any part.
+
+## Circuit boards
+
+Import a KiCad board (`.kicad_pcb`, KiCad 6 and newer) to design an enclosure around it. The viewer shows the board with its parts, its thickness, its holes, its mounting holes and how many parts it has.
+
+- **The board** is its outline on the Edge.Cuts layer, as thick as the board, with its drilled holes (round and oval) and cut-outs. Its lower left corner is at the origin and its bottom on the XY plane. Copper, tracks and vias are left out.
+- **The parts** are one more body: each part is a box of its courtyard, as tall as its **Height** field in KiCad (for example `11.6 mm`), or 3 mm without one, on the side the part is on. Mounting holes are no parts.
+- **STEP models:** import the STEP files of the parts' 3D models into the same project, named like the model in KiCad (`SOIC-8_3.9x4.9mm_P1.27mm.step` for `…/SOIC-8_3.9x4.9mm_P1.27mm.wrl`), and those parts are their models, placed as in KiCad's 3D viewer. Import them before you open the assembly that uses the board, or open it again.
+- **Holes for joints:** each hole's wall is named after its part: `hole:H1` for a part H1 with one hole (a mounting hole), `hole:J1:2` for pad 2 of J1. Insert the board into an assembly, and attach the enclosure's screw posts to the holes with joints: a joint on a hole lines up with its axis. The board's faces are `board:top` and `board:bottom`.
 
 ## Use a drawing in a sketch
 

@@ -112,6 +112,8 @@ describe('Sketch blocks (CAD-154)', () => {
     expect(point(session, 's1', 'i1:c')).toEqual([expect.closeTo(30), expect.closeTo(14)]);
     expect(view(session)?.profiles).toHaveLength(1);
     expect(await session.blocks()).toEqual([{ sketch: 'slot', name: 'Slot' }]);
+    // The sketch uses the block: the block cannot move after it.
+    expect(await session.execute({ type: 'reorder-item', itemId: 'slot', index: 1 })).toMatchObject({ ok: false });
   });
 
   it('places a block twice, turned and scaled, and both follow when it is edited once', async () => {

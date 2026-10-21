@@ -154,10 +154,11 @@ export function itemDependencies(item: TimelineItem, timeline: readonly Timeline
     if (Array.isArray(value)) value.forEach((v) => visit(v, key));
     else if (value && typeof value === 'object') for (const [k, v] of Object.entries(value)) visit(v, k);
   };
-  // A sketch's own geometry refers to nothing in the timeline; its plane and projections do.
+  // A sketch's own geometry refers to nothing in the timeline; its plane, projections and blocks of this component do.
   if (isSketch(item)) {
     visit(item.plane, 'plane');
     for (const e of item.entities) if (e.kind === 'projection') visit(e.refs);
+    for (const e of item.entities) if (e.kind === 'block' && !e.document) found.add(e.block);
   } else {
     visit({ ...item, id: undefined, name: undefined });
   }

@@ -174,7 +174,7 @@ interface NamedReference {
 }
 
 /** A value in millimetres or radians as an expression. */
-const quantityText = (value: number, angle: boolean) => `${value.toFixed(9)} ${angle ? "rad" : "mm"}`;
+const quantityText = (value: number, angle: boolean) => `${value.toFixed(9)} ${angle ? 'rad' : 'mm'}`;
 
 /**
  * The document's named reference dimensions, at first with what they measured when last solved (the
@@ -223,6 +223,10 @@ export class Regeneration {
   /** What the printer needs added to holes (and taken off pegs) for parts to fit as designed. */
   private compensation = 0;
   private scope: ReadonlyMap<string, Quantity> = new Map();
+  /** The parameters in effect (the project's and the component's, configured). */
+  private parameterList: readonly Parameter[] = [];
+  /** Named reference dimensions, as parameters that hold what they measure (ADR-54). */
+  private measures: NamedReference[] = [];
 
   constructor(
     private readonly engines: RegenerationEngines,
@@ -243,7 +247,7 @@ export class Regeneration {
     const own = new Set(document.parameters.map((p) => p.name));
     const shared = (context.projectParameters ?? []).filter((p) => !own.has(p.name));
     this.parameterList = [...shared, ...document.parameters].map(configured);
-    this.references = namedReferences(document, new Set([...own, ...shared.map((p) => p.name)]));
+    this.measures = namedReferences(document, new Set([...own, ...shared.map((p) => p.name)]));
     const evaluated = this.evaluateParameters();
     const marker = document.timeline.length - document.rollbackIndex;
     for (const [index, item] of document.timeline.entries()) {
@@ -262,7 +266,7 @@ export class Regeneration {
       const value = this.scope.get(parameter.name);
       return { parameter, ...(value ? { display: display(value, document.units) } : {}), ...(project ? { project } : {}) };
     };
-    const measuredViews = this.references.map((r): ParameterView => {
+    const measuredViews = this.measures.map((r): ParameterView => {
       const value = this.scope.get(r.name);
       return { parameter: { id: r.id, name: r.name, expression: r.expression }, ...(value ? { display: display(value, document.units) } : {}), measured: r.sketchName };
     });
@@ -281,14 +285,9 @@ export class Regeneration {
     };
   }
 
-  /** The parameters in effect (the project's and the component's, configured). */
-  private parameterList: readonly Parameter[] = [];
-  /** Named reference dimensions, as parameters that hold what they measure (ADR-54). */
-  private references: NamedReference[] = [];
-
   /** Evaluates the parameters with the values the named reference dimensions measure so far. */
   private evaluateParameters(): Result<Map<string, Quantity>, ParameterError> {
-    const evaluated = this.engines.parameters.evaluateAll([...this.parameterList, ...this.references]);
+    const evaluated = this.engines.parameters.evaluateAll([...this.parameterList, ...this.measures]);
     if (evaluated.ok) this.scope = evaluated.value;
     return evaluated;
   }
@@ -298,7 +297,7 @@ export class Regeneration {
    * would read what its own sketch (or a later one) measures cannot drive it.
    */
   private usesAny(expression: string, names: ReadonlySet<string>): string | undefined {
-    const expressions = new Map<string, string>([...this.parameterList, ...this.references].map((p) => [p.name, p.expression]));
+    const expressions = new Map<string, string>([...this.parameterList, ...this.measures].map((p) => [p.name, p.expression]));
     const seen = new Set<string>();
     const stack = this.engines.parameters.namesIn(expression);
     while (stack.length) {
@@ -315,7 +314,7 @@ export class Regeneration {
   /** After a sketch solved: the values its named references measure, for everything after it. */
   private measuredBy(sketch: Sketch, measured: ReadonlyMap<string, number>): void {
     let changed = false;
-    this.references = this.references.map((r) => {
+    this.measures = this.measures.map((r) => {
       const value = r.sketch === sketch.id ? measured.get(r.dimension) : undefined;
       if (value === undefined || r.expression === quantityText(value, r.angle)) return r;
       changed = true;
@@ -342,10 +341,10 @@ export class Regeneration {
     let sketch = projected.value;
     const values = new Map<string, number>();
     // What this sketch and later ones measure cannot drive its dimensions.
-    const later = new Set(this.references.filter((r) => r.index >= index).map((r) => r.name));
+    const later = new Set(this.measures.filter((r) => r.index >= index).map((r) => r.name));
     for (const dimension of sketch.constraints.filter(isDimension)) {
       if (dimension.reference) {
-        const taken = dimension.name && !this.references.some((r) => r.sketch === sketch.id && r.dimension === dimension.id);
+        const taken = dimension.name && !this.measures.some((r) => r.sketch === sketch.id && r.dimension === dimension.id);
         if (taken) return unsolved(`The name "${dimension.name}" is already used by a parameter or another reference dimension.`, frame.value);
         continue;
       }

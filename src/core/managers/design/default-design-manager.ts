@@ -361,7 +361,8 @@ class Session implements DesignSession {
   async validate(): Promise<ValidationReport> {
     const { document, derived } = this.current;
     const profile = processOf(document);
-    const sketches = [...derived.sketches.values()].filter((v) => !v.error).map((v) => ({ sketch: v.sketch, profiles: v.profiles }));
+    // Blocks are not cut themselves: the sketches that place them are.
+    const sketches = [...derived.sketches.values()].filter((v) => !v.error && !v.sketch.block).map((v) => ({ sketch: v.sketch, profiles: v.profiles }));
     const checks = await this.deps.analysis.validate({ bodies: this.namedBodies(), sketches }, profile);
     return { profile, checks };
   }

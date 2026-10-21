@@ -10,6 +10,9 @@ import { drawingTools } from './tools/drawings';
 import { libraryTools } from './tools/libraries';
 import { modelTools } from './tools/models';
 import { projectTools } from './tools/projects';
+import { scriptTools } from './tools/scripts';
+import type { ScriptSandbox } from './script';
+import { prompts, resourcesOf, type Resource } from './resources';
 import { type Captioned, documentArg, runAll, number, object, point, type Progress, projectArg, string, strings, type Tool } from './tools/schema';
 
 /** A JSON-RPC 2.0 message as MCP clients send it (newline-delimited JSON over stdio). */
@@ -46,7 +49,8 @@ Draw:
 1. create_document with kind "drawing" (an A3 sheet at 1:1), then edit_drawing: set-sheet (size, orientation, scale), set-title-block, add-view {"id":"front","source":"<component or assembly id>","direction":"front","at":[x,y]} (front, back, top, bottom, left, right, iso; section (full, offset or half), detail, scale, label). Sheet coordinates are mm from the bottom left.
 2. get_drawing lists the views' boxes on the sheet and their anchors: points, circles and lines by persistent name, where they are on the sheet. Annotations attach to anchors: dimensions (linear, horizontal, vertical, radius, diameter, angle; with tolerances and ISO fits), center marks and lines, hole and thread callouts, surface finish symbols; notes, balloons and parts lists sit at sheet points.
 3. render_picture of a drawing shows the sheet as the PDF prints it (focus [view id] zooms onto a view); export_drawing writes PDF or DXF.
-Lengths are expressions ("6 mm", "2 * wall", "1 in"); plain numbers are millimetres. command_reference has every command, feature, part, assembly and drawing type as TypeScript, by topic (commands, sketch, features, document, assembly, drawing).`;
+Lengths are expressions ("6 mm", "2 * wall", "1 in"); plain numbers are millimetres. command_reference has every command, feature, part, assembly and drawing type as TypeScript, by topic (commands, sketch, features, document, assembly, drawing); the same and the user guide are resources (cadence://reference/<topic>, cadence://guide/<page>).
+Many steps at once: run_script runs a whole script against the scripting API (loops, calculations, many parts or sheets) in a sandbox, and answers with what it returned, printed and changed (cadence://reference/scripts).`;
 
 /** The MCP server: CADence's scripting API as tools (docs/User-guide/Automation.md). */
 export class McpServer {
@@ -59,12 +63,19 @@ export class McpServer {
     private readonly version: string,
     /** Where files go when a tool is given no path, for the agent to know. */
     private readonly exportsFolder?: string,
+    /** The user guide's pages by name, as resources (CAD-172). */
+    guide: Readonly<Record<string, string>> = {},
+    /** Runs scripts (run_script): a worker of their own in the command line; this thread in tests. */
+    private readonly sandbox?: ScriptSandbox,
   ) {
     this.tools = this.createTools();
+    this.resources = resourcesOf(reference, guide);
   }
 
-  /** Tool calls in progress, by request id: whether they were cancelled. */
-  private readonly running = new Map<string | number, { cancelled: boolean }>();
+  private readonly resources: readonly Resource[];
+
+  /** Tool calls in progress, by request id: whether they were cancelled, and how to stop them. */
+  private readonly running = new Map<string | number, { cancelled: boolean; readonly stop: AbortController }>();
 
   /**
    * The response to a message; undefined for notifications, and for a request cancelled meanwhile.
@@ -77,6 +88,7 @@ export class McpServer {
       const call = this.running.get(params['requestId'] as string | number);
       if (call && !call.cancelled) {
         call.cancelled = true;
+        call.stop.abort();
         this.cadence.stop();
       }
       return undefined;
@@ -88,7 +100,7 @@ export class McpServer {
         const requested = String(params['protocolVersion'] ?? '');
         return reply({
           protocolVersion: protocolVersions.includes(requested) ? requested : protocolVersions[0],
-          capabilities: { tools: {} },
+          capabilities: { tools: {}, resources: {}, prompts: {} },
           serverInfo: { name: 'cadence', version: this.version },
           instructions: this.exportsFolder ? `${instructions}
 Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a path.` : instructions,
@@ -98,15 +110,34 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
         return reply({});
       case 'tools/list':
         return reply({ tools: this.tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
+      case 'resources/list':
+        return reply({ resources: this.resources.map(({ text, ...resource }) => ({ ...resource, size: text.length })) });
+      case 'resources/templates/list':
+        return reply({ resourceTemplates: [] });
+      case 'resources/read': {
+        const resource = this.resources.find((r) => r.uri === params['uri']);
+        if (!resource) return { jsonrpc: '2.0', id, error: { code: -32002, message: `No resource ${String(params['uri'])}.`, data: { uri: params['uri'] } } };
+        return reply({ contents: [{ uri: resource.uri, mimeType: resource.mimeType, text: resource.text }] });
+      }
+      case 'prompts/list':
+        return reply({ prompts: prompts.map(({ name, title, description, arguments: args }) => ({ name, title, description, arguments: args })) });
+      case 'prompts/get': {
+        const prompt = prompts.find((p) => p.name === params['name']);
+        if (!prompt) return { jsonrpc: '2.0', id, error: { code: -32602, message: `No prompt ${String(params['name'])}. Prompts: ${prompts.map((p) => p.name).join(', ')}.` } };
+        const args = (params['arguments'] ?? {}) as Record<string, string>;
+        const missing = prompt.arguments.filter((a) => a.required && !args[a.name]?.trim()).map((a) => a.name);
+        if (missing.length) return { jsonrpc: '2.0', id, error: { code: -32602, message: `The prompt ${prompt.name} needs ${missing.join(', ')}.` } };
+        return reply({ description: prompt.description, messages: [{ role: 'user', content: { type: 'text', text: prompt.text(args) } }] });
+      }
       case 'tools/call': {
         const token = (params['_meta'] as { progressToken?: string | number } | undefined)?.progressToken;
         const progress: Progress = (done, total, text) => {
           if (token !== undefined) notify({ jsonrpc: '2.0', method: 'notifications/progress', params: { progressToken: token, progress: done, total, message: text } });
         };
-        const call = { cancelled: false };
+        const call = { cancelled: false, stop: new AbortController() };
         this.running.set(id, call);
         try {
-          const answer = await this.call(String(params['name']), (params['arguments'] ?? {}) as Record<string, unknown>, progress);
+          const answer = await this.call(String(params['name']), (params['arguments'] ?? {}) as Record<string, unknown>, progress, call.stop.signal);
           return call.cancelled ? undefined : reply(answer);
         } finally {
           this.running.delete(id);
@@ -117,21 +148,21 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
     }
   }
 
-  private async call(name: string, args: Record<string, unknown>, progress: Progress): Promise<Record<string, unknown>> {
+  private async call(name: string, args: Record<string, unknown>, progress: Progress, signal: AbortSignal): Promise<Record<string, unknown>> {
     const tool = this.tools.find((t) => t.name === name);
     if (!tool) return { content: [{ type: 'text', text: `Unknown tool ${name}.` }], isError: true };
     await this.cadence.kernelRestarted();
-    const answer = await this.answer(tool, args, progress);
+    const answer = await this.answer(tool, args, progress, signal);
     // A kernel that failed during the call (out of memory) has started again: say so (CAD-133).
     if (!(await this.cadence.kernelRestarted())) return answer;
     const note = 'The geometry kernel failed during this call and started again; documents open here are read again from their files. Unsaved results are lost; saved documents are not.';
     return { ...answer, content: [...(answer['content'] as unknown[]), { type: 'text', text: note }] };
   }
 
-  private async answer(tool: Tool, args: Record<string, unknown>, progress: Progress): Promise<Record<string, unknown>> {
+  private async answer(tool: Tool, args: Record<string, unknown>, progress: Progress, signal: AbortSignal): Promise<Record<string, unknown>> {
     const image = (bytes: Uint8Array) => ({ type: 'image', data: Buffer.from(bytes).toString('base64'), mimeType: 'image/png' });
     try {
-      const result = await tool.run(args, progress);
+      const result = await tool.run(args, progress, signal);
       // Pictures go back as images the agent can look at.
       if (result instanceof Uint8Array) return { content: [image(result)] };
       if (result && typeof result === 'object' && 'picture' in result) {
@@ -346,11 +377,12 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
       {
         name: 'export_component',
         description:
-          'Writes a component to a file: its bodies as STEP, STL, OBJ or 3MF; a sketch, or the flat pattern of a sheet metal part, as DXF or SVG; html: a viewer for people without CADence; csv: the configuration table. Returns the path.',
+          'Writes a component to a file: its bodies as STEP, STL, OBJ or 3MF; a sketch, or the flat pattern of a sheet metal part, as DXF or SVG; html: a viewer for people without CADence; csv: the configuration table; plugin: with a plugin exporter of its project (exporter "<plugin id>/<exporter>", list_scripts). Returns the path.',
         inputSchema: object(
           {
             document: documentArg,
-            format: { type: 'string', enum: ['step', 'stl', 'obj', '3mf', 'dxf', 'svg', 'html', 'csv'] },
+            format: { type: 'string', enum: ['step', 'stl', 'obj', '3mf', 'dxf', 'svg', 'html', 'csv', 'plugin'] },
+            exporter: string('For plugin: "<plugin id>/<exporter>".'),
             sketch: string('For DXF and SVG: the sketch id.'),
             flatPattern: { type: 'boolean', description: 'For DXF and SVG: the flat pattern instead of a sketch.' },
             path: string('Where to write the file (default: the exports folder).'),
@@ -363,6 +395,12 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
           const to = args['path'] === undefined ? {} : { to: String(args['path']) };
           if (format === 'html') return script.exportViewer(to);
           if (format === 'csv') return script.exportConfigurations(to);
+          if (format === 'plugin') {
+            const exporter = String(args['exporter'] ?? '');
+            const slash = exporter.lastIndexOf('/');
+            if (slash <= 0) throw new CadenceError('usage', 'A plugin export needs exporter "<plugin id>/<exporter>" (list_scripts lists them).');
+            return script.exportWith(exporter.slice(0, slash), exporter.slice(slash + 1), to);
+          }
           if (format !== 'dxf' && format !== 'svg') return script.export(format as SolidFormat, to);
           if (args['flatPattern']) return script.exportFlatPattern(format as DrawingFormat, to);
           if (!args['sketch']) throw new CadenceError('no-sketch', 'DXF and SVG need a sketch id or flatPattern.');
@@ -516,6 +554,7 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
       ...modelTools(cadence),
       ...projectTools(cadence),
       ...libraryTools(cadence),
+      ...scriptTools(cadence, this.exportsFolder, this.sandbox),
     ];
   }
 }

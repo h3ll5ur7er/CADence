@@ -9,7 +9,8 @@ export interface Tool {
   readonly name: string;
   readonly description: string;
   readonly inputSchema: Record<string, unknown>;
-  run(args: Record<string, unknown>, progress: Progress): Promise<unknown>;
+  /** `signal` aborts when the client cancels the call. */
+  run(args: Record<string, unknown>, progress: Progress, signal?: AbortSignal): Promise<unknown>;
 }
 
 /** A picture to look at with a line about it. */

@@ -13,7 +13,9 @@ import type {
   MeshRepair,
   Parameter,
   ProjectId,
+  ProjectPlugin,
   ProjectRemote,
+  ProjectScript,
   ProjectSummary,
   ProjectTemplate,
   RemoteCredentials,
@@ -106,6 +108,15 @@ export interface ProjectManager {
   deleteProject(id: ProjectId): Promise<void>;
   /** Replaces the project's parameters (checked first: names, cycles, expressions); its components regenerate. */
   setProjectParameters(id: ProjectId, parameters: readonly Parameter[]): Promise<Result<void>>;
+
+  /** Replaces the scripts kept with the project (CAD-173): names unique, parameters named as JavaScript names. */
+  setProjectScripts(id: ProjectId, scripts: readonly ProjectScript[]): Promise<Result<void>>;
+  /**
+   * Installs a plugin into the project from its source (one JavaScript file, read in the script
+   * sandbox and checked), in place of an earlier version of the same id; its features regenerate (CAD-174).
+   */
+  installPlugin(id: ProjectId, source: string): Promise<Result<ProjectPlugin>>;
+  removePlugin(id: ProjectId, pluginId: string): Promise<Result<void>>;
 
   /** Grouped by kind (components, assemblies, imported), then by name. */
   listDocuments(projectId: ProjectId): Promise<DocumentSummary[]>;

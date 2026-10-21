@@ -1,6 +1,6 @@
 # Automation
 
-Model, check, convert and export without the app: with scripts, on the command line, or by an AI agent through the Model Context Protocol (MCP). All three work on project folders, the way the desktop app keeps projects, and use the same geometry kernel as the app.
+Model, check, convert and export without the app: with scripts, on the command line, or by an AI agent through the Model Context Protocol (MCP). All three work on project folders, the way the desktop app keeps projects, and use the same geometry kernel as the app. In the app, the [script console](#the-script-console) runs scripts against the open project, and [plugins](#plugins) add features, generators and exporters others wrote.
 
 [TOC]
 
@@ -30,6 +30,7 @@ That builds `dist/automation/cadence.mjs`. Run it with `npm run cadence -- <comm
 | `picture <project> <document> <file>` | A PNG of a component or an assembly: `--view iso` (default), `front`, `back`, `top`, `bottom`, `left` or `right`, or `--direction x,y,z` (towards the camera) with `--up x,y,z`; `--width`, `--height` (800 × 600); `--white` for a white background; `--focus`, `--hide`, `--ghost` with body or instance ids (`a,b`) to zoom onto, leave out or show see-through; assemblies also `--explode <view>` (with `--steps n`) or `--study <id> --time <seconds>` |
 | `convert <input> <output>` | Converts a file, formats from the extensions: `bracket.step` to `bracket.stl`, `logo.svg` to `logo.dxf`, a KiCad board `board.kicad_pcb` to `board.step` |
 | `run <script> [arguments]` | Runs a script (below) |
+| `install-plugin <project> <file>` | Installs a plugin (a `.cadence-plugin.js` file) into a project ([Plugins](#plugins)) |
 | `open-git <url>` | Opens a project from a git repository (`--cors-proxy <url>` if needed) |
 | `sync <project>` | Syncs a project with its repository; conflicts are left for the app |
 | `mcp` | Serves CADence to an AI agent (below) |
@@ -92,7 +93,50 @@ Ids are yours to choose; they make later commands readable (`profiles`, `sketch`
 - A dimension with `reference: true` drives nothing; `summary().sketches` lists what it measures under `references` (mm, or degrees for angles). Give it a `name` and parameters and later features can use it (`{ type: 'add-parameter', parameter: { id, name: 'half', expression: 'diagonal / 2' } }`). `set-dimension-reference` turns a dimension into a reference or back into a driving one at the value it shows. A dimension that would over-constrain is refused with a message that it can go in as a reference.
 - `{ type: 'make-block', sketchId, block, name, ids, base: [x, y], insertion }` makes a block sketch of the chosen points, curves and texts and places it back; `{ id, kind: 'block', block: <block sketch>, document?: <another component of the project>, origin: <point>, angle: '30 deg', scale: '2', construction: false }` (with `add-sketch-geometry`) places it again; its pieces are `<placement>:<id in the block>`. `set-block` turns and scales a placement, `explode-block` makes it plain curves, `set-sketch-block` marks any sketch as a block. Editing the block sketch updates every placement.
 - The feature `{ type: 'wrap', sketch, profiles, face, method: 'wrap' | 'project', depth, operation: 'emboss' | 'engrave' }` raises or cuts profiles (letters too) on a round or any face; see [[User guide/Part modeling#Wrap: emboss and engrave on round faces]].
-
+## Scripts in the sandbox
+`cadence run` runs script files you trust as Node modules. Scripts from agents (`run_script`), the app's script console and plugin generators run in a sandbox instead ([[Architecture/Decisions#ADR-60]]): a JavaScript engine of their own (QuickJS) that reaches nothing but the scripting API. The script is the body of an async function:
+```js
+// Ten plates, 10 to 100 mm long.
+const { project } = (await cadence.projects.createProject('Plates')).value;
+for (let i = 1; i <= 10; i++) {
+  const created = (await cadence.projects.createDocument(project.id, 'component', `Plate ${i}`)).value;
+  const plate = await cadence.component(created.id);
+  await plate.run({ type: 'create-sketch', id: 's', plane: 'XY' }, { type: 'add-rectangle', sketchId: 's', id: 'r', x: 0, y: 0, width: 10 * i, height: 20 });
+  const [profile] = (await plate.summary({ only: ['sketches'] })).sketches[0].profiles;
+  await plate.run({ type: 'add-feature', feature: { type: 'extrude', id: 'e', name: '', suppressed: false, sketch: 's', profiles: [profile.id], distance: '3 mm', direction: 'normal', operation: 'new-body' } });
+}
+return 'done';
+```
+- **What it has:** `cadence` (the API above, with `cadence.projects`), `params` (the values asked for, numbers in mm and degrees), `args` (`run_script`'s arguments), `project` (the project it runs for: `id` and `name`), and `console`. No files, no network, no Node.
+- **Every call returns a promise**, `summary()` and `changes()` included: `await` them. Components, assemblies and drawings are handles to the open documents; pictures come back as base64. The types are in [[src/automation/script-api.ts]] (the MCP resource `cadence://reference/scripts`).
+- **Files** go to the exports folder only: `export('stl', { to: 'boxes/box.stl' })` writes below it, a path outside it is refused (in the app, exports are downloads).
+- **Limits:** 256 MB of memory, and a time limit (`run_script`: 2 minutes by default, at most 10; the console: 10 minutes). A script that never waits is stopped there too.
+- **The answer:** what `return` gave, the lines it printed, and the documents it created, changed or deleted.
+## The script console
+In the editor, **Scripts and plugins** (the `</>` button, or the command palette) opens the project's scripts:
+- **Kept scripts** are saved with the project: they travel with its versions, git and archives. A new script starts as a generator of boxes, with `size` as its parameter.
+- **Parameters** (a name, a default and a kind: length, number, angle or text) are asked before each run, so one script makes the same part in many sizes. The script reads them as `params.size`.
+- **The editor** completes the API: after `cadence.`, `cadence.projects.` or an open document, a list of members with their types (arrows and Enter or Tab to take one). *The scripting API's types* shows all of them. Tab indents, Ctrl+Enter runs.
+- **Run** runs the script in a worker against the project; the output shows what it printed, what it returned, and the documents it made or changed, which the project then shows. **Stop** ends it at once.
+## Plugins
+A plugin adds **features** (parts of a component's timeline that regenerate with its parameters), **generators** (scripts with parameters) and **exporters** (file formats) to a project ([[Architecture/Decisions#ADR-60a]]). It is one JavaScript file whose body returns the plugin; the sample is [[public/plugins/trays.cadence-plugin.js]]:
+return {
+  id: 'acme.trays', name: 'Trays', version: '1.0.0', cadence: 1,
+  features: {
+    tray: {
+      label: 'Tray',
+      parameters: [{ name: 'width', default: '60 mm', kind: 'length' }, { name: 'height', default: '20 mm', kind: 'length' }],
+      // Lengths in mm; solids are outlines in the feature's plane, extruded by height from z.
+      build: ({ width, height }) => [{ outline: [[0, 0], [width, 0], [width, 40], [0, 40]], holes: [], z: 0, height }],
+    },
+  },
+  generators: { set: { label: 'Set of trays', parameters: [], run: async (cadence, params, { project }) => { /* the scripting API */ } } },
+  exporters: { scad: { label: 'OpenSCAD', extension: 'scad', mediaType: 'text/plain', export: ({ name, bodies }) => '…' } },
+};
+- **Install** it into a project: in the app, *Install plugin…* in the Scripts dialog (or *Install the sample plugin*); `cadence install-plugin <project> <file>`; the MCP tool `install_plugin`. A newer version of the same id replaces the older one.
+- **Features** are added to the open component from the Scripts dialog (or with `add-feature` and `type: "plugin"`), with their parameters as expressions (`size`, `2 * wall`); the feature dialog edits them later. The component regenerates them like any other feature, in the app and in the MCP server, since the plugin travels with the project. A project without the plugin, or with another major version of it, shows the feature with the reason it failed.
+- **Generators** run from the Scripts dialog, or with `run_script` (`generator: "<plugin id>/<name>"`). **Exporters** write the open component's triangles to their format (Scripts dialog, `export_component` with `format: "plugin"`, `component.exportWith(plugin, exporter)`).
+- Plugin code runs in the sandbox: features and exporters get only their values, generators the scripting API. A feature has 10 s and 64 MB to build.
 ## AI agents (MCP)
 
 `cadence mcp` is an MCP server over stdio. Add it to an MCP client with the full path to the self-contained binary (below) or the built file, for example:
@@ -145,6 +189,10 @@ The server tells the agent how to model when it connects, and offers these tools
 | `render_picture` | A picture returned as an image the agent can look at: of a component or an assembly from a view or a direction, zoomed onto bodies or instances, others hidden or see-through, cut open by a section plane; assemblies also exploded or at a moment of a study; a drawing's sheet as the PDF prints it (or one view of it); an imported 3D file |
 | `animate_study` | A motion study as an animated GIF (its path) and a sheet of moments to look at: one camera for all frames, and moments that show different poses |
 | `command_reference` | The commands and contracts as TypeScript types with their documentation, by `topic`: `commands`, `sketch`, `features` (with the parts: gears, ring gears, bevel gears, worms, springs, screws, bearings …), `document`, `assembly`, `drawing`; each short enough for an agent to read whole |
+| `run_script` | A whole script in the sandbox ([above](#scripts-in-the-sandbox)): loops and calculations in one call, within a time limit (`seconds`); answers with its value, its output and the documents it touched. With `project` and `generator`, a script kept with the project or a plugin generator, with `parameters` |
+| `list_scripts`, `install_plugin` | A project's kept scripts and plugins (their features, generators and exporters); a plugin installed from a file |
+
+**Resources and prompts.** Besides tools, the server offers resources to read: the command reference by topic (`cadence://reference/commands`, …, and `cadence://reference/scripts` for scripts) and this user guide, page by page (`cadence://guide/Automation`, …). Its prompts start common jobs with their arguments: `part_from_sketch` (a part, how it is made, the file to export), `drawing_of_part` (a component and its views), `assembly_of_parts` (the parts and how they move) and `parts_by_script` (a series of parts in one `run_script`).
 
 **Agents can do what people do.** Every operation of the Project, Design, Assembly and Drawing Managers is a tool or part of one ([[CAD-124]]). Left out are only what serves the app's own screen: thumbnails, previews while dragging, screen recordings (agents get `animate_study`) and the colours of surface analysis.
 

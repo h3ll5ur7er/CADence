@@ -7,6 +7,11 @@ describe('document migrations', () => {
     expect(migrate(doc)).toEqual(doc);
   });
 
+  it('takes version 3 documents to 4 as they are: plugin features are new (CAD-174)', () => {
+    const doc = { id: 'c', schemaVersion: 3, kind: 'component', timeline: [{ kind: 'feature', feature: { type: 'extrude', id: 'e' } }] };
+    expect(migrate(doc)).toEqual({ ...doc, schemaVersion: 4 });
+  });
+
   it('gives version 1 assemblies an empty list of motion studies', () => {
     expect(migrate({ id: 'a', schemaVersion: 1, kind: 'assembly', instances: [], joints: [] })).toEqual({
       id: 'a',

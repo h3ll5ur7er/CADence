@@ -54,6 +54,24 @@ export const credits: readonly { readonly name: string; readonly version: string
     "url": "https://github.com/fontsource/font-files"
   },
   {
+    "name": "@jitl/quickjs-ffi-types",
+    "version": "0.32.0",
+    "license": "MIT",
+    "url": "https://github.com/justjake/quickjs-emscripten"
+  },
+  {
+    "name": "@jitl/quickjs-singlefile-browser-release-sync",
+    "version": "0.32.0",
+    "license": "MIT",
+    "url": "https://github.com/justjake/quickjs-emscripten"
+  },
+  {
+    "name": "@jitl/quickjs-singlefile-mjs-release-sync",
+    "version": "0.32.0",
+    "license": "MIT",
+    "url": "https://github.com/justjake/quickjs-emscripten"
+  },
+  {
     "name": "@salusoft89/planegcs",
     "version": "1.3.0",
     "license": "LGPL-2.0-or-later",
@@ -394,6 +412,12 @@ export const credits: readonly { readonly name: string; readonly version: string
     "version": "0.11.10",
     "license": "MIT",
     "url": "https://github.com/shtylman/node-process"
+  },
+  {
+    "name": "quickjs-emscripten-core",
+    "version": "0.32.0",
+    "license": "MIT",
+    "url": "https://github.com/justjake/quickjs-emscripten"
   },
   {
     "name": "readable-stream",

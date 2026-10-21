@@ -5,7 +5,8 @@ import tseslint from 'typescript-eslint';
 
 // Layer boundaries are enforced by tools/architecture (run with `npm test`), not by ESLint.
 export default tseslint.config(
-  { ignores: ['dist/', '.angular/', 'coverage/', 'playwright-report/', 'test-results/', 'src-tauri/target/', 'src-tauri/gen/'] },
+  // Plugins are the bodies of functions (they end in `return { … }`), run in CADence's sandbox: not modules.
+  { ignores: ['dist/', '.angular/', 'coverage/', 'playwright-report/', 'test-results/', 'src-tauri/target/', 'src-tauri/gen/', '**/*.cadence-plugin.js'] },
   {
     files: ['**/*.ts'],
     extends: [

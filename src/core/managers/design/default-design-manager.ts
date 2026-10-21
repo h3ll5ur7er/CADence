@@ -36,6 +36,7 @@ import type { AnalysisEngine } from '@core/engines/analysis';
 import type { InterchangeEngine } from '@core/engines/interchange';
 import type { ModelingEngine } from '@core/engines/modeling';
 import type { ParameterEngine } from '@core/engines/parameter';
+import { createPluginEngine, type PluginEngine } from '@core/engines/plugin';
 import { flatPattern } from '@core/engines/sheet-metal';
 import { inferRelations, type SketchEngine } from '@core/engines/sketch';
 import type { Clock } from '@core/utilities/clock';
@@ -70,6 +71,8 @@ export interface DesignManagerDependencies {
   readonly assets: AssetAccess;
   readonly events: EventBus<DomainEvents>;
   readonly clock: Clock;
+  /** Builds plugin features and runs plugin exporters (CAD-174); one of the script sandbox by default. */
+  readonly plugins?: PluginEngine;
 }
 
 interface Snapshot {
@@ -105,6 +108,8 @@ class Session implements DesignSession {
     initial: Snapshot,
     private readonly results: ResultPublisher,
     private context: RegenerationContext,
+    /** The project's plugins the session was built with (CAD-174). */
+    private plugins: string,
   ) {
     this.current = initial;
     for (const mesh of initial.meshes) this.meshCache.set(mesh.key, mesh);
@@ -112,7 +117,9 @@ class Session implements DesignSession {
 
   /** Regenerates with the project's new parameters; the document itself does not change. */
   private async projectChanged(): Promise<void> {
-    this.context = { ...this.context, projectParameters: await projectParametersOf(this.deps, this.current.document) };
+    const project = await projectContextOf(this.deps, this.current.document);
+    this.context = { ...this.context, projectParameters: project.parameters };
+    this.plugins = project.plugins;
     const derived = await new Regeneration(this.deps).run(this.current.document, this.context);
     await this.commit({ document: this.current.document, derived, meshes: await this.meshes(derived) });
   }
@@ -125,8 +132,8 @@ class Session implements DesignSession {
    */
   private async followProject(): Promise<void> {
     if (this.projectWatch) return;
-    const now = await projectParametersOf(this.deps, this.current.document);
-    if (JSON.stringify(now) !== JSON.stringify(this.context.projectParameters ?? [])) await this.projectChanged();
+    const now = await projectContextOf(this.deps, this.current.document);
+    if (JSON.stringify(now.parameters) !== JSON.stringify(this.context.projectParameters ?? []) || now.plugins !== this.plugins) await this.projectChanged();
   }
 
   /**
@@ -325,6 +332,23 @@ class Session implements DesignSession {
     return readConfigurationsCsv(csv, this.parametersInEffect(), this.current.document.configurations ?? [], this.deps.parameters);
   }
 
+  async exportWith(pluginId: string, exporterName: string): Promise<Result<void>> {
+    const { document } = this.current;
+    const plugin = (await this.deps.projects.find(document.projectId))?.plugins?.find((p) => p.id === pluginId);
+    if (!plugin) return fail({ code: 'unknown-plugin', message: `The project has no plugin ${pluginId}.` });
+    const exporter = plugin.exporters.find((e) => e.name === exporterName);
+    if (!exporter) return fail({ code: 'unknown-exporter', message: `${plugin.name} has no exporter "${exporterName}".` });
+    const names = new Map(this.namedBodies(this.current.derived).map((b) => [b.id, b.name]));
+    const bodies = this.state()
+      .bodies.filter((body) => !document.appearances?.[body.body]?.hidden)
+      .map((body) => ({ id: names.get(body.body) ?? body.body, positions: Array.from(body.positions), indices: Array.from(body.indices) }));
+    if (bodies.length === 0) return fail({ code: 'nothing-to-export', message: 'There are no bodies to export yet.' });
+    const text = await (this.deps.plugins ?? createPluginEngine()).export(plugin, exporter.name, { name: document.name, bodies });
+    if (!text.ok) return text;
+    await this.deps.externalFiles.deliver({ name: `${document.name}.${exporter.extension}`, mediaType: exporter.mediaType, bytes: new TextEncoder().encode(text.value) });
+    return ok(undefined);
+  }
+
   async exportViewer(): Promise<Result<void>> {
     const { document } = this.current;
     const names = new Map(this.namedBodies(this.current.derived).map((b) => [b.id, b.name]));
@@ -519,7 +543,13 @@ function blocksOf(document: ComponentDocument): string {
 }
 
 async function projectParametersOf(deps: DesignManagerDependencies, document: ComponentDocument): Promise<readonly Parameter[]> {
-  return (await deps.projects.find(document.projectId))?.parameters ?? [];
+  return (await projectContextOf(deps, document)).parameters;
+}
+
+/** What of its project a component is built with: the parameters, and the plugins (by id, version and source). */
+async function projectContextOf(deps: DesignManagerDependencies, document: ComponentDocument): Promise<{ readonly parameters: readonly Parameter[]; readonly plugins: string }> {
+  const project = await deps.projects.find(document.projectId);
+  return { parameters: project?.parameters ?? [], plugins: (project?.plugins ?? []).map((p) => `${p.id}@${p.version}#${p.source.length}`).join(',') };
 }
 
 const materialOf = (document: ComponentDocument): Material => document.material ?? (materials[0] as Material);
@@ -562,10 +592,11 @@ export class DefaultDesignManager implements DesignManager {
     if (document?.kind !== 'component') {
       return fail({ code: 'unknown-document', message: `Component ${documentId} does not exist.` });
     }
-    const context = { projectParameters: await projectParametersOf(this.deps, document) };
+    const project = await projectContextOf(this.deps, document);
+    const context = { projectParameters: project.parameters };
     const derived = await new Regeneration(this.deps).run(document, context);
     const meshes = derived.bodies.length ? await this.deps.modeling.tessellate(derived.bodies) : [];
-    return ok(new Session(this.deps, { document, derived, meshes }, new ResultPublisher(this.deps), context));
+    return ok(new Session(this.deps, { document, derived, meshes }, new ResultPublisher(this.deps), context, project.plugins));
   }
 
   /** Answers a queued `regenerateComponent` request (for one configuration) with `componentRegenerated`. */

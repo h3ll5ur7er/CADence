@@ -260,6 +260,8 @@ export interface DesignSession {
   readConfigurations(csv: string): Result<ConfigurationImport>;
   /** The shown bodies as one HTML file with a viewer (turn, measure, hide), for people without CADence. */
   exportViewer(): Promise<Result<void>>;
+  /** The shown bodies as a file a plugin's exporter writes from their triangles (CAD-174). */
+  exportWith(plugin: string, exporter: string): Promise<Result<void>>;
   /** Area, length, radius, distance and angle of picked faces and edges. */
   measure(refs: readonly TopologyRef[]): Promise<Result<Measurement>>;
   /** Volume, mass (from the material), centre of mass and bounding box per body. */

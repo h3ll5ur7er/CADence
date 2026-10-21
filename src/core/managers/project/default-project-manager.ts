@@ -29,7 +29,9 @@ import {
   type Parameter,
   type Project,
   type ProjectId,
+  type ProjectPlugin,
   type ProjectRemote,
+  type ProjectScript,
   type ProjectSummary,
   type ProjectTemplate,
   type RemoteCredentials,
@@ -44,6 +46,7 @@ import {
 } from '@core/contracts';
 import { InvalidVersionNameError, RemoteError, type Version, type VersionAccess, type VersionFile } from '@core/access/version';
 import type { InterchangeEngine, SimplifiedMesh } from '@core/engines/interchange';
+import { createPluginEngine, type PluginEngine } from '@core/engines/plugin';
 import { readZip, zip } from '@core/utilities/archive';
 import { range } from '@core/utilities/math';
 import { pictureSize } from '@core/utilities/picture';
@@ -51,7 +54,7 @@ import { loadFont } from '@core/utilities/text';
 import type { ParameterEngine } from '@core/engines/parameter';
 import type { Clock } from '@core/utilities/clock';
 import type { EventBus } from '@core/utilities/messaging';
-import { archiveFiles, copyOf, notesOf, type ProjectBundle, readArchive, remapIds, templateBundle, withNewIds } from './project-bundles';
+import { archiveFiles, copyOf, extras, notesOf, type ProjectBundle, readArchive, remapIds, templateBundle, withNewIds } from './project-bundles';
 import { libraryCopies } from './project-libraries';
 import type { AttachmentInput, CreatedProject, ExternalFile, ImportedContent, ImportedView, LibraryUpdate, ProjectManager, SimplifiedImport, StoreChange } from './project-manager';
 import { findStandardPart, standardComponent, standardLibraryName, standardLibraryParts, standardParts } from './standard-library';
@@ -71,6 +74,8 @@ export interface ProjectManagerDependencies {
   readonly events: EventBus<DomainEvents>;
   readonly clock: Clock;
   readonly newId: () => string;
+  /** Reads the plugins installed into projects (CAD-174); one of the script sandbox by default. */
+  readonly plugins?: PluginEngine;
 }
 
 const maxNameLength = 80;
@@ -162,7 +167,7 @@ const withTrash = (project: Project, trash: readonly TrashedDocument[]): Project
   return trash.length ? { ...rest, trash } : rest;
 };
 /** The settings a project's versions keep: what travels with it to other devices (not its trash or remote). */
-const settingsText = (project: Project) => JSON.stringify({ name: project.name, parameters: project.parameters ?? [], ...notesOf(project) }, null, 2);
+const settingsText = (project: Project) => JSON.stringify({ name: project.name, parameters: project.parameters ?? [], ...notesOf(project), ...extras(project) }, null, 2);
 
 /** Media types of files kept as attachments, by extension. */
 const attachmentTypes: Readonly<Record<string, string>> = {
@@ -198,6 +203,7 @@ export class DefaultProjectManager implements ProjectManager {
   private readonly watchers = new Set<(change: StoreChange) => void>();
   /** The last simplified mesh previewed, kept so keeping it does not simplify it again. */
   private simplified: { readonly id: DocumentId; readonly assetId: AssetId; readonly triangles: number; readonly mesh: SimplifiedMesh } | undefined;
+  private plugins: PluginEngine | undefined;
 
   constructor(private readonly deps: ProjectManagerDependencies) {
     deps.events.subscribe('documentSaved', ({ projectId }) => this.scheduleVersion(projectId));
@@ -455,15 +461,17 @@ export class DefaultProjectManager implements ProjectManager {
     if (!project) return;
     const settings = await versions.read(id, version, settingsPath);
     if (settings) {
-      const { name, parameters, ...notes } = JSON.parse(settings) as Pick<Project, 'name' | 'parameters' | 'description' | 'attachments' | 'library'>;
-      const { description: _d, attachments: _a, library: _l, ...rest } = project;
-      for (const attachment of notes.attachments ?? []) {
+      const { name, parameters, ...kept } = JSON.parse(settings) as Pick<Project, 'name' | 'parameters' | 'description' | 'attachments' | 'library' | 'scripts' | 'plugins'>;
+      const { description: _d, attachments: _a, library: _l, scripts: _scripts, plugins: _plugins, ...rest } = project;
+      for (const attachment of kept.attachments ?? []) {
         if (attachment.kind !== 'file' || (await assets.fetch(attachment.assetId))) continue;
         const bytes = await versions.readBytes(id, version, originalPath(attachment.assetId));
         if (bytes) await assets.keep({ id: attachment.assetId, projectId: id, name: attachment.name, byteLength: bytes.length, bytes });
       }
-      await this.deps.projects.revise({ ...rest, name, parameters: parameters ?? [], ...notesOf(notes), modifiedAt: this.now() });
-      if (JSON.stringify(parameters ?? []) !== JSON.stringify(project.parameters ?? [])) events.publish('projectParametersChanged', { projectId: id });
+      await this.deps.projects.revise({ ...rest, name, parameters: parameters ?? [], ...notesOf(kept), ...extras(kept), modifiedAt: this.now() });
+      // Plugins build features: a change of them is a change of what components are made with.
+      const before = JSON.stringify([project.parameters ?? [], project.plugins ?? []]);
+      if (JSON.stringify([parameters ?? [], kept.plugins ?? []]) !== before) events.publish('projectParametersChanged', { projectId: id });
       events.publish('projectChanged', { projectId: id });
     }
     const kept = new Set<string>();
@@ -530,6 +538,51 @@ export class DefaultProjectManager implements ProjectManager {
     if (!evaluated.ok) return evaluated;
     await this.deps.projects.revise({ ...project, parameters, modifiedAt: this.now() });
     this.deps.events.publish('projectParametersChanged', { projectId: id });
+    return ok(undefined);
+  }
+
+  async setProjectScripts(id: ProjectId, scripts: readonly ProjectScript[]): Promise<Result<void>> {
+    const project = await this.deps.projects.find(id);
+    if (!project) return unknownProject(id);
+    const names = new Set<string>();
+    for (const script of scripts) {
+      const name = validName(script.name);
+      if (!name.ok) return name;
+      if (names.has(script.name.trim())) return fail({ code: 'duplicate-name', message: `Two scripts are named “${script.name.trim()}”.` });
+      names.add(script.name.trim());
+      const parameter = script.parameters.find((p) => !/^[A-Za-z_$][\w$]*$/.test(p.name));
+      if (parameter) return fail({ code: 'invalid-name', message: `“${parameter.name}” cannot name a parameter: use letters, digits and _, not starting with a digit.` });
+    }
+    const { scripts: _scripts, ...rest } = project;
+    const kept = scripts.map((s) => ({ ...s, name: s.name.trim() }));
+    await this.deps.projects.revise({ ...rest, ...(kept.length ? { scripts: kept } : {}), modifiedAt: this.now() });
+    this.scheduleVersion(id);
+    return ok(undefined);
+  }
+
+  async installPlugin(id: ProjectId, source: string): Promise<Result<ProjectPlugin>> {
+    const project = await this.deps.projects.find(id);
+    if (!project) return unknownProject(id);
+    this.plugins ??= this.deps.plugins ?? createPluginEngine();
+    const read = await this.plugins.read(source);
+    if (!read.ok) return read;
+    const plugins = [...(project.plugins ?? []).filter((p) => p.id !== read.value.id), read.value].sort((a, b) => a.name.localeCompare(b.name));
+    await this.deps.projects.revise({ ...project, plugins, modifiedAt: this.now() });
+    // Its features regenerate with the new version, as with new parameters.
+    this.deps.events.publish('projectParametersChanged', { projectId: id });
+    this.scheduleVersion(id);
+    return ok(read.value);
+  }
+
+  async removePlugin(id: ProjectId, pluginId: string): Promise<Result<void>> {
+    const project = await this.deps.projects.find(id);
+    if (!project) return unknownProject(id);
+    if (!project.plugins?.some((p) => p.id === pluginId)) return fail({ code: 'unknown-plugin', message: `The project has no plugin ${pluginId}.` });
+    const { plugins: _plugins, ...rest } = project;
+    const plugins = project.plugins.filter((p) => p.id !== pluginId);
+    await this.deps.projects.revise({ ...rest, ...(plugins.length ? { plugins } : {}), modifiedAt: this.now() });
+    this.deps.events.publish('projectParametersChanged', { projectId: id });
+    this.scheduleVersion(id);
     return ok(undefined);
   }
 
@@ -1067,7 +1120,7 @@ export class DefaultProjectManager implements ProjectManager {
       const asset = attachment.kind === 'file' ? await this.deps.assets.fetch(attachment.assetId) : undefined;
       if (attachment.kind === 'file' && asset) originals.set(attachment.assetId, asset.bytes);
     }
-    return { name: project.name, parameters: project.parameters ?? [], documents, originals, ...(project.copiedFrom ? { copiedFrom: project.copiedFrom } : {}), ...notesOf(project) };
+    return { name: project.name, parameters: project.parameters ?? [], documents, originals, ...(project.copiedFrom ? { copiedFrom: project.copiedFrom } : {}), ...notesOf(project), ...extras(project) };
   }
 
   /** A new project holding the bundle's documents and originals as they are (ids included). */
@@ -1081,6 +1134,7 @@ export class DefaultProjectManager implements ProjectManager {
       parameters: bundle.parameters,
       ...(copied ? { copiedFrom: copied } : {}),
       ...notesOf(bundle),
+      ...extras(bundle),
     };
     await this.deps.projects.establish(project);
     const documents = bundle.documents.map((d) => ({ ...d, projectId: project.id }) as CadDocument);

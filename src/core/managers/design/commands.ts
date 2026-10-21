@@ -36,6 +36,7 @@ export interface Applied {
 }
 
 const featureLabels: Readonly<Record<FeatureType, string>> = {
+  plugin: 'Plugin feature',
   part: 'Part',
   insert: 'Insert body',
   extrude: 'Extrude',

@@ -2,6 +2,7 @@ import { type ApplicationConfig, isDevMode, provideBrowserGlobalErrorListeners }
 import { provideRouter, withComponentInputBinding } from '@angular/router';
 import { provideServiceWorker } from '@angular/service-worker';
 import { createBrowserCore, createDesktopCore } from '@core/composition';
+import type { SandboxWorker } from '@core/utilities/sandbox';
 import { fontFiles } from '@core/utilities/text';
 import { isTauri } from '@tauri-apps/api/core';
 import { routes } from './app.routes';
@@ -42,11 +43,17 @@ const core = tauriFiles
   : createBrowserCore(options);
 if (desktop) openWebLinksInBrowser();
 
+/** A worker for one script of the script console, ended when it is done or stopped (CAD-173). */
+function scriptWorker(): SandboxWorker {
+  const worker = new Worker(new URL('../workers/script.worker', import.meta.url), { type: 'module' });
+  return { post: (message) => worker.postMessage(message), listen: (handler) => worker.addEventListener('message', (event) => handler(event.data)), terminate: () => worker.terminate() };
+}
+
 export const appConfig: ApplicationConfig = {
   providers: [
     provideBrowserGlobalErrorListeners(),
     provideRouter(routes, withComponentInputBinding()),
-    provideCore(core),
+    provideCore(core, scriptWorker),
     // The web app works offline from its cache (ngsw-config.json); the desktop app is installed and needs none.
     provideServiceWorker('ngsw-worker.js', { enabled: !isDevMode() && !desktop, registrationStrategy: 'registerWhenStable:5000' }),
     // Newer versions: the service worker's on the web, signed GitHub releases on the desktop.

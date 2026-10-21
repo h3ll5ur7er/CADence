@@ -24,6 +24,7 @@ import type { InterchangeEngine } from '@core/engines/interchange';
 import { createKinematicsEngine } from '@core/engines/kinematics';
 import type { ModelingEngine } from '@core/engines/modeling';
 import { createParameterEngine } from '@core/engines/parameter';
+import { createPluginEngine } from '@core/engines/plugin';
 import { createSketchEngine } from '@core/engines/sketch';
 import { fontSource, type TextFont } from '@core/utilities/text';
 import { type AssemblyManager, createAssemblyManager } from '@core/managers/assembly';
@@ -183,6 +184,8 @@ export function createCore(host: Host): Core {
   // Files other processes (an agent's MCP server, a script) changed become the events other windows send (CAD-150).
   host.watch?.((paths) => void followFolders(paths, projects, documents, events));
   const fonts = fontSource(host.fontUrls);
+  // One sandbox for plugins: features built once per set of values, for every manager.
+  const plugins = createPluginEngine();
   const geometry: Geometry = host.geometry
     ? {
         modeling: remote<ModelingEngine>(host.geometry, 'modeling'),
@@ -202,6 +205,7 @@ export function createCore(host: Host): Core {
       events,
       clock: systemClock,
       newId,
+      plugins,
     }),
     designManager: createDesignManager({
       projects,
@@ -215,6 +219,7 @@ export function createCore(host: Host): Core {
       assets,
       events,
       clock: systemClock,
+      plugins,
     }),
     assemblyManager: createAssemblyManager({
       projects,

@@ -23,7 +23,7 @@ import type { ProjectManager } from '@core/managers/project';
 import { deflate, encodeGif, encodePng, type Pixels } from '@core/utilities/picture';
 import { boundsOf, type RasterMesh, rasterize, type RasterView, rasterViews, type Vec3 as RasterVec3 } from '@core/utilities/raster';
 import { DrawingScript } from './drawing';
-import { CadenceError, type ExportTarget, unwrap } from './results';
+import { CadenceError, deliveredSince, type ExportTarget, unwrap } from './results';
 import { expandShape, roughValue, type ScriptCommand } from './shapes';
 
 /** How a picture of a component or an assembly is taken. */
@@ -559,6 +559,11 @@ export class ComponentScript {
     return this.delivered(options.to, () => this.session.exportFlatPattern(format));
   }
 
+  /** The shown bodies as the file a plugin's exporter writes (CAD-174); returns its path. */
+  async exportWith(plugin: string, exporter: string, options: { readonly to?: string } = {}): Promise<string> {
+    return this.delivered(options.to, () => this.session.exportWith(plugin, exporter));
+  }
+
   properties(): Promise<BodyProperties[]> {
     return this.session.properties();
   }
@@ -591,7 +596,7 @@ export class ComponentScript {
     if (to) this.exports.deliverNextTo(to);
     const before = this.exports.delivered.length;
     unwrap(await write());
-    const path = this.exports.delivered[before];
+    const path = deliveredSince(this.exports, before);
     if (!path) throw new CadenceError('not-exported', 'Nothing was written.');
     return path;
   }
@@ -815,7 +820,7 @@ export class AssemblyScript {
     const picked = distinctMoments(frames, moments);
     const columns = Math.ceil(Math.sqrt(picked.length));
     const small = picked.map((i) => pixels(shown[i] as Shown[], { ...options, width: Math.round(width / 1.5), height: Math.round(height / 1.5), white: true, ...(bounds ? { bounds } : {}) }));
-    return { path: this.exports.delivered[before] as string, sheet: await encodePng(sheet(small, columns)), times: picked.map((i) => round((frames[i] as (typeof frames)[number]).time)) };
+    return { path: deliveredSince(this.exports, before) as string, sheet: await encodePng(sheet(small, columns)), times: picked.map((i) => round((frames[i] as (typeof frames)[number]).time)) };
   }
 
   async export(format: AssemblyFormat, options: { readonly to?: string } = {}): Promise<string> {
@@ -867,7 +872,7 @@ export class AssemblyScript {
     if (to) this.exports.deliverNextTo(to);
     const before = this.exports.delivered.length;
     unwrap(await write());
-    return this.exports.delivered[before] as string;
+    return deliveredSince(this.exports, before) as string;
   }
 
   close(): void {
@@ -1018,7 +1023,7 @@ export class Cadence {
     if (options.to) this.exports.deliverNextTo(options.to);
     const before = this.exports.delivered.length;
     unwrap(await this.projects.exportImported(documentId as DocumentId, format));
-    return this.exports.delivered[before] as string;
+    return deliveredSince(this.exports, before) as string;
   }
 
   /**

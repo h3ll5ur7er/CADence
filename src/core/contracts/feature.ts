@@ -445,7 +445,25 @@ export interface ScaleFeature extends FeatureBase {
   readonly factor: string;
 }
 
+/**
+ * A feature a plugin of the project builds from its parameters: solids from outlines in a plane,
+ * made again on every regeneration ([[Architecture/Decisions#ADR-60a]]).
+ */
+export interface PluginFeature extends FeatureBase {
+  readonly type: 'plugin';
+  /** The plugin's id, and the version the feature was made with. */
+  readonly plugin: string;
+  readonly version: string;
+  /** The feature's name within the plugin. */
+  readonly feature: string;
+  readonly plane: 'XY' | 'XZ' | 'YZ';
+  /** Expressions by parameter name, evaluated with the component's parameters. */
+  readonly parameters: Readonly<Record<string, string>>;
+  readonly operation: BodyOperation;
+}
+
 export type Feature =
+  | PluginFeature
   | PartFeature
   | HelixFeature
   | InsertFeature

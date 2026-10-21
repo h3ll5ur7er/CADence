@@ -89,6 +89,8 @@ Clients enter through one manager each: Home and the Imported viewer use the **P
 | **Analysis Engine** | | | | | | | | | | ● | |
 | **Interchange Engine** | | | | | | | | | | ● | |
 
+The **Plugin Engine** runs plugins' code in the sandbox: the Project Manager reads a plugin when it is installed, and the Design Manager builds plugin features and runs plugin exporters with it ([[Architecture/Decisions#ADR-60a]]).
+
 Project Access, Document Access and Asset Access read and write the project store and asset store. Shape Access works on the in-worker shape cache, and External File Access on the host's file pickers, downloads and dialogs.
 
 ## Call rules
@@ -142,6 +144,7 @@ flowchart LR
 - **The desktop app watches its project folders.** Changes other processes make (an agent's MCP server, a script) become the events other windows send, through the composition root (`Host.watch`, [[Architecture/Decisions#ADR-53]]).
 - **The viewport owns how the model is seen** (camera, projection, section); documents own how bodies look; the user's preferences (control scheme) are kept per install ([[Architecture/Decisions#ADR-24]]).
 - **The web app's files and kernels are cached by a service worker** (web only), so it runs offline; the desktop app bundles them ([[Architecture/Decisions#ADR-23]]).
+- **Scripts and plugins run in a sandbox of their own**: QuickJS in WebAssembly, which reaches nothing but what it is given. The app runs each script of its console in a Web Worker (`script.worker.ts`) and the command line in a worker thread, so Stop ends the worker; plugin features are pure and short, and are built where the Design Manager runs ([[Architecture/Decisions#ADR-60]]).
 - **Light engines run on the main thread.** Parameter and Kinematics are pure and synchronous (a solve takes well under a millisecond for home-sized assemblies); Sketch (planegcs, about 1 MB of WASM) is async. Any of them can move to a worker behind an async proxy once profiling shows a need.
 
 ## Technology
@@ -166,11 +169,11 @@ src/
   core/
     contracts/            Data contracts: document model, DTOs, commands, events
     managers/             project/  design/  assembly/
-    engines/              sketch/  parameter/  modeling/  kinematics/  analysis/  interchange/
+    engines/              sketch/  parameter/  modeling/  kinematics/  analysis/  interchange/  plugin/
     access/               project/  document/  asset/  shape/  external-file/
     utilities/            messaging/  diagnostics/  math/  identity/
     composition/          composition roots: createBrowserCore, createDesktopCore, createInMemoryCore; node.ts: createNodeCore
-  workers/                geometry.worker.ts (hosts the kernel-bound engines)
+  workers/                geometry.worker.ts (hosts the kernel-bound engines), views.worker.ts, script.worker.ts (the script console's sandbox)
   automation/             Client in Node: scripting API, command line, MCP server (built by tools/automation/build.mjs)
 src-tauri/                Desktop shell (Rust)
 e2e/                      Playwright specs and evidence screenshots

@@ -1,6 +1,6 @@
 import type { DrawingAnnotation, DrawingView, Sheet, TitleBlock, Vec2, Vec3, ViewAnchor } from '@core/contracts';
 import type { DrawingCommand, DrawingSession, DrawingState, SheetAnchor, SheetLayout } from '@core/managers/drawing';
-import { CadenceError, type ExportTarget, unwrap } from './results';
+import { CadenceError, deliveredSince, type ExportTarget, unwrap } from './results';
 
 const round = (value: number) => Math.round(value * 1000) / 1000;
 const roundPoint = (p: Vec2): Vec2 => [round(p[0]), round(p[1])];
@@ -299,7 +299,7 @@ export class DrawingScript {
     if (options.to) this.exports.deliverNextTo(options.to);
     const before = this.exports.delivered.length;
     unwrap(await (format === 'pdf' ? this.session.exportPdf() : this.session.exportDxf()));
-    return this.exports.delivered[before] as string;
+    return deliveredSince(this.exports, before) as string;
   }
 
   close(): void {

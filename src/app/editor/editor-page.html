@@ -23,6 +23,9 @@
       <span class="synced-dot" aria-hidden="true"></span>
     }
   </button>
+  <button type="button" class="icon-btn" aria-label="Scripts and plugins" title="Scripts and plugins" [disabled]="!project.value()" (click)="openScripts()">
+    <cad-icon name="script" />
+  </button>
   <button type="button" class="icon-btn" aria-label="About CADence" title="About CADence" (click)="about.open()">
     <cad-icon name="info" />
   </button>
@@ -112,3 +115,4 @@
 <cad-history-dialog #historyDialog (restored)="documents.reload(); project.reload()" />
 <cad-sync-dialog (synced)="refresh()" />
 <cad-project-dialog (changed)="project.reload()" />
+<cad-scripts-dialog (changed)="refresh()" />

@@ -29,7 +29,9 @@ import {
   type PartSpec,
   type PlaneFrame,
   type PlaneRef,
+  type PluginFeature,
   type Profile,
+  type ProfileLoop,
   type Result,
   type Sketch,
   type SketchDrawing,
@@ -49,9 +51,11 @@ import {
 } from '@core/contracts';
 import type { AssetAccess } from '@core/access/asset';
 import type { DocumentAccess } from '@core/access/document';
+import type { ProjectAccess } from '@core/access/project';
 import type { DrawingEntities, InterchangeEngine } from '@core/engines/interchange';
 import type { AxisInput, BodyState, HelixPiece, ModelingEngine, ModelingRequest, PathPiece, Placement, ToolInput, PartSolid } from '@core/engines/modeling';
 import type { ParameterEngine, ParameterError, Quantity, ValueKind } from '@core/engines/parameter';
+import { createPluginEngine, type PluginEngine, type PluginSolid } from '@core/engines/plugin';
 import { type DragTarget, type FontFiles, measureDimension, placesAlong, type SketchEngine, type SketchPath, sketchPath } from '@core/engines/sketch';
 import { contentHash } from '@core/utilities/identity';
 import { references } from './commands';
@@ -99,6 +103,9 @@ export interface RegenerationEngines {
   readonly documents: DocumentAccess;
   readonly assets: AssetAccess;
   readonly interchange: InterchangeEngine;
+  /** Plugin features: the project's plugins, and what runs them (CAD-174); one of the sandbox by default. */
+  readonly projects?: Pick<ProjectAccess, 'find'>;
+  readonly plugins?: PluginEngine;
 }
 
 /**
@@ -126,6 +133,8 @@ async function boardParts(
   }
   return { parts, key: [document.assetId, ...used.sort()].join('+') };
 }
+
+let defaultPlugins: PluginEngine | undefined;
 
 /** Everything derived from a document by running its timeline. */
 export interface Derived {
@@ -239,6 +248,32 @@ function namedReferences(document: ComponentDocument, taken: ReadonlySet<string>
 /** Omit that keeps a union's members apart. */
 type WithoutKey<T> = T extends unknown ? Omit<T, 'key'> : never;
 
+/** Where a plugin's solid starts: the feature's plane moved `z` along its normal. */
+function solidFrame(plane: PluginFeature['plane'], solid: PluginSolid): PlaneFrame {
+  const { origin, u, v } = originFrames[plane];
+  const normal: Vec3 = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+  return { origin: [origin[0] + normal[0] * solid.z, origin[1] + normal[1] * solid.z, origin[2] + normal[2] * solid.z], u, v };
+}
+
+const signedArea = (points: readonly Vec2[]) =>
+  points.reduce((sum, [x, y], i) => {
+    const [nx, ny] = points[(i + 1) % points.length] as Vec2;
+    return sum + x * ny - nx * y;
+  }, 0) / 2;
+
+/** A plugin's outline as a profile: straight edges named by the solid and the edge, outer loop counter-clockwise, holes clockwise. */
+function solidProfile(feature: string, index: number, solid: PluginSolid): Profile {
+  const loop = (points: readonly Vec2[], outer: boolean, name: string): ProfileLoop => {
+    const polygon = signedArea(points) > 0 === outer ? [...points] : [...points].reverse();
+    const edges = polygon.map((start, i) => ({ kind: 'line' as const, start, end: polygon[(i + 1) % polygon.length] as Vec2, source: `${name}e${i}` }));
+    return { edges, polygon };
+  };
+  const outer = loop(solid.outline, true, `s${index}`);
+  const holes = solid.holes.map((hole, k) => loop(hole, false, `s${index}h${k}`));
+  const area = Math.abs(signedArea(solid.outline)) - solid.holes.reduce((sum, hole) => sum + Math.abs(signedArea(hole)), 0);
+  return { id: `${feature}:${index}`, outer, holes, area };
+}
+
 const add = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const scale = (a: Vec3, s: number): Vec3 => [a[0] * s, a[1] * s, a[2] * s];
 const cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -273,6 +308,8 @@ export class Regeneration {
   private parameterList: readonly Parameter[] = [];
   /** Named reference dimensions, as parameters that hold what they measure (ADR-54). */
   private measures: NamedReference[] = [];
+  /** The component's project, for its plugins. */
+  private projectId: ComponentDocument['projectId'] | undefined;
 
   constructor(
     private readonly engines: RegenerationEngines,
@@ -282,6 +319,7 @@ export class Regeneration {
   /** Runs the timeline with the project's parameters (the component's own of the same name win). */
   async run(document: ComponentDocument, context: RegenerationContext = {}): Promise<Derived> {
     this.timeline = document.timeline;
+    this.projectId = document.projectId;
     if (document.process?.kind === 'print') {
       this.layer = document.process.layerHeight;
       this.compensation = document.process.holeCompensation ?? 0;
@@ -790,6 +828,7 @@ export class Regeneration {
   }
 
   private async feature(feature: Feature): Promise<Result<void>> {
+    if (feature.type === 'plugin') return this.pluginFeature(feature);
     if (feature.type === 'plane') {
       const frame = await this.constructionPlane(feature);
       if (!frame.ok) return frame;
@@ -822,8 +861,66 @@ export class Regeneration {
     return ok(undefined);
   }
 
+  /**
+   * A plugin's feature: its parameters evaluated with the component's, its solids from the plugin (in
+   * the sandbox), each extruded in the feature's plane. Several solids of a new body become one body.
+   */
+  private async pluginFeature(feature: PluginFeature): Promise<Result<void>> {
+    const project = this.projectId === undefined ? undefined : await this.engines.projects?.find(this.projectId);
+    const plugin = project?.plugins?.find((p) => p.id === feature.plugin);
+    if (!plugin) return fail({ code: 'missing-input', message: `The plugin ${feature.plugin} ${feature.version} is not installed in this project. Install it from the Scripts panel.` });
+    const major = (version: string) => version.split('.')[0];
+    if (major(plugin.version) !== major(feature.version)) {
+      return fail({ code: 'missing-input', message: `It was made with ${plugin.name} ${feature.version}; the project has ${plugin.version}, which builds it differently. Make the feature again.` });
+    }
+    const definition = plugin.features.find((f) => f.name === feature.feature);
+    if (!definition) return fail({ code: 'missing-input', message: `${plugin.name} ${plugin.version} has no feature "${feature.feature}".` });
+    const values: Record<string, number | string> = {};
+    for (const parameter of definition.parameters) {
+      const expression = feature.parameters[parameter.name] ?? parameter.default;
+      if (parameter.kind === 'text') {
+        values[parameter.name] = expression;
+        continue;
+      }
+      const kind: ValueKind = parameter.kind === 'number' ? 'scalar' : parameter.kind;
+      const value = this.value(expression, kind, parameter.label ?? parameter.name);
+      if (!value.ok) return value;
+      values[parameter.name] = parameter.kind === 'angle' ? (value.value * 180) / Math.PI : value.value;
+    }
+    defaultPlugins ??= createPluginEngine();
+    const solids = await (this.engines.plugins ?? defaultPlugins).build(plugin, feature.feature, values);
+    if (!solids.ok) return solids;
+    const made: string[] = [];
+    for (const [index, solid] of solids.value.entries()) {
+      const before = new Set(this.bodies.map((b) => b.id));
+      const request = {
+        feature: feature.id,
+        bodies: this.bodies,
+        type: 'extrude' as const,
+        frame: solidFrame(feature.plane, solid),
+        profiles: [solidProfile(feature.id, index, solid)],
+        distance: solid.height,
+        direction: 'normal' as const,
+        operation: feature.operation,
+      };
+      const outcome = await this.engines.modeling.apply({ ...request, key: contentHash({ ...request, bodies: this.bodies.map((b) => b.key) }) });
+      if (outcome.error) return fail({ code: 'feature-failed', message: outcome.error });
+      this.bodies = outcome.bodies;
+      if (feature.operation === 'new-body') made.push(...this.bodies.filter((b) => !before.has(b.id)).map((b) => b.id));
+    }
+    // The solids of a new body touch rather than overlap (a floor and walls on it): join them as one.
+    const [first, ...rest] = made;
+    if (first !== undefined && rest.length) {
+      const request = { feature: feature.id, bodies: this.bodies, type: 'combine' as const, target: first, tools: rest, operation: 'join' as const, keepTools: false };
+      const outcome = await this.engines.modeling.apply({ ...request, key: contentHash({ ...request, bodies: this.bodies.map((b) => b.key) }) });
+      if (outcome.error) return fail({ code: 'feature-failed', message: outcome.error });
+      this.bodies = outcome.bodies;
+    }
+    return ok(undefined);
+  }
+
   /** The kernel request for a feature, with expressions evaluated and references resolved. */
-  private async request(feature: Exclude<Feature, { type: 'plane' | 'helix' }>): Promise<Result<ModelingRequest>> {
+  private async request(feature: Exclude<Feature, { type: 'plane' | 'helix' | 'plugin' }>): Promise<Result<ModelingRequest>> {
     const base = { feature: feature.id, bodies: this.bodies };
     const withKey = (body: WithoutKey<ModelingRequest>): Result<ModelingRequest> =>
       ok({ ...body, key: contentHash({ ...body, bodies: this.bodies.map((b) => b.key) }) } as ModelingRequest);

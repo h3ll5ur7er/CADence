@@ -99,7 +99,7 @@ export function libraryTools(cadence: Cadence): Tool[] {
     {
       name: 'list_libraries',
       description:
-        'Libraries whose components assemblies insert without copying them by hand: the built-in standard parts (ISO 4762 screws, ISO 4032 nuts, ISO 7089 washers, heat-set inserts, ball bearings, in every size) and the projects marked as libraries. With library, lists its parts (match filters them, e.g. "M3").',
+        'Libraries whose components assemblies insert without copying them by hand: the built-in standard parts (ISO 4762 screws, ISO 4032 nuts, ISO 7089 washers, heat-set inserts, ball bearings, in every size; stepper motors NEMA 8 to 23 in their common lengths) and the projects marked as libraries. With library, lists its parts (match filters them, e.g. "M3").',
       inputSchema: object({ library: string('A library id or name: lists its parts.'), match: string('Only parts whose name contains this.') }),
       run: async (args) => {
         if (args['library'] === undefined) return cadence.projects.listLibraries();
@@ -146,7 +146,7 @@ export function libraryTools(cadence: Cadence): Tool[] {
     {
       name: 'insert_library_part',
       description:
-        'Inserts a library part into an assembly as an instance, by designation for standard parts ("ISO 4762 M3 x 12", "ISO 4032 M3", "Ball bearing 608") or by name or id for other libraries; with at, also a joint that lays it on a hole: its origin (a screw\'s head underside, a nut\'s bottom face) on the axis of a round face or circular edge of another instance (flip turns it over). The project keeps the part as the library version it took; it appears in the bill of materials by its designation.',
+        'Inserts a library part into an assembly as an instance, by designation for standard parts ("ISO 4762 M3 x 12", "ISO 4032 M3", "Ball bearing 608", "Stepper motor NEMA 17 x 40") or by name or id for other libraries; with at, also a joint that lays it on a hole: its origin (a screw\'s head underside, a nut\'s bottom face, a motor\'s mounting face with its shaft along the axis) on the axis of a round face or circular edge of another instance (flip turns it over). The project keeps the part as the library version it took; it appears in the bill of materials by its designation.',
       inputSchema: object(
         {
           document: string('The assembly (id).'),

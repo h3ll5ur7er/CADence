@@ -2,6 +2,8 @@ import {
   asDocumentId,
   bearings,
   type BearingSize,
+  steppers,
+  type StepperSize,
   type ComponentDocument,
   currentSchemaVersion,
   type LibraryPart,
@@ -49,6 +51,10 @@ export const standardParts: readonly StandardPart[] = [
   ...metricSizes.map((size) => ({ key: `washer-${size}`, designation: `ISO 7089 ${size}`, group: 'Washers (ISO 7089)', spec: { kind: 'washer', size } as const })),
   ...metricSizes.map((size) => ({ key: `insert-${size}`, designation: `Heat-set insert ${size}`, group: 'Heat-set inserts', spec: { kind: 'insert', size } as const })),
   ...(Object.keys(bearings) as BearingSize[]).map((size) => ({ key: `bearing-${size}`, designation: `Ball bearing ${size}`, group: 'Ball bearings', spec: { kind: 'bearing', size } as const })),
+  // Stepper motors in their common lengths (CAD-194).
+  ...(Object.keys(steppers) as StepperSize[]).flatMap((size) =>
+    steppers[size].lengths.map((length) => ({ key: `stepper-${size.replace(' ', '')}-${length}`, designation: `Stepper motor ${size} × ${length}`, group: 'Stepper motors', spec: { kind: 'stepper', size, length: `${length} mm` } as const })),
+  ),
 ];
 
 const byKey = new Map(standardParts.map((part) => [part.key, part]));
@@ -58,13 +64,14 @@ export const standardLibraryParts = (): LibraryPart[] => standardParts.map(({ ke
 
 /** A standard part by its key, or by its designation (`ISO 4762 M3 × 12`; `x` for `×` will do). */
 export function findStandardPart(keyOrDesignation: string): StandardPart | undefined {
-  const wanted = keyOrDesignation.trim().toLowerCase().replace(/\s*[x×]\s*/g, ' × ').replace(/\s+/g, ' ');
+  // The thin bearings' other name: 618xx for 68xx.
+  const wanted = keyOrDesignation.trim().toLowerCase().replace(/\s*[x×]\s*/g, ' × ').replace(/\s+/g, ' ').replace(/^ball bearing 618(\d\d)$/, 'ball bearing 68$1');
   return byKey.get(keyOrDesignation.trim()) ?? standardParts.find((part) => part.designation.toLowerCase() === wanted);
 }
 
 /**
  * A standard part as a component of a project: a part feature at the origin of the XY plane, in
- * steel, named by its designation. A screw's head stands on the plane and its shank goes down the
+ * steel (a motor as heavy as one), named by its designation. A screw's head stands on the plane and its shank goes down the
  * z axis, so its origin lies on the face it is screwed against.
  */
 export function standardComponent(part: StandardPart, projectId: ProjectId, id: string, now: string): ComponentDocument {
@@ -83,7 +90,8 @@ export function standardComponent(part: StandardPart, projectId: ProjectId, id: 
       { id: 'part', type: 'part', name: part.designation, suppressed: false, part: part.spec, sketch: 's', points: ['origin'], angle: '0 deg', flip: false, operation: 'new-body' },
     ],
     rollbackIndex: 0,
-    material: (materials.find((m) => m.name === 'Steel') ?? materials[0]) as Material,
+    // A motor weighs as its case, coils and magnet do together: a NEMA 17 × 40 about 280 g (CAD-194).
+    material: part.spec.kind === 'stepper' ? { name: 'Stepper motor', density: 4 } : ((materials.find((m) => m.name === 'Steel') ?? materials[0]) as Material),
     library: { library: standardLibraryId, libraryName: standardLibraryName, document: part.key, version: standardLibraryVersion, follow: 'asked' },
   };
 }

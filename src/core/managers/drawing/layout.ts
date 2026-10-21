@@ -217,7 +217,24 @@ export function layoutSheet(input: LayoutInput): SheetLayout {
     const drawn = annotate(annotation, { anchorOf, scaleOfView, directionOf, free, line, text, arrows, instances, callouts: input.callouts, parts: input.parts });
     if (!drawn) lost.push(annotation.id);
   }
-  return { width, height, paths, texts, arrows, anchors, views, instances, lost };
+  // Each annotation's box (CAD-193): its lines, arrows and texts (by their estimated width).
+  const boxes = new Map<string, { min: [number, number]; max: [number, number] }>();
+  const grow = (owner: string | undefined, p: Vec2) => {
+    if (!owner || !document.annotations.some((n) => n.id === owner)) return;
+    const box = boxes.get(owner) ?? { min: [Infinity, Infinity], max: [-Infinity, -Infinity] };
+    box.min = [Math.min(box.min[0], p[0]), Math.min(box.min[1], p[1])];
+    box.max = [Math.max(box.max[0], p[0]), Math.max(box.max[1], p[1])];
+    boxes.set(owner, box);
+  };
+  for (const path of paths) for (const p of path.points) grow(path.owner, p);
+  for (const arrow of arrows) grow(arrow.owner, arrow.tip);
+  for (const t of texts) {
+    const w = textWidth(t.text, t.size);
+    const left = t.align === 'left' ? t.at[0] : t.align === 'center' ? t.at[0] - w / 2 : t.at[0] - w;
+    grow(t.owner, [left, t.at[1] - t.size * 0.3]);
+    grow(t.owner, [left + w, t.at[1] + t.size]);
+  }
+  return { width, height, paths, texts, arrows, anchors, views, boxes: [...boxes].map(([id, box]) => ({ id, ...box })), instances, lost };
 }
 
 /**
@@ -447,21 +464,36 @@ function annotate(a: DrawingAnnotation, t: Tools): boolean {
     case 'parts-list': {
       const list = t.parts.get(a.view);
       if (!list) return false;
-      const widths = [12, 70, 16, 32];
+      const rows = [{ item: 'Item', name: 'Part', count: 'Count', material: 'Material' }, ...list.rows.map((r) => ({ item: String(r.item), name: r.name, count: String(r.count), material: r.material }))];
+      const cells = rows.map((r) => [r.item, r.name, r.count, r.material]);
+      // Columns as wide as their texts (CAD-193); smaller text, then shortened texts, where the frame is too near.
+      const room = a.at[0] - margin - 1;
+      let size = 3;
+      const widthsAt = (s: number) => [12, 30, 16, 20].map((least, k) => Math.max(least, ...cells.map((c) => textWidth(c[k] as string, s) + 3)));
+      let widths = widthsAt(size);
+      if (widths.reduce((sum, w) => sum + w, 0) > room) {
+        size = Math.max(2, (size * room) / widths.reduce((sum, w) => sum + w, 0));
+        widths = widthsAt(size);
+      }
+      // Still too wide: the name and material columns share what is left.
+      if (widths.reduce((sum, w) => sum + w, 0) > room) {
+        const fixed = (widths[0] as number) + (widths[2] as number);
+        const share = Math.max(10, (room - fixed) / 2);
+        widths = [widths[0] as number, share, widths[2] as number, share];
+      }
       const total = widths.reduce((s, w) => s + w, 0);
       const left = a.at[0] - total;
-      const rowHeight = 7;
-      const rows = [{ item: 'Item', name: 'Part', count: 'Count', material: 'Material' }, ...list.rows.map((r) => ({ item: String(r.item), name: r.name, count: String(r.count), material: r.material }))];
-      rows.forEach((row, i) => {
+      const rowHeight = Math.max(5, (7 * size) / 3);
+      cells.forEach((row, i) => {
         const top = a.at[1] - i * rowHeight;
         line([[left, top - rowHeight], [a.at[0], top - rowHeight]], 'thin', a.id);
         let x = left;
-        [row.item, row.name, row.count, row.material].forEach((value, k) => {
-          text([x + 1.5, top - rowHeight + 2], value, 3, 'left', a.id, i === 0);
+        row.forEach((value, k) => {
+          text([x + 1.5, top - rowHeight + rowHeight * 0.29], fitted(value, (widths[k] as number) - 3, size), size, 'left', a.id, i === 0);
           x += widths[k] as number;
         });
       });
-      const bottom = a.at[1] - rows.length * rowHeight;
+      const bottom = a.at[1] - cells.length * rowHeight;
       line([[left, a.at[1]], [a.at[0], a.at[1]]], 'thin', a.id);
       let x = left;
       for (const w of [0, ...widths]) {
@@ -531,6 +563,19 @@ function valueOf(a: Dimension, main: string, nominal: number): ValueText {
 
 /** About how wide a text is on the sheet (Helvetica averages 0.6 of its size). */
 const textWidth = (value: string, size: number) => value.length * size * 0.62;
+
+/** The text shortened with an ellipsis until it fits the width at this size (CAD-193). */
+function fitted(value: string, width: number, size: number): string {
+  if (textWidth(value, size) <= width) return value;
+  const keep = Math.max(1, Math.floor(width / (size * 0.62)) - 1);
+  return `${value.slice(0, keep)}…`;
+}
+
+/** The size (down to 2 mm) at which a text fits a width, and the text, shortened if it still does not. */
+function fit(value: string, width: number, size: number): { text: string; size: number } {
+  const fits = Math.min(size, Math.max(2, width / Math.max(1, value.length * 0.62)));
+  return { text: fitted(value, width, fits), size: fits };
+}
 
 function widthOf(value: ValueText): number {
   if ('inline' in value) return textWidth(value.inline, textSize);
@@ -641,7 +686,8 @@ function frameTitle(document: DrawingDocument, width: number, line: Tools['line'
   line([[left, bottom + 9], [right, bottom + 9]], 'thin');
   for (const x of [left + 60, left + 120]) line([[x, bottom], [x, bottom + 18]], 'thin');
   const block = document.titleBlock;
-  text([left + 3, bottom + 22], block.title || document.name, 6, 'left', undefined, true);
+  const title = fit(block.title || document.name, 174, 6);
+  text([left + 3, bottom + 22], title.text, title.size, 'left', undefined, true);
   const scale = document.sheet.scale >= 1 ? `${formatValue(document.sheet.scale)}:1` : `1:${formatValue(1 / document.sheet.scale)}`;
   const cells: [string, string][] = [
     ['No.', block.number],
@@ -654,6 +700,8 @@ function frameTitle(document: DrawingDocument, width: number, line: Tools['line'
   cells.forEach(([label, value], i) => {
     const [x, y] = [left + (i % 3) * 60 + 2, bottom + (i < 3 ? 10.5 : 1.5)];
     text([x, y + 4], label, 2, 'left');
-    text([x + 14, y + 1.5], value, 3.5, 'left');
+    // Each value in its cell (CAD-193): smaller, then shortened, when it is long.
+    const shown = fit(value, 60 - 14 - 3, 3.5);
+    text([x + 14, y + 1.5], shown.text, shown.size, 'left');
   });
 }

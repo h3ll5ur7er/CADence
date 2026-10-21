@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import {
   type AxisRef,
   bearings,
+  steppers,
   bevelMesh,
   type BodyOperation,
   centreDistance,
@@ -141,6 +142,7 @@ export class FeatureDialog {
 
   protected readonly metricSizes = metricSizes;
   protected readonly bearingSizes = Object.keys(bearings);
+  protected readonly stepperSizes = Object.keys(steppers);
   protected readonly partKinds = Object.entries(partLabels).map(([value, label]) => ({ value: value as PartKind, label }));
   /** Hole sizes for each screw: clearance, tapping and heat-set insert holes (mm). */
   protected readonly holePresets = metricSizes.flatMap((size) => [

@@ -688,6 +688,22 @@
               </select>
             </label>
           }
+          @case ('stepper') {
+            <div class="row two">
+              <label class="field">
+                Size
+                <select id="feature-part-size" (change)="setPart({ size: value($event) })">
+                  @for (size of stepperSizes; track size) {
+                    <option [value]="size" [selected]="size === f.part.size">{{ size }}</option>
+                  }
+                </select>
+              </label>
+              <label class="field">
+                Length
+                <input id="feature-part-length" autocomplete="off" [value]="f.part.length" (change)="setPart({ length: length($event) })" />
+              </label>
+            </div>
+          }
           @case ('magnet') {
             <div class="row two">
             <label class="field">

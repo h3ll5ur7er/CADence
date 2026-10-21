@@ -142,6 +142,18 @@ describe('The standard library (CAD-152)', () => {
     expect(new Set(standardParts.map((p) => p.key)).size).toBe(standardParts.length);
   });
 
+  it('has the bearings a robot joint takes and stepper motors in their common lengths (CAD-194)', async () => {
+    expect(findStandardPart('Ball bearing 6805')?.key).toBe('bearing-6805');
+    expect(findStandardPart('Ball bearing 61805')?.key).toBe('bearing-6805');
+    expect(findStandardPart('bearing-6205')?.spec).toEqual({ kind: 'bearing', size: '6205' });
+    expect(standardParts.filter((p) => p.spec.kind === 'stepper').map((p) => p.designation)).toContain('Stepper motor NEMA 17 × 40');
+    expect(findStandardPart('stepper motor nema 23 x 56')?.spec).toEqual({ kind: 'stepper', size: 'NEMA 23', length: '56 mm' });
+    const d = device();
+    const { project } = unwrap(await d.manager.createProject('Robot'));
+    const motor = unwrap(await d.manager.useLibraryPart(project.id, standardLibraryId, 'stepper-NEMA17-40'));
+    expect(((await d.documents.load(motor.id)) as ComponentDocument).material).toEqual({ name: 'Stepper motor', density: 4 });
+  });
+
   it('makes a standard part a steel component of the project, once', async () => {
     const d = device();
     const { project } = unwrap(await d.manager.createProject('Robot'));

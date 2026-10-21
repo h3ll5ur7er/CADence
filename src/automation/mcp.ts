@@ -600,7 +600,7 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
       {
         name: 'command_reference',
         description:
-          'The TypeScript types of the commands and contracts, with their documentation, by topic: commands (design commands and shorthands), sketch (entities and constraints), features (the features), parts (the parts features place: gears, ring gears, bevel gears, worms, springs, screws, bearings …), document (components, materials, checks, appearance), assembly (assembly commands and what sessions answer: states, collisions, loads), joints (instances, joints and their offsets, links, studies with targets and carried parts, patterns, exploded views, cables), drawing (drawing commands, sheets, views, annotations). Without a topic, the list of topics.',
+          'The TypeScript types of the commands and contracts, with their documentation, by topic: commands (design commands and shorthands), sketch (entities and constraints), features (the features), parts (the parts features place: gears, ring gears, bevel gears, worms, springs, screws, bearings, stepper motors …), document (components, materials, checks, appearance), assembly (assembly commands and what sessions answer: states, collisions, loads), joints (instances, joints and their offsets, links, studies with targets and carried parts, patterns, exploded views, cables), drawing (drawing commands, sheets, views, annotations). Without a topic, the list of topics.',
         inputSchema: object({ topic: { type: 'string', enum: Object.keys(this.reference) } }),
         run: async (args) => {
           const topic = args['topic'] === undefined ? undefined : String(args['topic']);

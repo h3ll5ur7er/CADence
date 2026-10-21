@@ -23,6 +23,8 @@ A view is drawn exactly. Where that takes longer than 20 seconds, it is drawn fr
 **Threads** are drawn as ISO 6410 draws them, whether shown as a marker or modelled: from the side, a thin line along the minor diameter of a threaded shaft (the major diameter of a tapped hole) and a thick line where the thread ends; seen along the axis, a thin three-quarter circle. Hidden threads are dashed. A modelled thread is drawn from the part with its groove filled in, so its views take seconds, not minutes. Threads made before this version appear once their component has changed.
 - **Detail** (the magnifier): click the middle of the detail in a view. A circle of it is drawn twice as large below it, labelled *Detail B* (and the circle marked on the view).
 
+A view can leave parts out: bodies of a component, instances of an assembly (agents set its `hide`), say the table an arm stands on, which would otherwise set the sheet's scale.
+
 Views of an assembly show its parts where the assembly puts them, and each part's corners, edges, holes and outlines can be dimensioned. The assembly's editor places them for drawings whenever it changes: open an assembly once before drawing it.
 
 ## Dimensions and notes
@@ -40,7 +42,7 @@ Dimensions stay attached to the model's geometry by its persistent names, so the
 
 ## Parts lists and balloons
 
-On a view of an assembly, **Parts list** puts a table of its parts (item, name with configuration, count with copies of patterns, material) where you click its top right corner. **Balloon:** click a part in the view, then where the balloon goes; it shows the part's item number.
+On a view of an assembly, **Parts list** puts a table of its parts (item, name with configuration, count with copies of patterns, material) where you click its top right corner. Its columns are as wide as their texts; where the frame comes too near, the text gets smaller (down to 2 mm) and then shortened with an ellipsis, so the table never runs past the frame. The title block does the same with a long title or value. Agents see where each annotation is drawn: `get_drawing` gives every annotation's box on the sheet, texts included, and an edit answers with the boxes of what it placed, so a parts list that would cover a view shows before a picture does. **Balloon:** click a part in the view, then where the balloon goes; it shows the part's item number.
 
 ## Export
 

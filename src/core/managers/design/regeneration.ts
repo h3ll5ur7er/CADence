@@ -12,6 +12,7 @@ import {
   generatorOf,
   isDimension,
   isFontFormat,
+  type ImportedDocument,
   isModelFormat,
   isSketch,
   isToolFeature,
@@ -85,6 +86,32 @@ export interface RegenerationEngines {
   readonly documents: DocumentAccess;
   readonly assets: AssetAccess;
   readonly interchange: InterchangeEngine;
+}
+
+/**
+ * A circuit board's parts: the project's imported STEP files named like the 3D models its parts
+ * refer to (CAD-170), and a key for its solids that changes when they do.
+ */
+async function boardParts(
+  access: { readonly documents: DocumentAccess; readonly assets: AssetAccess; readonly interchange: InterchangeEngine },
+  document: ImportedDocument,
+  bytes: Uint8Array,
+): Promise<{ parts?: ReadonlyMap<string, Uint8Array>; key: string }> {
+  if (document.format !== 'kicad_pcb') return { key: document.assetId };
+  // A copy: the geometry worker takes the bytes it is sent.
+  const wanted = new Set(await access.interchange.partFiles(bytes.slice(), document.format));
+  const parts = new Map<string, Uint8Array>();
+  const used: string[] = [];
+  for (const summary of await access.documents.enumerate(document.projectId)) {
+    const name = summary.name.toLowerCase();
+    if (summary.format !== 'step' || !wanted.has(name) || parts.has(name)) continue;
+    const step = await access.documents.load(summary.id);
+    const asset = step?.kind === 'imported' ? await access.assets.fetch(step.assetId) : undefined;
+    if (!asset || step?.kind !== 'imported') continue;
+    parts.set(name, asset.bytes);
+    used.push(step.assetId);
+  }
+  return { parts, key: [document.assetId, ...used.sort()].join('+') };
 }
 
 /** Everything derived from a document by running its timeline. */
@@ -560,7 +587,8 @@ export class Regeneration {
         }
         const original = await this.engines.assets.fetch(document.assetId);
         if (!original) return fail({ code: 'missing-input', message: 'The original of its imported file is missing.' });
-        const sources = await this.engines.interchange.readSolids(original.bytes, format, `import:${document.assetId}`);
+        const { parts, key } = await boardParts(this.engines, document, original.bytes);
+        const sources = await this.engines.interchange.readSolids(original.bytes, format, `import:${key}`, parts);
         if (!sources.ok) return fail({ code: 'feature-failed', message: sources.error.message });
         return withKey({ ...base, type: 'insert', sources: sources.value });
       }

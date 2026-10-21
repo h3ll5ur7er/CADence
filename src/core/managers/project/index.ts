@@ -2,7 +2,7 @@ import { DefaultProjectManager, type ProjectManagerDependencies } from './defaul
 import type { ProjectManager } from './project-manager';
 
 export type { ProjectManagerDependencies } from './default-project-manager';
-export type { CreatedProject, ExternalFile, ImportedView, ProjectManager } from './project-manager';
+export type { CreatedProject, ExternalFile, ImportedView, ProjectManager, SimplifiedImport } from './project-manager';
 
 export function createProjectManager(dependencies: ProjectManagerDependencies): ProjectManager {
   return new DefaultProjectManager(dependencies);

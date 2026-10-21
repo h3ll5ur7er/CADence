@@ -42,7 +42,7 @@ classDiagram
   class ImportedDocument {
     schemaVersion: number
     assetId: AssetId
-    format: step | stl | obj | 3mf | dxf | svg
+    format: step | stl | obj | 3mf | kicad_pcb | dxf | svg | png | jpg | ttf | otf | woff
     metadata
   }
   Project "1" --> "*" DocumentSummary
@@ -138,7 +138,7 @@ Each feature type is its own interface in [[src/core/contracts/feature.ts]]. All
 
 | Type | Inputs | Values |
 | --- | --- | --- |
-| `insert` | an imported STEP, STL, OBJ or 3MF document | (its solids become new bodies) |
+| `insert` | an imported STEP, STL, OBJ, 3MF or KiCad board document | (its solids become new bodies; a board's holes keep their names, `hole:<reference>`) |
 | `extrude` | sketch, profile ids | distance; direction (normal, reverse, symmetric); operation |
 | `revolve` | sketch, profile ids, axis (origin axis, sketch construction line or edge) | angle; operation |
 | `fillet`, `chamfer` | edges (`TopologyRef`) | radius / distance |

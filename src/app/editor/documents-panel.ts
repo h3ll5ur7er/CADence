@@ -5,7 +5,7 @@ import { carriesFiles, droppedFiles } from '../shared/drop';
 import { Thumbnail } from '../shared/thumbnail';
 import { Icon, type IconName } from '../shared/icon';
 
-export const importAccept = '.step,.stp,.stl,.obj,.3mf,.dxf,.svg,.png,.jpg,.jpeg';
+export const importAccept = '.step,.stp,.stl,.obj,.3mf,.kicad_pcb,.dxf,.svg,.png,.jpg,.jpeg';
 
 const groups: readonly { kind: DocumentKind; label: string; icon: IconName }[] = [
   { kind: 'component', label: 'Components', icon: 'component' },

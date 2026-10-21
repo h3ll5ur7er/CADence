@@ -239,8 +239,17 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
       },
       {
         name: 'import_file',
-        description: 'Imports a file (STEP, STL, OBJ, 3MF, DXF, SVG, PNG, JPEG) from disk into a project; with replace, puts it in place of an imported document (instances and sketches that use it follow).',
-        inputSchema: object({ project: projectArg, path: string('Path of the file on this computer.'), replace: string('An imported document to replace (id).') }, ['project', 'path']),
+        description:
+          'Imports a file (STEP, STL, OBJ, 3MF, KiCad board, DXF, SVG, PNG, JPEG) from disk into a project; with replace, puts it in place of an imported document (instances and sketches that use it follow). A KiCad board (.kicad_pcb) answers with its holes, whose walls are named for joints (hole:<reference>); with triangles, a mesh is also kept repaired and simplified to about that many triangles, so it can be used as a solid.',
+        inputSchema: object(
+          {
+            project: projectArg,
+            path: string('Path of the file on this computer.'),
+            replace: string('An imported document to replace (id).'),
+            triangles: number('For a mesh (STL, OBJ, 3MF): also keep a copy, repaired and simplified to about this many triangles (up to 100,000 become solids).'),
+          },
+          ['project', 'path'],
+        ),
         run: async (args) => {
           const path = String(args['path']);
           if (args['replace'] !== undefined) {
@@ -250,7 +259,17 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
             return `Replaced ${document.name}.`;
           }
           const imported = unwrap(await cadence.projects.importFile(await projectId(args), { name: basename(path), bytes: new Uint8Array(await readFile(path)) }));
-          return { id: imported.id, name: imported.name, kind: imported.kind };
+          const answer: Record<string, unknown> = { id: imported.id, name: imported.name, kind: imported.kind };
+          if (imported.format === 'kicad_pcb') {
+            const content = unwrap(await cadence.projects.previewImported(imported.id));
+            if (content.kind === 'model' && content.board) answer['board'] = content.board;
+          }
+          if (args['triangles'] !== undefined) {
+            const preview = unwrap(await cadence.projects.previewSimplified(imported.id, Number(args['triangles'])));
+            const simplified = unwrap(await cadence.projects.simplifyImported(imported.id, Number(args['triangles'])));
+            answer['simplified'] = { id: simplified.id, name: simplified.name, triangles: preview.content.triangles, of: preview.before, repair: preview.repair };
+          }
+          return answer;
         },
       },
       {

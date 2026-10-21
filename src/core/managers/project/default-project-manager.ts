@@ -17,6 +17,7 @@ import {
   type DocumentSummary,
   type DomainEvents,
   fail,
+  type ImportedDocument,
   type ImportFormat,
   isFontFormat,
   isModelFormat,
@@ -34,7 +35,7 @@ import {
   type SyncOutcome,
 } from '@core/contracts';
 import { InvalidVersionNameError, RemoteError, type Version, type VersionAccess, type VersionFile } from '@core/access/version';
-import type { InterchangeEngine } from '@core/engines/interchange';
+import type { InterchangeEngine, SimplifiedMesh } from '@core/engines/interchange';
 import { readZip, zip } from '@core/utilities/archive';
 import { range } from '@core/utilities/math';
 import { pictureSize } from '@core/utilities/picture';
@@ -43,7 +44,7 @@ import type { ParameterEngine } from '@core/engines/parameter';
 import type { Clock } from '@core/utilities/clock';
 import type { EventBus } from '@core/utilities/messaging';
 import { archiveFiles, copyOf, type ProjectBundle, readArchive, remapIds, templateBundle, withNewIds } from './project-bundles';
-import type { CreatedProject, ExternalFile, ImportedContent, ImportedView, ProjectManager } from './project-manager';
+import type { CreatedProject, ExternalFile, ImportedContent, ImportedView, ProjectManager, SimplifiedImport } from './project-manager';
 
 export interface ProjectManagerDependencies {
   readonly projects: ProjectAccess;
@@ -96,6 +97,7 @@ const mediaTypes: Readonly<Record<ImportFormat, string>> = {
   stl: 'model/stl',
   obj: 'model/obj',
   '3mf': 'model/3mf',
+  kicad_pcb: 'application/x-kicad-pcb',
   dxf: 'image/vnd.dxf',
   svg: 'image/svg+xml',
   png: 'image/png',
@@ -111,6 +113,7 @@ const formatsByExtension: Readonly<Record<string, ImportFormat>> = {
   stl: 'stl',
   obj: 'obj',
   '3mf': '3mf',
+  kicad_pcb: 'kicad_pcb',
   dxf: 'dxf',
   svg: 'svg',
   png: 'png',
@@ -159,6 +162,8 @@ export class DefaultProjectManager implements ProjectManager {
   private readonly pending = new Map<ProjectId, ReturnType<typeof setTimeout>>();
   /** One recording or sync at a time. */
   private recording: Promise<unknown> = Promise.resolve();
+  /** The last simplified mesh previewed, kept so keeping it does not simplify it again. */
+  private simplified: { readonly id: DocumentId; readonly assetId: AssetId; readonly triangles: number; readonly mesh: SimplifiedMesh } | undefined;
 
   constructor(private readonly deps: ProjectManagerDependencies) {
     deps.events.subscribe('documentSaved', ({ projectId }) => this.scheduleVersion(projectId));
@@ -557,7 +562,7 @@ export class DefaultProjectManager implements ProjectManager {
     if (document?.kind !== 'imported') return fail({ code: 'unknown-document', message: `Imported file ${id} does not exist.` });
     const format = formatOf(file.name);
     if (!format || isDrawing(format) !== isDrawing(document.format)) {
-      return fail({ code: 'unsupported-format', message: isDrawing(document.format) ? 'Replace a drawing by a DXF or SVG file.' : 'Replace a 3D file by a STEP, STL, OBJ or 3MF file.' });
+      return fail({ code: 'unsupported-format', message: isDrawing(document.format) ? 'Replace a drawing by a DXF or SVG file.' : 'Replace a 3D file by a STEP, STL, OBJ, 3MF or KiCad board file.' });
     }
     const assetId = asAssetId(this.deps.newId());
     await this.deps.assets.keep({ id: assetId, projectId: document.projectId, name: file.name, byteLength: file.bytes.byteLength, bytes: file.bytes });
@@ -732,9 +737,43 @@ export class DefaultProjectManager implements ProjectManager {
       if (!size) return fail({ code: 'unreadable', message: `${document.fileName} is not a PNG or JPEG picture.` });
       return ok({ kind: 'picture', width: size.width, height: size.height, mediaType: size.mediaType, bytes });
     }
-    const model = await this.deps.interchange.readMesh(bytes, document.format, `preview:${document.assetId}`);
+    const { parts, key } = await this.boardParts(document, bytes);
+    const model = await this.deps.interchange.readMesh(bytes, document.format, `preview:${key}`, parts);
     if (!model.ok) return model;
     return ok({ kind: 'model', ...model.value });
+  }
+
+  async previewSimplified(id: DocumentId, triangles: number): Promise<Result<SimplifiedImport>> {
+    const simplified = await this.simplify(id, triangles);
+    if (!simplified.ok) return simplified;
+    const { preview, before, repair } = simplified.value.mesh;
+    return ok({ content: { kind: 'model', ...preview }, before, repair });
+  }
+
+  async simplifyImported(id: DocumentId, triangles: number): Promise<Result<DocumentSummary>> {
+    const simplified = await this.simplify(id, triangles);
+    if (!simplified.ok) return simplified;
+    const { document, mesh } = simplified.value;
+    this.simplified = undefined;
+    const name = `${document.name.slice(0, maxNameLength - 13)} (simplified)`;
+    return this.importFile(document.projectId, { name: `${name}.${document.format}`, bytes: mesh.file });
+  }
+
+  /** A mesh file repaired and simplified, once per document and size. */
+  private async simplify(id: DocumentId, triangles: number): Promise<Result<{ document: ImportedDocument; mesh: SimplifiedMesh }>> {
+    const original = await this.original(id);
+    if (!original.ok) return original;
+    const { document, bytes } = original.value;
+    const format = document.format;
+    if (format !== 'stl' && format !== 'obj' && format !== '3mf') {
+      return fail({ code: 'unsupported-format', message: 'Only meshes (STL, OBJ, 3MF) are simplified; other files hold exact solids or drawings.' });
+    }
+    const kept = this.simplified;
+    if (kept?.id === id && kept.assetId === document.assetId && kept.triangles === triangles) return ok({ document, mesh: kept.mesh });
+    const result = await this.deps.interchange.simplifyMesh(bytes, format, triangles, `simplified:${document.assetId}`);
+    if (!result.ok) return result;
+    this.simplified = { id, assetId: document.assetId, triangles, mesh: result.value };
+    return ok({ document, mesh: result.value });
   }
 
   async deliverFile(file: { readonly name: string; readonly mediaType: string; readonly bytes: Uint8Array }): Promise<void> {
@@ -745,14 +784,37 @@ export class DefaultProjectManager implements ProjectManager {
     const original = await this.original(id);
     if (!original.ok) return original;
     const { document, bytes } = original.value;
-    const converted = await this.deps.interchange.convert(bytes, document.format, format);
+    const { parts } = isModelFormat(document.format) ? await this.boardParts(document, bytes) : {};
+    const converted = await this.deps.interchange.convert(bytes, document.format, format, parts);
     if (!converted.ok) return converted;
     await this.deps.externalFiles.deliver({ name: `${document.name}.${format}`, mediaType: mediaTypes[format], bytes: converted.value });
     return ok(undefined);
   }
 
+  /**
+   * A circuit board's parts: the project's imported STEP files named like the 3D models its parts
+   * refer to (CAD-170), and a key for its solids that changes when they do.
+   */
+  private async boardParts(document: ImportedDocument, bytes: Uint8Array): Promise<{ parts?: ReadonlyMap<string, Uint8Array>; key: string }> {
+    if (document.format !== 'kicad_pcb') return { key: document.assetId };
+    // A copy: the geometry worker takes the bytes it is sent.
+    const wanted = new Set(await this.deps.interchange.partFiles(bytes.slice(), document.format));
+    const parts = new Map<string, Uint8Array>();
+    const used: string[] = [];
+    for (const summary of await this.deps.documents.enumerate(document.projectId)) {
+      const name = summary.name.toLowerCase();
+      if (summary.format !== 'step' || !wanted.has(name) || parts.has(name)) continue;
+      const step = await this.deps.documents.load(summary.id);
+      const asset = step?.kind === 'imported' ? await this.deps.assets.fetch(step.assetId) : undefined;
+      if (!asset || step?.kind !== 'imported') continue;
+      parts.set(name, asset.bytes);
+      used.push(step.assetId);
+    }
+    return { parts, key: [document.assetId, ...used.sort()].join('+') };
+  }
+
   /** An imported document with the bytes of its original file. */
-  private async original(id: DocumentId): Promise<Result<{ document: Extract<CadDocument, { kind: 'imported' }>; bytes: Uint8Array }>> {
+  private async original(id: DocumentId): Promise<Result<{ document: ImportedDocument; bytes: Uint8Array }>> {
     const document = await this.deps.documents.load(id);
     if (document?.kind !== 'imported') return fail({ code: 'unknown-document', message: `Imported file ${id} does not exist.` });
     const asset = await this.deps.assets.fetch(document.assetId);

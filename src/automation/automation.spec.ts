@@ -306,6 +306,11 @@ describe('everything the app does, for agents (CAD-124)', () => {
     const stl = (await json('import_file', { project: created.project.id, path: join(repository, 'e2e', 'fixtures', 'wedge.stl') })) as { id: string };
     expect(result(await call('render_picture', { document: stl.id, width: 120, height: 90 })).content[0]?.type).toBe('image');
     expect(result(await call('render_picture', { document: svg.id })).content[0]?.text).toContain('not a 3D file');
+    // A mesh kept simplified as well; a circuit board with its holes named for joints (CAD-169, CAD-170).
+    const simplified = (await json('import_file', { project: created.project.id, path: join(repository, 'e2e', 'fixtures', 'wedge.stl'), triangles: 4 })) as { simplified: { name: string; triangles: number } };
+    expect(simplified.simplified).toMatchObject({ name: 'wedge (simplified)', triangles: expect.any(Number) });
+    const board = (await json('import_file', { project: created.project.id, path: join(repository, 'e2e', 'fixtures', 'sensor-board.kicad_pcb') })) as { board: { mountingHoles: string[] } };
+    expect(board.board.mountingHoles).toEqual(['hole:H1', 'hole:H2', 'hole:H3', 'hole:H4']);
 
     // A section through the cube's middle shows less of it than the whole cube.
     const ink = async (args: Record<string, unknown>) => {

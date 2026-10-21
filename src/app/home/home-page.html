@@ -6,7 +6,7 @@
   <button type="button" class="icon-btn about" aria-label="About CADence" title="About CADence" (click)="about.open()">
     <cad-icon name="info" />
   </button>
-  <label class="btn" title="Open a project archive (.cadence), or start a project from STEP, STL, OBJ, 3MF, DXF or SVG files">
+  <label class="btn" title="Open a project archive (.cadence), or start a project from STEP, STL, OBJ, 3MF, KiCad board, DXF or SVG files">
     <cad-icon name="upload" />
     Open file…
     <input #file type="file" multiple class="visually-hidden" [accept]="accept" (change)="picked(file)" />

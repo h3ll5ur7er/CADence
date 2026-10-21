@@ -4,6 +4,7 @@ import { InMemoryExternalFileAccess } from '@core/access/external-file';
 import { InMemoryProjectAccess } from '@core/access/project';
 import { asDocumentId, asProjectId, type DomainEvents, type ImportedDocument, type Result } from '@core/contracts';
 import { createInterchangeEngine } from '@core/engines/interchange';
+import { scan, writeStl } from '@core/engines/interchange/testing';
 import { steppingClock } from '@core/utilities/clock';
 import { EventBus } from '@core/utilities/messaging';
 import { GitVersionAccess } from '@core/access/version';
@@ -264,6 +265,22 @@ describe('ProjectManager', () => {
       unwrap(await manager.exportImported(doc.id, 'dxf'));
       expect(new TextDecoder().decode(files.delivered[0]?.bytes)).toContain('CIRCLE');
       expect(await manager.exportImported(doc.id, 'stl')).toMatchObject({ ok: false, error: { code: 'unreadable' } });
+    });
+
+    it('simplifies a large mesh with a preview, and keeps it as a new file next to the original (CAD-169)', async () => {
+      const { project } = unwrap(await manager.createProject('P'));
+      const doc = unwrap(await manager.importFile(project.id, { name: 'Bust.stl', bytes: writeStl([scan(101, 100)]) }));
+      const preview = unwrap(await manager.previewSimplified(doc.id, 2000));
+      expect(preview.before).toBe(20_000);
+      expect(preview.content.triangles).toBeLessThanOrEqual(2000);
+      expect(preview.content).toMatchObject({ kind: 'model', usableAsSolid: true });
+      expect(preview.repair).toEqual({ mergedVertices: 0, removedTriangles: 0, flippedTriangles: 0, closedHoles: 0 });
+      const kept = unwrap(await manager.simplifyImported(doc.id, 2000));
+      expect(kept).toMatchObject({ kind: 'imported', name: 'Bust (simplified)', format: 'stl' });
+      expect(unwrap(await manager.previewImported(kept.id))).toMatchObject({ triangles: preview.content.triangles });
+      expect(unwrap(await manager.previewImported(doc.id))).toMatchObject({ triangles: 20_000 });
+      const svg = unwrap(await manager.importFile(project.id, { name: 'a.svg', bytes: new TextEncoder().encode('<svg/>') }));
+      expect(await manager.previewSimplified(svg.id, 100)).toMatchObject({ ok: false, error: { code: 'unsupported-format' } });
     });
 
     it('reports files that cannot be read', async () => {

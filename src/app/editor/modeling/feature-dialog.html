@@ -10,9 +10,9 @@
           Imported file
           <select id="feature-document" (change)="set({ document: value($event) })">
             @for (d of store.importedModels(); track d.id) {
-              <option [value]="d.id" [selected]="d.id === f.document">{{ d.name }} ({{ d.format?.toUpperCase() }})</option>
+              <option [value]="d.id" [selected]="d.id === f.document">{{ d.name }} ({{ d.format === 'kicad_pcb' ? 'KiCad board' : d.format?.toUpperCase() }})</option>
             } @empty {
-              <option value="" selected>Import a STEP, STL, OBJ or 3MF file first</option>
+              <option value="" selected>Import a STEP, STL, OBJ, 3MF or KiCad board file first</option>
             }
           </select>
         </label>

@@ -1,4 +1,5 @@
 import type { FileSystem } from '@core/utilities/file-system';
+import { contentHash } from '@core/utilities/identity';
 import {
   BaseDirectory,
   exists,
@@ -15,10 +16,16 @@ import {
 
 const options = { baseDir: BaseDirectory.AppData };
 
+/** What `own` keeps for a path this app removed. */
+const removed = 'removed';
+
 const parentOf = (path: string) => path.slice(0, Math.max(path.lastIndexOf('/'), 0));
 
 /** FileSystem rooted in the app data folder, through Tauri's fs plugin (scope: capabilities/default.json). */
 export class TauriFileSystem implements FileSystem {
+  /** What this app last wrote at a path (a hash of the text), or that it removed it: changes not to report (CAD-150). */
+  private readonly own = new Map<string, string>();
+
   exists(path: string): Promise<boolean> {
     return exists(path, options);
   }
@@ -32,7 +39,19 @@ export class TauriFileSystem implements FileSystem {
   }
 
   writeText(path: string, text: string): Promise<void> {
+    this.own.set(path, contentHash(text));
     return this.replace(path, (temporary) => writeTextFile(temporary, text, options));
+  }
+
+  /** Of these paths, those another process changed: their text is not what this app wrote last, or they went without it removing them. */
+  async notWrittenHere(paths: readonly string[]): Promise<string[]> {
+    const changed: string[] = [];
+    for (const path of new Set(paths)) {
+      const there = await exists(path, options).catch(() => false);
+      const now = there ? contentHash(await readTextFile(path, options).catch(() => '')) : removed;
+      if (this.own.get(path) !== now) changed.push(path);
+    }
+    return changed;
   }
 
   readBytes(path: string): Promise<Uint8Array> {
@@ -53,6 +72,7 @@ export class TauriFileSystem implements FileSystem {
   }
 
   async remove(path: string): Promise<void> {
+    for (const known of this.own.keys()) if (known === path || known.startsWith(`${path}/`)) this.own.set(known, removed);
     if (await exists(path, options)) await remove(path, { ...options, recursive: true });
   }
 

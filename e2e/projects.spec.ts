@@ -58,7 +58,7 @@ test('syncs a project through git: sent from one browser, opened in another, cha
     await other.getByRole('button', { name: 'Open from git…' }).click();
     await other.getByRole('textbox', { name: 'Repository address' }).fill(url);
     await other.getByRole('button', { name: 'Open project' }).click();
-    await expect(other.getByRole('button', { name: 'Shared plate' })).toBeVisible();
+    await expect(other.getByRole('button', { name: 'Shared plate', exact: true })).toBeVisible();
     await expect(other.getByTestId('body-size')).toHaveText('60, 30, 6 mm');
     await setThickness(other, '9 mm');
     await expect(other.getByTestId('body-size')).toHaveText('60, 30, 9 mm');

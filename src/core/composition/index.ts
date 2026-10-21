@@ -2,6 +2,7 @@ import { type AssetAccess, FileSystemAssetAccess, IndexedDbAssetAccess, InMemory
 import {
   type DocumentAccess,
   FileSystemDocumentAccess,
+  folderChange,
   IndexedDbDocumentAccess,
   InMemoryDocumentAccess,
 } from '@core/access/document';
@@ -30,7 +31,7 @@ import { createDesignManager, type DesignManager } from '@core/managers/design';
 import type { DrawingManager, DrawingManagerDependencies } from '@core/managers/drawing';
 import { createProjectManager, type ProjectManager } from '@core/managers/project';
 import { systemClock } from '@core/utilities/clock';
-import { type FileSystem, IndexedDbFileSystem, MemoryFileSystem } from '@core/utilities/file-system';
+import { type FileSystem, type FolderWatch, IndexedDbFileSystem, MemoryFileSystem } from '@core/utilities/file-system';
 import { newId } from '@core/utilities/identity';
 import { EventBus, type MessageChannelLike, type Port, relayEvents, remote, stoppable, type StoppablePort } from '@core/utilities/messaging';
 
@@ -92,6 +93,11 @@ export interface Host {
   readonly views?: () => StoppablePort;
   /** Where events are shared with the app's other tabs and windows (a `BroadcastChannel`). */
   readonly channel?: MessageChannelLike;
+  /**
+   * Watches the project folders (desktop, CAD-150): reports the paths, relative to the folder the
+   * projects are in, that another process changed (not this app's own writes).
+   */
+  readonly watch?: FolderWatch;
 }
 
 /** How long a drawing view may take to draw exactly before it is drawn from the triangles (CAD-125). */
@@ -103,6 +109,8 @@ export const viewTimeLimit = 20_000;
  */
 const relayed: Partial<Record<keyof DomainEvents, keyof DomainEvents>> = {
   documentSaved: 'documentChanged',
+  documentCreated: 'documentCreated',
+  projectChanged: 'projectChanged',
   documentRenamed: 'documentRenamed',
   documentRestored: 'documentRestored',
   documentDeleted: 'documentDeleted',
@@ -120,6 +128,7 @@ export interface HostOptions {
   readonly stopGeometry?: () => void;
   readonly views?: () => StoppablePort;
   readonly channel?: MessageChannelLike;
+  readonly watch?: FolderWatch;
 }
 
 interface Geometry {
@@ -171,6 +180,8 @@ export function createCore(host: Host): Core {
   const events = new EventBus<DomainEvents>();
   if (host.channel) relayEvents(events, host.channel, relayed);
   const { projects, documents, assets, externalFiles } = host;
+  // Files other processes (an agent's MCP server, a script) changed become the events other windows send (CAD-150).
+  host.watch?.((paths) => void followFolders(paths, projects, documents, events));
   const fonts = fontSource(host.fontUrls);
   const geometry: Geometry = host.geometry
     ? {
@@ -242,6 +253,28 @@ export function createCore(host: Host): Core {
       }
     },
   };
+}
+
+/**
+ * Publishes what changed in the project folders: documents changed or gone (`documentChanged`,
+ * `documentDeleted`), projects changed or gone (`projectChanged`, `projectDeleted`).
+ */
+export async function followFolders(paths: readonly string[], projects: ProjectAccess, documents: DocumentAccess, events: EventBus<DomainEvents>): Promise<void> {
+  const changes = new Map(paths.flatMap((path) => {
+    const change = folderChange(path);
+    return change ? [[change.kind === 'document' ? change.documentId : change.projectId, change] as const] : [];
+  }));
+  for (const change of changes.values()) {
+    if (change.kind === 'project') {
+      const found = await projects.find(change.projectId).catch(() => undefined);
+      if (found) events.publish('projectChanged', { projectId: change.projectId });
+      else events.publish('projectDeleted', { projectId: change.projectId });
+      continue;
+    }
+    // A document of a newer schema cannot be loaded, but it is there.
+    const there = await documents.load(change.documentId).then(Boolean, () => true);
+    events.publish(there ? 'documentChanged' : 'documentDeleted', { documentId: change.documentId });
+  }
 }
 
 /** Composition root for the browser: IndexedDB storage, exports as downloads. */

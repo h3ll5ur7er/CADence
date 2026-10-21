@@ -1,4 +1,4 @@
-import type { CadDocument, Parameter, Project, ProjectTemplate } from '@core/contracts';
+import type { Attachment, CadDocument, Parameter, Project, ProjectTemplate } from '@core/contracts';
 
 /**
  * A project's content, apart from where it is kept: its settings, documents and imported originals.
@@ -9,8 +9,13 @@ export interface ProjectBundle {
   readonly parameters: readonly Parameter[];
   /** As stored; their `projectId` is replaced when the bundle becomes a project. */
   readonly documents: readonly CadDocument[];
-  /** Imported originals by asset id. */
+  /** Imported originals and attached files, by asset id. */
   readonly originals: ReadonlyMap<string, Uint8Array>;
+  /** The project's notes and attachments (CAD-149). */
+  readonly description?: string;
+  readonly attachments?: readonly Attachment[];
+  /** The project is a library of this id (CAD-151). */
+  readonly library?: NonNullable<Project['library']>;
   /** The ids a copy's documents had in its history (`Project.copiedFrom`, CAD-147). */
   readonly copiedFrom?: Project['copiedFrom'];
 }
@@ -33,10 +38,13 @@ export function copyOf(bundle: ProjectBundle, newId: () => string): { bundle: Pr
     ids.set(document.id, newId());
     if (document.kind === 'imported') ids.set(document.assetId, newId());
   }
+  // Attached files are assets too: a copy has its own.
+  for (const attachment of bundle.attachments ?? []) if (attachment.kind === 'file') ids.set(attachment.assetId, newId());
   return {
     bundle: {
       ...bundle,
       documents: bundle.documents.map((document) => JSON.parse(remapIds(JSON.stringify(document), ids)) as CadDocument),
+      ...(bundle.attachments ? { attachments: JSON.parse(remapIds(JSON.stringify(bundle.attachments), ids)) as Attachment[] } : {}),
       originals: new Map([...bundle.originals].map(([id, bytes]) => [ids.get(id) ?? id, bytes])),
     },
     ids,
@@ -64,7 +72,7 @@ export const archiveVersion = 1;
 export function archiveFiles(bundle: ProjectBundle, history: readonly { path: string; bytes: Uint8Array }[] = []): { name: string; bytes: Uint8Array }[] {
   const text = (value: unknown) => new TextEncoder().encode(JSON.stringify(value, null, 2));
   return [
-    { name: 'cadence.json', bytes: text({ format: archiveFormat, version: archiveVersion, name: bundle.name, parameters: bundle.parameters, ...(bundle.copiedFrom ? { copiedFrom: bundle.copiedFrom } : {}) }) },
+    { name: 'cadence.json', bytes: text({ format: archiveFormat, version: archiveVersion, name: bundle.name, parameters: bundle.parameters, ...(bundle.copiedFrom ? { copiedFrom: bundle.copiedFrom } : {}), ...notesOf(bundle) }) },
     ...bundle.documents.map((document) => ({ name: `documents/${document.id}.json`, bytes: text({ ...document, projectId: undefined }) })),
     ...[...bundle.originals].map(([id, bytes]) => ({ name: `originals/${id}`, bytes })),
     ...history.map((file) => ({ name: `history/${file.path}`, bytes: file.bytes })),
@@ -75,7 +83,7 @@ export function archiveFiles(bundle: ProjectBundle, history: readonly { path: st
 export function readArchive(files: ReadonlyMap<string, Uint8Array>): { bundle: ProjectBundle; history: { path: string; bytes: Uint8Array }[] } | undefined {
   const manifest = files.get('cadence.json');
   if (!manifest) return undefined;
-  const settings = JSON.parse(new TextDecoder().decode(manifest)) as { format?: string; version?: number; name?: string; parameters?: Parameter[]; copiedFrom?: Project['copiedFrom'] };
+  const settings = JSON.parse(new TextDecoder().decode(manifest)) as { format?: string; version?: number; name?: string; parameters?: Parameter[]; copiedFrom?: Project['copiedFrom'] } & Pick<ProjectBundle, 'description' | 'attachments' | 'library'>;
   if (settings.format !== archiveFormat || (settings.version ?? 0) > archiveVersion) return undefined;
   const documents: CadDocument[] = [];
   const originals = new Map<string, Uint8Array>();
@@ -85,5 +93,14 @@ export function readArchive(files: ReadonlyMap<string, Uint8Array>): { bundle: P
     else if (path.startsWith('originals/')) originals.set(path.slice('originals/'.length), bytes);
     else if (path.startsWith('history/') && !path.endsWith('/')) history.push({ path: path.slice('history/'.length), bytes });
   }
-  return { bundle: { name: settings.name ?? 'Imported project', parameters: settings.parameters ?? [], documents, originals, ...(settings.copiedFrom ? { copiedFrom: settings.copiedFrom } : {}) }, history };
+  return { bundle: { name: settings.name ?? 'Imported project', parameters: settings.parameters ?? [], documents, originals, ...(settings.copiedFrom ? { copiedFrom: settings.copiedFrom } : {}), ...notesOf(settings) }, history };
+}
+
+/** A project's description, attachments and library mark, where it has them: settings kept in archives and versions. */
+export function notesOf(settings: Pick<ProjectBundle, 'description' | 'attachments' | 'library'>): Pick<ProjectBundle, 'description' | 'attachments' | 'library'> {
+  return {
+    ...(settings.description ? { description: settings.description } : {}),
+    ...(settings.attachments?.length ? { attachments: settings.attachments } : {}),
+    ...(settings.library ? { library: settings.library } : {}),
+  };
 }

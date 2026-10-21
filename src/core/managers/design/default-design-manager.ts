@@ -361,6 +361,9 @@ class Session implements DesignSession {
   }
 
   private async apply(given: DesignCommand): Promise<Result<void>> {
+    // A library's part is kept as the library had it; it changes there, and comes here with an update (CAD-151).
+    const { library } = this.current.document;
+    if (library) return fail({ code: 'library-part', message: `${this.current.document.name} comes from the library ${library.libraryName}: change it there, then update it here.` });
     const command = await this.anchored(given);
     if (command.type === 'set-appearance' && !this.current.derived.bodies.some((b) => b.id === command.body)) {
       return fail({ code: 'invalid-command', message: `There is no body ${command.body}.` });

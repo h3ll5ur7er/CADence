@@ -43,6 +43,26 @@ export interface DocumentSummary {
   readonly modifiedAt: Timestamp;
   /** Imported documents: the file format, so lists can tell drawings from 3D files. */
   readonly format?: ImportFormat;
+  /** A library's part used in this project: kept as the library had it in a version (CAD-151). */
+  readonly library?: LibraryLink;
+}
+
+/**
+ * Where a document used from a library comes from (docs/Architecture/Decisions.md#ADR-53a): the
+ * library's own id, the document there and the library version it is a copy of. Such documents are
+ * read only; an update replaces them by a newer version of the library's.
+ */
+export interface LibraryLink {
+  /** `Project.library.id` of the library, or `standard`. */
+  readonly library: string;
+  /** The library's name when the part was taken, for when it is not on this device. */
+  readonly libraryName: string;
+  /** The document's id in the library, or a standard part's key. */
+  readonly document: string;
+  /** The library's version: an id of its history (`standard-1` for the built-in catalogue). */
+  readonly version: string;
+  /** `always`: newer versions of the library replace it on their own; `asked`: when asked. */
+  readonly follow: 'asked' | 'always';
 }
 
 /** Persisted design intent; see docs/Architecture/Document-model.md. */
@@ -151,8 +171,8 @@ export type CadDocument = ComponentDocument | AssemblyDocument | DrawingDocument
 export const currentSchemaVersion = 3;
 
 export function summarize(document: CadDocument): DocumentSummary {
-  const { id, projectId, kind, name, createdAt, modifiedAt } = document;
-  return { id, projectId, kind, name, createdAt, modifiedAt, ...(document.kind === 'imported' ? { format: document.format } : {}) };
+  const { id, projectId, kind, name, createdAt, modifiedAt, library } = document;
+  return { id, projectId, kind, name, createdAt, modifiedAt, ...(document.kind === 'imported' ? { format: document.format } : {}), ...(library ? { library } : {}) };
 }
 
 /** Imported documents a part or assembly can use as a solid. */

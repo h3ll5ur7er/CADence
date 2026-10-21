@@ -1,4 +1,5 @@
 <div class="stage">
+  <cad-changed-elsewhere [shown]="store.elsewhere.pending()" (reload)="reopen()" (keep)="store.elsewhere.pending.set(false)" />
   <svg
     #sheet
     class="sheet"

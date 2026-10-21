@@ -1,10 +1,14 @@
 import type {
+  Attachment,
   BodyMesh,
   ConflictChoice,
   CreatableDocumentKind,
   DocumentId,
   DocumentSummary,
   ImportFormat,
+  LibraryLink,
+  LibraryPart,
+  LibrarySummary,
   Parameter,
   ProjectId,
   ProjectRemote,
@@ -15,6 +19,7 @@ import type {
   SketchEntity,
   SyncOutcome,
   TextOutlines,
+  TrashItem,
   Vec3,
   Version,
 } from '@core/contracts';
@@ -56,6 +61,27 @@ export type ImportedContent =
   /** A picture (PNG, JPEG): its size in pixels, and its bytes to show. */
   | { readonly kind: 'picture'; readonly width: number; readonly height: number; readonly mediaType: string; readonly bytes: Uint8Array };
 
+/** What a list of projects or documents shows has changed: read it again (CAD-150). */
+export type StoreChange =
+  /** The projects (a project's name, settings, notes; projects added, deleted, restored). */
+  | { readonly kind: 'projects'; readonly projectId?: ProjectId }
+  /**
+   * A document changed in another tab, window or process, or was renamed, restored or deleted; `gone`
+   * when it no longer exists. A document saved by an editor of this window is not a change.
+   */
+  | { readonly kind: 'document'; readonly documentId: DocumentId; readonly gone?: boolean };
+
+/** What a file or a link to attach is. */
+export type AttachmentInput = { readonly file: ExternalFile } | { readonly link: { readonly url: string; readonly name?: string } };
+
+/** A library part whose library has a newer version than the one the project uses (CAD-151). */
+export interface LibraryUpdate {
+  readonly document: DocumentSummary;
+  readonly link: LibraryLink;
+  /** The library's latest version. */
+  readonly latest: string;
+}
+
 /** Project and document lifecycle (see docs/Architecture/Components.md#project-manager). */
 export interface ProjectManager {
   /** Most recently modified first. */
@@ -63,6 +89,7 @@ export interface ProjectManager {
   findProject(id: ProjectId): Promise<ProjectSummary | undefined>;
   createProject(name: string): Promise<Result<CreatedProject>>;
   renameProject(id: ProjectId, name: string): Promise<Result<void>>;
+  /** Moves the project to the trash (CAD-148): it is kept, with its documents and history, for {@link trashDays} days. */
   deleteProject(id: ProjectId): Promise<void>;
   /** Replaces the project's parameters (checked first: names, cycles, expressions); its components regenerate. */
   setProjectParameters(id: ProjectId, parameters: readonly Parameter[]): Promise<Result<void>>;
@@ -73,7 +100,46 @@ export interface ProjectManager {
   /** Without a name, the document gets the next free default name ("Component 3"). */
   createDocument(projectId: ProjectId, kind: CreatableDocumentKind, name?: string): Promise<Result<DocumentSummary>>;
   renameDocument(id: DocumentId, name: string): Promise<Result<void>>;
+  /** Moves the document to its project's trash (CAD-148); its history stays with the project. */
   deleteDocument(id: DocumentId): Promise<void>;
+
+  /** What is in the trash, newest first; what has been there longer than {@link trashDays} days is deleted for good first. */
+  listTrash(): Promise<TrashItem[]>;
+  /** Brings a project or a document back from the trash, a document as it was when it was deleted. */
+  restoreFromTrash(id: ProjectId | DocumentId): Promise<Result<TrashItem>>;
+  /** Deletes a project or a document in the trash for good. */
+  deleteFromTrash(id: ProjectId | DocumentId): Promise<Result<void>>;
+  /** Deletes everything in the trash for good. */
+  emptyTrash(): Promise<void>;
+
+  /** Replaces the project's description (Markdown, CAD-149). */
+  setProjectDescription(id: ProjectId, description: string): Promise<Result<void>>;
+  /** Keeps a file with the project as it is, or a link. */
+  addAttachment(id: ProjectId, attachment: AttachmentInput): Promise<Result<Attachment>>;
+  removeAttachment(id: ProjectId, attachmentId: string): Promise<Result<void>>;
+  /** An attached file's bytes. */
+  attachmentFile(id: ProjectId, attachmentId: string): Promise<Result<{ readonly attachment: Attachment; readonly bytes: Uint8Array }>>;
+
+  /** Marks the project as a library other projects use, or no longer (CAD-151). */
+  setLibrary(id: ProjectId, library: boolean): Promise<Result<void>>;
+  /** The built-in standard parts, then the projects marked as libraries. */
+  listLibraries(): Promise<LibrarySummary[]>;
+  /** The components a library offers. */
+  libraryParts(library: string): Promise<Result<LibraryPart[]>>;
+  /**
+   * The project's document of a library part, to insert into its assemblies: the one taken before, or
+   * the part as the library's latest version has it (`follow`: whether newer versions replace it on their own).
+   */
+  useLibraryPart(projectId: ProjectId, library: string, part: string, options?: { readonly follow?: LibraryLink['follow'] }): Promise<Result<DocumentSummary>>;
+  /** The project's library parts whose library has a newer version of them. */
+  libraryUpdates(projectId: ProjectId): Promise<LibraryUpdate[]>;
+  /** Brings library parts (all, or those given) to their library's latest version; answers those that changed. */
+  updateLibraryParts(projectId: ProjectId, documents?: readonly DocumentId[]): Promise<Result<DocumentSummary[]>>;
+  /** Whether newer library versions replace the part on their own. */
+  setLibraryFollow(id: DocumentId, follow: LibraryLink['follow']): Promise<Result<void>>;
+
+  /** Tells the listener when what lists show has changed, also in other tabs, windows and processes (CAD-150). */
+  watch(listener: (change: StoreChange) => void): () => void;
 
   importFile(projectId: ProjectId, file: ExternalFile): Promise<Result<DocumentSummary>>;
   /** Replaces an imported document's file by a newer one of the same kind (3D or drawing); what uses it regenerates. */
@@ -84,7 +150,7 @@ export interface ProjectManager {
   /** A copy of a document in its project, named "<name> (copy)". */
   duplicateDocument(id: DocumentId): Promise<Result<DocumentSummary>>;
   /** Hands the whole project over as one archive file (`.cadence`), with its version history if asked. */
-  exportProject(id: ProjectId, options?: { readonly history?: boolean }): Promise<Result<void>>;
+  exportProject(id: ProjectId, options?: { readonly history?: boolean; readonly libraries?: boolean }): Promise<Result<void>>;
   /** A new project from an archive file made by `exportProject`. */
   importProject(file: ExternalFile): Promise<Result<ProjectSummary>>;
   /** A new project from a template; its first component is ready to open. */

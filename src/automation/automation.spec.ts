@@ -122,7 +122,7 @@ describe('the MCP server', () => {
     const project = (JSON.parse(text(await call('list_projects'))) as { id: string }[])[0]?.id as string;
     expect((JSON.parse(text(await call('list_documents', { project }))) as { name: string }[]).map((d) => d.name)).toEqual(['Plate']);
     const scrap = JSON.parse(text(await call('create_document', { project, kind: 'component', name: 'Scrap' }))) as { id: string };
-    expect(text(await call('delete_document', { document: scrap.id }))).toBe('Deleted Scrap.');
+    expect(text(await call('delete_document', { document: scrap.id }))).toBe('Moved Scrap to the trash (restore it with trash).');
     expect((JSON.parse(text(await call('list_documents', { project }))) as unknown[]).length).toBe(1);
   });
 
@@ -262,7 +262,7 @@ describe('everything the app does, for agents (CAD-124)', () => {
     expect(text(await call('sync_project', { project, url }))).toContain('(remote-unreachable)');
     expect(text(await call('open_git', { url }))).toContain('(remote-unreachable)');
 
-    expect(text(await call('delete_project', { project }))).toBe('Deleted Pipe bracket.');
+    expect(text(await call('delete_project', { project }))).toBe('Moved Pipe bracket to the trash (restore it with trash).');
     // The archive brought back in is left (the copy has a name of its own).
     expect((await core.projectManager.listProjects()).filter((p) => p.name === 'Pipe bracket')).toHaveLength(1);
   });

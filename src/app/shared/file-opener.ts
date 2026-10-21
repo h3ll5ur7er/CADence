@@ -37,8 +37,9 @@ export class FileOpener {
         const imported = await this.projects.importFile(created.value.project.id, file);
         if (!imported.ok) return imported;
       }
-      // A project of files needs no empty component.
+      // A project of files needs no empty component, not even in the trash.
       await this.projects.deleteDocument(created.value.firstDocument.id);
+      await this.projects.deleteFromTrash(created.value.firstDocument.id);
       opened = created.value.project;
     }
     return { ok: true, value: opened };

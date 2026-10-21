@@ -40,7 +40,7 @@
                   <cad-icon name="component" [size]="40" />
                 </cad-thumbnail>
               </span>
-              <span class="name">{{ project.name }}</span>
+              <span class="name">{{ project.name }}@if (project.library) {<span class="badge" title="Other projects use its components">Library</span>}</span>
               <span class="meta">
                 {{ plural(project.documentCount, 'document') }} · edited {{ relativeTime(project.modifiedAt) }}
               </span>
@@ -90,6 +90,44 @@
     }
   } @else if (projects.error()) {
     <p class="error" role="alert">Projects could not be loaded. Reload the page to try again.</p>
+  }
+  @if (trash.value()?.length) {
+    <section class="trash" aria-label="Trash">
+      <div class="heading">
+        <button type="button" class="btn btn-ghost" [attr.aria-expanded]="trashOpen()" (click)="trashOpen.set(!trashOpen())">
+          <cad-icon name="trash" /> Trash
+        </button>
+        <span class="count">{{ trash.value()?.length }}</span>
+        @if (trashOpen()) {
+          <button type="button" class="btn btn-ghost empty-trash" (click)="emptyTrash()">Empty trash</button>
+        }
+      </div>
+      @if (trashOpen()) {
+        <p class="hint">What you delete stays here for 30 days, then it is deleted for good.</p>
+        <ul class="trash-list" aria-label="Deleted projects and documents">
+          @for (item of trash.value(); track item.id) {
+            <li>
+              <cad-icon [name]="item.kind === 'project' ? 'folder' : item.documentKind === 'imported' ? 'imported' : item.documentKind" [size]="16" />
+              <span class="what">
+                <span class="name">{{ item.name }}</span>
+                <span class="meta">
+                  @if (item.kind === 'project') {
+                    Project, {{ plural(item.documentCount, 'document') }}
+                  } @else {
+                    {{ kinds[item.documentKind] }} of {{ item.projectName }}
+                  }
+                  · deleted {{ relativeTime(item.trashedAt) }}
+                </span>
+              </span>
+              <button type="button" class="btn" [attr.aria-label]="'Restore ' + item.name" (click)="restore(item)">Restore</button>
+              <button type="button" class="icon-btn" [attr.aria-label]="'Delete ' + item.name + ' for good'" title="Delete for good" (click)="deleteForGood(item)">
+                <cad-icon name="trash" />
+              </button>
+            </li>
+          }
+        </ul>
+      }
+    </section>
   }
 </main>
 

@@ -58,6 +58,7 @@ import { describeConstraint } from '../sketch/sketch-overlay';
 import { googleFont, SYSTEM_FONTS } from '../../shared/fonts';
 import { SketchEditor } from '../sketch/sketch-editor';
 import { SketchToolbar } from '../sketch/sketch-toolbar';
+import { ChangedElsewhereNotice } from '../changed-elsewhere';
 
 const statusLabels = {
   'fully-constrained': 'Fully constrained',
@@ -156,13 +157,19 @@ const exportFormats: readonly { format: SolidFormat; label: string }[] = [
 /** Part modeling mode: sketches, features, parameters and bodies. */
 @Component({
   selector: 'cad-component-mode',
-  imports: [Viewport, PictureDialog, Icon, SketchEditor, SketchToolbar, NameDialog, FolderDialog, NoteDialog, FeatureDialog, ParametersPanel, MeasurePanel, CheckPanel, SimulatePanel, RepairPanel],
+  imports: [ChangedElsewhereNotice, Viewport, PictureDialog, Icon, SketchEditor, SketchToolbar, NameDialog, FolderDialog, NoteDialog, FeatureDialog, ParametersPanel, MeasurePanel, CheckPanel, SimulatePanel, RepairPanel],
   providers: [DesignStore],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './component-mode.html',
   styleUrls: ['./mode-layout.scss', './editor-tools.scss', './component-mode.scss'],
 })
 export class ComponentMode {
+  /** Opens the document again, with what another program changed (CAD-150). */
+  protected reopen(): void {
+    const { id, projectId } = this.document();
+    void this.store.open(id, projectId);
+  }
+
   readonly document = input.required<DocumentSummary>();
   protected readonly status = inject(EditorStatus);
   protected readonly thumbnails = inject(ThumbnailSaver);

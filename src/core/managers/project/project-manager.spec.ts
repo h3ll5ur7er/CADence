@@ -136,6 +136,9 @@ describe('ProjectManager', () => {
       expect(restored).toEqual([document.value.id]);
       expect((await manager.projectHistory(projectId))[0]?.message).toMatch(/^Restored Bracket from /);
       await manager.deleteProject(projectId);
+      // In the trash, the history is kept; deleted for good, it goes too.
+      expect(await manager.projectHistory(projectId)).not.toEqual([]);
+      unwrap(await manager.deleteFromTrash(projectId));
       expect(await manager.projectHistory(projectId)).toEqual([]);
     });
 
@@ -149,7 +152,7 @@ describe('ProjectManager', () => {
       });
     });
 
-    it('deletes a project with its documents and assets and announces it', async () => {
+    it('moves a deleted project to the trash, announced, and deletes it for good with its documents and assets', async () => {
       const { project, firstDocument } = unwrap(await manager.createProject('Doomed'));
       const imported = unwrap(await manager.importFile(project.id, { name: 'part.stl', bytes: new Uint8Array(3) }));
       const assetId = ((await documents.load(imported.id)) as ImportedDocument).assetId;
@@ -162,9 +165,12 @@ describe('ProjectManager', () => {
       await events.drained();
 
       expect(await manager.listProjects()).toEqual([]);
+      expect(await manager.findProject(project.id)).toBeUndefined();
+      expect(await documents.load(firstDocument.id)).toBeDefined();
+      expect(announced).toEqual([project.id]);
+      unwrap(await manager.deleteFromTrash(project.id));
       expect(await documents.load(firstDocument.id)).toBeUndefined();
       expect(await assets.fetch(assetId)).toBeUndefined();
-      expect(announced).toEqual([project.id]);
     });
   });
 

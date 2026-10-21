@@ -7,6 +7,7 @@ import type { DrawingFormat, SolidFormat } from '@core/managers/design';
 import { type AssemblyPictureOptions, type Cadence, CadenceError, type SummaryFilter, unwrap } from './api';
 import type { ScriptCommand } from './shapes';
 import { drawingTools } from './tools/drawings';
+import { libraryTools } from './tools/libraries';
 import { modelTools } from './tools/models';
 import { projectTools } from './tools/projects';
 import { type Captioned, documentArg, runAll, number, object, point, type Progress, projectArg, string, strings, type Tool } from './tools/schema';
@@ -228,13 +229,13 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
       },
       {
         name: 'delete_document',
-        description: 'Deletes a component, an assembly or an imported file from its project, for good (the project history keeps earlier versions).',
+        description: 'Moves a component, an assembly, a drawing or an imported file to the trash, where it stays for 30 days with its history (trash restores it).',
         inputSchema: object({ document: documentArg }, ['document']),
         run: async (args) => {
           const document = await cadence.document(String(args['document']));
           cadence.forget(document.id);
           await cadence.projects.deleteDocument(document.id as DocumentId);
-          return `Deleted ${document.name}.`;
+          return `Moved ${document.name} to the trash (restore it with trash).`;
         },
       },
       {
@@ -494,6 +495,7 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
       ...drawingTools(cadence),
       ...modelTools(cadence),
       ...projectTools(cadence),
+      ...libraryTools(cadence),
     ];
   }
 }

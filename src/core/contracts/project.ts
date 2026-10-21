@@ -1,5 +1,5 @@
-import type { CadDocument, Parameter } from './document';
-import type { ProjectId } from './ids';
+import type { CadDocument, DocumentKind, Parameter } from './document';
+import type { AssetId, DocumentId, ProjectId } from './ids';
 
 /** ISO 8601 timestamp, e.g. `2026-10-14T18:00:00.000Z`. */
 export type Timestamp = string;
@@ -18,6 +18,72 @@ export interface Project {
    * documents and originals had there, by their ids here (oldest last), so restoring finds them (CAD-147).
    */
   readonly copiedFrom?: Readonly<Record<string, readonly string[]>>;
+  /** When the project was moved to the trash (CAD-148); absent for projects in use. */
+  readonly trashedAt?: Timestamp;
+  /** The project's documents in the trash, oldest first (CAD-148). */
+  readonly trash?: readonly TrashedDocument[];
+  /** What the project is about, in Markdown (CAD-149). */
+  readonly description?: string;
+  /** Photos, datasheets and links kept with the project (CAD-149). */
+  readonly attachments?: readonly Attachment[];
+  /**
+   * The project is a library: other projects use its components (CAD-151). Its `id` is the library's
+   * own, kept in its settings, so references find it on every device, in archives and in git.
+   */
+  readonly library?: { readonly id: string };
+}
+
+/** How long the trash keeps what was deleted (CAD-148). */
+export const trashDays = 30;
+
+/** A document in its project's trash: its last state is the version `version` of the project's history. */
+export interface TrashedDocument {
+  readonly id: DocumentId;
+  readonly name: string;
+  readonly kind: DocumentKind;
+  readonly trashedAt: Timestamp;
+  readonly version: string;
+}
+
+/** What the trash lists: projects, and documents of projects that are not in the trash themselves. */
+export type TrashItem =
+  | { readonly kind: 'project'; readonly id: ProjectId; readonly name: string; readonly trashedAt: Timestamp; readonly expiresAt: Timestamp; readonly documentCount: number }
+  | {
+      readonly kind: 'document';
+      readonly id: DocumentId;
+      readonly name: string;
+      readonly documentKind: DocumentKind;
+      readonly projectId: ProjectId;
+      readonly projectName: string;
+      readonly trashedAt: Timestamp;
+      readonly expiresAt: Timestamp;
+    };
+
+/** A file kept with a project as it is (a photo, a datasheet), or a link (CAD-149). */
+export type Attachment =
+  | { readonly id: string; readonly kind: 'file'; readonly name: string; readonly mediaType: string; readonly byteLength: number; readonly assetId: AssetId; readonly addedAt: Timestamp }
+  | { readonly id: string; readonly kind: 'link'; readonly name: string; readonly url: string; readonly addedAt: Timestamp };
+
+/** The built-in library of standard parts (CAD-152): screws, nuts, washers, inserts and bearings in every size. */
+export const standardLibraryId = 'standard';
+
+/** A library other projects can use: a project marked as one, or the built-in standard parts. */
+export interface LibrarySummary {
+  /** The library's own id (`Project.library.id`, or `standard`). */
+  readonly id: string;
+  readonly name: string;
+  /** The project holding it here; absent for the built-in library. */
+  readonly projectId?: ProjectId;
+  readonly partCount: number;
+}
+
+/** A component a library offers. */
+export interface LibraryPart {
+  /** Its document id in the library, or a standard part's key (`screw-M3-12`). */
+  readonly id: string;
+  readonly name: string;
+  /** What it is listed under (`Screws (ISO 4762)`). */
+  readonly group?: string;
 }
 
 /** A starting point for new projects: settings and documents, made with CADence (public/templates). */

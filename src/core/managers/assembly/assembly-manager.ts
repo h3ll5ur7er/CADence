@@ -21,8 +21,8 @@ import type {
 
 /** Every change to an assembly is one of these commands; ids come from the caller. */
 export type AssemblyCommand =
-  /** An empty name gets the next default ("Bracket 2"). */
-  | { readonly type: 'insert-instance'; readonly instance: Instance }
+  /** An empty name gets the next default ("Bracket 2"); with a joint, the instance is joined in the same change. */
+  | { readonly type: 'insert-instance'; readonly instance: Instance; readonly joint?: Joint }
   /** Also removes the instance's joints. */
   | { readonly type: 'remove-instance'; readonly instanceId: string }
   | { readonly type: 'rename-instance'; readonly instanceId: string; readonly name: string }

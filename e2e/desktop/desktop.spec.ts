@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Browser, chromium, expect, type Page, test } from '@playwright/test';
@@ -128,12 +128,26 @@ test('models in project folders, exports through the save dialog, and starts aga
     await card.getByRole('link').click();
     await expect(page.getByTestId('body-size')).toHaveText('60, 30, 6 mm');
 
-    // Leaves the desktop app's projects as they were.
+    // Another program (an agent's MCP server, a script) changes the component on disk: the open editor follows (CAD-150).
+    const documentId = /\/documents\/([^/?#]+)/.exec(page.url())?.[1] as string;
+    const file = join(projectFolder, 'documents', `${documentId}.json`);
+    const stored = JSON.parse(readFileSync(file, 'utf8')) as { parameters: { name: string; expression: string }[]; modifiedAt: string };
+    const thicker = { ...stored, modifiedAt: new Date().toISOString(), parameters: stored.parameters.map((p) => (p.name === 'thickness' ? { ...p, expression: '10 mm' } : p)) };
+    writeFileSync(file, JSON.stringify(thicker, null, 2));
+    await expect(page.getByTestId('body-size')).toHaveText('60, 30, 10 mm', { timeout: 60_000 });
+    await evidence(page, 'phase-34-desktop-follows');
+
+    // Leaves the desktop app's projects as they were: deleted, then deleted for good from the trash (CAD-148).
     await page.goto(home);
     await card.getByRole('button', { name: `Delete ${name}` }).click();
     await page.getByRole('button', { name: 'Delete project' }).click();
     await expect(card).toHaveCount(0);
-    expect(existsSync(projectFolder)).toBe(false);
+    expect(existsSync(projectFolder)).toBe(true);
+    const trash = page.getByRole('region', { name: 'Trash' });
+    await trash.getByRole('button', { name: 'Trash' }).click();
+    await trash.getByRole('button', { name: `Delete ${name} for good` }).click();
+    await page.getByRole('button', { name: 'Delete for good' }).click();
+    await expect.poll(() => existsSync(projectFolder)).toBe(false);
   } finally {
     rmSync(work, { recursive: true, force: true });
     // A failed run must not leave its project behind either.

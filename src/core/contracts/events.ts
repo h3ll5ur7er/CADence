@@ -7,6 +7,8 @@ export interface DomainEvents {
   readonly projectChanged: { readonly projectId: ProjectId };
   /** The project's parameters changed: its components regenerate. */
   readonly projectParametersChanged: { readonly projectId: ProjectId };
+  /** A document was added to a project (created, imported, copied, taken from a library): lists show it. */
+  readonly documentCreated: { readonly projectId: ProjectId; readonly documentId: DocumentId };
   readonly documentRenamed: { readonly documentId: DocumentId; readonly name: string };
   /** A document was brought back as it was in an earlier version: editors and assemblies showing it reload it. */
   readonly documentRestored: { readonly documentId: DocumentId };

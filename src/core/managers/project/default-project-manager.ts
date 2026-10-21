@@ -198,7 +198,7 @@ export class DefaultProjectManager implements ProjectManager {
     deps.events.subscribe('documentSaved', ({ projectId }) => this.scheduleVersion(projectId));
     // What lists show: documents changed elsewhere (tabs, windows, processes: CAD-150), renamed, restored or deleted, and projects.
     const tell = (change: StoreChange) => this.watchers.forEach((listener) => listener(change));
-    for (const event of ['documentChanged', 'documentRenamed', 'documentRestored'] as const) deps.events.subscribe(event, ({ documentId }) => tell({ kind: 'document', documentId }));
+    for (const event of ['documentChanged', 'documentCreated', 'documentRenamed', 'documentRestored'] as const) deps.events.subscribe(event, ({ documentId }) => tell({ kind: 'document', documentId }));
     deps.events.subscribe('documentDeleted', ({ documentId }) => tell({ kind: 'document', documentId, gone: true }));
     for (const event of ['projectDeleted', 'projectChanged', 'projectParametersChanged'] as const) deps.events.subscribe(event, ({ projectId }) => tell({ kind: 'projects', projectId }));
   }
@@ -773,6 +773,7 @@ export class DefaultProjectManager implements ProjectManager {
       const document = standardComponent(standard, projectId, this.deps.newId(), this.now());
       await this.deps.documents.store(document);
       await this.touchProject(projectId);
+      this.deps.events.publish('documentCreated', { projectId, documentId: document.id });
       return ok(summarize(document));
     }
     const source = await this.libraryProject(library);
@@ -874,7 +875,7 @@ export class DefaultProjectManager implements ProjectManager {
       if (taken.some((d) => d.id === document.id)) {
         if (document.kind === 'component') await this.deps.assets.discardResult(document.id);
         this.deps.events.publish('documentRestored', { documentId: document.id });
-      }
+      } else this.deps.events.publish('documentCreated', { projectId, documentId: document.id });
     }
     await this.touchProject(projectId);
     return summarize(copies.documents[0] as CadDocument);
@@ -925,6 +926,7 @@ export class DefaultProjectManager implements ProjectManager {
     };
     await this.deps.documents.store(document);
     await this.touchProject(projectId);
+    this.deps.events.publish('documentCreated', { projectId, documentId: document.id });
     return ok(summarize(document));
   }
 
@@ -979,6 +981,7 @@ export class DefaultProjectManager implements ProjectManager {
     await this.keepOriginals(document.projectId, [copy], bundle.originals);
     await this.deps.documents.store(copy);
     await this.touchProject(document.projectId);
+    this.deps.events.publish('documentCreated', { projectId: document.projectId, documentId: copy.id });
     return ok(summarize(copy));
   }
 
@@ -1192,6 +1195,7 @@ export class DefaultProjectManager implements ProjectManager {
           ? { ...header, kind, sheet: { size: 'A3', orientation: 'landscape', scale: 1 }, titleBlock: { title: name, number: '', drawnBy: '', material: '', revision: 'A' }, views: [], annotations: [] }
           : { ...header, kind, instances: [], joints: [], motionStudies: [] };
     await this.deps.documents.store(document);
+    this.deps.events.publish('documentCreated', { projectId, documentId: document.id });
     return summarize(document);
   }
 

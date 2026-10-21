@@ -109,6 +109,8 @@ export const viewTimeLimit = 20_000;
  */
 const relayed: Partial<Record<keyof DomainEvents, keyof DomainEvents>> = {
   documentSaved: 'documentChanged',
+  documentCreated: 'documentCreated',
+  projectChanged: 'projectChanged',
   documentRenamed: 'documentRenamed',
   documentRestored: 'documentRestored',
   documentDeleted: 'documentDeleted',

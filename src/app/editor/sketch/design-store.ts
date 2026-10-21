@@ -571,6 +571,8 @@ export class DesignStore {
     this.panel.set(undefined);
     this.measurePicks.set([]);
     this.finishEditing();
+    // A feature dialog was about the document as it was.
+    this.draft.set(undefined);
     this.error.set(undefined);
   }
 }

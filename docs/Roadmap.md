@@ -38,9 +38,23 @@ The work is planned in phases. Each phase ends with a running demo and visible e
 | 31. A binary for agents ✅ | The command line and MCP server as one self-contained executable with the kernels and fonts inside, for agents of other projects | [[CAD-131]] |
 | 32. Releases for every system ✅ | Installers for Windows, macOS and Linux from each version tag, each with the command line for agents next to the app; the command line on its own per system; the About dialog says how to add it to Claude Code | [[CAD-132]] |
 | 33. The keyboard enclosure's findings ✅ | Fixes for what an agent found modelling a keyboard enclosure: a kernel that recovers, an MCP server that answers side by side and can be cancelled, a schema an older app refuses, project parameters and version histories that carry over, sturdier booleans and extrudes, sketches that stay on their faces, gears that print | [[CAD-133]] … [[CAD-147]] |
+| 34. Projects III | A trash; notes and attachments with projects; the desktop app follows what agents change on disk; libraries shared between projects, and standard parts as assembly instances from one | [[CAD-148]] [[CAD-149]] [[CAD-150]] [[CAD-151]] [[CAD-152]] |
+| 35. Sketcher IV | Reference dimensions, reusable sketch blocks, sketches wrapped onto curved faces | [[CAD-153]] [[CAD-154]] [[CAD-155]] |
+| 36. Part modeling IV | Ribs up to the next face and drill points; nested timeline folders and repairs matched by shape; a material per body | [[CAD-156]] [[CAD-157]] [[CAD-158]] |
+| 37. Gears and springs | Root fillets on ring gears and profile-shifted gears; bevel and worm gears; helices and springs | [[CAD-159]] [[CAD-160]] [[CAD-161]] |
+| 38. Sheet metal II | Flanges on flanges in the flat pattern and corner reliefs; hems and miter flanges | [[CAD-162]] [[CAD-163]] |
+| 39. Drawings III | Offset and half sections; tolerances, surface finish and true-length dimensions; cosmetic threads; anchors on cones, spheres, free-form faces and assembly parts; exact views finishing in the background | [[CAD-164]] [[CAD-165]] [[CAD-166]] [[CAD-167]] [[CAD-168]] |
+| 40. Import II | Solids from large and broken meshes; circuit boards from KiCad | [[CAD-169]] [[CAD-170]] |
+| 41. Automation III | Whole scripts through MCP; MCP resources and prompts; a script console in the app; plugins | [[CAD-171]] [[CAD-172]] [[CAD-173]] [[CAD-174]] |
+| 42. Versions and collaboration | Comparing versions; three-way merges inside a document; users, sign-in and sharing (a server, decided first); real-time collaboration | [[CAD-175]] [[CAD-176]] [[CAD-177]] [[CAD-178]] |
+| 43. Anywhere | A phone-friendly viewer, augmented reality, onboarding | [[CAD-179]] [[CAD-180]] [[CAD-181]] |
 
 The order follows the dependencies: the Sketcher needs the editor shell, Part modeling needs profiles, and Assemblies need regenerated components. Within a phase, tasks are listed in the order they will be done.
 
 Phases 7 to 14 come from the points checked in [[Open points]]: delivery first, so every later phase is built and published by CI; then the viewport and the sketcher, which later modeling features build on; text before the features that use it; projects and automation last, since they wrap everything else.
 
 Phases 15 to 25 come from the second round of [[Open points]]: release obligations and the desktop first; then projects (archives come before file associations), the sketcher and part modeling, which drawings and assemblies build on; assemblies before technical drawings, whose parts lists use the bill of materials; visuals, simulation and performance last, measured on everything before them.
+
+Phases 34 to 43 come from the third round of [[Open points]]: projects first, since libraries are what standard parts, sketch blocks and plugins are shared through, and since agents' work should show in the desktop app while the rest is built; then the sketcher and part modeling, gears and sheet metal, which drawings show; drawings before import and automation, which use everything else; versions and collaboration late, as users and sharing need a server that is decided first ([[CAD-177]]); the phone viewer and onboarding last, since they show and explain all of it.
+
+Two stress tests run beside the phases, through the MCP server like the radial engine: a six-axis robot arm ([[CAD-182]]) and a Stewart platform ([[CAD-183]]). Their findings become phases of their own, as the radial engine's became phases 26 to 28.

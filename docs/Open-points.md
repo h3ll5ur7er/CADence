@@ -22,48 +22,48 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 
 - [ ] **Remember the sign-in** for a remote in the operating system's keychain on the desktop, or sign in with OAuth (GitHub, GitLab). *(ADR-30 trade-off)*
 - [ ] **Own CORS proxy for git sync:** a ready-made, self-hostable proxy (e.g. a Cloudflare Worker template), so sign-ins never pass through a third party. *(ADR-30 trade-off)*
-- [ ] **Three-way merge inside a document** (e.g. two people adding different features to one component), instead of choosing one side. *(ADR-30 trade-off)*
-- [ ] **Compare versions** of a component side by side, or overlaid, in the viewport. *(new)*
-- [ ] **Users, sign-in and sharing.** *(Volatility analysis: deliberately not encapsulated)*
-- [ ] **Real-time collaboration.** Commands keep it possible. *(Volatility analysis: not planned)*
+- [x] **Three-way merge inside a document** (e.g. two people adding different features to one component), instead of choosing one side. *(ADR-30 trade-off)* → [[CAD-176]]
+- [x] **Compare versions** of a component side by side, or overlaid, in the viewport. *(new)* → [[CAD-175]]
+- [x] **Users, sign-in and sharing.** *(Volatility analysis: deliberately not encapsulated)* → [[CAD-177]]
+- [x] **Real-time collaboration.** Commands keep it possible. *(Volatility analysis: not planned)* → [[CAD-178]]
 - [ ] **Large originals in OPFS** instead of IndexedDB, if imports get big. *(ADR-5)*
 - [ ] **Search** across projects and documents, and sorting, folders or tags on the home page. *(new)*
-- [ ] **Trash:** deleted projects and documents can be restored for a while. *(new)*
-- [ ] **Project notes and attachments:** a description, photos, datasheets and links kept with the project. *(new)*
-- [ ] **The desktop app follows what agents change:** it watches the project folders, so a part an agent edits through the MCP server updates in the open editor (today only other tabs of the app are heard). *(new; the radial engine was modelled beside the app)*
-- [ ] **Libraries shared between projects:** components (standard parts, a company's brackets) kept once and used in many projects, updated everywhere. *(new)*
+- [x] **Trash:** deleted projects and documents can be restored for a while. *(new)* → [[CAD-148]]
+- [x] **Project notes and attachments:** a description, photos, datasheets and links kept with the project. *(new)* → [[CAD-149]]
+- [x] **The desktop app follows what agents change:** it watches the project folders, so a part an agent edits through the MCP server updates in the open editor (today only other tabs of the app are heard). *(new; the radial engine was modelled beside the app)* → [[CAD-150]]
+- [x] **Libraries shared between projects:** components (standard parts, a company's brackets) kept once and used in many projects, updated everywhere. *(new)* → [[CAD-151]]
 - [ ] **Versions recorded for agents:** each MCP session or script run kept as a named version, so its changes can be looked at and undone as one. *(new)*
 
 ## Sketching
 
-- [ ] **Sketches on curved faces:** wrap or project a sketch onto a cylinder or cone (labels, grips, engraved scales). *(new)*
-- [ ] **Reference dimensions** that show a measured value without driving the sketch. *(new)*
-- [ ] **Reusable sketch blocks:** a group of curves and relations kept and inserted again (a slot pattern, a logo). *(new)*
+- [x] **Sketches on curved faces:** wrap or project a sketch onto a cylinder or cone (labels, grips, engraved scales). *(new)* → [[CAD-155]]
+- [x] **Reference dimensions** that show a measured value without driving the sketch. *(new)* → [[CAD-153]]
+- [x] **Reusable sketch blocks:** a group of curves and relations kept and inserted again (a slot pattern, a logo). *(new)* → [[CAD-154]]
 
 ## Part modeling
 
-- [ ] **Sheet metal II:** flanges on flanges in the flat pattern, corner reliefs, hems and miter flanges. *(ADR-29 trade-off)*
+- [x] **Sheet metal II:** flanges on flanges in the flat pattern, corner reliefs, hems and miter flanges. *(ADR-29 trade-off)* → [[CAD-162]] [[CAD-163]]
 - [ ] **NURBS**
 - [ ] **Scale bodies per axis.** Needs `BRepBuilderAPI_GTransform`, missing from the bundled OpenCascade build; a custom `replicad-opencascadejs` build could add it (and `gp_Cone`, `gp_Torus`, and `HLRBRep_PolyAlgo` for drawings). *(ADR-28, ADR-49)*
-- [ ] **Rib up to the next face** instead of a set depth, and **drill points** at the bottom of blind holes. *(ADR-28 trade-offs)*
-- [ ] **Standard parts as assembly instances** from a shared library. *(ADR-35 trade-off)*
-- [ ] **Nested timeline folders**, and repair candidates matched by shape as well as distance. *(ADR-36 trade-offs)*
+- [x] **Rib up to the next face** instead of a set depth, and **drill points** at the bottom of blind holes. *(ADR-28 trade-offs)* → [[CAD-156]]
+- [x] **Standard parts as assembly instances** from a shared library. *(ADR-35 trade-off)* → [[CAD-152]]
+- [x] **Nested timeline folders**, and repair candidates matched by shape as well as distance. *(ADR-36 trade-offs)* → [[CAD-157]]
 - [ ] **Lithophanes and image embossing:** a picture turned into relief on a face. *(new)*
 - [ ] **Textures:** knurling and patterned surfaces on faces. *(new)*
 - [ ] **Direct editing of imported solids:** push and pull faces, delete holes and fillets of a STEP part without its history. *(new)*
 - [ ] **Surface modeling:** boundary surfaces, thicken, patch and knit into solids. *(new)*
 - [ ] **A start point per loft section**, picked in its sketch, where lining the sections up automatically is not what is meant. *(ADR-43 trade-off)*
-- [ ] **Root fillets on ring gears**, and profile shifted gears for few teeth. *([[CAD-98]], [[CAD-107]])*
-- [ ] **Helices and springs:** coils, compression and torsion springs from wire size, pitch and turns. *(new)*
-- [ ] **Bevel and worm gears** next to spur, helical and ring gears. *(new)*
+- [x] **Root fillets on ring gears**, and profile shifted gears for few teeth. *([[CAD-98]], [[CAD-107]])* → [[CAD-159]]
+- [x] **Helices and springs:** coils, compression and torsion springs from wire size, pitch and turns. *(new)* → [[CAD-161]]
+- [x] **Bevel and worm gears** next to spur, helical and ring gears. *(new)* → [[CAD-160]]
 
 ## Technical drawings
 
-- [ ] **Drawings II:** offset and half sections, true-length dimensions on isometric views, tolerances and surface finish symbols. *(ADR-39 trade-offs)*
-- [ ] **Cosmetic threads:** threads drawn as their major and minor diameters (ISO 6410), not as the modelled helix, which is slow and unusual on a sheet. *([[CAD-125]])*
-- [ ] **Outlines of cones, spheres and free-form faces** as anchors, as cylinders have them. *([[CAD-127]])*
-- [ ] **Anchors on the parts of assembly views,** not only their outermost points. *([[CAD-127]])*
-- [ ] **The exact projection finishing in the background,** replacing a view drawn from the triangles once it is done. *([[CAD-130]])*
+- [x] **Drawings II:** offset and half sections, true-length dimensions on isometric views, tolerances and surface finish symbols. *(ADR-39 trade-offs)* → [[CAD-164]] [[CAD-165]]
+- [x] **Cosmetic threads:** threads drawn as their major and minor diameters (ISO 6410), not as the modelled helix, which is slow and unusual on a sheet. *([[CAD-125]])* → [[CAD-166]]
+- [x] **Outlines of cones, spheres and free-form faces** as anchors, as cylinders have them. *([[CAD-127]])* → [[CAD-167]]
+- [x] **Anchors on the parts of assembly views,** not only their outermost points. *([[CAD-127]])* → [[CAD-167]]
+- [x] **The exact projection finishing in the background,** replacing a view drawn from the triangles once it is done. *([[CAD-130]])* → [[CAD-168]]
 - [ ] **Dimensions suggested for a view:** the sizes that define the part (overall, diameters, centre distances), placed without collisions, for people and agents to accept or edit. *(new; dimensioning 28 sheets was most of round 5)*
 - [ ] **Hole tables, ordinate and chamfer dimensions.** *(new)*
 - [ ] **Several sheets per drawing, sheet templates** (a company's title block) and a revision table. *(new)*
@@ -73,9 +73,9 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 - [ ] **Light and dark theme switch** in the app (today it follows the system). *(new)*
 - [ ] **Touch and tablet use.** *(new)*
 - [ ] **Named views:** save camera positions and section planes, and return to them. *(new)*
-- [ ] **Augmented reality:** look at a part at real size on a phone (WebXR, or a USDZ/glTF export). *(new)*
+- [x] **Augmented reality:** look at a part at real size on a phone (WebXR, or a USDZ/glTF export). *(new)* → [[CAD-180]]
 - [ ] **Undo history panel:** see the commands that were applied and step back to any of them. *(new)*
-- [ ] **Onboarding:** a short interactive tour and sample projects, with links from tools to the User guide. *(new)*
+- [x] **Onboarding:** a short interactive tour and sample projects, with links from tools to the User guide. *(new)* → [[CAD-181]]
 - [ ] **3D annotations (PMI):** dimensions, notes and tolerances kept on the model in the viewport and in STEP. *(new)*
 
 ## Analysis and manufacturing
@@ -83,7 +83,7 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 - [ ] **Resin (SLA) printer profiles** with their own rules (no nozzle; drain holes, suction cups). *([[CAD-21]])*
 - [ ] **Machine profiles per user,** shared by all components (today each component stores its own). *(ADR-19 trade-off)*
 - [ ] **A finer wall check** that cannot miss a thin spot inside one large flat triangle. *(ADR-18 trade-off)*
-- [ ] **Material per body** rather than per component. *(phase 4)*
+- [x] **Material per body** rather than per component. *(phase 4)* → [[CAD-158]]
 - [ ] **Print orientation:** suggest the orientation with the least support. *(new)*
 - [ ] **Print estimates:** filament use and print time. *(new)*
 - [ ] **Arrange parts on the build plate** and export them as one 3MF. *(new)*
@@ -111,18 +111,18 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 
 ## Import
 
-- [ ] **Solids from meshes above 100,000 triangles**, with decimation (simplifying) first. *([[CAD-26]], ADR-22)*
+- [x] **Solids from meshes above 100,000 triangles**, with decimation (simplifying) first. *([[CAD-26]], ADR-22)* → [[CAD-169]]
 - [ ] **Repair open or broken meshes** before making them solid. *(new)*
 - [ ] **More formats:** IGES, BREP, AMF, glTF, colours from 3MF and OBJ. *(new)*
-- [ ] **Circuit boards:** import a KiCad board (outline, holes, component heights) to design an enclosure around it. *(new)*
+- [x] **Circuit boards:** import a KiCad board (outline, holes, component heights) to design an enclosure around it. *(new)* → [[CAD-170]]
 
 ## Automation and AI
 
 - [ ] **MCP over HTTP** from the running app, so an agent can drive the web app's projects directly. *(ADR-31 trade-off)*
 - [ ] **An assistant in the app:** describe a part or a change in words, and an AI model builds it with the same tools the MCP server offers, step by step in the timeline. *(new)*
-- [ ] **Script console in the app:** run scripts against the open project, and keep them with the project as reusable generators. *(new)*
-- [ ] **Scripts for agents through MCP:** a tool that runs a whole generator script, as the radial engine's agent did through the command line to place dimensions on 26 sheets. *(new; [[CAD-128]])*
-- [ ] **MCP resources and prompts:** the command reference and the user guide as resources, and prompts for common jobs (a part from a sketch, a drawing of a part). *(new)*
+- [x] **Script console in the app:** run scripts against the open project, and keep them with the project as reusable generators. *(new)* → [[CAD-173]]
+- [x] **Scripts for agents through MCP:** a tool that runs a whole generator script, as the radial engine's agent did through the command line to place dimensions on 26 sheets. *(new; [[CAD-128]])* → [[CAD-171]]
+- [x] **MCP resources and prompts:** the command reference and the user guide as resources, and prompts for common jobs (a part from a sketch, a drawing of a part). *(new)* → [[CAD-172]]
 - [ ] **The command line as an npm package** (`npx cadence`), for people who have Node, beside the self-contained binary. *(ADR-31, ADR-50)*
 
 ## Platform and performance
@@ -130,8 +130,8 @@ Each point says where it comes from: a task, a decision ([[Architecture/Decision
 - [ ] **Performance budgets in CI:** fail when start-up, regeneration or bundle size get noticeably worse. *(new)*
 - [ ] **Accessibility review** (keyboard use of the 3D view, screen reader labels). *(new)*
 - [ ] **Translations** of the interface. *(new)*
-- [ ] **A phone-friendly viewer:** open, view, measure and share models on a phone. *(new)*
-- [ ] **Plugins:** features, generators and exporters others write, loaded by the app and the MCP server. *(new)*
+- [x] **A phone-friendly viewer:** open, view, measure and share models on a phone. *(new)* → [[CAD-179]]
+- [x] **Plugins:** features, generators and exporters others write, loaded by the app and the MCP server. *(new)* → [[CAD-174]]
 
 ## Future stress tests
 
@@ -139,8 +139,8 @@ The radial engine ([[CAD-96]], [[Magnum opus]]) found 34 issues by building some
 
 - [ ] **A mechanical clock:** escapement, gear trains with exact ratios, a pendulum, tiny parts and tight fits. *Stresses:* gears with many teeth and small modules, motion links and studies over long times, fits for printing, drawings of small parts.
 - [ ] **A desktop 3D printer:** a frame of aluminium extrusions, linear rails, belts, stepper motors and hundreds of fasteners. *Stresses:* standard parts and sub-assemblies, large assemblies with many identical instances, the bill of materials, build instructions, imported vendor STEP files.
-- [ ] **A six-axis robot arm:** a chain of revolute joints with limits, a gripper, cable routes. *Stresses:* long kinematic chains, joint limits, motion studies, collision checks over the reach, the strength check of the links.
-- [ ] **A Stewart platform:** a base and a top plate joined by six legs, each an actuator (a slider) between two ball or universal joints. Simple parts, hard motion: six closed loops share one plate. *Stresses:* many coupled loops solved at once (each leg's length sets the plate's pose), driving the plate's pose and getting the leg lengths (no joint gives that today), joint angle limits and leg collisions over the reach, universal joints (only ball joints exist), motion studies of the plate tilting and turning.
+- [x] **A six-axis robot arm:** a chain of revolute joints with limits, a gripper, cable routes. *Stresses:* long kinematic chains, joint limits, motion studies, collision checks over the reach, the strength check of the links. → [[CAD-182]]
+- [x] **A Stewart platform:** a base and a top plate joined by six legs, each an actuator (a slider) between two ball or universal joints. Simple parts, hard motion: six closed loops share one plate. *Stresses:* many coupled loops solved at once (each leg's length sets the plate's pose), driving the plate's pose and getting the leg lengths (no joint gives that today), joint angle limits and leg collisions over the reach, universal joints (only ball joints exist), motion studies of the plate tilting and turning. → [[CAD-183]]
 - [ ] **A two-stage planetary gearbox with housing:** bearings, seals and shafts, dimensioned with fits. *Stresses:* planetary links, interference at the teeth, the strength check of shafts and teeth, drawings with tolerances.
 - [ ] **A laser-cut flat-pack kit** (a lamp, a shelf or a marble run): finger joints, slots, living hinges. *Stresses:* the laser workflow from 3D to DXF, kerf, nesting, assembly instructions for builders.
 - [ ] **A drone or a propeller and a hull:** airfoil lofts, twisted blades, smooth hulls. *Stresses:* lofts and sweeps of spline sections, surface analysis, the kernel on free-form faces (and the drawings of them).

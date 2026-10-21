@@ -45,6 +45,8 @@ Files are written to a temporary name next to them, then renamed into place, so 
 | `npm run e2e` | Playwright user journeys against the dev server; writes evidence screenshots to `e2e/evidence/` |
 | `npm run e2e:desktop` | Smoke test of the built desktop app (Windows; build it first with `npx tauri build --no-bundle --config src-tauri/tauri.test.conf.json`, which turns on WebView2 remote debugging on port 9333): projects as folders, an export through the native save dialog, a restart. It adds a project to the desktop app's folder and deletes it again |
 | `npm run e2e:pages` | Builds the web app as GitHub Pages serves it (below `/CADence/`, with the service worker) and runs the journeys in `e2e/pages/` against it: deep links, installability, offline use |
+
+Journeys reuse a server already running on their port (4300 for `e2e`, 4310 for `e2e:pages`). Checkouts that run journeys at the same time (worktrees of parallel phases) each set ports of their own, `E2E_PORT` and `E2E_PAGES_PORT`, or they test each other's code.
 | `npm run build:pages` | Only that build, into `dist/cadence/browser`; the base path comes from `BASE_HREF` (default `/CADence/`). `node tools/pages/serve.mjs` serves it at http://localhost:4310/CADence/ |
 
 ## Continuous integration and deployment

@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const port = 4310;
+// E2E_PAGES_PORT: a port of its own for each checkout running journeys at once.
+const port = Number(process.env['E2E_PAGES_PORT'] ?? 4310);
 
 /**
  * Journeys against the production build as GitHub Pages serves it: below /CADence/, with the service

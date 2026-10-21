@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const port = 4300;
+// E2E_PORT: a port of its own for each checkout running journeys at once (the server is reused when it is up).
+const port = Number(process.env['E2E_PORT'] ?? 4300);
 
 /** End-to-end tests against the dev build. Screenshots for phase evidence land in e2e/evidence/. */
 export default defineConfig({

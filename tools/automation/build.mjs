@@ -14,7 +14,8 @@ const read = (path) => readFileSync(new URL(path, root), 'utf8');
 const referenceTopics = {
   commands: ['src/core/managers/design/design-manager.ts', 'src/automation/shapes.ts'],
   sketch: ['src/core/contracts/sketch.ts'],
-  features: ['src/core/contracts/feature.ts', 'src/core/contracts/parts.ts'],
+  features: ['src/core/contracts/feature.ts'],
+  parts: ['src/core/contracts/parts.ts'],
   document: ['src/core/contracts/document.ts', 'src/core/contracts/analysis.ts', 'src/core/contracts/appearance.ts'],
   assembly: ['src/core/managers/assembly/assembly-manager.ts', 'src/core/contracts/assembly.ts'],
   drawing: ['src/core/managers/drawing/drawing-manager.ts', 'src/core/contracts/drawing.ts'],

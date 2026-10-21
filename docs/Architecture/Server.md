@@ -84,4 +84,7 @@ docker run -p 8787:8787 -v cadence-data:/data -e CADENCE_PUBLIC_URL=https://cade
 | `GET /live/<id>/<document>?client=…&after=…` | The relay's events for a document: a welcome with what was missed and who is there, then entries, presence and departures |
 | `POST /live/<id>/<document>`, `…/presence`, `…/snapshot` | A change (`{clientId, payload}`), where one works, a snapshot the room asked for |
 
+> [!NOTE]
+> The desktop app opens web links in the system browser, so signing in there with GitHub or Google does not come back to the app yet; signing in by name works, and so do sharing and live editing once signed in.
+
 Its tests ([[server/server.spec.ts]], and live editing through it in [[src/core/managers/design/live.spec.ts]]) run it for real, with git; the browser journeys of phase 42 start one too ([[e2e/versions-and-collaboration.spec.ts]]).

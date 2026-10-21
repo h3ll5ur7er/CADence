@@ -1,10 +1,15 @@
+import type { ThreadMarker } from '@core/contracts';
 import type { Shape3D } from 'replicad';
 
-/** A solid with the persistent names of its faces and edges, keyed by OCCT hash code. */
+/**
+ * A solid with the persistent names of its faces and edges, keyed by OCCT hash code; shapes read
+ * from a component result also carry the threads on them, for drawings (CAD-166).
+ */
 export interface NamedShape {
   readonly shape: Shape3D;
   readonly faces: ReadonlyMap<number, string>;
   readonly edges: ReadonlyMap<number, string>;
+  readonly threads?: readonly ThreadMarker[];
 }
 
 /**

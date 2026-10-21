@@ -1,5 +1,6 @@
 import { dimensionAnchors, type DrawingAnnotation, type DrawingDocument, type DrawingView, fail, fitsDimension, ok, type Result, sheetSizes } from '@core/contracts';
 import type { DrawingCommand } from './drawing-manager';
+import { fitOf } from './fits';
 
 const invalid = (message: string) => fail({ code: 'invalid-command', message });
 
@@ -16,6 +17,8 @@ export function viewsOf(annotation: DrawingAnnotation): string[] {
     case 'balloon':
     case 'parts-list':
       return [annotation.view];
+    case 'surface-finish':
+      return annotation.edge ? [annotation.edge.view] : [];
     case 'note':
       return [];
   }
@@ -28,6 +31,8 @@ function checkView(document: DrawingDocument, view: DrawingView): string | undef
     if (!parent || parent.id === view.id) return 'A detail shows part of another view of this drawing.';
     if (!(view.detail.radius > 0)) return 'A detail needs a radius above zero.';
   }
+  const section = view.section;
+  if (section && ![section.offset, ...(section.steps ?? []).flatMap((s) => [s.at, s.offset])].every(Number.isFinite)) return 'A section needs its offsets (and where its steps are) in millimetres.';
   return undefined;
 }
 
@@ -39,6 +44,20 @@ function checkAnnotation(document: DrawingDocument, annotation: DrawingAnnotatio
     return `A ${annotation.type} dimension attaches to ${forms.join(', or ')}.`;
   }
   if (annotation.kind === 'note' && !annotation.text.trim()) return 'A note needs a text.';
+  if (annotation.kind === 'dimension' && annotation.tolerance) {
+    const tolerance = annotation.tolerance;
+    if (tolerance.kind === 'symmetric' && !(tolerance.value > 0)) return 'A ± tolerance needs a value above zero.';
+    if ((tolerance.kind === 'deviations' || tolerance.kind === 'limits') && !(Number.isFinite(tolerance.upper) && Number.isFinite(tolerance.lower) && tolerance.upper > tolerance.lower)) {
+      return 'A tolerance needs an upper deviation above its lower one.';
+    }
+    if (tolerance.kind === 'fit') {
+      // Checked at a middling size: the classes known are the same for all sizes.
+      const known = fitOf(tolerance.fit, 10);
+      if ('error' in known) return known.error;
+    }
+  }
+  if (annotation.kind === 'dimension' && annotation.axis && !['linear', 'horizontal', 'vertical'].includes(annotation.type)) return 'Only lengths are measured along a model axis.';
+  if (annotation.kind === 'surface-finish' && annotation.edge && annotation.edge.kind !== 'line') return 'A surface finish symbol stands on a straight edge or outline.';
   return undefined;
 }
 

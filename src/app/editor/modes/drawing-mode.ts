@@ -6,10 +6,13 @@ import {
   type DrawingView,
   fitsDimension,
   nextDimensionAnchor,
+  type SectionCut,
   type Sheet,
   type SheetSize,
   sheetSizes,
+  type SurfaceProcess,
   type TitleBlock,
+  type Tolerance,
   type Vec2,
   type ViewAnchor,
   type ViewDirection,
@@ -97,6 +100,8 @@ export class DrawingMode {
         return picked ? 'Click the second corner or circle.' : 'Click a corner or circle.';
       case 'callout':
         return picked ? 'Click where the callout goes.' : 'Click a hole.';
+      case 'surface-finish':
+        return picked ? 'Click the side of the edge the symbol stands on.' : 'Click a straight edge or outline, or where the symbol goes.';
       case 'balloon':
         return this.pending() ? 'Click where the balloon goes.' : 'Click a part of an assembly view.';
       case 'parts-list':
@@ -216,7 +221,8 @@ export class DrawingMode {
       return;
     }
     const tool = this.store.tool();
-    if (tool.kind === 'select' || tool.kind === 'note' || tool.kind === 'parts-list' || tool.kind === 'detail' || (tool.kind === 'callout' && this.store.picked().length) || tool.kind === 'balloon') {
+    const placing = (tool.kind === 'callout' || tool.kind === 'surface-finish') && this.store.picked().length;
+    if (tool.kind === 'select' || tool.kind === 'note' || tool.kind === 'parts-list' || tool.kind === 'detail' || placing || tool.kind === 'balloon') {
       this.hover.set(undefined);
       return;
     }
@@ -301,6 +307,17 @@ export class DrawingMode {
         if (anchor) this.store.picked.set([anchor]);
         return;
       }
+      case 'surface-finish': {
+        // On an edge, on the side clicked next; else where clicked (CAD-165).
+        const [edge] = this.store.picked();
+        const anchor = edge ? undefined : this.store.anchorNear(at, this.reach());
+        if (anchor) return this.store.picked.set([anchor]);
+        if (await this.store.run({ type: 'add-annotation', annotation: { kind: 'surface-finish', id, at, ...(edge ? { edge: anchorRef(edge) } : {}), process: 'removal', roughness: 'Ra 3.2' } })) {
+          this.store.use({ kind: 'select' });
+          this.store.selection.set({ kind: 'annotation', id });
+        }
+        return;
+      }
       default: {
         const anchor = this.store.anchorNear(at, this.reach());
         if (!anchor) return;
@@ -366,9 +383,53 @@ export class DrawingMode {
 
   protected setAnnotation(annotation: DrawingAnnotation, change: Record<string, unknown>): void {
     const merged: Record<string, unknown> = { ...annotation, ...change };
-    // An empty dimension text shows the measured value again; an empty angle places the leader itself.
-    const next = annotation.kind === 'dimension' ? Object.fromEntries(Object.entries(merged).filter(([key, value]) => !((key === 'text' && value === '') || (key === 'angle' && (value === null || Number.isNaN(value)))))) : merged;
+    // An empty dimension text shows the measured value again, an empty angle places the leader itself, and null takes a setting away.
+    const empty = (key: string, value: unknown) => value === null || (key === 'text' && value === '' && annotation.kind === 'dimension') || (key === 'angle' && Number.isNaN(value)) || ((key === 'roughness' || key === 'method') && value === '');
+    const next = Object.fromEntries(Object.entries(merged).filter(([key, value]) => !empty(key, value)));
     void this.store.run({ type: 'edit-annotation', annotation: next as unknown as DrawingAnnotation });
+  }
+
+  /** A dimension's tolerance of a kind, with values to start from (CAD-165); empty: none. */
+  protected setTolerance(annotation: DrawingAnnotation, kind: string): void {
+    const starts: Record<string, Tolerance> = {
+      symmetric: { kind: 'symmetric', value: 0.1 },
+      deviations: { kind: 'deviations', upper: 0.1, lower: -0.1 },
+      limits: { kind: 'limits', upper: 0.1, lower: -0.1 },
+      fit: { kind: 'fit', fit: 'H7' },
+    };
+    this.setAnnotation(annotation, { tolerance: starts[kind] ?? null });
+  }
+
+  /** Changes a value of a dimension's tolerance. */
+  protected setToleranceValue(annotation: DrawingAnnotation, change: Record<string, unknown>): void {
+    if (annotation.kind === 'dimension' && annotation.tolerance) this.setAnnotation(annotation, { tolerance: { ...annotation.tolerance, ...change } });
+  }
+
+  protected readonly processes: readonly { readonly value: SurfaceProcess; readonly label: string }[] = [
+    { value: 'removal', label: 'Material removed' },
+    { value: 'any', label: 'Any process' },
+    { value: 'no-removal', label: 'No material removed' },
+  ];
+
+  /** A section's steps as text: pairs of where and how far (mm), separated by semicolons (CAD-164). */
+  protected stepsText(section: SectionCut): string {
+    return (section.steps ?? []).map((s) => `${s.at}:${s.offset}`).join('; ');
+  }
+
+  /** Changes how a view cuts; settings not used are left out, not stored empty. */
+  protected setSection(view: DrawingView, change: { half?: boolean; steps?: string; along?: string }): void {
+    const section = view.section ?? { offset: 0 };
+    const parsed = (text: string) =>
+      text
+        .split(';')
+        .map((pair) => pair.split(':').map((v) => Number(v.trim())))
+        .filter((pair) => pair.length === 2 && pair.every((v) => Number.isFinite(v)))
+        .map(([at, offset]) => ({ at: at as number, offset: offset as number }));
+    const steps = change.steps === undefined ? section.steps : parsed(change.steps);
+    const half = change.half ?? section.half;
+    const along = change.along ?? section.along;
+    const next: SectionCut = { offset: section.offset, ...(steps?.length ? { steps } : {}), ...(along === 'v' ? { along: 'v' as const } : {}), ...(half ? { half: true } : {}) };
+    this.setView(view, { section: next });
   }
 
   protected remove(): void {
@@ -403,7 +464,8 @@ export class DrawingMode {
   }
 
   protected annotationName(annotation: DrawingAnnotation): string {
-    return annotation.kind === 'dimension' ? `${dimensionLabels[annotation.type]} dimension` : annotation.kind === 'note' ? 'Note' : annotation.kind.replace('-', ' ').replace(/^./, (c) => c.toUpperCase());
+    return annotation.kind === 'dimension' ? `${dimensionLabels[annotation.type]} dimension` : annotation.kind === 'note' ? 'Note' : annotation.kind.replaceAll('-', ' ').replace(/^./, (c) => c.toUpperCase());
+
   }
 
   protected value(event: Event): string {

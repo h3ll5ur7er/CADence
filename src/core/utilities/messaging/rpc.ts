@@ -78,17 +78,24 @@ export interface StoppablePort extends Port {
 /**
  * A proxy whose method calls run in a worker of their own and may take at most `limit` ms (CAD-125):
  * a call that takes longer stops the worker (WebAssembly cannot be interrupted otherwise) and fails
- * with a `TimeoutError`, as do the calls waiting with it; the next call starts a new worker.
+ * with a `TimeoutError`, as do the calls waiting with it; the next call starts a new worker. An
+ * infinite `limit` lets calls take as long as they take (CAD-168); `idle` stops the worker that
+ * long (ms) after its last call has answered, to give back its memory.
  */
-export function stoppable<T extends object>(start: () => StoppablePort, service: string, limit: number): Remote<T> {
+export function stoppable<T extends object>(start: () => StoppablePort, service: string, limit: number, options: { readonly idle?: number } = {}): Remote<T> {
   let worker: StoppablePort | undefined;
+  let calls = 0;
+  let resting: ReturnType<typeof setTimeout> | undefined;
   return new Proxy({} as Remote<T>, {
     get: (_target, method) => {
       if (typeof method !== 'string' || method === 'then') return undefined;
       return async (...args: unknown[]) => {
+        clearTimeout(resting);
         const port = (worker ??= start());
         let timer: ReturnType<typeof setTimeout> | undefined;
         const late = new Promise<never>((_resolve, reject) => {
+          // setTimeout runs at once on delays it cannot hold.
+          if (!Number.isFinite(limit)) return;
           timer = setTimeout(() => {
             const error = Object.assign(new Error(`${service}.${method} took longer than ${limit / 1000} s.`), { name: 'TimeoutError' });
             if (worker === port) worker = undefined;
@@ -97,10 +104,20 @@ export function stoppable<T extends object>(start: () => StoppablePort, service:
             reject(error);
           }, limit);
         });
+        calls += 1;
         try {
           return await Promise.race([call(port, service, method, args), late]);
         } finally {
           clearTimeout(timer);
+          calls -= 1;
+          if (options.idle !== undefined && calls === 0 && worker === port) {
+            resting = setTimeout(() => {
+              if (calls > 0 || worker !== port) return;
+              worker = undefined;
+              port.terminate();
+            }, options.idle);
+            (resting as { unref?: () => void }).unref?.();
+          }
         }
       };
     },

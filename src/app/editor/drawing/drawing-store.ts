@@ -11,6 +11,7 @@ export type DrawingTool =
   | { readonly kind: 'center-mark' }
   | { readonly kind: 'center-line' }
   | { readonly kind: 'callout' }
+  | { readonly kind: 'surface-finish' }
   | { readonly kind: 'balloon' }
   | { readonly kind: 'parts-list' }
   | { readonly kind: 'detail' };
@@ -89,7 +90,10 @@ export class DrawingStore {
           ? ['circle']
           : tool.kind === 'center-line'
             ? ['point', 'circle']
-            : [];
+            : tool.kind === 'surface-finish'
+              ? ['line']
+              : [];
+
     // Geometry a view does not show is not offered, unless the view draws hidden lines (CAD-127).
     const drawsHidden = new Set((this.document()?.views ?? []).filter((v) => v.hidden).map((v) => v.id));
     let best: { anchor: SheetAnchor; distance: number } | undefined;

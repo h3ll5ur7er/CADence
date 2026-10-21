@@ -1,5 +1,5 @@
 import { createShapeAccess } from '@core/access/shape';
-import { originFrames } from '@core/contracts';
+import { originFrames, type ProfileEdge, type ThreadMarker, type Vec2 } from '@core/contracts';
 import { circleLoop, profile, rectangleLoop } from '@core/contracts/testing/profiles';
 import { describe, expect, it } from 'vitest';
 import { createModelingEngine } from './index';
@@ -157,5 +157,222 @@ describe('drawing views', () => {
     if (!view.ok) throw new Error(view.error.message);
     expect(Math.round(view.value.box.min[0])).toBe(100);
     expect(view.value.bodies).toEqual([{ id: 'a1', at: [130, 15] }]);
+  });
+  describe('offset and half sections (CAD-164)', () => {
+    /** A 60 × 30 × 10 plate with ⌀6 holes at (15, 10) and (45, 20): not in line. */
+    async function holes() {
+      const outcome = await engine.apply({
+        type: 'extrude',
+        feature: 'e1',
+        key: 'drawing-two-holes',
+        bodies: [],
+        frame: originFrames.XY,
+        profiles: [profile(rectangleLoop(0, 0, 60, 30, 'plate'), [circleLoop(15, 10, 3, 'a', false), circleLoop(45, 20, 3, 'b', false)])],
+        distance: 10,
+        direction: 'normal',
+        operation: 'new-body',
+      });
+      return outcome.bodies;
+    }
+    /** The x of vertical pieces of the cut's outline, rounded. */
+    const walls = (cut: readonly (readonly [Vec2, Vec2])[]) => [...new Set(cut.flatMap(([a, b]) => (Math.abs(a[0] - b[0]) < 1e-6 ? [Math.round(a[0])] : [])))].sort((p, q) => p - q);
+    const at30 = (curves: readonly ProjectedCurve[]) => curves.filter((c) => c.kind === 'line' && Math.abs(c.start[0] - 30) < 1e-6 && Math.abs(c.end[0] - 30) < 1e-6);
+
+    it('steps the cut through two holes not in line, without drawing the step', async () => {
+      const bodies = await holes();
+      // From the front (the viewer at −y), the middle at y = 15: 5 mm nearer the viewer is y = 10, through
+      // the first hole; from x = 30 on, 5 mm further back is y = 20, through the second.
+      const view = await engine.drawView(bodies, { ...front, hidden: false, cut: { offset: 5, steps: [{ at: 0, offset: -5 }] } });
+      if (!view.ok) throw new Error(view.error.message);
+      // The two pieces of the cut meet at x = 30.
+      expect(walls(view.value.cut)).toEqual([0, 12, 18, 30, 42, 48, 60]);
+      // The step there lies across the hatching: no line drawn.
+      expect(at30(view.value.visible)).toEqual([]);
+      // A full section through the middle misses both holes.
+      const full = await engine.drawView(bodies, { ...front, hidden: false, cut: { offset: 0 } });
+      if (!full.ok) throw new Error(full.error.message);
+      expect(walls(full.value.cut)).toEqual([0, 60]);
+    });
+
+    it('cuts half the view, right of its centre line', async () => {
+      const bodies = await holes();
+      const view = await engine.drawView(bodies, { ...front, hidden: false, cut: { offset: -5, half: true } });
+      if (!view.ok) throw new Error(view.error.message);
+      // Right of x = 30 only, through the second hole (y = 20).
+      expect(walls(view.value.cut)).toEqual([30, 42, 48, 60]);
+      expect(at30(view.value.visible)).toEqual([]);
+    });
+  });
+
+  describe('outlines as anchors (CAD-167)', () => {
+    const polygon = (corners: Vec2[], source: string) => ({
+      edges: corners.map((start, i): ProfileEdge => ({ kind: 'line', start, end: corners[(i + 1) % corners.length] as Vec2, source: `${source}-${i}` })),
+      polygon: corners,
+    });
+
+    it('offers the outlines of a cone seen from the side, with points at their ends', async () => {
+      // A frustum about z: ⌀20 at the bottom, ⌀8 at the top, 20 high.
+      const outcome = await engine.apply({
+        type: 'revolve',
+        feature: 'k',
+        key: 'drawing-cone',
+        bodies: [],
+        frame: originFrames.XZ,
+        profiles: [profile(polygon([[0, 0], [10, 0], [4, 20], [0, 20]], 'k'))],
+        axis: { origin: [0, 0, 0], direction: [0, 0, 1] },
+        angle: 2 * Math.PI,
+        operation: 'new-body',
+      });
+      expect(outcome.error ?? '').toBe('');
+      const view = await engine.drawView(outcome.bodies, front);
+      if (!view.ok) throw new Error(view.error.message);
+      // One outline, the other is the seam of the revolved face: an edge.
+      expect(view.value.lines.filter((l) => l.name.startsWith('s:') && !l.hidden)).toHaveLength(1);
+      const ends = view.value.lines.filter((l) => !l.hidden).map((l) => [l.start, l.end].map((p) => p.map((x) => Math.round(x * 1000) / 1000 + 0)).sort((a, b) => (a[1] as number) - (b[1] as number)));
+      expect(ends).toEqual(
+        expect.arrayContaining([
+          [
+            [-10, 0],
+            [-4, 20],
+          ],
+          [
+            [10, 0],
+            [4, 20],
+          ],
+        ]),
+      );
+      expect(view.value.points.filter((p) => p.name.startsWith('s:') && p.name.endsWith(':a')).length).toBe(1);
+    });
+
+    it('offers the outline of a sphere as a circle', async () => {
+      const half: ProfileEdge[] = [
+        { kind: 'arc', source: 'ball', start: [0, -5], end: [0, 5], center: [0, 0], radius: 5, ccw: true },
+        { kind: 'line', source: 'axis', start: [0, 5], end: [0, -5] },
+      ];
+      const outcome = await engine.apply({
+        type: 'revolve',
+        feature: 'ball',
+        key: 'drawing-ball',
+        bodies: [],
+        frame: originFrames.XZ,
+        profiles: [profile({ edges: half, polygon: [[0, -5], [5, 0], [0, 5]] })],
+        axis: { origin: [0, 0, 0], direction: [0, 0, 1] },
+        angle: 2 * Math.PI,
+        operation: 'new-body',
+      });
+      expect(outcome.error ?? '').toBe('');
+      const view = await engine.drawView(outcome.bodies, top);
+      if (!view.ok) throw new Error(view.error.message);
+      const outline = view.value.circles.find((c) => c.name.startsWith('s:'));
+      expect(outline).toMatchObject({ radius: expect.closeTo(5, 6), center: [expect.closeTo(0, 6), expect.closeTo(0, 6)] });
+      expect(outline?.hidden).toBeUndefined();
+    });
+
+    it('offers the rims of a torus seen along its axis, and the outermost points of its outline from the side', async () => {
+      // A ring: a ⌀4 circle 10 from the z axis, revolved about it.
+      const outcome = await engine.apply({ type: 'revolve', feature: 'o', key: 'drawing-ring', bodies: [], frame: originFrames.XZ, profiles: [profile(circleLoop(10, 5, 2, 'o'))], axis: { origin: [0, 0, 0], direction: [0, 0, 1] }, angle: 2 * Math.PI, operation: 'new-body' });
+      expect(outcome.error ?? '').toBe('');
+      const above = await engine.drawView(outcome.bodies, top);
+      if (!above.ok) throw new Error(above.error.message);
+      const rims = above.value.circles.filter((c) => c.name.startsWith('s:')).map((c) => [c.name.split(':').at(-1), Math.round(c.radius)]);
+      expect(rims).toEqual(expect.arrayContaining([['outer', 12], ['inner', 8]]));
+      const side = await engine.drawView(outcome.bodies, front);
+      if (!side.ok) throw new Error(side.error.message);
+      const extremes = side.value.points.filter((p) => p.name.startsWith('s:') && !p.hidden);
+      const left = extremes.find((p) => p.name.endsWith(':left'));
+      expect(left?.at[0]).toBeCloseTo(-12, 1);
+      expect(extremes.find((p) => p.name.endsWith(':top'))?.at[1]).toBeCloseTo(7, 1);
+    });
+
+    it('names the parts of an assembly view by instance', async () => {
+      const [body] = await plate();
+      const placed = await engine.restore(
+        await engine.snapshotPlaced([
+          { id: 'a1', body: body as NonNullable<typeof body>, transform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] },
+          { id: 'a2', body: body as NonNullable<typeof body>, transform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 100, 0, 0, 1] },
+        ]),
+        'placed-names',
+      );
+      const view = await engine.drawView(placed, { ...top, prefixed: true });
+      if (!view.ok) throw new Error(view.error.message);
+      // Each part's hole, where that part is.
+      const holes = view.value.circles.filter((c) => c.name.includes('hole') && Math.abs(c.radius - 5) < 1e-6);
+      expect(holes.map((c) => [c.name.split('/')[0], Math.round(c.center[0])])).toEqual(
+        expect.arrayContaining([
+          ['a1', 20],
+          ['a2', 120],
+        ]),
+      );
+    });
+  });
+
+  describe('cosmetic threads (CAD-166)', () => {
+    /** Seen from below: the bolt's free end. */
+    const bottom = { frame: { origin: [0, 0, 0] as const, u: [1, 0, 0] as const, v: [0, -1, 0] as const }, hidden: true };
+    /** A bolt: a ⌀10 shank 10 long below a ⌀16 head, threaded M10 over 8 mm (modelled or not) from its free end. */
+    async function bolt(modelled: boolean) {
+      const shank = await engine.apply({ type: 'extrude', feature: 'shank', key: 'drawing-shank', bodies: [], frame: { ...originFrames.XY, origin: [0, 0, -10] }, profiles: [profile(circleLoop(0, 0, 5, 'shank'))], distance: 10, direction: 'normal', operation: 'new-body' });
+      const head = await engine.apply({ type: 'extrude', feature: 'head', key: 'drawing-head', bodies: shank.bodies, frame: originFrames.XY, profiles: [profile(circleLoop(0, 0, 8, 'head'))], distance: 6, direction: 'normal', operation: 'join' });
+      const face = { kind: 'face' as const, body: 'shank', name: 'f:shank:side:shank', hint: [5, 0, -5] as const };
+      const threaded = await engine.apply({ type: 'thread', feature: 't', key: `drawing-bolt-thread-${modelled}`, bodies: head.bodies, face, size: 'M10', diameter: 10, pitch: 1.5, length: 8, modelled, flip: false });
+      expect(threaded.error ?? '').toBe('');
+      return engine.restore(await engine.snapshot(threaded.bodies, [threaded.thread as ThreadMarker]), `drawing-bolt-result-${modelled}`);
+    }
+
+    it('draws a marked thread with thin lines along its minor diameter and a three-quarter circle seen end on', async () => {
+      const bodies = await bolt(false);
+      const side = await engine.drawView(bodies, front);
+      if (!side.ok) throw new Error(side.error.message);
+      // Thin lines at x = ±(5 − 0.6134 × 1.5) from z = −10 to −2, and a thick line across at z = −2.
+      const thin = (side.value.thin ?? []).flatMap((c) => (c.kind === 'line' ? [[Math.round(c.start[0] * 100) / 100, Math.round(c.start[1]), Math.round(c.end[1])]] : []));
+      expect(thin).toEqual(
+        expect.arrayContaining([
+          [4.08, -10, -2],
+          [-4.08, -10, -2],
+        ]),
+      );
+      expect(side.value.visible.some((c) => c.kind === 'line' && Math.abs(c.start[1] + 2) < 1e-6 && Math.abs(c.end[1] + 2) < 1e-6 && Math.abs(Math.abs(c.start[0] - c.end[0]) - 10) < 1e-6)).toBe(true);
+      expect(side.value.lines.filter((l) => l.name.startsWith('thread:t:') && !l.hidden).length).toBe(2);
+      const end = await engine.drawView(bodies, bottom);
+      if (!end.ok) throw new Error(end.error.message);
+      expect(round((end.value.thin ?? []).filter((c) => c.kind === 'arc'))).toEqual([[0, 0, 4]]);
+      expect(end.value.circles.find((c) => c.name === 'thread:t')).toMatchObject({ radius: 5 });
+      // From above, the head hides it: dashed.
+      const above = await engine.drawView(bodies, top);
+      if (!above.ok) throw new Error(above.error.message);
+      expect(above.value.thin ?? []).toEqual([]);
+      expect(above.value.circles.find((c) => c.name === 'thread:t')?.hidden).toBe(true);
+    });
+
+    it('draws a tapped hole in a section, and not one the cut takes away', async () => {
+      const plate = await engine.apply({ type: 'extrude', feature: 'e1', key: 'drawing-tapped', bodies: [], frame: originFrames.XY, profiles: [profile(rectangleLoop(0, 0, 60, 30, 'plate'), [circleLoop(15, 15, 2.5, 'a', false), circleLoop(45, 15, 2.5, 'b', false)])], distance: 6, direction: 'normal', operation: 'new-body' });
+      const lines = async (hole: 'a' | 'b') => {
+        const face = { kind: 'face' as const, body: (plate.bodies[0] as { id: string }).id, name: `f:e1:side:${hole}`, hint: [hole === 'a' ? 15 : 45, 17.5, 3] as const };
+        const tapped = await engine.apply({ type: 'thread', feature: 't', key: `drawing-tapped-${hole}`, bodies: plate.bodies, face, size: 'M6', diameter: 6, pitch: 1, modelled: false, flip: false });
+        const bodies = await engine.restore(await engine.snapshot(tapped.bodies, [tapped.thread as ThreadMarker]), `drawing-tapped-result-${hole}`);
+        // Through the first hole's middle; 3 mm behind the second, which is taken away.
+        const view = await engine.drawView(bodies, { ...front, cut: { offset: 0, steps: [{ at: 0, offset: -3 }] } });
+        if (!view.ok) throw new Error(view.error.message);
+        const xs = (curves: readonly ProjectedCurve[] | undefined) => (curves ?? []).flatMap((c) => (c.kind === 'line' && Math.abs(c.start[0] - c.end[0]) < 1e-6 ? [Math.round(c.start[0])] : [])).sort((p, q) => p - q);
+        return { thin: xs(view.value.thin), hidden: xs(view.value.hidden) };
+      };
+      // The major diameter, ⌀6, as thin lines either side of the cut hole.
+      expect(await lines('a')).toEqual({ thin: [12, 18], hidden: [] });
+      expect(await lines('b')).toEqual({ thin: [], hidden: [] });
+    });
+
+    it('draws a modelled thread the same way, fast, instead of its helix', async () => {
+      const bodies = await bolt(true);
+      const started = performance.now();
+      const end = await engine.drawView(bodies, bottom);
+      if (!end.ok) throw new Error(end.error.message);
+      const side = await engine.drawView(bodies, front);
+      if (!side.ok) throw new Error(side.error.message);
+      expect(performance.now() - started).toBeLessThan(15_000);
+      // The shank's outline is drawn straight, its ends edge on: no slanted helix pieces.
+      expect(side.value.visible.every((c) => c.kind === 'line' && (Math.abs(c.start[0] - c.end[0]) < 1e-6 || Math.abs(c.start[1] - c.end[1]) < 1e-6))).toBe(true);
+      expect(round(end.value.visible)).toContainEqual([0, 0, 5]);
+      expect(round((end.value.thin ?? []).filter((c) => c.kind === 'arc'))).toEqual([[0, 0, 4]]);
+    });
   });
 });

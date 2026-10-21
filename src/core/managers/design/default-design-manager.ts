@@ -21,6 +21,7 @@ import {
   type Result,
   resultStamp,
   type SimulationResult,
+  type ThreadMarker,
   type TopologyRef,
   type ValidationReport,
   type SketchConstraint,
@@ -418,7 +419,7 @@ class Session implements DesignSession {
     this.deps.events.publish('documentSaved', { projectId: snapshot.document.projectId, documentId: snapshot.document.id });
     const state = this.state();
     for (const listener of this.listeners) listener(state);
-    await this.results.publish(snapshot.document, snapshot.derived.bodies, this.context.projectParameters, snapshot.document.configuration);
+    await this.results.publish(snapshot.document, snapshot.derived.bodies, this.context.projectParameters, snapshot.document.configuration, snapshot.derived.threads);
     const { configuration } = snapshot.document;
     this.deps.events.publish('resultPublished', { documentId: snapshot.document.id, ...(configuration ? { configuration } : {}) });
   }
@@ -456,9 +457,9 @@ class ResultPublisher {
 
   constructor(private readonly deps: DesignManagerDependencies) {}
 
-  async publish(document: ComponentDocument, bodies: readonly BodyState[], projectParameters: readonly Parameter[] = [], configuration?: string): Promise<void> {
-    const keys = bodies.map((b) => b.key).join('|');
-    if (this.last?.keys !== keys) this.last = { keys, bytes: await this.deps.modeling.snapshot(bodies) };
+  async publish(document: ComponentDocument, bodies: readonly BodyState[], projectParameters: readonly Parameter[] = [], configuration?: string, threads: readonly ThreadMarker[] = []): Promise<void> {
+    const keys = `${bodies.map((b) => b.key).join('|')}|${JSON.stringify(threads)}`;
+    if (this.last?.keys !== keys) this.last = { keys, bytes: await this.deps.modeling.snapshot(bodies, threads) };
     const stamp = resultStamp(document.modifiedAt, projectParameters);
     await this.deps.assets.publishResult({ documentId: document.id, projectId: document.projectId, stamp, bytes: this.last.bytes, ...(configuration ? { configuration } : {}) });
   }
@@ -488,7 +489,7 @@ export class DefaultDesignManager implements DesignManager {
     if (document?.kind !== 'component' || (configuration && !document.configurations?.some((c) => c.id === configuration))) return answer(false);
     const projectParameters = await projectParametersOf(this.deps, document);
     const derived = await new Regeneration(this.deps).run(document, { projectParameters, configuration: configuration ?? '' });
-    await new ResultPublisher(this.deps).publish(document, derived.bodies, projectParameters, configuration);
+    await new ResultPublisher(this.deps).publish(document, derived.bodies, projectParameters, configuration, derived.threads);
     answer(true);
   }
 }

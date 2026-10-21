@@ -397,6 +397,19 @@ describe('drawings for agents (CAD-123)', () => {
     // Undone and redone, one command at a time.
     expect(await json('undo_drawing', { document: sheet.id })).toMatchObject({ removed: ['call'] });
     expect(await json('undo_drawing', { document: sheet.id, redo: true })).toMatchObject({ created: { annotations: ['call'] } });
+    // A fit on the hole, and a surface finish symbol on an edge by its handle (CAD-165).
+    const edge = ((await json('get_drawing', { document: sheet.id, view: 'top', kind: 'line' })) as typeof anchors).anchors[0];
+    const finished = await json('edit_drawing', {
+      document: sheet.id,
+      commands: [
+        { type: 'add-annotation', annotation: { kind: 'dimension', id: 'fit', type: 'diameter', anchors: [ref(circle)], offset: 14, angle: 225, tolerance: { kind: 'fit', fit: 'H7' } } },
+        { type: 'add-annotation', annotation: { kind: 'surface-finish', id: 'ra', at: [150, 245], edge: ref(edge), process: 'removal', roughness: 'Ra 1.6' } },
+      ],
+    });
+    expect(finished).toMatchObject({ created: { annotations: ['fit', 'ra'] } });
+    expect(finished).not.toHaveProperty('lost');
+    const listed = (await json('get_drawing', { document: sheet.id, only: ['annotations'] })) as { annotations: { id: string; edge?: { ref?: string } }[] };
+    expect(listed.annotations.find((a) => a.id === 'ra')?.edge?.ref).toBe(edge?.ref);
     expect(text(await call('command_reference', {}))).toContain('drawing');
   });
 });

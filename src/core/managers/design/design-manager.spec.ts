@@ -7,11 +7,13 @@ import {
   asAssetId,
   asDocumentId,
   asProjectId,
+  type BodyMesh,
   type ComponentDocument,
   currentSchemaVersion,
   type DomainEvents,
   type ImportFormat,
   lengthExpression,
+  nestFolders,
   type PlaneFrame,
   type PartFeature,
   type PartSpec,
@@ -34,7 +36,8 @@ import { EventBus } from '@core/utilities/messaging';
 import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { png } from '@core/utilities/picture/testing';
-import { createDesignManager, type DesignSession } from './index';
+import { readZip } from '@core/utilities/archive';
+import { createDesignManager, type DesignManager, type DesignSession } from './index';
 
 function unwrap<T>(result: Result<T>): T {
   if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
@@ -75,6 +78,7 @@ describe('DesignManager', () => {
   let events: EventBus<DomainEvents>;
   let projects: InMemoryProjectAccess;
   let session: DesignSession;
+  let manager: DesignManager;
   let documentId: ComponentDocument['id'];
 
   beforeEach(async () => {
@@ -98,7 +102,7 @@ describe('DesignManager', () => {
       timeline: [],
       rollbackIndex: 0,
     });
-    const manager = createDesignManager({
+    manager = createDesignManager({
       projects,
       documents,
       externalFiles: files,
@@ -490,6 +494,26 @@ describe('DesignManager', () => {
     }
     const volume = async () => (await session.properties()).reduce((sum, b) => sum + b.volume, 0);
 
+    it('builds two versions of a plate and compares their bodies: a new hole is removed material (CAD-175)', async () => {
+      await plate();
+      const before = session.state().document;
+      const hole = [
+        { id: 'h:center', kind: 'point', x: 20, y: 15 },
+        { id: 'h', kind: 'circle', center: 'h:center', radius: 4, construction: false },
+      ] as const;
+      unwrap(await session.execute({ type: 'create-sketch', id: 's2', plane: 'XY' }));
+      unwrap(await session.execute({ type: 'add-sketch-geometry', sketchId: 's2', entities: [...hole], constraints: [] }));
+      const circle = session.state().sketches.get('s2')?.profiles[0]?.id as string;
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'e2', type: 'extrude', name: '', suppressed: false, sketch: 's2', profiles: [circle], distance: '6 mm', direction: 'normal', operation: 'cut' } }));
+      const compared = unwrap(await manager.compareBodies(before, session.state().document));
+      expect(compared.before).toHaveLength(1);
+      expect(compared.after).toHaveLength(1);
+      expect(compared.added).toEqual([]);
+      expect(compared.removed).toHaveLength(1);
+      expect(compared.volume.removed).toBeCloseTo(Math.PI * 16 * 6, 0);
+      expect(compared.volume.before).toBeCloseTo(60 * 30 * 6, 0);
+    });
+
     it('turns a feature into another kind, keeping its id (CAD-118)', async () => {
       const profile = await plate();
       const revolve = { id: 'e1', type: 'revolve', name: '', suppressed: false, sketch: 's1', profiles: [profile], axis: { kind: 'origin', axis: 'Y' }, angle: '360 deg', operation: 'new-body' } as const;
@@ -550,7 +574,8 @@ describe('DesignManager', () => {
         const ringGear = await part({ kind: 'ring-gear', module: '1 mm', teeth: '40', width: '5 mm', outside: '50 mm', pressureAngle: '20 deg', helixAngle: '0 deg' });
         const solid = ring(40, 50, 5);
         expect(Math.abs(ringGear - solid) / solid).toBeLessThan(0.05);
-        expect(session.state().bodies[0]?.faces.length).toBeLessThanOrEqual(40 * 6 + 3);
+        // Per space two flanks, a tip and a root arc, two lines below the base circle and two root fillets (CAD-159).
+        expect(session.state().bodies[0]?.faces.length).toBeLessThanOrEqual(40 * 8 + 3);
         // Twisting the teeth of a helical gear is slow on a CI runner.
       }, 60_000);
 
@@ -629,6 +654,20 @@ describe('DesignManager', () => {
       expect(before - (await volume())).toBeCloseTo(Math.PI * 2.7 ** 2 * 6, 1);
     });
 
+    it('ends blind holes in a drill point, 118° unless set (CAD-156)', async () => {
+      await plate();
+      unwrap(await session.execute({ type: 'create-sketch', id: 'sh', plane: { face: { kind: 'face', body: 'e1', name: 'f:e1:end' } } }));
+      unwrap(await session.execute({ type: 'add-sketch-geometry', sketchId: 'sh', entities: [{ id: 'hp', kind: 'point', x: 0, y: 0 }], constraints: [] }));
+      const before = await volume();
+      const hole = { id: 'h1', type: 'hole', name: '', suppressed: false, sketch: 'sh', points: ['hp'], kind: 'simple', diameter: '4 mm', extent: 'blind', depth: '3 mm', boreDiameter: '0 mm', boreDepth: '0 mm', sinkDiameter: '0 mm', sinkAngle: '90 deg', teardrop: false, bridge: false, drillPoint: true } as const;
+      unwrap(await session.execute({ type: 'add-feature', feature: hole }));
+      const cone = (angle: number) => (Math.PI * 4 * (2 / Math.tan((angle * Math.PI) / 360))) / 3;
+      expect(before - (await volume())).toBeCloseTo(Math.PI * 4 * 3 + cone(118), 2);
+      unwrap(await session.execute({ type: 'edit-feature', feature: { ...hole, pointAngle: '90 deg' } }));
+      expect(before - (await volume())).toBeCloseTo(Math.PI * 4 * 3 + cone(90), 2);
+      expect((await session.execute({ type: 'edit-feature', feature: { ...hole, pointAngle: '180 deg' } })).ok).toBe(false);
+    });
+
     it('extrudes a sketch profile into a body driven by parameters', async () => {
       await plate();
       expect(session.state().document.timeline.map((i) => i.name)).toEqual(['Sketch 1', 'Extrude 1']);
@@ -690,6 +729,35 @@ describe('DesignManager', () => {
       expect(unwrap(await session.brokenReferences('r1'))).toEqual([]);
     });
 
+    it('offers a lost fillet edge the edge of the same size before the nearest one (CAD-157)', async () => {
+      await plate();
+      // On the top face (its middle at x 30, y 15): points for a ⌀8 hole at x 10, a ⌀4 one at x 22, and one more at x 50.
+      unwrap(await session.execute({ type: 'create-sketch', id: 'sh', plane: { face: { kind: 'face', body: 'e1', name: 'f:e1:end' } } }));
+      const points = [['pa', -20], ['pb', -8], ['pc', 20]] as const;
+      unwrap(await session.execute({ type: 'add-sketch-geometry', sketchId: 'sh', entities: points.map(([id, x]) => ({ id, kind: 'point' as const, x, y: 0 })), constraints: [] }));
+      const hole = (id: string, point: string, diameter: string) =>
+        ({ id, type: 'hole', name: '', suppressed: false, sketch: 'sh', points: [point], kind: 'simple', diameter, extent: 'through', depth: '0 mm', boreDiameter: '0 mm', boreDepth: '0 mm', sinkDiameter: '0 mm', sinkAngle: '90 deg', teardrop: false, bridge: false }) as const;
+      unwrap(await session.execute({ type: 'add-feature', feature: hole('ha', 'pa', '8 mm') }));
+      unwrap(await session.execute({ type: 'add-feature', feature: hole('hb', 'pb', '4 mm') }));
+      const rim = session.state().bodies[0]?.edges.find((e) => e.name.includes('f:e1:end') && e.name.includes('f:ha:wall:pa'))?.name as string;
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'r1', type: 'fillet', name: '', suppressed: false, edges: [{ kind: 'edge', body: 'e1', name: rim, hint: [14, 15, 6] }], size: '1' } }));
+      // The fillet keeps what its edge was like: a circle of radius 4, 8π long.
+      const kept = session.state().document.timeline.find((i) => i.id === 'r1');
+      expect(kept?.type === 'fillet' && kept.edges[0]?.shape).toMatchObject({ type: 'circle', size: expect.closeTo(8 * Math.PI, 3), radius: expect.closeTo(4, 6) });
+
+      // The big hole moves to the third point: the fillet's edge is gone.
+      unwrap(await session.execute({ type: 'edit-feature', feature: hole('ha', 'pc', '8 mm') }));
+      expect(session.state().items.get('r1')?.state).toBe('error');
+      const [lost] = unwrap(await session.brokenReferences('r1'));
+      const [best, ...others] = lost?.candidates ?? [];
+      // The rim of the hole of the same size, 32 mm away, comes before the small hole's rim 6 mm away.
+      expect(best).toMatchObject({ sameShape: true, distance: expect.closeTo(32, 1) });
+      expect(best?.ref.name).toContain('f:ha:wall:pc');
+      expect(others.some((c) => c.ref.name.includes('f:hb:wall:pb') && (c.distance ?? Infinity) < 7 && !c.sameShape)).toBe(true);
+      unwrap(await session.execute({ type: 'replace-reference', itemId: 'r1', from: lost?.ref as TopologyRef, to: best?.ref as TopologyRef }));
+      expect(session.state().items.get('r1')).toEqual({ state: 'ok' });
+    });
+
     it('reorders the timeline, but never before what an item uses', async () => {
       await plate();
       unwrap(await session.execute({ type: 'add-feature', feature: { id: 'p1', type: 'plane', name: '', suppressed: false, base: 'XY', offset: '20' } }));
@@ -739,6 +807,42 @@ describe('DesignManager', () => {
       expect(session.state().document.timeline.find((i) => i.id === 'e1')?.note).toBe('Thickness from the parameter');
       unwrap(await session.execute({ type: 'set-note', itemId: 'e1', note: '' }));
       expect(session.state().document.timeline.find((i) => i.id === 'e1')).not.toHaveProperty('note');
+    });
+
+    it('nests folders in folders and moves a folder with what it holds (CAD-157)', async () => {
+      await plate();
+      const plane = (id: string) => ({ id, type: 'plane' as const, name: '', suppressed: false, base: 'XY' as const, offset: '20' });
+      for (const id of ['p1', 'p2', 'p3']) unwrap(await session.execute({ type: 'add-feature', feature: plane(id) }));
+      const order = () => session.state().document.timeline.map((i) => i.id);
+      const nested = () => nestFolders(session.state().document.folders ?? [], session.state().document.timeline).map((f) => [f.folder.id, f.parent ?? '', f.depth]);
+      unwrap(await session.execute({ type: 'set-folder', folder: { id: 'outer', name: 'Outer', first: 's1', last: 'p2' } }));
+      unwrap(await session.execute({ type: 'set-folder', folder: { id: 'inner', name: 'Inner', first: 'p1', last: 'p2' } }));
+      expect(nested()).toEqual([['outer', '', 0], ['inner', 'outer', 1]]);
+      // Holding part of another folder is refused.
+      expect(await session.execute({ type: 'set-folder', folder: { id: 'x', name: 'Across', first: 'e1', last: 'p3' } })).toMatchObject({ ok: false, error: { message: 'A folder holds whole folders or none of them: this one would hold part of Outer.' } });
+
+      // Moved out, the inner folder takes its items along and leaves the outer one.
+      unwrap(await session.execute({ type: 'move-folder', folderId: 'inner', index: 3 }));
+      expect(order()).toEqual(['s1', 'e1', 'p3', 'p1', 'p2']);
+      expect(nested()).toEqual([['outer', '', 0], ['inner', '', 0]]);
+      expect(session.state().document.folders?.find((f) => f.id === 'outer')).toMatchObject({ first: 's1', last: 'e1' });
+      // Dropped between the outer folder's items, it is in it again.
+      unwrap(await session.execute({ type: 'move-folder', folderId: 'inner', index: 1 }));
+      expect(order()).toEqual(['s1', 'p1', 'p2', 'e1', 'p3']);
+      expect(nested()).toEqual([['outer', '', 0], ['inner', 'outer', 1]]);
+      // The outer folder moves with the one it holds.
+      unwrap(await session.execute({ type: 'move-folder', folderId: 'outer', index: 1 }));
+      expect(order()).toEqual(['p3', 's1', 'p1', 'p2', 'e1']);
+      expect(nested()).toEqual([['outer', '', 0], ['inner', 'outer', 1]]);
+      // A folder cannot move above what it uses.
+      unwrap(await session.execute({ type: 'set-folder', folder: { id: 'sketch', name: 'Sketch', first: 's1', last: 's1' } }));
+      expect(await session.execute({ type: 'move-folder', folderId: 'sketch', index: 4 })).toMatchObject({ ok: false, error: { message: 'Extrude 1 uses Sketch 1, so it has to come after it.' } });
+      unwrap(await session.execute({ type: 'delete-folder', folderId: 'sketch' }));
+
+      unwrap(await session.execute({ type: 'suppress-folder', folderId: 'outer', suppressed: true }));
+      expect(session.state().document.timeline.filter((i) => i.suppressed).map((i) => i.id)).toEqual(['s1', 'p1', 'p2', 'e1']);
+      unwrap(await session.execute({ type: 'delete-folder', folderId: 'outer' }));
+      expect(nested()).toEqual([['inner', '', 0]]);
     });
 
     it('copies, splits and combines bodies with parameters', async () => {
@@ -908,6 +1012,72 @@ describe('DesignManager', () => {
       expect(text).toContain(String(Math.round((30 + allowance + 10) * 1e6) / 1e6).slice(0, 6));
     });
 
+    it('unfolds a box with corner reliefs and a hem on a flange (CAD-162, CAD-163)', async () => {
+      await drawRectangle(); // 28 × 15 from (2, 1)
+      const profile = session.state().sketches.get('s1')?.profiles[0]?.id as string;
+      const sheet = { type: 'base-flange', name: '', suppressed: false, sketch: 's1', profiles: [profile], direction: 'normal', thickness: '1 mm', bendRadius: '1 mm', kFactor: '0.5' } as const;
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'bf', ...sheet, cornerRelief: 'round', reliefSize: '2 mm' } }));
+      const edge = (side: string, hint: Vec3): TopologyRef => {
+        const found = session.state().bodies[0]?.edges.find((e) => e.name.includes('f:bf:end') && e.name.includes(`:side:${side}`));
+        return { kind: 'edge', body: 'bf', name: found?.name as string, hint };
+      };
+      const box = [edge('ab', [16, 1, 1]), edge('bc', [30, 8.5, 1]), edge('cd', [16, 16, 1]), edge('da', [2, 8.5, 1])];
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'ef', type: 'edge-flange', name: '', suppressed: false, edges: box, length: '8', angle: '90 deg' } }));
+      expect(session.state().bodies[0]?.faces.filter((f) => f.name.startsWith('f:ef:relief:'))).toHaveLength(4);
+      unwrap(await session.exportFlatPattern('dxf'));
+      const text = new TextDecoder().decode(files.delivered.at(-1)?.bytes);
+      // Four round reliefs, four bends.
+      expect(text.match(/\nARC\n/g)).toHaveLength(4);
+      expect(text.match(/\nBEND\n/g)?.length).toBeGreaterThanOrEqual(4);
+
+      // A hem on the top edge of the right flange (x = 31 to 32, up to z = 1 + 1 + 8 = 10), folded outwards.
+      const body = session.state().bodies[0] as BodyMesh;
+      // A straight edge's middle: halfway between the ends of its polyline.
+      const middle = (e: BodyMesh['edges'][number]): Vec3 => [0, 1, 2].map((i) => ((body.edgePositions[e.start * 3 + i] ?? 0) + (body.edgePositions[(e.start + e.count - 1) * 3 + i] ?? 0)) / 2) as unknown as Vec3;
+      const top = body.edges.find((e) => Math.hypot(...middle(e).map((v, i) => v - ([32, 8.5, 10][i] as number))) < 1e-4);
+      expect(top).toBeDefined();
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'hm', type: 'hem', name: '', suppressed: false, edges: [{ kind: 'edge', body: 'bf', name: top?.name as string, hint: [32, 8.5, 10] }], style: 'open', gap: '1 mm', length: '4' } }));
+      expect(session.state().items.get('hm')).toMatchObject({ state: 'ok' });
+      unwrap(await session.exportFlatPattern('svg'));
+      const flat = new TextDecoder().decode(files.delivered.at(-1)?.bytes);
+      // The hem lies flat beyond the right flange: 30 + its bend and 8 mm, then the hem's half turn (π × (0.5 + 0.5)) and 4 mm.
+      const reach = 30 + (Math.PI / 2) * 1.5 + 8 + Math.PI * 1 + 4;
+      expect(flat).toContain(String(Math.round(reach * 1000) / 1000).slice(0, 5));
+    });
+
+    it('runs a miter flange along two edges from a profile sketch', async () => {
+      await drawRectangle();
+      const profile = session.state().sketches.get('s1')?.profiles[0]?.id as string;
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'bf', type: 'base-flange', name: '', suppressed: false, sketch: 's1', profiles: [profile], direction: 'normal', thickness: '1 mm', bendRadius: '1 mm', kFactor: '0.5' } }));
+      // The profile on the front plane, square to the right edge: 10 mm up, then 4 mm back in.
+      unwrap(await session.execute({ type: 'create-sketch', id: 'p', plane: 'XZ' }));
+      unwrap(
+        await session.execute({
+          type: 'add-sketch-geometry',
+          sketchId: 'p',
+          entities: [
+            { id: 'p1', kind: 'point', x: 30, y: 1 },
+            { id: 'p2', kind: 'point', x: 30, y: 11 },
+            { id: 'p3', kind: 'point', x: 26, y: 11 },
+            { id: 'l1', kind: 'line', start: 'p1', end: 'p2', construction: false },
+            { id: 'l2', kind: 'line', start: 'p2', end: 'p3', construction: false },
+          ],
+          constraints: [],
+        }),
+      );
+      const edges = ['bc', 'cd'].map((side): TopologyRef => {
+        const found = session.state().bodies[0]?.edges.find((e) => e.name.includes('f:bf:end') && e.name.includes(`:side:${side}`));
+        return { kind: 'edge', body: 'bf', name: found?.name as string };
+      });
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'mf', type: 'miter-flange', name: '', suppressed: false, edges, sketch: 'p' } }));
+      expect(session.state().items.get('mf')).toMatchObject({ state: 'ok' });
+      expect(await volume()).toBeGreaterThan(28 * 15 + (15 + 28) * (10 + 4));
+      unwrap(await session.exportFlatPattern('dxf'));
+      const text = new TextDecoder().decode(files.delivered.at(-1)?.bytes);
+      // Two bends on each of the two pieces.
+      expect(text.match(/\nBEND\n/g)?.length).toBeGreaterThanOrEqual(4);
+    });
+
     it('refuses parameter changes that would break the model', async () => {
       await plate();
       const broken = await session.execute({ type: 'delete-parameter', id: 'pt' });
@@ -1002,6 +1172,47 @@ describe('DesignManager', () => {
       expect(await session.execute({ type: 'set-material', material: { name: 'Air', density: 0 } })).toMatchObject({ ok: false, error: { code: 'invalid-command' } });
     });
 
+    it("weighs, checks and exports each body in its own material, the component's by default (CAD-158)", async () => {
+      await plate();
+      unwrap(await session.execute({ type: 'add-feature', feature: { id: 'm1', type: 'move', name: '', suppressed: false, bodies: ['e1'], translate: ['0', '40', '0'], axis: { kind: 'origin', axis: 'Z' }, angle: '0 deg', copy: true } }));
+      const plateVolume = 60 * 30 * 6;
+      unwrap(await session.execute({ type: 'set-body-material', body: 'm1', material: { name: 'Steel', density: 7.85 } }));
+      expect(session.state().document.bodyMaterials).toEqual({ m1: { name: 'Steel', density: 7.85 } });
+      expect((await session.properties()).map((p) => [p.body, p.material, p.mass])).toEqual([
+        ['e1', 'PLA', expect.closeTo((plateVolume * 1.24) / 1000, 6)],
+        ['m1', 'Steel', expect.closeTo((plateVolume * 7.85) / 1000, 6)],
+      ]);
+      // The component's material changes the bodies without one of their own.
+      unwrap(await session.execute({ type: 'set-material', material: { name: 'PETG', density: 1.27 } }));
+      expect((await session.properties()).map((p) => p.material)).toEqual(['PETG', 'Steel']);
+      // Exports name each body's material.
+      unwrap(await session.exportBodies('3mf'));
+      const model = new TextDecoder().decode((await readZip(files.delivered.at(-1)?.bytes as Uint8Array)).get('3D/3dmodel.model'));
+      expect(model).toContain('<basematerials id="3"><base name="PETG" displaycolor="#B4B4B4FF"/><base name="Steel" displaycolor="#B4B4B4FF"/></basematerials>');
+      expect(model).toMatch(/<object id="2" name="[^"]+" type="model" pid="3" pindex="1">/);
+      unwrap(await session.exportBodies('obj'));
+      expect(new TextDecoder().decode(files.delivered.at(-1)?.bytes)).toContain('usemtl Steel');
+      // Back to the component's; a body that is not there cannot get one.
+      unwrap(await session.execute({ type: 'set-body-material', body: 'm1' }));
+      expect(session.state().document.bodyMaterials).toBeUndefined();
+      expect(await session.execute({ type: 'set-body-material', body: 'nothing', material: { name: 'Steel', density: 7.85 } })).toMatchObject({ ok: false });
+      expect(await session.execute({ type: 'set-body-material', body: 'e1', material: { name: 'Air', density: 0 } })).toMatchObject({ ok: false });
+    });
+
+    it("checks the strength of a steel body in a plastic part with steel's stiffness (CAD-158)", async () => {
+      await plate();
+      const faces = session.state().bodies[0]?.faces ?? [];
+      const at = (x: number) => ({ kind: 'face' as const, body: 'e1', name: faces.find((f) => Math.abs((f.center[0] as number) - x) < 1e-6 && f.planar)?.name as string });
+      unwrap(await session.execute({ type: 'set-simulation', setup: { fixed: [at(0)], loads: [{ kind: 'force', face: at(60), force: 50, direction: [0, 0, -1] }] } }));
+      const plastic = unwrap(await session.simulate());
+      unwrap(await session.execute({ type: 'set-body-material', body: 'e1', material: { name: 'Steel', density: 7.85 } }));
+      const steel = unwrap(await session.simulate());
+      // Bent less by about the stiffness ratio (200 GPa over 3.5; Poisson's ratios differ a little), with steel's yield strength.
+      expect(plastic.maxDisplacement / steel.maxDisplacement).toBeGreaterThan(0.95 * (200000 / 3500));
+      expect(plastic.maxDisplacement / steel.maxDisplacement).toBeLessThan(1.05 * (200000 / 3500));
+      expect(steel.safetyFactor).toBeCloseTo(250 / steel.maxStress, 6);
+    }, 60_000);
+
     it('checks the strength of a part held on one face and loaded on another', async () => {
       await plate();
       const faces = session.state().bodies[0]?.faces ?? [];
@@ -1095,6 +1306,21 @@ describe('DesignManager', () => {
     it('fails an insert whose imported file is gone', async () => {
       const result = await session.execute({ type: 'add-feature', feature: { id: 'i1', type: 'insert', name: '', suppressed: false, document: 'nothing' } });
       expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining('deleted or is not a 3D file') } });
+    });
+
+    it('shares the bodies as an HTML viewer, glTF or USDZ (CAD-180)', async () => {
+      await plate();
+      unwrap(await session.exportViewer());
+      expect(files.delivered.at(-1)).toMatchObject({ name: 'Component 1.html', mediaType: 'text/html' });
+      unwrap(await session.exportViewer('glb'));
+      expect(files.delivered.at(-1)).toMatchObject({ name: 'Component 1.glb', mediaType: 'model/gltf-binary' });
+      const usdz = unwrap(await session.viewerFile('usdz'));
+      expect(usdz.name).toBe('Component 1.usdz');
+      expect(new TextDecoder().decode(usdz.bytes)).toContain('def Mesh "Extrude_1_1"');
+    });
+
+    it('has nothing to share before there are bodies', async () => {
+      expect(await session.viewerFile('glb')).toMatchObject({ ok: false, error: { code: 'nothing-to-export' } });
     });
 
     it('exports the bodies as STEP', async () => {

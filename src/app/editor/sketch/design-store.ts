@@ -7,6 +7,7 @@ import {
   isImportedModel,
   isImportedFont,
   isImportedPicture,
+  isDimension,
   type ProjectId,
   type Feature,
   type FeatureType,
@@ -24,16 +25,20 @@ import {
   type Vec3,
   type ValidationReport,
   type LengthUnit,
+  type LiveWhere,
   type SketchFreedom,
 } from '@core/contracts';
-import type { BrokenReference, ConfigurationImport, DesignCommand, DesignSession, DesignState, DrawingFormat, ExportOptions, InsertDrawingOptions, SketchView, SolidFormat } from '@core/managers/design';
+import type { BlockSummary, BrokenReference, ConfigurationImport, DesignCommand, DesignSession, DesignState, DrawingFormat, ExportOptions, InsertDrawingOptions, SketchView, SolidFormat } from '@core/managers/design';
 import { newId } from '@core/utilities/identity';
+import type { ViewerFormat } from '@core/utilities/scene';
 import { DESIGN_MANAGER, PROJECT_MANAGER } from '../../core.providers';
 import { pictureUrl } from '../../shared/picture-url';
+import { ServerAccounts } from '../../shared/server-accounts';
 import type { Pick, PickKind, TopologyPick } from '../../viewport/picking';
 import type { StressField } from '../../viewport/surface-analysis';
 import { applyPick, defaultFeature, type FeatureDraft, type PickTarget, pickableFor, selectionOf } from '../modeling/feature-drafts';
 import type { SketchClipboard } from './selection';
+import { ChangedElsewhere } from '../changed-elsewhere';
 import type { TextDraft, Tool } from './sketch-tools';
 
 /** What the properties column shows besides feature dialogs and sketch info. */
@@ -51,6 +56,7 @@ const pickOfRef = (ref: TopologyRef): Pick =>
 export class DesignStore {
   private readonly manager = inject(DESIGN_MANAGER);
   private readonly projects = inject(PROJECT_MANAGER);
+  private readonly accounts = inject(ServerAccounts);
   private session: DesignSession | undefined;
   private unsubscribe: (() => void) | undefined;
   private dragFrame: Promise<unknown> = Promise.resolve();
@@ -59,6 +65,12 @@ export class DesignStore {
   readonly error = signal<string | undefined>(undefined);
   /** A sketch command refused because it contradicts relations or dimensions the sketch has: those, and the command to try again. */
   readonly conflict = signal<{ readonly sketchId: string; readonly constraints: readonly string[]; readonly command: DesignCommand } | undefined>(undefined);
+  /** A dimension refused because it would over-constrain the sketch: it can go in as a reference instead (ADR-54). */
+  readonly referenceOffer = signal<Extract<DesignCommand, { type: 'add-constraint' }> | undefined>(undefined);
+  /** New dimensions are references (they show values and drive nothing). */
+  readonly referenceDimensions = signal(false);
+  /** The block the place-block tool puts down. */
+  readonly blockToPlace = signal<BlockSummary | undefined>(undefined);
   readonly editing = signal<string | undefined>(undefined);
   readonly tool = signal<Tool>('select');
   /** Corners of the polygon tool. */
@@ -193,8 +205,30 @@ export class DesignStore {
     return preview?.sketch.id === id ? preview : this.state()?.sketches.get(id);
   });
 
+  /** The component changed elsewhere (another window, an agent: CAD-150). */
+  readonly elsewhere = new ChangedElsewhere(this.projects);
+
   constructor() {
-    inject(DestroyRef).onDestroy(() => this.unsubscribe?.());
+    inject(DestroyRef).onDestroy(() => {
+      this.unsubscribe?.();
+      this.elsewhere.close();
+      this.session?.leaveLive();
+    });
+  }
+
+  /** Edits the component live when its project is shared on a CADence server this browser is signed in to (CAD-178). */
+  private async goLive(session: DesignSession, projectId: ProjectId): Promise<void> {
+    const server = (await this.projects.findProject(projectId))?.remote?.server;
+    const token = server?.link ?? (server ? this.accounts.signInFor(server.url)?.token : undefined);
+    if (!server || !token || this.session !== session) return;
+    session.goLive({ server: server.url, project: server.project, token, viewOnly: server.role === 'viewer' || !!server.link });
+    this.present({});
+  }
+
+  /** Tells the others editing live where one works: the edited sketch, and the pointer in it. */
+  present(where: LiveWhere): void {
+    const sketch = this.editing();
+    this.session?.present({ ...(sketch ? { sketch } : {}), ...where });
   }
 
   /** The parameters of the open component's project (all of them, also those the component overrides). */
@@ -203,6 +237,7 @@ export class DesignStore {
 
   async open(documentId: DocumentId, projectId: ProjectId): Promise<void> {
     this.unsubscribe?.();
+    this.session?.leaveLive();
     this.reset();
     this.projectId = projectId;
     void this.projects.listDocuments(projectId).then((documents) => this.projectDocuments.set(documents));
@@ -214,10 +249,13 @@ export class DesignStore {
     }
     this.session = opened.value;
     this.state.set(this.session.state());
+    // A feature dialog open or a sketch being edited is input the user would lose: they are asked first.
+    this.elsewhere.follow(documentId, () => this.state()?.document.modifiedAt, () => this.draft() !== undefined || this.editing() !== undefined, () => this.open(documentId, projectId));
     this.unsubscribe = this.session.subscribe((state) => {
       this.state.set(state);
       if (this.editing() && !state.sketches.has(this.editing() as string)) this.finishEditing();
     });
+    void this.goLive(this.session, projectId);
   }
 
   /** Runs a command; shows its error and returns false when it was rejected. */
@@ -230,7 +268,21 @@ export class DesignStore {
     this.error.set(result.ok ? undefined : result.error.message);
     const sketchId = 'sketchId' in command ? command.sketchId : undefined;
     this.conflict.set(!result.ok && sketchId && result.error.related?.length ? { sketchId, constraints: result.error.related, command } : undefined);
+    const offer = !result.ok && result.error.code === 'over-constrained' && command.type === 'add-constraint' && isDimension(command.constraint) && !command.constraint.reference;
+    this.referenceOffer.set(offer ? command : undefined);
     return result.ok;
+  }
+
+  /** Adds the refused dimension as a reference: it shows the value without driving the sketch. */
+  async addAsReference(): Promise<boolean> {
+    const offer = this.referenceOffer();
+    if (!offer || !isDimension(offer.constraint)) return false;
+    return this.run({ ...offer, constraint: { ...offer.constraint, reference: true } });
+  }
+
+  /** The blocks sketches can place: this component's and the project's other components'. */
+  async blocks(): Promise<BlockSummary[]> {
+    return (await this.session?.blocks()) ?? [];
   }
 
   /** Removes one of the relations or dimensions a refused command conflicted with, then runs that command again. */
@@ -410,10 +462,17 @@ export class DesignStore {
     return result?.ok ? result.value : undefined;
   }
 
-  /** The model as one HTML file with a viewer, to share. */
-  async exportViewer(): Promise<void> {
-    const result = await this.session?.exportViewer();
+  /** The model to share: one HTML file with a viewer, or glTF or USDZ (CAD-180). */
+  async exportViewer(format: ViewerFormat = 'html'): Promise<void> {
+    const result = await this.session?.exportViewer(format);
     if (result && !result.ok) this.error.set(result.error.message);
+  }
+
+  /** The model as a file to show in augmented reality; `undefined` (with the error shown) when there is nothing to show. */
+  async viewerFile(format: ViewerFormat): Promise<{ readonly name: string; readonly bytes: Uint8Array } | undefined> {
+    const result = await this.session?.viewerFile(format);
+    if (result && !result.ok) this.error.set(result.error.message);
+    return result?.ok ? result.value : undefined;
   }
 
   /** Opens a side panel (or closes it with `undefined`), leaving sketches and dialogs. */
@@ -469,10 +528,12 @@ export class DesignStore {
     this.tool.set(tool);
     this.selection.set([]);
     this.error.set(undefined);
+    this.present({});
   }
 
   finishEditing(): void {
     this.editing.set(undefined);
+    this.session?.present({});
     this.tool.set('select');
     this.selection.set([]);
     this.preview.set(undefined);
@@ -562,6 +623,8 @@ export class DesignStore {
     this.panel.set(undefined);
     this.measurePicks.set([]);
     this.finishEditing();
+    // A feature dialog was about the document as it was.
+    this.draft.set(undefined);
     this.error.set(undefined);
   }
 }

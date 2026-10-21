@@ -12,7 +12,17 @@ Create an assembly with **Assembly** in the documents panel, then **Insert** a c
 - A component with configurations offers them in the instance's properties: each instance can show another variant (*Bracket (Long)*).
 - New instances start to the right of the others. Select an instance that no joint places and drag its **arrows** in the view, or type its **Position** (X, Y, Z in mm and a turn about Z).
 - Select an instance a joint places to drag it along the joint's free directions: arrows for a slider (or the sliding of a cylindrical, pin-slot or planar joint), a ring for a revolute joint. The joint's values follow.
-- While a component is being rebuilt, its instances show *loading*. When you change a component, in this tab or in another tab or window, its instances update. A deleted component shows *missing*.
+- While a component is being rebuilt, its instances show *loading*. When you change a component, in this tab, in another tab or window, or (on the desktop) through an agent or a script, its instances update. A deleted component shows *missing*.
+
+## Library parts and standard parts
+
+**Insert → From a library…** opens the libraries ([[User guide/Projects and versions#Libraries]]): **Standard parts** (screws, nuts, washers, inserts and bearings in every size) and the projects marked as libraries. **Find** narrows the list (`M3 12`, `nut`, `608`).
+
+1. Click a part, such as *ISO 4762 M3 × 12*.
+2. Click a hole's **edge** (or a round face) of an instance in the view: the part goes onto it with a revolute joint, its origin on the hole's axis. A screw's origin is the underside of its head, so it sits on the face with its shank in the hole; a nut's and a washer's is their bottom face. **Turn the part over** flips it.
+3. **Insert**. The panel stays open for the next hole; **Done** closes it. Without a hole, the part is inserted free, next to the others.
+
+Each part is one document of the project however often it is inserted; the bill of materials lists standard parts by their designation, in steel.
 
 ## Joints
 
@@ -43,6 +53,8 @@ Select a joint to drag its values with the sliders (or type them), to set **limi
 | Kind | Enter | Ratio |
 | --- | --- | --- |
 | Gears | the teeth of both gears | turns the other way, teeth over teeth (20 driving 10: −2) |
+| Bevel gears | the teeth of both gears | like gears: teeth over teeth, the other way about axes that point to the apex |
+| Worm and wheel | the worm's starts and the wheel's teeth | starts over teeth of the worm's turn (one start, 30 teeth: −1/30); **The other way round** when the wheel turns the wrong way |
 | Rack and pinion | the pinion's pitch diameter | π × ⌀ / 360 mm of rack per degree |
 | Belt or chain | both pulley diameters | turns the same way, diameter over diameter |
 | Sun to planet carrier | the teeth of the sun and of the ring (fixed) | sun ÷ (sun + ring) of the sun's turn (24 and 60: 2/7) |
@@ -83,7 +95,7 @@ Click **Motion** to start a study. It has a duration and *keys*: a joint's value
 
 ## Bill of materials
 
-The **bill of materials** (the stacked squares) lists every component (and configuration) with its count, material and mass, copies of patterns included. **Export CSV** saves it for a spreadsheet.
+The **bill of materials** (the stacked squares) lists every component (and configuration) with its count, material and mass, copies of patterns included; standard parts by their designation (*ISO 4762 M3 × 12*). **Export CSV** saves it for a spreadsheet.
 
 ## Check and export
 

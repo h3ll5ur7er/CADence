@@ -1,4 +1,4 @@
-import type { Appearance, BodyMesh, Matrix4 as Placement, PlaneFrame, ThreadMarker, Vec3 } from '@core/contracts';
+import type { Appearance, BodyMesh, HelixPath, Matrix4 as Placement, PlaneFrame, ThreadMarker, Vec3 } from '@core/contracts';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -36,7 +36,7 @@ import type { DragAction, MouseBindings } from '../shared/keymap';
 import { lookOf, type SectionPlane } from './looks';
 import { meshVertices, type Pick, pickAt, type PickKind, pickKey, type TopologyPick } from './picking';
 import type { StressField, SurfaceAnalysis } from './surface-analysis';
-import { createBody, createPlane, createSketch, edgeHighlight, faceHighlight, lines, releaseGeometry, threadHelix, type ViewportTheme } from './scene-content';
+import { createBody, createPlane, createSketch, edgeHighlight, faceHighlight, helixCurve, lines, releaseGeometry, threadHelix, type ViewportTheme } from './scene-content';
 import type { SketchDisplay } from './sketch-display';
 import type { Affine } from './sketch-planes';
 
@@ -120,6 +120,8 @@ export class ViewportScene {
   private readonly annotations = new Group();
   private readonly grid: Group;
   private readonly threads = new Group();
+  /** Helix features, as curves (CAD-161). */
+  private readonly helices = new Group();
   /** Lines from where exploded parts were to where they are. */
   private readonly trails = new Group();
   private readonly parts = new Group();
@@ -138,6 +140,9 @@ export class ViewportScene {
   private transition: { from: Quaternion; to: Quaternion; start: number; distance: number } | undefined;
   private initialized = false;
   private pressed: { x: number; y: number } | undefined;
+  /** Fingers on the view: a gesture of two (pan, pinch) picks nothing when they lift. */
+  private readonly touching = new Set<number>();
+  private gesture = false;
   private handle: { readonly controls: TransformControls; readonly proxy: Object3D } | undefined;
   /** Faces coloured by a surface analysis instead of their looks. */
   private analysis: SurfaceAnalysis | undefined;
@@ -178,13 +183,14 @@ export class ViewportScene {
     this.origin = createOrigin(theme);
     this.model.enabled = false;
     this.model.add(this.bodies, this.parts);
-    this.scene.add(this.origin, this.model, this.sketches, this.planes, this.threads, this.trails, this.highlights, this.annotations);
+    this.scene.add(this.origin, this.model, this.sketches, this.planes, this.threads, this.helices, this.trails, this.highlights, this.annotations);
     this.controls.target.copy(homeTarget);
     this.placeCamera(viewDirections.home, homeDistance);
 
     eventTarget.addEventListener('pointermove', this.hover);
     eventTarget.addEventListener('pointerdown', this.press);
     eventTarget.addEventListener('pointerup', this.release);
+    eventTarget.addEventListener('pointercancel', this.cancel);
   }
 
   async init(): Promise<RendererBackend> {
@@ -347,6 +353,12 @@ export class ViewportScene {
     this.requestRender();
   }
 
+  /** Helix features as curves in the construction colour. */
+  setHelices(helices: readonly HelixPath[]): void {
+    this.replace(this.helices, helices.map((h) => helixCurve(h, this.theme.construction)));
+    this.requestRender();
+  }
+
   setPlanes(frames: readonly PlaneFrame[]): void {
     this.replace(this.planes, frames.map((f) => createPlane(f, this.theme.construction)));
   }
@@ -497,6 +509,7 @@ export class ViewportScene {
     this.eventTarget.removeEventListener('pointermove', this.hover);
     this.eventTarget.removeEventListener('pointerdown', this.press);
     this.eventTarget.removeEventListener('pointerup', this.release);
+    this.eventTarget.removeEventListener('pointercancel', this.cancel);
     this.setHandle(undefined);
     this.controls.dispose();
     disposeTree(this.scene);
@@ -581,12 +594,26 @@ export class ViewportScene {
   };
 
   private readonly press = (event: PointerEvent): void => {
-    this.pressed = event.button === 0 ? { x: event.clientX, y: event.clientY } : undefined;
+    if (event.pointerType === 'touch') {
+      this.touching.add(event.pointerId);
+      // The first finger starts a gesture afresh; a second makes it a pan or pinch.
+      this.gesture = this.touching.size > 1;
+    } else {
+      this.gesture = false;
+    }
+    this.pressed = event.button === 0 && !this.gesture ? { x: event.clientX, y: event.clientY } : undefined;
+  };
+
+  private readonly cancel = (event: PointerEvent): void => {
+    this.touching.delete(event.pointerId);
+    this.pressed = undefined;
   };
 
   private readonly release = (event: PointerEvent): void => {
     const pressed = this.pressed;
     this.pressed = undefined;
+    this.touching.delete(event.pointerId);
+    if (this.gesture) return;
     // A press on the move handle drags it; it picks nothing.
     if (this.handleDragging) return;
     if (!pressed || Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) > clickTolerance) return;
@@ -811,7 +838,10 @@ export class ViewportScene {
   private frameBox(box: Box3, direction: Vector3): void {
     const center = box.getCenter(new Vector3());
     const radius = Math.max(1, box.max.distanceTo(box.min) / 2);
-    const distance = (radius / Math.sin((fov * Math.PI) / 360)) * 1.15;
+    // The narrower of the two angles of view: on a phone held upright, the width (CAD-179).
+    const vertical = (fov * Math.PI) / 360;
+    const horizontal = Math.atan(Math.tan(vertical) * (this.size.width / Math.max(this.size.height, 1)));
+    const distance = (radius / Math.sin(Math.min(vertical, horizontal))) * 1.15;
     this.perspective.near = Math.max(0.01, distance / 2000);
     this.perspective.far = distance * 100;
     this.perspective.updateProjectionMatrix();

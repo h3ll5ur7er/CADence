@@ -1,8 +1,12 @@
 import type {
+  BodyDifference,
   BodyMesh,
   BodyOperation,
   BodyState,
+  CornerRelief,
   FlangeMarker,
+  HelixPath,
+  HemStyle,
   Matrix4,
   PlaneFrame,
   Profile,
@@ -28,6 +32,17 @@ export type PathPiece =
   | { readonly kind: 'line'; readonly start: Vec3; readonly end: Vec3 }
   | { readonly kind: 'arc'; readonly start: Vec3; readonly mid: Vec3; readonly end: Vec3 }
   | { readonly kind: 'bezier'; readonly points: readonly [Vec3, Vec3, Vec3, Vec3] };
+
+/** A helix as a sweep path (CAD-161). */
+export type HelixPiece = { readonly kind: 'helix' } & HelixPath;
+
+/** What sheet metal features need: the sheet's rules, the corner relief, and the flanges earlier features made (corners with them get reliefs too). */
+export interface SheetInput {
+  readonly thickness: number;
+  readonly bendRadius: number;
+  readonly relief?: { readonly shape: CornerRelief; readonly size: number };
+  readonly flanges?: readonly FlangeMarker[];
+}
 
 /** Where one copy of a pattern goes: turned about an axis (radians), then shifted. */
 export interface Placement {
@@ -69,25 +84,42 @@ export type ModelingRequest = RequestBase &
         readonly operation: BodyOperation;
       }
     | { readonly type: 'fillet' | 'chamfer'; readonly edges: readonly TopologyRef[]; readonly size: number; readonly endSize?: number }
-    | {
+    | ({
         readonly type: 'edge-flange';
         readonly edges: readonly TopologyRef[];
         readonly length: number;
         /** Radians. */
         readonly angle: number;
-        readonly thickness: number;
-        readonly bendRadius: number;
-      }
+      } & SheetInput)
+    | ({ readonly type: 'hem'; readonly edges: readonly TopologyRef[]; readonly style: HemStyle; readonly gap: number; readonly length: number } & SheetInput)
+    | ({
+        readonly type: 'miter-flange';
+        readonly edges: readonly TopologyRef[];
+        /** The profile: straight lines in a plane square to one of the edges, and that plane. */
+        readonly profile: readonly PathPiece[];
+        readonly frame: PlaneFrame;
+      } & SheetInput)
     | { readonly type: 'draft'; readonly faces: readonly TopologyRef[]; readonly plane: PlaneFrame; readonly angle: number }
     | {
         readonly type: 'rib';
         readonly frame: PlaneFrame;
         readonly path: readonly PathPiece[];
         readonly thickness: number;
-        readonly depth: number;
+        /** `next`: up to the next face of the bodies in its direction. */
+        readonly depth: number | 'next';
         readonly direction: 'normal' | 'reverse' | 'symmetric';
       }
     | { readonly type: 'shell'; readonly faces: readonly TopologyRef[]; readonly thickness: number }
+    | {
+        /** Profiles wrapped or projected onto a face, raised out of it or cut into it (wrap.ts). */
+        readonly type: 'wrap';
+        readonly frame: PlaneFrame;
+        readonly profiles: readonly Profile[];
+        readonly face: TopologyRef;
+        readonly method: 'wrap' | 'project';
+        readonly depth: number;
+        readonly operation: 'emboss' | 'engrave';
+      }
     | {
         readonly type: 'linear-pattern';
         readonly tools: readonly ToolInput[];
@@ -143,7 +175,7 @@ export type ModelingRequest = RequestBase &
         readonly type: 'sweep';
         readonly frame: PlaneFrame;
         readonly profiles: readonly Profile[];
-        readonly path: readonly PathPiece[];
+        readonly path: readonly (PathPiece | HelixPiece)[];
         readonly closed: boolean;
         readonly operation: BodyOperation;
       }
@@ -177,7 +209,7 @@ export interface ModelingOutcome {
   readonly error?: string;
   /** Where a thread feature put its thread. */
   readonly thread?: ThreadMarker;
-  /** Where an edge flange feature put its flanges. */
+  /** Where a sheet metal feature (edge flange, hem, miter flange) put its flanges. */
   readonly flanges?: readonly FlangeMarker[];
 }
 
@@ -201,6 +233,11 @@ export interface ModelingEngine {
   planeOf(bodies: readonly BodyState[], face: TopologyRef): Promise<Result<PlaneFrame>>;
   tessellate(bodies: readonly BodyState[]): Promise<BodyMesh[]>;
   /**
+   * The material added from `before` to `after` (each body of `after` without all of `before`) and
+   * removed (the other way round), as meshes whose body ids are `added:<id>` and `removed:<id>`.
+   */
+  compare(before: readonly BodyState[], after: readonly BodyState[]): Promise<Result<BodyDifference>>;
+  /**
    * A joint frame in body coordinates: on a flat face its centre and outward normal; on a cylinder,
    * cone or circular edge a point and direction of its axis; on a straight edge its middle and
    * direction. Axes without an inside point along their largest positive world axis.
@@ -211,8 +248,8 @@ export interface ModelingEngine {
    * (OCCT HLR), a section's cut, and the named points, circles and lines to dimension.
    */
   drawView(bodies: readonly BodyState[], request: ViewRequest): Promise<Result<ViewGeometry>>;
-  /** The bodies' solids and names, for publishing as a component result. */
-  snapshot(bodies: readonly BodyState[]): Promise<Uint8Array>;
+  /** The bodies' solids and names, and the threads on them (CAD-166), for publishing as a component result. */
+  snapshot(bodies: readonly BodyState[], threads?: readonly ThreadMarker[]): Promise<Uint8Array>;
   /**
    * How many times the kernel was started again after a failure (CAD-133): the shapes of earlier
    * generations are gone, so what held them (open documents) reads them again.

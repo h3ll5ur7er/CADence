@@ -1,6 +1,6 @@
 import type { DrawingAnnotation, DrawingView, Sheet, TitleBlock, Vec2, Vec3, ViewAnchor } from '@core/contracts';
 import type { DrawingCommand, DrawingSession, DrawingState, SheetAnchor, SheetLayout } from '@core/managers/drawing';
-import { CadenceError, type ExportTarget, unwrap } from './results';
+import { CadenceError, deliveredSince, type ExportTarget, unwrap } from './results';
 
 const round = (value: number) => Math.round(value * 1000) / 1000;
 const roundPoint = (p: Vec2): Vec2 => [round(p[0]), round(p[1])];
@@ -132,7 +132,7 @@ export class DrawingScript {
   private async resolved(command: DrawingCommand): Promise<DrawingCommand> {
     if (command.type !== 'add-annotation' && command.type !== 'edit-annotation') return command;
     const given = command.annotation as unknown as Record<string, unknown>;
-    const fields = ['anchors', 'circle', 'a', 'b'].filter((f) => f in given);
+    const fields = ['anchors', 'circle', 'a', 'b', 'edge'].filter((f) => f in given);
     const refs = (value: unknown) => (Array.isArray(value) ? value : [value]).some((a) => a && typeof a === 'object' && 'ref' in a);
     if (!fields.some((f) => refs(given[f]))) return command;
     await this.ready();
@@ -214,6 +214,8 @@ export class DrawingScript {
           return { ...a, circle: short(a.circle) as ViewAnchor };
         case 'center-line':
           return { ...a, a: short(a.a) as ViewAnchor, b: short(a.b) as ViewAnchor };
+        case 'surface-finish':
+          return a.edge ? { ...a, edge: short(a.edge) as ViewAnchor } : a;
         default:
           return a;
       }
@@ -297,7 +299,7 @@ export class DrawingScript {
     if (options.to) this.exports.deliverNextTo(options.to);
     const before = this.exports.delivered.length;
     unwrap(await (format === 'pdf' ? this.session.exportPdf() : this.session.exportDxf()));
-    return this.exports.delivered[before] as string;
+    return deliveredSince(this.exports, before) as string;
   }
 
   close(): void {

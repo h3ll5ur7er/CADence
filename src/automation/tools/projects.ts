@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
-import type { ConflictChoice, DocumentId, RemoteCredentials } from '@core/contracts';
+import type { ConflictChoice, DocumentId, ProjectId, RemoteCredentials } from '@core/contracts';
 import type { Cadence, ExportTarget } from '../api';
 import { CadenceError, unwrap } from '../results';
 import { templates } from '../templates';
@@ -45,13 +45,13 @@ export function projectTools(cadence: Cadence, env: NodeJS.ProcessEnv = process.
     },
     {
       name: 'delete_project',
-      description: 'Deletes a project with all its documents and its version history, for good. Export it first (export_project) to keep a copy.',
+      description: 'Moves a project with all its documents and its version history to the trash, where it stays for 30 days (trash restores it or deletes it for good).',
       inputSchema: object({ project: projectArg }, ['project']),
       run: async (args) => {
         const project = await cadence.project(String(args['project']));
         for (const document of await cadence.projects.listDocuments(project.id)) cadence.forget(document.id);
         await cadence.projects.deleteProject(project.id);
-        return `Deleted ${project.name}.`;
+        return `Moved ${project.name} to the trash (restore it with trash).`;
       },
     },
     {
@@ -70,11 +70,11 @@ export function projectTools(cadence: Cadence, env: NodeJS.ProcessEnv = process.
     {
       name: 'export_project',
       description: 'Writes a project as a .cadence archive (its documents and imported originals, with history: its versions too), to back it up or hand it on. Returns the path.',
-      inputSchema: object({ project: projectArg, history: { type: 'boolean', description: 'Include the version history.' }, path: string('Where to write the archive (default: the exports folder).') }, ['project']),
+      inputSchema: object({ project: projectArg, history: { type: 'boolean', description: 'Include the version history.' }, libraries: { type: 'boolean', description: 'Include the libraries the project uses, each with its history.' }, path: string('Where to write the archive (default: the exports folder).') }, ['project']),
       run: async (args) => {
         if (args['path'] !== undefined) exports.deliverNextTo(String(args['path']));
         const before = exports.delivered.length;
-        unwrap(await cadence.projects.exportProject(await projectId(args), { history: args['history'] === true }));
+        unwrap(await cadence.projects.exportProject(await projectId(args), { history: args['history'] === true, libraries: args['libraries'] === true }));
         return exports.delivered[before];
       },
     },
@@ -90,13 +90,14 @@ export function projectTools(cadence: Cadence, env: NodeJS.ProcessEnv = process.
     {
       name: 'versions',
       description:
-        "A project's version history: list (a project's, or a document's with document), record (a version now, with a message), restore (a document as it was in a version; the restore is a change of its own), name or unname (a version, the latest by default). Copies of projects (duplicated, or imported beside their original) keep the history.",
+        "A project's version history: list (a project's, or a document's with document), record (a version now, with a message), restore (a document as it was in a version; the restore is a change of its own), compare (a document in version with it in to, or as it is now: what was added, removed, changed and moved in its timeline, sketches and parameters, in words, and for components the volume added and removed), name or unname (a version, the latest by default). Copies of projects (duplicated, or imported beside their original) keep the history.",
       inputSchema: object(
         {
-          action: { type: 'string', enum: ['list', 'record', 'restore', 'name', 'unname'] },
+          action: { type: 'string', enum: ['list', 'record', 'restore', 'compare', 'name', 'unname'] },
           project: projectArg,
           document: documentArg,
           version: string('A version id (from list).'),
+          to: string('compare: the newer version id (the document as it is now by default).'),
           message: string('record: what changed.'),
           name: string('name, unname: the version name, e.g. "v1.0".'),
         },
@@ -105,7 +106,7 @@ export function projectTools(cadence: Cadence, env: NodeJS.ProcessEnv = process.
       run: async (args) => {
         const action = String(args['action']);
         const version = args['version'] === undefined ? undefined : String(args['version']);
-        if (action === 'restore' || (action === 'list' && args['document'] !== undefined)) {
+        if (action === 'restore' || action === 'compare' || (action === 'list' && args['document'] !== undefined)) {
           const document = String(args['document'] ?? '') as DocumentId;
           // Ids are the document's own: refuse one of another project than the one named (CAD-147).
           if (args['project'] !== undefined) {
@@ -113,7 +114,8 @@ export function projectTools(cadence: Cadence, env: NodeJS.ProcessEnv = process.
             if (found && found.projectId !== named) throw new CadenceError('wrong-project', `${found.name} is a document of another project; its id there is ${found.id}.`);
           }
           if (action === 'list') return cadence.projects.documentHistory(document);
-          if (!version) throw new CadenceError('usage', 'restore needs a document and a version.');
+          if (!version) throw new CadenceError('usage', `${action} needs a document and a version.`);
+          if (action === 'compare') return cadence.compareVersions(document, version, args['to'] === undefined ? undefined : String(args['to']));
           unwrap(await cadence.projects.restoreDocument(document, version));
           cadence.forget(document);
           return `Restored as of ${version}.`;
@@ -139,14 +141,23 @@ export function projectTools(cadence: Cadence, env: NodeJS.ProcessEnv = process.
     {
       name: 'sync_project',
       description:
-        'Syncs a project with its git repository (sign-in from $CADENCE_GIT_USERNAME and $CADENCE_GIT_PASSWORD), after setting the repository with url. Answers what happened; when both sides changed documents, it lists them: sync again with resolutions ({"<path>": "mine" | "theirs"}).',
-      inputSchema: object({ project: projectArg, url: string('The repository to sync with from now on.'), resolutions: { type: 'object', additionalProperties: { type: 'string', enum: ['mine', 'theirs'] }, description: 'Which side to keep for each conflict, by its path.' } }, ['project']),
+        'Syncs a project with its git repository (sign-in from $CADENCE_GIT_USERNAME and $CADENCE_GIT_PASSWORD), after setting the repository with url. Answers what happened. Documents changed on both sides are merged by their timeline items, sketch elements and parameters; what both changed differently is listed per document (items, each with how mine and theirs have it): sync again with resolutions, {"<path>#<item path>": "mine" | "theirs"} per item, or {"<path>": "mine" | "theirs"} for a whole document. With libraries, the libraries the project uses that have repositories of their own sync too.',
+      inputSchema: object({ project: projectArg, url: string('The repository to sync with from now on.'), resolutions: { type: 'object', additionalProperties: { type: 'string', enum: ['mine', 'theirs'] }, description: 'Which side to keep for each conflict: by "<path>#<item path>" per item, or by the path of the document for all of it.' }, libraries: { type: 'boolean', description: 'Also sync the libraries the project uses.' } }, ['project']),
       run: async (args) => {
         const project = await projectId(args);
         if (args['url'] !== undefined) unwrap(await cadence.projects.setRemote(project, { url: String(args['url']) }));
         const outcome = unwrap(await cadence.projects.syncProject(project, credentials(env), args['resolutions'] as Readonly<Record<string, ConflictChoice>> | undefined));
+        // The libraries it uses are projects of their own, synced with their own repositories (CAD-151).
+        const libraries: Record<string, unknown> = {};
+        if (args['libraries'] === true) {
+          const used = new Set((await cadence.projects.listDocuments(project)).flatMap((d) => (d.library ? [d.library.library] : [])));
+          for (const library of (await cadence.projects.listLibraries()).filter((l) => used.has(l.id) && l.projectId)) {
+            const found = await cadence.projects.findProject(library.projectId as ProjectId);
+            if (found?.remote) libraries[library.name] = unwrap(await cadence.projects.syncProject(found.id, credentials(env)));
+          }
+        }
         cadence.forget();
-        return outcome;
+        return Object.keys(libraries).length ? { ...outcome, libraries } : outcome;
       },
     },
     {

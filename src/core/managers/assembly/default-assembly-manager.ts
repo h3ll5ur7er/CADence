@@ -3,6 +3,7 @@ import type { DocumentAccess } from '@core/access/document';
 import type { ProjectAccess } from '@core/access/project';
 import type { ExternalFileAccess } from '@core/access/external-file';
 import {
+  bodyMaterial,
   type AssemblyDocument,
   type BodyMesh,
   type BodyState,
@@ -11,9 +12,11 @@ import {
   type DomainEvents,
   fail,
   type Interference,
+  type ImportedDocument,
   isModelFormat,
   type JointOrigin,
   type Material,
+  materialNames,
   materials,
   type Matrix4,
   type Measurement,
@@ -34,6 +37,7 @@ import type { Clock } from '@core/utilities/clock';
 import { compose, fromFrame, invertRigid, transformPoint, translation } from '@core/utilities/math';
 import { toCsv } from '@core/utilities/csv';
 import type { EventBus } from '@core/utilities/messaging';
+import type { ViewerFormat } from '@core/utilities/scene';
 import type {
   AssemblyCommand,
   AssemblyFormat,
@@ -66,6 +70,32 @@ export interface AssemblyManagerDependencies {
   readonly clock: Clock;
 }
 
+/**
+ * A circuit board's parts: the project's imported STEP files named like the 3D models its parts
+ * refer to (CAD-170), and a key for its solids that changes when they do.
+ */
+async function boardParts(
+  access: { readonly documents: DocumentAccess; readonly assets: AssetAccess; readonly interchange: InterchangeEngine },
+  document: ImportedDocument,
+  bytes: Uint8Array,
+): Promise<{ parts?: ReadonlyMap<string, Uint8Array>; key: string }> {
+  if (document.format !== 'kicad_pcb') return { key: document.assetId };
+  // A copy: the geometry worker takes the bytes it is sent.
+  const wanted = new Set(await access.interchange.partFiles(bytes.slice(), document.format));
+  const parts = new Map<string, Uint8Array>();
+  const used: string[] = [];
+  for (const summary of await access.documents.enumerate(document.projectId)) {
+    const name = summary.name.toLowerCase();
+    if (summary.format !== 'step' || !wanted.has(name) || parts.has(name)) continue;
+    const step = await access.documents.load(summary.id);
+    const asset = step?.kind === 'imported' ? await access.assets.fetch(step.assetId) : undefined;
+    if (!asset || step?.kind !== 'imported') continue;
+    parts.set(name, asset.bytes);
+    used.push(step.assetId);
+  }
+  return { parts, key: [document.assetId, ...used.sort()].join('+') };
+}
+
 interface LoadedComponent {
   readonly view: ComponentView;
   readonly bodies: readonly BodyState[];
@@ -73,7 +103,14 @@ interface LoadedComponent {
   readonly stamp: string;
   /** What its parts weigh by. */
   readonly material: Material;
+  /** Its bodies' own materials, by body id (CAD-158). */
+  readonly bodyMaterials?: Readonly<Record<string, Material>>;
 }
+
+/** The densities of a component's bodies that have a material of their own. */
+const densities = (component: LoadedComponent) => Object.fromEntries(Object.entries(component.bodyMaterials ?? {}).map(([body, m]) => [body, m.density]));
+/** The materials a component's bodies are made of, by name. */
+const materialsOf = (component: LoadedComponent) => materialNames(component, component.bodies.map((b) => b.id));
 
 interface Derived {
   readonly poses: ReadonlyMap<string, Matrix4>;
@@ -229,7 +266,7 @@ class Session implements AssemblySession {
     const parts: AssemblyProperties['parts'][number][] = [];
     for (const { instance, component, transform } of this.readyInstances()) {
       if (instance.appearance?.hidden) continue;
-      const bodies = await this.deps.analysis.properties(component.bodies, component.material.density);
+      const bodies = await this.deps.analysis.properties(component.bodies, component.material.density, densities(component));
       const partMass = bodies.reduce((sum, b) => sum + b.mass, 0);
       for (const body of bodies) {
         const center = transformPoint(transform, body.centerOfMass);
@@ -237,7 +274,7 @@ class Session implements AssemblySession {
         volume += body.volume;
       }
       mass += partMass;
-      parts.push({ instance: instance.id, name: instance.name, material: component.material.name, mass: partMass });
+      parts.push({ instance: instance.id, name: instance.name, material: materialsOf(component), mass: partMass });
     }
     const centerOfMass: Vec3 = mass > 0 ? [(moment[0] as number) / mass, (moment[1] as number) / mass, (moment[2] as number) / mass] : [0, 0, 0];
     return { mass, volume, centerOfMass, parts };
@@ -324,8 +361,8 @@ class Session implements AssemblySession {
       }
       const configuration = instance.configuration ? component.view.configurations?.find((c) => c.id === instance.configuration)?.name : undefined;
       const name = this.components.get(source)?.view.name.replace(/ \(.*\)$/, '') ?? 'Component';
-      const mass = this.deps.analysis.properties(component.bodies, component.material.density).then((bodies) => bodies.reduce((sum, b) => sum + b.mass, 0));
-      lines.set(source, { line: { component: name, ...(configuration ? { configuration } : {}), material: component.material.name }, instances: [instance.id], mass });
+      const mass = this.deps.analysis.properties(component.bodies, component.material.density, densities(component)).then((bodies) => bodies.reduce((sum, b) => sum + b.mass, 0));
+      lines.set(source, { line: { component: name, ...(configuration ? { configuration } : {}), material: materialsOf(component) }, instances: [instance.id], mass });
     }
     const result: BomLine[] = [];
     for (const { line, instances, mass } of lines.values()) result.push({ ...line, count: instances.length, mass: await mass, instances });
@@ -379,7 +416,7 @@ class Session implements AssemblySession {
     // Every part, also those still being regenerated.
     await this.loaded();
     const bodies = this.readyInstances().flatMap(({ instance, component, transform }) =>
-      component.bodies.map((body, k) => ({ name: component.bodies.length > 1 ? `${instance.name} (${k + 1})` : instance.name, key: body.key, transform })),
+      component.bodies.map((body, k) => ({ name: component.bodies.length > 1 ? `${instance.name} (${k + 1})` : instance.name, key: body.key, transform, material: bodyMaterial(component, body.id).name })),
     );
     if (bodies.length === 0) return fail({ code: 'nothing-to-export', message: 'Insert components with bodies first.' });
     try {
@@ -391,7 +428,14 @@ class Session implements AssemblySession {
     }
   }
 
-  async exportViewer(): Promise<Result<void>> {
+  async exportViewer(format: ViewerFormat = 'html'): Promise<Result<void>> {
+    const file = await this.viewerFile(format);
+    if (!file.ok) return file;
+    await this.deps.externalFiles.deliver(file.value);
+    return ok(undefined);
+  }
+
+  async viewerFile(format: ViewerFormat): Promise<Result<{ readonly name: string; readonly mediaType: string; readonly bytes: Uint8Array }>> {
     await this.loaded();
     const parts = this.readyInstances()
       .filter(({ instance }) => !instance.appearance?.hidden)
@@ -411,10 +455,8 @@ class Session implements AssemblySession {
         }),
       );
     if (parts.length === 0) return fail({ code: 'nothing-to-export', message: 'Insert components with bodies first.' });
-    const { viewerHtml } = await import('@core/utilities/viewer');
-    const bytes = new TextEncoder().encode(viewerHtml({ title: this.document.name, parts }));
-    await this.deps.externalFiles.deliver({ name: `${this.document.name}.html`, mediaType: 'text/html', bytes });
-    return ok(undefined);
+    const { viewerFile } = await import('@core/utilities/scene');
+    return ok(await viewerFile({ title: this.document.name, parts }, format));
   }
 
   async saveRecording(bytes: Uint8Array, studyName: string): Promise<void> {
@@ -558,28 +600,30 @@ class Session implements AssemblySession {
       return;
     }
     const material = document.material ?? defaultMaterial;
+    const made = { material, ...(document.bodyMaterials ? { bodyMaterials: document.bodyMaterials } : {}) };
     const result = await this.deps.assets.latestResult(id, configuration);
     const stamp = resultStamp(document.modifiedAt, (await this.deps.projects.find(document.projectId))?.parameters);
     if (result?.stamp !== stamp) {
       const requests = this.requests.get(source) ?? 0;
       if (reason === 'regenerated' && requests >= maxRequests) {
-        this.hold(source, { view: view('missing', []), bodies: [], stamp: '', material });
+        this.hold(source, { view: view('missing', []), bodies: [], stamp: '', ...made });
         return;
       }
       this.requests.set(source, requests + 1);
-      this.hold(source, { view: view('loading', previous?.view.bodies ?? []), bodies: previous?.bodies ?? [], stamp: previous?.stamp ?? '', material });
+      this.hold(source, { view: view('loading', previous?.view.bodies ?? []), bodies: previous?.bodies ?? [], stamp: previous?.stamp ?? '', ...made });
       this.deps.events.publish('regenerateComponent', { documentId: id, ...(configuration ? { configuration } : {}) });
       return;
     }
     this.requests.delete(source);
     const appearances = document.appearances ?? {};
     if (previous?.stamp === result.stamp && previous.view.status === 'ready') {
-      this.hold(source, { ...previous, view: { ...view('ready', previous.view.bodies), appearances }, material });
+      const { bodyMaterials: _before, ...kept } = previous;
+      this.hold(source, { ...kept, view: { ...view('ready', previous.view.bodies), appearances }, ...made });
       return;
     }
     const bodies = await this.deps.modeling.restore(result.bytes, `result:${source}:${result.stamp}`);
     const meshes = bodies.length ? await this.deps.modeling.tessellate(bodies) : [];
-    this.hold(source, { view: { ...view('ready', meshes), appearances }, bodies, stamp: result.stamp, material });
+    this.hold(source, { view: { ...view('ready', meshes), appearances }, bodies, stamp: result.stamp, ...made });
   }
 
   /**
@@ -591,15 +635,18 @@ class Session implements AssemblySession {
     const missing = () => {
       this.hold(id, { view: { id, name, status: 'missing', bodies: [] }, bodies: [], stamp: '', material: defaultMaterial });
     };
-    if (this.components.get(id)?.stamp === assetId) return;
+    // A board's solids also depend on the STEP files of its parts: its stamp says which.
+    if (format !== 'kicad_pcb' && this.components.get(id)?.stamp === assetId) return;
     const original = isModelFormat(format) ? await this.deps.assets.fetch(assetId) : undefined;
     if (!original || !isModelFormat(format)) return missing();
-    const sources = await this.deps.interchange.readSolids(original.bytes, format, `import:${assetId}`);
+    const { parts, key } = await boardParts(this.deps, document, original.bytes);
+    if (this.components.get(id)?.stamp === key) return;
+    const sources = await this.deps.interchange.readSolids(original.bytes, format, `import:${key}`, parts);
     if (!sources.ok) return missing();
-    const outcome = await this.deps.modeling.apply({ type: 'insert', feature: 'import', key: `imported:${assetId}`, bodies: [], sources: sources.value });
+    const outcome = await this.deps.modeling.apply({ type: 'insert', feature: 'import', key: `imported:${key}`, bodies: [], sources: sources.value });
     if (outcome.error) return missing();
     const meshes = await this.deps.modeling.tessellate(outcome.bodies);
-    this.hold(id, { view: { id, name, status: 'ready', bodies: meshes }, bodies: outcome.bodies, stamp: assetId, material: defaultMaterial });
+    this.hold(id, { view: { id, name, status: 'ready', bodies: meshes }, bodies: outcome.bodies, stamp: key, material: defaultMaterial });
   }
 
   /** The kinematic model: joints whose frames resolve, and the reasons of those that do not. */

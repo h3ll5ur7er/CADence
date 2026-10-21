@@ -15,6 +15,13 @@ export interface ExportTarget {
   /** Paths of the files written so far, oldest first. */
   readonly delivered: readonly string[];
   deliverNextTo(path: string): void;
+  /** Files go to the user as downloads (the app): no path is known, and exports answer with this text. */
+  readonly downloads?: string;
+}
+
+/** The path of the file written since `before` files were; in the app, that it went to the downloads. */
+export function deliveredSince(exports: ExportTarget, before: number): string | undefined {
+  return exports.delivered[before] ?? exports.downloads;
 }
 
 /** A value, or the error of a result (with the ids of what is at fault, for agents). */

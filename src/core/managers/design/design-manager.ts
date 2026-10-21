@@ -1,5 +1,6 @@
 import type {
   Appearance,
+  BodyDifference,
   BodyMesh,
   BodyProperties,
   ComponentDocument,
@@ -28,13 +29,17 @@ import type {
   TextPath,
   TextWeight,
   ThreadMarker,
+  HelixPath,
   TraceSettings,
   TopologyRef,
   ValidationReport,
   Vec2,
+  LiveWhere,
 } from '@core/contracts';
 
+import type { ViewerFormat } from '@core/utilities/scene';
 import type { ConfigurationImport } from './configurations';
+import type { LiveState, LiveTarget } from './live';
 import type { BrokenReference } from './references';
 
 /** Every change to a component is one of these commands (docs/Architecture/Decisions.md#adr-10). Ids come from the caller. */
@@ -43,9 +48,26 @@ export type DesignCommand =
   | { readonly type: 'add-sketch-geometry'; readonly sketchId: string; readonly entities: readonly SketchEntity[]; readonly constraints: readonly SketchConstraint[] }
   | { readonly type: 'add-constraint'; readonly sketchId: string; readonly constraint: SketchConstraint }
   | { readonly type: 'set-dimension'; readonly sketchId: string; readonly constraintId: string; readonly expression: string }
+  /**
+   * Makes a dimension a reference (it shows what the sketch measures and drives nothing; with a `name`,
+   * later items and parameters read it) or driving again, at the value it shows (ADR-54).
+   */
+  | { readonly type: 'set-dimension-reference'; readonly sketchId: string; readonly constraintId: string; readonly reference: boolean; readonly name?: string }
   | { readonly type: 'move-point'; readonly sketchId: string; readonly pointId: string; readonly x: number; readonly y: number }
   | { readonly type: 'toggle-construction'; readonly sketchId: string; readonly ids: readonly string[] }
   | { readonly type: 'delete-sketch-elements'; readonly sketchId: string; readonly ids: readonly string[] }
+  /**
+   * Makes a block of chosen points, curves and texts (ADR-54a): a new block sketch `block` (before this
+   * one; an empty name gets "Block 2" and so on) whose origin is `base`, placed back where they were as
+   * `insertion` (on the point `<insertion>-origin`).
+   */
+  | { readonly type: 'make-block'; readonly sketchId: string; readonly block: string; readonly name?: string; readonly ids: readonly string[]; readonly base: Vec2; readonly insertion: string }
+  /** Makes a sketch a block that other sketches can place, or an ordinary sketch again. */
+  | { readonly type: 'set-sketch-block'; readonly sketchId: string; readonly block: boolean }
+  /** Turns a placed block into plain points, curves and texts where it is (ids `<insertion>.<id in the block>`). */
+  | { readonly type: 'explode-block'; readonly sketchId: string; readonly insertion: string }
+  /** How a placed block is turned (an angle expression) and scaled (a number expression). */
+  | { readonly type: 'set-block'; readonly sketchId: string; readonly insertion: string; readonly angle: string; readonly scale: string }
   /**
    * Moves sketch elements (and the points of curves among them), then turns them about `rotate.center`.
    * A turn drops their horizontal and vertical relations, which would undo it.
@@ -89,8 +111,10 @@ export type DesignCommand =
   | { readonly type: 'replace-reference'; readonly itemId: string; readonly from: TopologyRef; readonly to: TopologyRef }
   /** A note on a timeline item (empty: none). */
   | { readonly type: 'set-note'; readonly itemId: string; readonly note: string }
-  /** Groups the items from `first` to `last` in a new folder (an empty name gets "Folder 2" and so on), or changes a folder; folders may not overlap. */
+  /** Groups the items from `first` to `last` in a new folder (an empty name gets "Folder 2" and so on), or changes a folder; a folder holds whole folders or none of them. */
   | { readonly type: 'set-folder'; readonly folder: TimelineFolder }
+  /** Moves a folder's items, the folders in it with them, to `index` (in the timeline without them); dropped between another folder's items, it is in that folder. */
+  | { readonly type: 'move-folder'; readonly folderId: string; readonly index: number }
   /** Removes a folder; its items stay. */
   | { readonly type: 'delete-folder'; readonly folderId: string }
   /** Suppresses or unsuppresses every item of a folder. */
@@ -101,6 +125,8 @@ export type DesignCommand =
   | { readonly type: 'set-parameter'; readonly parameter: Parameter }
   | { readonly type: 'delete-parameter'; readonly id: string }
   | { readonly type: 'set-material'; readonly material: Material }
+  /** What one body is made of (absent: the component's material again); mass, strength, bills of materials and exports use it (CAD-158). */
+  | { readonly type: 'set-body-material'; readonly body: string; readonly material?: Material }
   /** Replaces the configuration table; the configuration being edited must stay in it. */
   | { readonly type: 'set-configurations'; readonly configurations: readonly Configuration[] }
   /** Edits and shows a configuration (absent: the parameters' own values). */
@@ -151,6 +177,8 @@ export interface ParameterView {
   readonly display?: string;
   /** A project parameter (edited in the project, used here). */
   readonly project?: boolean;
+  /** A named reference dimension: what it measures, read only; the name of its sketch (ADR-54). */
+  readonly measured?: string;
 }
 
 export interface DesignState {
@@ -162,11 +190,15 @@ export interface DesignState {
   readonly bodies: readonly BodyMesh[];
   /** Threads, for showing on their faces. */
   readonly threads: readonly ThreadMarker[];
+  /** Helix features, for showing as curves (CAD-161). */
+  readonly helices: readonly HelixPath[];
   /** Whether the component is a sheet metal part (it has a base flange), which can be laid flat. */
   readonly sheetMetal: boolean;
   readonly parameters: readonly ParameterView[];
   readonly canUndo: boolean;
   readonly canRedo: boolean;
+  /** While editing live with others (CAD-178). */
+  readonly live?: LiveState;
 }
 
 export type DrawingFormat = 'dxf' | 'svg';
@@ -189,8 +221,18 @@ export interface InsertDrawingOptions {
   readonly trace?: TraceSettings;
 }
 
+/** A block that sketches can place: a block sketch of this component, or (with `document`) of another one of the project. */
+export interface BlockSummary {
+  readonly sketch: string;
+  readonly name: string;
+  readonly document?: DocumentId;
+  readonly documentName?: string;
+}
+
 export interface DesignSession {
   state(): DesignState;
+  /** The blocks of the project: this component's first, then those of its other components (ADR-54a). */
+  blocks(): Promise<BlockSummary[]>;
   /** Called after every change; returns the unsubscribe function. */
   subscribe(listener: (state: DesignState) => void): () => void;
   execute(command: DesignCommand): Promise<Result<void>>;
@@ -222,8 +264,15 @@ export interface DesignSession {
   exportConfigurations(): Promise<Result<void>>;
   /** Reads a configuration table from CSV and checks it; apply it with `set-configurations`. */
   readConfigurations(csv: string): Result<ConfigurationImport>;
-  /** The shown bodies as one HTML file with a viewer (turn, measure, hide), for people without CADence. */
-  exportViewer(): Promise<Result<void>>;
+  /**
+   * The shown bodies to share: one HTML file with a viewer (turn, measure, hide) for people without
+   * CADence, or glTF or USDZ for other viewers and augmented reality (CAD-180), at real size.
+   */
+  exportViewer(format?: ViewerFormat): Promise<Result<void>>;
+  /** The file `exportViewer` delivers, for the app to show itself (augmented reality). */
+  viewerFile(format: ViewerFormat): Promise<Result<{ readonly name: string; readonly mediaType: string; readonly bytes: Uint8Array }>>;
+  /** The shown bodies as a file a plugin's exporter writes from their triangles (CAD-174). */
+  exportWith(plugin: string, exporter: string): Promise<Result<void>>;
   /** Area, length, radius, distance and angle of picked faces and edges. */
   measure(refs: readonly TopologyRef[]): Promise<Result<Measurement>>;
   /** Volume, mass (from the material), centre of mass and bounding box per body. */
@@ -232,9 +281,32 @@ export interface DesignSession {
   validate(): Promise<ValidationReport>;
   /** The strength check of the stored setup, with the component's material (CAD-93). */
   simulate(): Promise<Result<SimulationResult>>;
+  /**
+   * Edits the component live with the others who have it open, through its project's CADence server
+   * (CAD-178): changes made here go to them, theirs come here, all in the server's order.
+   */
+  goLive(target: LiveTarget): Result<void>;
+  leaveLive(): void;
+  /** Tells the others where one works: the sketch, the item, the pointer. */
+  present(where: LiveWhere): void;
+}
+
+/** Two versions of a component built: their bodies, and the material added and removed between them (CAD-175). */
+export interface BodyComparison extends BodyDifference {
+  readonly before: readonly BodyMesh[];
+  readonly after: readonly BodyMesh[];
 }
 
 /** Part design workflow (docs/Architecture/Components.md#design-manager). */
 export interface DesignManager {
   open(documentId: DocumentId): Promise<Result<DesignSession>>;
+  /**
+   * Builds two versions of a component (as the Project Manager's `compareVersions` gives them, with
+   * the project parameters of each; the project's current ones when absent) and compares their bodies.
+   */
+  compareBodies(
+    before: ComponentDocument,
+    after: ComponentDocument,
+    projectParameters?: { readonly before: readonly Parameter[]; readonly after: readonly Parameter[] },
+  ): Promise<Result<BodyComparison>>;
 }

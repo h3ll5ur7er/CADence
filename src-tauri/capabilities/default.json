@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Window permissions: core APIs, read/write access to the app data folder, where project folders live, save dialogs, opening web links in the browser, and updates (check, install, restart).",
+  "description": "Window permissions: core APIs, read/write access to the app data folder, where project folders live (watched for changes other processes make), save dialogs, opening web links in the browser, and updates (check, install, restart).",
   "windows": [
     "main"
   ],
@@ -17,6 +17,8 @@
     "fs:allow-remove",
     "fs:allow-rename",
     "fs:allow-stat",
+    "fs:allow-watch",
+    "fs:allow-unwatch",
     "dialog:allow-save",
     "opener:allow-open-url",
     "updater:default",

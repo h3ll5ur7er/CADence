@@ -1,20 +1,36 @@
 import type {
+  Attachment,
+  BoardSummary,
   BodyMesh,
+  CadDocument,
   ConflictChoice,
+  DocumentChange,
   CreatableDocumentKind,
   DocumentId,
   DocumentSummary,
   ImportFormat,
+  LibraryLink,
+  LibraryPart,
+  LibrarySummary,
+  MeshRepair,
   Parameter,
   ProjectId,
+  ProjectPlugin,
   ProjectRemote,
+  ProjectScript,
+  ProjectRole,
   ProjectSummary,
   ProjectTemplate,
   RemoteCredentials,
   Result,
+  ServerInfo,
+  ServerSignIn,
+  ServerUser,
+  SharedProject,
   SketchEntity,
   SyncOutcome,
   TextOutlines,
+  TrashItem,
   Vec3,
   Version,
 } from '@core/contracts';
@@ -50,11 +66,53 @@ export type ImportedContent =
       readonly max: Vec3;
       /** Whether components and assemblies can use it as a solid (meshes up to a size). */
       readonly usableAsSolid: boolean;
+      /** A circuit board: its holes and parts (CAD-170). */
+      readonly board?: BoardSummary;
     }
   /** A drawing's sketch entities, with the outlines of its texts. */
   | { readonly kind: 'drawing'; readonly entities: readonly SketchEntity[]; readonly texts: TextOutlines; readonly min: Vec3; readonly max: Vec3 }
   /** A picture (PNG, JPEG): its size in pixels, and its bytes to show. */
   | { readonly kind: 'picture'; readonly width: number; readonly height: number; readonly mediaType: string; readonly bytes: Uint8Array };
+
+/** What a list of projects or documents shows has changed: read it again (CAD-150). */
+export type StoreChange =
+  /** The projects (a project's name, settings, notes; projects added, deleted, restored). */
+  | { readonly kind: 'projects'; readonly projectId?: ProjectId }
+  /**
+   * A document changed in another tab, window or process, or was renamed, restored or deleted; `gone`
+   * when it no longer exists. A document saved by an editor of this window is not a change.
+   */
+  | { readonly kind: 'document'; readonly documentId: DocumentId; readonly gone?: boolean };
+
+/** What a file or a link to attach is. */
+export type AttachmentInput = { readonly file: ExternalFile } | { readonly link: { readonly url: string; readonly name?: string } };
+
+/** A library part whose library has a newer version than the one the project uses (CAD-151). */
+export interface LibraryUpdate {
+  readonly document: DocumentSummary;
+  readonly link: LibraryLink;
+  /** The library's latest version. */
+  readonly latest: string;
+}
+
+/** A mesh simplified for use as a solid, to look at before keeping it (CAD-169). */
+export interface SimplifiedImport {
+  readonly content: Extract<ImportedContent, { readonly kind: 'model' }>;
+  /** Triangles of the original. */
+  readonly before: number;
+  /** What the original needed to be closed and face outwards. */
+  readonly repair: MeshRepair;
+}
+
+/** A document in two versions, and what changed from one to the other (CAD-175). */
+export interface VersionComparison {
+  readonly before: CadDocument;
+  readonly after: CadDocument;
+  /** The project's parameters in each version, which its components use. */
+  readonly projectParameters: { readonly before: readonly Parameter[]; readonly after: readonly Parameter[] };
+  /** What changed from `before` to `after`: in the document, then in the project's parameters. */
+  readonly changes: readonly DocumentChange[];
+}
 
 /** Project and document lifecycle (see docs/Architecture/Components.md#project-manager). */
 export interface ProjectManager {
@@ -63,9 +121,19 @@ export interface ProjectManager {
   findProject(id: ProjectId): Promise<ProjectSummary | undefined>;
   createProject(name: string): Promise<Result<CreatedProject>>;
   renameProject(id: ProjectId, name: string): Promise<Result<void>>;
+  /** Moves the project to the trash (CAD-148): it is kept, with its documents and history, for {@link trashDays} days. */
   deleteProject(id: ProjectId): Promise<void>;
   /** Replaces the project's parameters (checked first: names, cycles, expressions); its components regenerate. */
   setProjectParameters(id: ProjectId, parameters: readonly Parameter[]): Promise<Result<void>>;
+
+  /** Replaces the scripts kept with the project (CAD-173): names unique, parameters named as JavaScript names. */
+  setProjectScripts(id: ProjectId, scripts: readonly ProjectScript[]): Promise<Result<void>>;
+  /**
+   * Installs a plugin into the project from its source (one JavaScript file, read in the script
+   * sandbox and checked), in place of an earlier version of the same id; its features regenerate (CAD-174).
+   */
+  installPlugin(id: ProjectId, source: string): Promise<Result<ProjectPlugin>>;
+  removePlugin(id: ProjectId, pluginId: string): Promise<Result<void>>;
 
   /** Grouped by kind (components, assemblies, imported), then by name. */
   listDocuments(projectId: ProjectId): Promise<DocumentSummary[]>;
@@ -73,7 +141,46 @@ export interface ProjectManager {
   /** Without a name, the document gets the next free default name ("Component 3"). */
   createDocument(projectId: ProjectId, kind: CreatableDocumentKind, name?: string): Promise<Result<DocumentSummary>>;
   renameDocument(id: DocumentId, name: string): Promise<Result<void>>;
+  /** Moves the document to its project's trash (CAD-148); its history stays with the project. */
   deleteDocument(id: DocumentId): Promise<void>;
+
+  /** What is in the trash, newest first; what has been there longer than {@link trashDays} days is deleted for good first. */
+  listTrash(): Promise<TrashItem[]>;
+  /** Brings a project or a document back from the trash, a document as it was when it was deleted. */
+  restoreFromTrash(id: ProjectId | DocumentId): Promise<Result<TrashItem>>;
+  /** Deletes a project or a document in the trash for good. */
+  deleteFromTrash(id: ProjectId | DocumentId): Promise<Result<void>>;
+  /** Deletes everything in the trash for good. */
+  emptyTrash(): Promise<void>;
+
+  /** Replaces the project's description (Markdown, CAD-149). */
+  setProjectDescription(id: ProjectId, description: string): Promise<Result<void>>;
+  /** Keeps a file with the project as it is, or a link. */
+  addAttachment(id: ProjectId, attachment: AttachmentInput): Promise<Result<Attachment>>;
+  removeAttachment(id: ProjectId, attachmentId: string): Promise<Result<void>>;
+  /** An attached file's bytes. */
+  attachmentFile(id: ProjectId, attachmentId: string): Promise<Result<{ readonly attachment: Attachment; readonly bytes: Uint8Array }>>;
+
+  /** Marks the project as a library other projects use, or no longer (CAD-151). */
+  setLibrary(id: ProjectId, library: boolean): Promise<Result<void>>;
+  /** The built-in standard parts, then the projects marked as libraries. */
+  listLibraries(): Promise<LibrarySummary[]>;
+  /** The components a library offers. */
+  libraryParts(library: string): Promise<Result<LibraryPart[]>>;
+  /**
+   * The project's document of a library part, to insert into its assemblies: the one taken before, or
+   * the part as the library's latest version has it (`follow`: whether newer versions replace it on their own).
+   */
+  useLibraryPart(projectId: ProjectId, library: string, part: string, options?: { readonly follow?: LibraryLink['follow'] }): Promise<Result<DocumentSummary>>;
+  /** The project's library parts whose library has a newer version of them. */
+  libraryUpdates(projectId: ProjectId): Promise<LibraryUpdate[]>;
+  /** Brings library parts (all, or those given) to their library's latest version; answers those that changed. */
+  updateLibraryParts(projectId: ProjectId, documents?: readonly DocumentId[]): Promise<Result<DocumentSummary[]>>;
+  /** Whether newer library versions replace the part on their own. */
+  setLibraryFollow(id: DocumentId, follow: LibraryLink['follow']): Promise<Result<void>>;
+
+  /** Tells the listener when what lists show has changed, also in other tabs, windows and processes (CAD-150). */
+  watch(listener: (change: StoreChange) => void): () => void;
 
   importFile(projectId: ProjectId, file: ExternalFile): Promise<Result<DocumentSummary>>;
   /** Replaces an imported document's file by a newer one of the same kind (3D or drawing); what uses it regenerates. */
@@ -84,7 +191,7 @@ export interface ProjectManager {
   /** A copy of a document in its project, named "<name> (copy)". */
   duplicateDocument(id: DocumentId): Promise<Result<DocumentSummary>>;
   /** Hands the whole project over as one archive file (`.cadence`), with its version history if asked. */
-  exportProject(id: ProjectId, options?: { readonly history?: boolean }): Promise<Result<void>>;
+  exportProject(id: ProjectId, options?: { readonly history?: boolean; readonly libraries?: boolean }): Promise<Result<void>>;
   /** A new project from an archive file made by `exportProject`. */
   importProject(file: ExternalFile): Promise<Result<ProjectSummary>>;
   /** A new project from a template; its first component is ready to open. */
@@ -96,6 +203,8 @@ export interface ProjectManager {
   projectHistory(id: ProjectId): Promise<Version[]>;
   /** The versions in which a document changed, newest first. */
   documentHistory(id: DocumentId): Promise<Version[]>;
+  /** A document as it was in a version (`from`) beside another version, or beside how it is now (no `to`). */
+  compareVersions(id: DocumentId, from: string, to?: string): Promise<Result<VersionComparison>>;
   /** Brings a document back as it was in a version (a change of its own, recorded as a version). */
   restoreDocument(id: DocumentId, version: string): Promise<Result<void>>;
   /** Names a version (the latest when none is given); a name given again moves. */
@@ -113,6 +222,29 @@ export interface ProjectManager {
   /** A new project holding the latest version of a remote, synced with it from then on. */
   openRemoteProject(remote: ProjectRemote, credentials?: RemoteCredentials): Promise<Result<ProjectSummary>>;
 
+  /** A CADence server's ways to sign in (CAD-177). Signing in with a provider happens in the browser: `<server>/auth/<provider>?return=<app address>`. */
+  serverInfo(server: string): Promise<Result<ServerInfo>>;
+  /** On servers that allow it (on a private network), signing in by name alone. */
+  signInByName(server: string, name: string): Promise<Result<ServerSignIn>>;
+  serverUser(signIn: ServerSignIn): Promise<Result<ServerUser>>;
+  signOut(signIn: ServerSignIn): Promise<void>;
+  /** The projects on a server shared with the one signed in. */
+  sharedProjects(signIn: ServerSignIn): Promise<Result<SharedProject[]>>;
+  /** Puts a project on a CADence server and syncs it there; from then on its members open, sync and edit it together. */
+  shareProject(id: ProjectId, signIn: ServerSignIn): Promise<Result<SharedProject>>;
+  /** A shared project as the server has it: its members and view links. */
+  sharing(id: ProjectId, signIn: ServerSignIn): Promise<Result<SharedProject>>;
+  /** Adds or changes a member (someone who signed in to the server once: by name, e-mail address or id); owners only. */
+  setMember(id: ProjectId, signIn: ServerSignIn, who: string, role: ProjectRole): Promise<Result<SharedProject>>;
+  removeMember(id: ProjectId, signIn: ServerSignIn, userId: string): Promise<Result<SharedProject>>;
+  /** A link anyone can open the project with, to view it; owners only. */
+  addViewLink(id: ProjectId, signIn: ServerSignIn): Promise<Result<SharedProject>>;
+  removeViewLink(id: ProjectId, signIn: ServerSignIn, token: string): Promise<Result<SharedProject>>;
+  /** A project on the server here: opened (and synced) the first time, synced after that. */
+  openShared(signIn: ServerSignIn, serverProject: string): Promise<Result<ProjectSummary>>;
+  /** A project shared through a view link, opened here to view (its syncs only take versions). */
+  openViewLink(server: string, link: string): Promise<Result<ProjectSummary>>;
+
   /** Keeps a picture of a document (PNG), replacing the one before. Unknown documents are ignored. */
   saveThumbnail(id: DocumentId, png: Uint8Array): Promise<void>;
   thumbnail(id: DocumentId): Promise<Uint8Array | undefined>;
@@ -121,6 +253,13 @@ export interface ProjectManager {
   openImported(id: DocumentId): Promise<ImportedView | undefined>;
   /** Reads an imported file for the viewer. */
   previewImported(id: DocumentId): Promise<Result<ImportedContent>>;
+  /**
+   * A mesh file (STL, OBJ, 3MF) repaired and simplified by quadric error to about `triangles`
+   * triangles, for the viewer to show before it is kept (CAD-169).
+   */
+  previewSimplified(id: DocumentId, triangles: number): Promise<Result<SimplifiedImport>>;
+  /** Keeps the simplified mesh as a new imported file of the same format, "<name> (simplified)", next to the original. */
+  simplifyImported(id: DocumentId, triangles: number): Promise<Result<DocumentSummary>>;
   /** Hands the imported file to the user in another format (drawings as drawings, 3D files as 3D files). */
   exportImported(id: DocumentId, format: ImportFormat): Promise<Result<void>>;
   /** Hands a file the editor made (a picture, a video) to the user: a download or a save dialog. */

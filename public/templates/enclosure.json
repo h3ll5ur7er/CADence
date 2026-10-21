@@ -41,7 +41,7 @@
       "name": "Case",
       "createdAt": "2026-01-01T00:00:00.000Z",
       "modifiedAt": "2026-01-01T00:00:00.000Z",
-      "schemaVersion": 3,
+      "schemaVersion": 4,
       "kind": "component",
       "units": "mm",
       "parameters": [],
@@ -176,7 +176,11 @@
             {
               "kind": "face",
               "body": "case",
-              "name": "f:case:end"
+              "name": "f:case:end",
+              "shape": {
+                "type": "plane",
+                "size": 4524
+              }
             }
           ],
           "thickness": "wall"

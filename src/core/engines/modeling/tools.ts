@@ -1,12 +1,13 @@
 import { adopt, type NamedShape } from '@core/access/shape';
-import type { PlaneFrame, Profile, ProfileEdge, Vec2, Vec3 } from '@core/contracts';
+import { helixPoint, type PlaneFrame, type Profile, type ProfileEdge, type Vec2, type Vec3 } from '@core/contracts';
 import { curveAt, ellipseParameter } from '@core/utilities/math';
 import { assembleWire, type Drawing, type Edge, type Face, getOC, measureArea, Sketches, makeBezierCurve, makeLine, makeThreePointArc, makeVertex, type Shape3D, type Sketch, type Wire } from 'replicad';
 import { cross3, dot3, length3, normalize3, normalOf, scale3, sub3, toPlane, toWorld, add3 } from './geometry';
 import { nameShape, namedSurfaces } from './naming';
 import { type Line, sameLine, samePlaneIgnoringSide, type Surface } from './surfaces';
 import { loopDrawing, profilesDrawing } from './geometry';
-import type { PathPiece } from './modeling-engine';
+import { helixWire } from './helices';
+import type { HelixPiece, PathPiece } from './modeling-engine';
 import { cut, fuse, valid } from './booleans';
 import { alignSections } from './sections';
 
@@ -308,11 +309,14 @@ export function loftTool(feature: string, sections: readonly { readonly frame: P
 }
 
 /** One loop swept along the spine, its sides named from the sweep's history. */
-function sweptLoop(feature: string, loop: Profile['outer'], frame: PlaneFrame, spine: Wire, cap: (surface: Surface) => string | undefined): NamedShape {
+function sweptLoop(feature: string, loop: Profile['outer'], frame: PlaneFrame, spine: Wire, cap: (surface: Surface) => string | undefined, binormal?: Vec3): NamedShape {
   const oc = getOC();
   const wire = wireOf(loop, frame);
   const builder = new oc.BRepOffsetAPI_MakePipeShell(spine.wrapped);
+  // Along a helix the profile keeps upright about its axis, as a thread's does.
+  const fixed = binormal ? new oc.gp_Dir(binormal[0], binormal[1], binormal[2]) : undefined;
   try {
+    if (fixed) builder.SetMode(fixed);
     builder.SetTransitionMode(oc.BRepBuilderAPI_TransitionMode.BRepBuilderAPI_RightCorner);
     builder.Add(wire.wrapped, false, false);
     builder.Build();
@@ -321,17 +325,23 @@ function sweptLoop(feature: string, loop: Profile['outer'], frame: PlaneFrame, s
     return nameFromHistory(shape, feature, generatedNames(builder as never, sourcedEdges(wire, loop.edges, frame), feature), cap);
   } finally {
     builder.delete();
+    fixed?.delete();
   }
 }
 
-function edgeOf(piece: PathPiece): Edge {
+function edgeOf(piece: PathPiece | HelixPiece): Edge {
+  if (piece.kind === 'helix') return helixWire(piece).edges[0] as Edge;
   if (piece.kind === 'line') return makeLine([...piece.start], [...piece.end]);
   if (piece.kind === 'arc') return makeThreePointArc([...piece.start], [...piece.mid], [...piece.end]);
   return makeBezierCurve(piece.points.map((p) => [...p] as [number, number, number]));
 }
 
 /** Where a path ends and the direction it runs there. */
-function pathEnd(piece: PathPiece): { point: Vec3; direction: Vec3 } {
+function pathEnd(piece: PathPiece | HelixPiece): { point: Vec3; direction: Vec3 } {
+  if (piece.kind === 'helix') {
+    const [before, end] = [helixPoint(piece, 1 - 1e-6), helixPoint(piece, 1)];
+    return { point: end, direction: normalize3(sub3(end, before)) };
+  }
   if (piece.kind === 'line') return { point: piece.end, direction: normalize3(sub3(piece.end, piece.start)) };
   if (piece.kind === 'bezier') return { point: piece.points[3], direction: normalize3(sub3(piece.points[3], piece.points[2])) };
   // The arc's tangent at its end: perpendicular to the radius, turning the way it runs.
@@ -348,16 +358,18 @@ function pathEnd(piece: PathPiece): { point: Vec3; direction: Vec3 } {
  * Profiles swept along a path (holes are swept and cut out). Caps are `start` (the profile's plane)
  * and `end`; sides are named after the profile edge they come from, along the whole path.
  */
-export function sweepTool(feature: string, frame: PlaneFrame, profiles: readonly Profile[], path: readonly PathPiece[], closed: boolean): NamedShape {
+export function sweepTool(feature: string, frame: PlaneFrame, profiles: readonly Profile[], path: readonly (PathPiece | HelixPiece)[], closed: boolean): NamedShape {
   const spine = assembleWire(path.map(edgeOf));
-  const end = pathEnd(path[path.length - 1] as PathPiece);
+  const end = pathEnd(path[path.length - 1] as PathPiece | HelixPiece);
   const endPlane: Surface = { type: 'plane', normal: end.direction, offset: dot3(end.direction, end.point) };
   const cap = (surface: Surface) => (closed ? undefined : samePlaneIgnoringSide(surface, planeOf(frame)) ? 'start' : samePlaneIgnoringSide(surface, endPlane) ? 'end' : undefined);
   let result: NamedShape | undefined;
+  const helix = path.find((p) => p.kind === 'helix');
+  const binormal = helix?.kind === 'helix' ? helix.axis : undefined;
   for (const profile of profiles) {
-    let solid = sweptLoop(feature, profile.outer, frame, spine, cap);
+    let solid = sweptLoop(feature, profile.outer, frame, spine, cap, binormal);
     for (const hole of profile.holes) {
-      const cutter = sweptLoop(feature, hole, frame, spine, cap);
+      const cutter = sweptLoop(feature, hole, frame, spine, cap, binormal);
       solid = nameShape(cut(solid.shape, cutter.shape), [...namedSurfaces(solid, 'tool'), ...namedSurfaces(cutter, 'tool')], () => undefined, feature);
     }
     result = result ? nameShape(fuse(result.shape, solid.shape), [...namedSurfaces(result, 'tool'), ...namedSurfaces(solid, 'tool')], () => undefined, feature) : solid;

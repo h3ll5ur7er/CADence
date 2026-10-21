@@ -12,8 +12,7 @@ import {
   type DrawingDocument,
   type DrawingView,
   fail,
-  type Material,
-  materials,
+  materialNames,
   ok,
   type Parameter,
   type Result,
@@ -50,6 +49,11 @@ export interface DrawingManagerDependencies {
    * `modeling` draws views exactly, however long they take.
    */
   readonly views?: Pick<ModelingEngine, 'restore' | 'drawView'>;
+  /**
+   * A kernel of its own that draws, without a time limit and one at a time, the views `views` ran
+   * out of time on; each replaces the view drawn from the triangles when it is done (CAD-168).
+   */
+  readonly exact?: Pick<ModelingEngine, 'restore' | 'drawView'>;
 }
 
 interface Source {
@@ -66,13 +70,64 @@ type Drawn = ViewGeometry | { readonly error: string };
 
 const historyLimit = 200;
 const maxRequests = 3;
-const defaultMaterial = materials[0] as Material;
 /**
  * Drawn views are kept as the drawing's result (CAD-125), so other processes need not draw them
  * again. The stamp changes when what a drawn view holds changes.
  */
-const drawnStamp = 'views:3';
+const drawnStamp = 'views:4';
 const drawing = 'Drawing…';
+
+interface ExactJob {
+  readonly key: string;
+  /** Whether the view is still wanted: shown, or its drawing closed (the result is kept for next time). */
+  readonly wanted: () => boolean;
+  readonly run: (engine: Pick<ModelingEngine, 'restore' | 'drawView'>) => Promise<Result<ViewGeometry>>;
+  readonly done: (geometry: ViewGeometry) => Promise<void>;
+}
+
+/**
+ * Views drawn exactly without a time limit after they took too long (CAD-168): one at a time, in a
+ * views kernel of their own, for every drawing the manager opens.
+ */
+class ExactViews {
+  private readonly waiting: ExactJob[] = [];
+  private readonly queued = new Set<string>();
+  private running = false;
+
+  constructor(private readonly engine: Pick<ModelingEngine, 'restore' | 'drawView'> | undefined) {}
+
+  /** Whether a view is waiting or being drawn. */
+  has(key: string): boolean {
+    return this.queued.has(key);
+  }
+
+  add(job: ExactJob): void {
+    if (!this.engine || this.queued.has(job.key)) return;
+    this.queued.add(job.key);
+    this.waiting.push(job);
+    void this.next();
+  }
+
+  private async next(): Promise<void> {
+    const engine = this.engine;
+    if (this.running || !engine) return;
+    const job = this.waiting.shift();
+    if (!job) return;
+    this.running = true;
+    try {
+      if (job.wanted()) {
+        const drawn = await job.run(engine);
+        if (drawn.ok) await job.done(drawn.value);
+      }
+    } catch {
+      // Drawn from the triangles it stays.
+    } finally {
+      this.running = false;
+      this.queued.delete(job.key);
+      void this.next();
+    }
+  }
+}
 
 class Session implements DrawingSession {
   private layout: SheetLayout;
@@ -87,10 +142,12 @@ class Session implements DrawingSession {
   private readonly unsubscribe: (() => void)[];
   private queue: Promise<unknown> = Promise.resolve();
   private projectParameters: readonly Parameter[] = [];
+  private closed = false;
 
   constructor(
     private readonly deps: DrawingManagerDependencies,
     private document: DrawingDocument,
+    private readonly exact: ExactViews,
   ) {
     this.layout = layoutSheet({ document, geometry: new Map(), callouts: new Map(), parts: new Map() });
     const { events } = deps;
@@ -142,7 +199,7 @@ class Session implements DrawingSession {
   private material(): string | undefined {
     for (const view of this.document.views) {
       const source = this.sources.get(sourceKey(view.source, view.configuration))?.document;
-      if (source?.kind === 'component') return (source.material ?? defaultMaterial).name;
+      if (source?.kind === 'component') return materialNames(source);
     }
     return undefined;
   }
@@ -153,6 +210,7 @@ class Session implements DrawingSession {
   }
 
   close(): void {
+    this.closed = true;
     for (const source of this.sources.values()) void this.deps.modeling.keep(source.bodies, false);
     for (const stop of this.unsubscribe) stop();
     this.listeners.clear();
@@ -324,20 +382,71 @@ class Session implements DrawingSession {
       }
       await this.keepDrawn([...shown.values()].map((s) => s.key));
     }
-    await this.publishLayout(geometry);
+    // Those drawn from the triangles are drawn exactly meanwhile (CAD-168).
+    for (const { view, source, key } of shown.values()) {
+      const drawn = this.geometry.get(key);
+      if (drawn && 'approximate' in drawn && drawn.approximate) this.finishExactly(view, source, key);
+    }
+    const finishing = new Set([...shown].filter(([, { key }]) => this.exact.has(`${this.document.id}|${key}`)).map(([id]) => id));
+    await this.publishLayout(geometry, finishing);
   }
 
-  private async publishLayout(geometry: ReadonlyMap<string, Drawn>): Promise<void> {
+  /** Has a view that was drawn from the triangles drawn exactly, without a time limit, to replace it (CAD-168). */
+  private finishExactly(view: DrawingView, source: Source, key: string): void {
+    const bytes = source.bytes;
+    if (!bytes) return;
+    const request = this.requestOf(view, source);
+    this.exact.add({
+      key: `${this.document.id}|${key}`,
+      wanted: () => this.closed || this.inUse(key),
+      // A copy: the bytes go over to the kernel's worker, and the session keeps them.
+      run: async (engine) => engine.drawView(await engine.restore(bytes.slice(), `result:${sourceKey(view.source, view.configuration)}:${source.stamp}`), request),
+      done: (geometry) => this.finished(key, geometry),
+    });
+  }
+
+  /** Whether a drawn view is one the drawing shows now. */
+  private inUse(key: string): boolean {
+    return this.document.views.some((view) => {
+      const source = !view.detail && this.sources.get(sourceKey(view.source, view.configuration));
+      return source && source.status === 'ready' && viewKey(view, source.stamp) === key;
+    });
+  }
+
+  /** An exact view in place of the one drawn from the triangles: kept with the drawing, and shown when it is open. */
+  private finished(key: string, geometry: ViewGeometry): Promise<void> {
+    return this.serialized(async () => {
+      this.geometry.set(key, geometry);
+      const kept = await this.deps.assets.latestResult(this.document.id);
+      let views: Record<string, ViewGeometry> = {};
+      try {
+        if (kept?.stamp === drawnStamp) views = JSON.parse(new TextDecoder().decode(kept.bytes)) as Record<string, ViewGeometry>;
+      } catch {
+        // A damaged cache is replaced.
+      }
+      const bytes = new TextEncoder().encode(JSON.stringify({ ...views, [key]: geometry }));
+      await this.deps.assets.publishResult({ documentId: this.document.id, projectId: this.document.projectId, stamp: drawnStamp, bytes });
+      if (!this.closed) await this.relayout();
+    });
+  }
+
+  /** How the modeling engine is asked for a view: its direction, hidden lines and section; the parts of an assembly by instance (CAD-167). */
+  private requestOf(view: DrawingView, source: Source): ViewRequest {
+    const { u, v } = viewAxes[view.direction];
+    return { frame: { origin: [0, 0, 0], u, v }, hidden: view.hidden, ...(view.section ? { cut: view.section } : {}), ...(source.document?.kind === 'assembly' ? { prefixed: true } : {}) };
+  }
+
+  private async publishLayout(geometry: ReadonlyMap<string, Drawn>, finishing?: ReadonlySet<string>): Promise<void> {
     const material = this.material();
-    this.layout = layoutSheet({ document: this.document, geometry, callouts: this.callouts(geometry), parts: await this.partsLists(), ...(material ? { material } : {}) });
+    this.layout = layoutSheet({ document: this.document, geometry, callouts: this.callouts(geometry), parts: await this.partsLists(), ...(material ? { material } : {}), ...(finishing?.size ? { finishing } : {}) });
+
     const state = this.state();
     for (const listener of this.listeners) listener(state);
   }
 
   /** Draws a view exactly, in the views kernel when there is one; one that takes too long there is drawn from the triangles. */
   private async draw(view: DrawingView, source: Source): Promise<Drawn> {
-    const { u, v } = viewAxes[view.direction];
-    const request: ViewRequest = { frame: { origin: [0, 0, 0], u, v }, hidden: view.hidden, ...(view.section ? { cut: { offset: view.section.offset } } : {}) };
+    const request = this.requestOf(view, source);
     const { views, modeling } = this.deps;
     let drawn: Result<ViewGeometry> | undefined;
     if (views && source.bytes) {
@@ -398,7 +507,7 @@ class Session implements DrawingSession {
         const component = await this.deps.documents.load(instance.component);
         const configuration = component?.kind === 'component' && instance.configuration ? component.configurations?.find((c) => c.id === instance.configuration)?.name : undefined;
         const name = `${component?.name ?? 'Missing component'}${configuration ? ` (${configuration})` : ''}`;
-        const material = component?.kind === 'component' ? (component.material ?? defaultMaterial).name : '';
+        const material = component?.kind === 'component' ? materialNames(component) : '';
         row = { item: rows.length + 1, name, count: 0, material, key };
         rows.push(row);
       }
@@ -428,7 +537,9 @@ class Session implements DrawingSession {
 
 /** What a drawn view shows: its source's result, direction, hidden lines and section. */
 function viewKey(view: DrawingView, stamp: string): string {
-  return `${sourceKey(view.source, view.configuration)}:${stamp}|${view.direction}|${view.hidden}|${view.section?.offset ?? ''}`;
+  const { section } = view;
+  const cut = section ? `${section.offset}${section.steps?.length ? `;${section.along ?? 'u'}${section.steps.map((s) => `,${s.at}:${s.offset}`).join('')}` : ''}${section.half ? ';half' : ''}` : '';
+  return `${sourceKey(view.source, view.configuration)}:${stamp}|${view.direction}|${view.hidden}|${cut}`;
 }
 
 /** The component with a configuration's parameter values, for texts computed from its features (callouts). */
@@ -438,12 +549,17 @@ function configured(component: ComponentDocument, configuration: string | undefi
 }
 
 export class DefaultDrawingManager implements DrawingManager {
-  constructor(private readonly deps: DrawingManagerDependencies) {}
+  private readonly exact: ExactViews;
+
+  constructor(private readonly deps: DrawingManagerDependencies) {
+    this.exact = new ExactViews(deps.exact);
+  }
 
   async open(documentId: DocumentId): Promise<Result<DrawingSession>> {
     const document = await this.deps.documents.load(documentId);
     if (document?.kind !== 'drawing') return fail({ code: 'unknown-document', message: `Drawing ${documentId} does not exist.` });
-    const session = new Session(this.deps, document);
+    const session = new Session(this.deps, document, this.exact);
+
     await session.start();
     return ok(session);
   }

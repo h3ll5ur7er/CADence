@@ -2,16 +2,20 @@ import {
   asDocumentId,
   type AxisRef,
   bearings,
+  bevelMesh,
   type BodyOperation,
   type ComponentDocument,
   type Dimension,
   fail,
   type Feature,
   fitAllowance,
+  type CornerRelief,
   type FlangeMarker,
   generatorOf,
+  type HelixPath,
   isDimension,
   isFontFormat,
+  type ImportedDocument,
   isModelFormat,
   isSketch,
   isToolFeature,
@@ -25,25 +29,34 @@ import {
   type PartSpec,
   type PlaneFrame,
   type PlaneRef,
+  type PluginFeature,
   type Profile,
+  type ProfileLoop,
   type Result,
   type Sketch,
   type SketchDrawing,
   type SketchEntity,
   type SketchEquation,
+  type SketchInsertion,
+  insertedId,
+  isCurve,
   sketchOriginId,
   type SketchProjection,
+  type SpringSize,
   type ThreadMarker,
   type TraceSettings,
   type Vec2,
   type Vec3,
+  wormMesh,
 } from '@core/contracts';
 import type { AssetAccess } from '@core/access/asset';
 import type { DocumentAccess } from '@core/access/document';
+import type { ProjectAccess } from '@core/access/project';
 import type { DrawingEntities, InterchangeEngine } from '@core/engines/interchange';
-import type { AxisInput, BodyState, ModelingEngine, ModelingRequest, PathPiece, Placement, ToolInput, PartSolid } from '@core/engines/modeling';
+import type { AxisInput, BodyState, HelixPiece, ModelingEngine, ModelingRequest, PathPiece, Placement, ToolInput, PartSolid } from '@core/engines/modeling';
 import type { ParameterEngine, ParameterError, Quantity, ValueKind } from '@core/engines/parameter';
-import { type DragTarget, type FontFiles, placesAlong, type SketchEngine, type SketchPath, sketchPath } from '@core/engines/sketch';
+import { createPluginEngine, type PluginEngine, type PluginSolid } from '@core/engines/plugin';
+import { type DragTarget, type FontFiles, measureDimension, placesAlong, type SketchEngine, type SketchPath, sketchPath } from '@core/engines/sketch';
 import { contentHash } from '@core/utilities/identity';
 import { references } from './commands';
 import type { ItemStatus, ParameterView, SketchView } from './design-manager';
@@ -51,12 +64,12 @@ import type { ItemStatus, ParameterView, SketchView } from './design-manager';
 /** Imported drawings read for sketches, by original and id prefix (originals never change). */
 const drawingCache = new Map<string, Promise<Result<DrawingEntities>>>();
 
-/** Whether solving moved a handle point of a drawing kept as one piece. */
+/** Whether solving moved a handle point of a drawing kept as one piece, or the point a block is placed at. */
 function handlesMoved(before: Sketch, after: Sketch): boolean {
   const at = (sketch: Sketch, id: string) => sketch.entities.find((e) => e.id === id);
   return before.entities.some((e) => {
-    if (e.kind !== 'drawing') return false;
-    return [e.origin, e.handle].some((id) => {
+    if (e.kind !== 'drawing' && e.kind !== 'block') return false;
+    return (e.kind === 'drawing' ? [e.origin, e.handle] : [e.origin]).some((id) => {
       const [p, q] = [at(before, id), at(after, id)];
       return p?.kind === 'point' && q?.kind === 'point' && Math.hypot(p.x - q.x, p.y - q.y) > 1e-9;
     });
@@ -74,7 +87,12 @@ export interface RegenerationContext {
 export interface SheetView {
   readonly frame: PlaneFrame;
   readonly profiles: readonly Profile[];
-  readonly rules: { readonly thickness: number; readonly bendRadius: number; readonly kFactor: number };
+  readonly rules: {
+    readonly thickness: number;
+    readonly bendRadius: number;
+    readonly kFactor: number;
+    readonly relief?: { readonly shape: CornerRelief; readonly size: number };
+  };
 }
 
 export interface RegenerationEngines {
@@ -85,7 +103,38 @@ export interface RegenerationEngines {
   readonly documents: DocumentAccess;
   readonly assets: AssetAccess;
   readonly interchange: InterchangeEngine;
+  /** Plugin features: the project's plugins, and what runs them (CAD-174); one of the sandbox by default. */
+  readonly projects?: Pick<ProjectAccess, 'find'>;
+  readonly plugins?: PluginEngine;
 }
+
+/**
+ * A circuit board's parts: the project's imported STEP files named like the 3D models its parts
+ * refer to (CAD-170), and a key for its solids that changes when they do.
+ */
+async function boardParts(
+  access: { readonly documents: DocumentAccess; readonly assets: AssetAccess; readonly interchange: InterchangeEngine },
+  document: ImportedDocument,
+  bytes: Uint8Array,
+): Promise<{ parts?: ReadonlyMap<string, Uint8Array>; key: string }> {
+  if (document.format !== 'kicad_pcb') return { key: document.assetId };
+  // A copy: the geometry worker takes the bytes it is sent.
+  const wanted = new Set(await access.interchange.partFiles(bytes.slice(), document.format));
+  const parts = new Map<string, Uint8Array>();
+  const used: string[] = [];
+  for (const summary of await access.documents.enumerate(document.projectId)) {
+    const name = summary.name.toLowerCase();
+    if (summary.format !== 'step' || !wanted.has(name) || parts.has(name)) continue;
+    const step = await access.documents.load(summary.id);
+    const asset = step?.kind === 'imported' ? await access.assets.fetch(step.assetId) : undefined;
+    if (!asset || step?.kind !== 'imported') continue;
+    parts.set(name, asset.bytes);
+    used.push(step.assetId);
+  }
+  return { parts, key: [document.assetId, ...used.sort()].join('+') };
+}
+
+let defaultPlugins: PluginEngine | undefined;
 
 /** Everything derived from a document by running its timeline. */
 export interface Derived {
@@ -95,6 +144,10 @@ export interface Derived {
   readonly bodies: readonly BodyState[];
   readonly tools: Map<string, ToolInput>;
   readonly threads: readonly ThreadMarker[];
+  /** The springs made as bodies, by body (CAD-161): their sizes, for their rates. */
+  readonly springs: ReadonlyMap<string, SpringSize>;
+  /** Helix features, by feature (CAD-161): paths for sweeps, shown as curves. */
+  readonly helices: ReadonlyMap<string, HelixPath>;
   /** The component's sheet (its base flange) and edge flanges, for the flat pattern. */
   readonly sheet?: SheetView;
   readonly flanges: readonly FlangeMarker[];
@@ -157,8 +210,69 @@ const constraintLabels: Readonly<Record<string, string>> = {
   angle: 'angle',
 };
 
+/** A named reference dimension as a parameter: what it measured last (ADR-54). */
+interface NamedReference {
+  readonly id: string;
+  readonly name: string;
+  readonly expression: string;
+  readonly sketch: string;
+  readonly sketchName: string;
+  readonly dimension: string;
+  /** The sketch's place in the timeline. */
+  readonly index: number;
+  readonly angle: boolean;
+}
+
+/** A value in millimetres or radians as an expression. */
+const quantityText = (value: number, angle: boolean) => `${value.toFixed(9)} ${angle ? 'rad' : 'mm'}`;
+
+/**
+ * The document's named reference dimensions, at first with what they measured when last solved (the
+ * stored positions). Names taken by parameters, or by an earlier reference, are left out.
+ */
+function namedReferences(document: ComponentDocument, taken: ReadonlySet<string>): NamedReference[] {
+  const names = new Set(taken);
+  const found: NamedReference[] = [];
+  for (const [index, item] of document.timeline.entries()) {
+    if (!isSketch(item)) continue;
+    for (const d of item.constraints) {
+      if (!isDimension(d) || !d.reference || !d.name || names.has(d.name)) continue;
+      names.add(d.name);
+      const angle = d.kind === 'angle';
+      found.push({ id: `${item.id}/${d.id}`, name: d.name, expression: quantityText(measureDimension(item, d) ?? 0, angle), sketch: item.id, sketchName: item.name, dimension: d.id, index, angle });
+    }
+  }
+  return found;
+}
+
 /** Omit that keeps a union's members apart. */
 type WithoutKey<T> = T extends unknown ? Omit<T, 'key'> : never;
+
+/** Where a plugin's solid starts: the feature's plane moved `z` along its normal. */
+function solidFrame(plane: PluginFeature['plane'], solid: PluginSolid): PlaneFrame {
+  const { origin, u, v } = originFrames[plane];
+  const normal: Vec3 = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+  return { origin: [origin[0] + normal[0] * solid.z, origin[1] + normal[1] * solid.z, origin[2] + normal[2] * solid.z], u, v };
+}
+
+const signedArea = (points: readonly Vec2[]) =>
+  points.reduce((sum, [x, y], i) => {
+    const [nx, ny] = points[(i + 1) % points.length] as Vec2;
+    return sum + x * ny - nx * y;
+  }, 0) / 2;
+
+/** A plugin's outline as a profile: straight edges named by the solid and the edge, outer loop counter-clockwise, holes clockwise. */
+function solidProfile(feature: string, index: number, solid: PluginSolid): Profile {
+  const loop = (points: readonly Vec2[], outer: boolean, name: string): ProfileLoop => {
+    const polygon = signedArea(points) > 0 === outer ? [...points] : [...points].reverse();
+    const edges = polygon.map((start, i) => ({ kind: 'line' as const, start, end: polygon[(i + 1) % polygon.length] as Vec2, source: `${name}e${i}` }));
+    return { edges, polygon };
+  };
+  const outer = loop(solid.outline, true, `s${index}`);
+  const holes = solid.holes.map((hole, k) => loop(hole, false, `s${index}h${k}`));
+  const area = Math.abs(signedArea(solid.outline)) - solid.holes.reduce((sum, hole) => sum + Math.abs(signedArea(hole)), 0);
+  return { id: `${feature}:${index}`, outer, holes, area };
+}
 
 const add = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const scale = (a: Vec3, s: number): Vec3 => [a[0] * s, a[1] * s, a[2] * s];
@@ -168,6 +282,9 @@ const dot = (a: Vec3, b: Vec3): number => a[0] * b[0] + a[1] * b[1] + a[2] * b[2
 const length = (a: Vec3): number => Math.hypot(a[0], a[1], a[2]);
 const unit = (a: Vec3): Vec3 => scale(a, 1 / (length(a) || 1));
 
+/** Part sizes that are plain numbers, not lengths: counts and the profile shift coefficient. */
+const scalars = new Set(['teeth', 'mateTeeth', 'starts', 'turns', 'shift']);
+
 /** Runs a component's timeline: parameters, then each sketch and feature in order. */
 export class Regeneration {
   private readonly sketches = new Map<string, SketchView>();
@@ -175,6 +292,8 @@ export class Regeneration {
   private readonly planes = new Map<string, PlaneFrame>();
   private readonly tools = new Map<string, ToolInput>();
   private readonly threads: ThreadMarker[] = [];
+  private readonly springs = new Map<string, SpringSize>();
+  private readonly helices = new Map<string, HelixPath>();
   private readonly flanges: FlangeMarker[] = [];
   private sheet: SheetView | undefined;
   private bodies: readonly BodyState[] = [];
@@ -185,6 +304,12 @@ export class Regeneration {
   /** What the printer needs added to holes (and taken off pegs) for parts to fit as designed. */
   private compensation = 0;
   private scope: ReadonlyMap<string, Quantity> = new Map();
+  /** The parameters in effect (the project's and the component's, configured). */
+  private parameterList: readonly Parameter[] = [];
+  /** Named reference dimensions, as parameters that hold what they measure (ADR-54). */
+  private measures: NamedReference[] = [];
+  /** The component's project, for its plugins. */
+  private projectId: ComponentDocument['projectId'] | undefined;
 
   constructor(
     private readonly engines: RegenerationEngines,
@@ -194,6 +319,7 @@ export class Regeneration {
   /** Runs the timeline with the project's parameters (the component's own of the same name win). */
   async run(document: ComponentDocument, context: RegenerationContext = {}): Promise<Derived> {
     this.timeline = document.timeline;
+    this.projectId = document.projectId;
     if (document.process?.kind === 'print') {
       this.layer = document.process.layerHeight;
       this.compensation = document.process.holeCompensation ?? 0;
@@ -204,13 +330,9 @@ export class Regeneration {
     const configured = (p: Parameter): Parameter => (p.name in values ? { ...p, expression: values[p.name] as string } : p);
     const own = new Set(document.parameters.map((p) => p.name));
     const shared = (context.projectParameters ?? []).filter((p) => !own.has(p.name));
-    const evaluated = this.engines.parameters.evaluateAll([...shared, ...document.parameters].map(configured));
-    if (evaluated.ok) this.scope = evaluated.value;
-    const view = (parameter: Parameter, project: boolean): ParameterView => {
-      const value = this.scope.get(parameter.name);
-      return { parameter, ...(value ? { display: display(value, document.units) } : {}), ...(project ? { project } : {}) };
-    };
-    const parameters = [...shared.map((p) => view(p, true)), ...document.parameters.map((p) => view(p, false))];
+    this.parameterList = [...shared, ...document.parameters].map(configured);
+    this.measures = namedReferences(document, new Set([...own, ...shared.map((p) => p.name)]));
+    const evaluated = this.evaluateParameters();
     const marker = document.timeline.length - document.rollbackIndex;
     for (const [index, item] of document.timeline.entries()) {
       if (index >= marker) {
@@ -221,9 +343,18 @@ export class Regeneration {
         this.items.set(item.id, { state: 'suppressed' });
         continue;
       }
-      const result = isSketch(item) ? await this.sketch(item) : await this.feature(item);
+      const result = isSketch(item) ? await this.sketch(item, index) : await this.feature(item);
       this.items.set(item.id, result.ok ? { state: 'ok' } : { state: 'error', error: result.error.message });
     }
+    const view = (parameter: Parameter, project: boolean): ParameterView => {
+      const value = this.scope.get(parameter.name);
+      return { parameter, ...(value ? { display: display(value, document.units) } : {}), ...(project ? { project } : {}) };
+    };
+    const measuredViews = this.measures.map((r): ParameterView => {
+      const value = this.scope.get(r.name);
+      return { parameter: { id: r.id, name: r.name, expression: r.expression }, ...(value ? { display: display(value, document.units) } : {}), measured: r.sketchName };
+    });
+    const parameters = [...shared.map((p) => view(p, true)), ...document.parameters.map((p) => view(p, false)), ...measuredViews];
     return {
       sketches: this.sketches,
       items: this.items,
@@ -231,11 +362,51 @@ export class Regeneration {
       bodies: this.bodies,
       tools: this.tools,
       threads: this.threads,
+      springs: this.springs,
+      helices: this.helices,
       ...(this.sheet ? { sheet: this.sheet } : {}),
       flanges: this.flanges,
       parameters,
       ...(evaluated.ok ? {} : { parameterError: evaluated.error }),
     };
+  }
+
+  /** Evaluates the parameters with the values the named reference dimensions measure so far. */
+  private evaluateParameters(): Result<Map<string, Quantity>, ParameterError> {
+    const evaluated = this.engines.parameters.evaluateAll([...this.parameterList, ...this.measures]);
+    if (evaluated.ok) this.scope = evaluated.value;
+    return evaluated;
+  }
+
+  /**
+   * The first of `names` an expression uses, also through the parameters it uses: a dimension that
+   * would read what its own sketch (or a later one) measures cannot drive it.
+   */
+  private usesAny(expression: string, names: ReadonlySet<string>): string | undefined {
+    const expressions = new Map<string, string>([...this.parameterList, ...this.measures].map((p) => [p.name, p.expression]));
+    const seen = new Set<string>();
+    const stack = this.engines.parameters.namesIn(expression);
+    while (stack.length) {
+      const name = stack.pop() as string;
+      if (seen.has(name)) continue;
+      seen.add(name);
+      if (names.has(name)) return name;
+      const next = expressions.get(name);
+      if (next !== undefined) stack.push(...this.engines.parameters.namesIn(next));
+    }
+    return undefined;
+  }
+
+  /** After a sketch solved: the values its named references measure, for everything after it. */
+  private measuredBy(sketch: Sketch, measured: ReadonlyMap<string, number>): void {
+    let changed = false;
+    this.measures = this.measures.map((r) => {
+      const value = r.sketch === sketch.id ? measured.get(r.dimension) : undefined;
+      if (value === undefined || r.expression === quantityText(value, r.angle)) return r;
+      changed = true;
+      return { ...r, expression: quantityText(value, r.angle) };
+    });
+    if (changed) this.evaluateParameters();
   }
 
   /** Evaluates an expression with the component's parameters. */
@@ -244,7 +415,7 @@ export class Regeneration {
     return value.ok ? value : fail({ code: 'invalid-expression', message: `${what} "${expression}": ${value.error.message}` });
   }
 
-  private async sketch(stored: Sketch): Promise<Result<void>> {
+  private async sketch(stored: Sketch, index = 0): Promise<Result<void>> {
     const frame = await this.frame(stored.plane);
     const unsolved = (error: string, f: PlaneFrame = originFrames.XY, conflicting?: readonly string[]) => {
       this.sketches.set(stored.id, { sketch: stored, frame: f, status: 'failed', degreesOfFreedom: 0, profiles: [], texts: new Map(), values: new Map(), error, ...(conflicting ? { conflicting } : {}) });
@@ -255,7 +426,16 @@ export class Regeneration {
     if (!projected.ok) return unsolved(projected.error.message, frame.value);
     let sketch = projected.value;
     const values = new Map<string, number>();
+    // What this sketch and later ones measure cannot drive its dimensions.
+    const later = new Set(this.measures.filter((r) => r.index >= index).map((r) => r.name));
     for (const dimension of sketch.constraints.filter(isDimension)) {
+      if (dimension.reference) {
+        const taken = dimension.name && !this.measures.some((r) => r.sketch === sketch.id && r.dimension === dimension.id);
+        if (taken) return unsolved(`The name "${dimension.name}" is already used by a parameter or another reference dimension.`, frame.value);
+        continue;
+      }
+      const read = later.size ? this.usesAny(dimension.expression, later) : undefined;
+      if (read) return unsolved(`${constraintLabels[dimension.kind]} "${dimension.expression}" uses ${read}, which this sketch or a later one measures: a reference cannot drive what it measures.`, frame.value);
       const value = this.dimension(dimension);
       if (!value.ok) return unsolved(value.error.message, frame.value);
       values.set(dimension.id, value.value);
@@ -276,7 +456,8 @@ export class Regeneration {
     }
     if (solution.status === 'failed') return unsolved('The sketch cannot satisfy these constraints. Check the dimension values.', frame.value);
     if (collapses(solution.sketch)) return unsolved('This would shrink a line, circle or arc to nothing.', frame.value);
-    this.sketches.set(sketch.id, { ...solution, frame: frame.value, values });
+    this.sketches.set(sketch.id, { ...solution, frame: frame.value, values: new Map([...values, ...solution.measured]) });
+    this.measuredBy(sketch, solution.measured);
     return ok(undefined);
   }
 
@@ -288,8 +469,14 @@ export class Regeneration {
     const projections = sketch.entities.filter((e): e is SketchProjection => e.kind === 'projection');
     const drawings = sketch.entities.filter((e): e is SketchDrawing => e.kind === 'drawing');
     const equations = sketch.entities.filter((e): e is SketchEquation => e.kind === 'equation');
-    if (!projections.length && !drawings.length && !equations.length) return ok(sketch);
+    const blocks = sketch.entities.filter((e): e is SketchInsertion => e.kind === 'block');
+    if (!projections.length && !drawings.length && !equations.length && !blocks.length) return ok(sketch);
     const entities = sketch.entities.filter((e) => !generatorOf(sketch, e.id));
+    for (const insertion of blocks) {
+      const pieces = await this.blockPieces(insertion, sketch);
+      if (!pieces.ok) return pieces;
+      entities.push(...pieces.value);
+    }
     for (const equation of equations) {
       const pieces = this.equationPieces(equation);
       if (!pieces.ok) return pieces;
@@ -353,7 +540,7 @@ export class Regeneration {
     const lengths = (entries: Record<string, string>): Result<Record<string, number>> => {
       const out: Record<string, number> = {};
       for (const [name, expression] of Object.entries(entries)) {
-        const kind = name.endsWith('Angle') || name === 'angle' ? 'angle' : name === 'teeth' ? 'scalar' : 'length';
+        const kind = name.endsWith('Angle') || name === 'angle' ? 'angle' : scalars.has(name) ? 'scalar' : 'length';
         const value = this.value(expression, kind, name);
         if (!value.ok) return value;
         out[name] = value.value;
@@ -391,10 +578,47 @@ export class Regeneration {
         return v.ok ? ok({ kind: 'post', diameter: num(v.value, 'diameter') - fitAllowance[part.fit] - this.compensation, height: num(v.value, 'height'), chamfer: 0.4 }) : v;
       }
       case 'gear': {
-        const v = lengths({ module: part.module, teeth: part.teeth, width: part.width, bore: part.bore, pressureAngle: part.pressureAngle, helixAngle: part.helixAngle, chamfer: part.chamfer ?? '0 mm' });
+        const v = lengths({ module: part.module, teeth: part.teeth, width: part.width, bore: part.bore, pressureAngle: part.pressureAngle, helixAngle: part.helixAngle, chamfer: part.chamfer ?? '0 mm', shift: part.shift ?? '0' });
         if (!v.ok) return v;
         const g = v.value;
-        return ok({ kind: 'gear', module: num(g, 'module'), teeth: num(g, 'teeth'), width: num(g, 'width'), bore: num(g, 'bore'), pressureAngle: num(g, 'pressureAngle'), helixAngle: num(g, 'helixAngle'), chamfer: num(g, 'chamfer') });
+        return ok({ kind: 'gear', module: num(g, 'module'), teeth: num(g, 'teeth'), width: num(g, 'width'), bore: num(g, 'bore'), pressureAngle: num(g, 'pressureAngle'), helixAngle: num(g, 'helixAngle'), chamfer: num(g, 'chamfer'), shift: num(g, 'shift') });
+      }
+      case 'bevel-gear': {
+        const v = lengths({ module: part.module, teeth: part.teeth, mateTeeth: part.mateTeeth, shaftAngle: part.shaftAngle, faceWidth: part.faceWidth, bore: part.bore, pressureAngle: part.pressureAngle });
+        if (!v.ok) return v;
+        const g = v.value;
+        const shaftAngle = num(g, 'shaftAngle');
+        if (!(shaftAngle > 0 && shaftAngle < Math.PI)) return fail({ code: 'invalid-input', message: 'The shaft angle must be between 0° and 180°.' });
+        if (!(num(g, 'mateTeeth') >= 6)) return fail({ code: 'invalid-input', message: 'The mate needs at least 6 teeth.' });
+        const { pitchAngle } = bevelMesh(num(g, 'module'), Math.round(num(g, 'teeth')), Math.round(num(g, 'mateTeeth')), shaftAngle);
+        return ok({ kind: 'bevel-gear', module: num(g, 'module'), teeth: num(g, 'teeth'), pitchAngle, faceWidth: num(g, 'faceWidth'), bore: num(g, 'bore'), pressureAngle: num(g, 'pressureAngle') });
+      }
+      case 'worm':
+      case 'worm-wheel': {
+        const sizes = part.kind === 'worm' ? { length: part.length } : { teeth: part.teeth, width: part.width };
+        const v = lengths({ module: part.module, starts: part.starts, leadAngle: part.leadAngle, bore: part.bore, pressureAngle: part.pressureAngle, ...sizes });
+        if (!v.ok) return v;
+        const g = v.value;
+        const lead = num(g, 'leadAngle');
+        if (!(lead > 0 && lead <= Math.PI / 4)) return fail({ code: 'invalid-input', message: 'The lead angle must be between 0° and 45°.' });
+        return part.kind === 'worm'
+          ? ok({ kind: 'worm', module: num(g, 'module'), starts: num(g, 'starts'), diameter: wormMesh(num(g, 'module'), Math.round(num(g, 'starts')), lead, 1).worm, length: num(g, 'length'), bore: num(g, 'bore'), pressureAngle: num(g, 'pressureAngle') })
+          : ok({ kind: 'worm-wheel', module: num(g, 'module'), teeth: num(g, 'teeth'), leadAngle: lead, width: num(g, 'width'), bore: num(g, 'bore'), pressureAngle: num(g, 'pressureAngle') });
+      }
+      case 'compression-spring':
+      case 'extension-spring':
+      case 'torsion-spring': {
+        const v = lengths({ wire: part.wire, outside: part.outside, turns: part.turns, ...(part.kind === 'extension-spring' ? {} : { pitch: part.pitch }), ...(part.kind === 'torsion-spring' ? { legs: part.legs } : {}) });
+        if (!v.ok) return v;
+        const g = v.value;
+        const [wire, mean, turns] = [num(g, 'wire'), num(g, 'outside') - num(g, 'wire'), num(g, 'turns')];
+        const size: SpringSize =
+          part.kind === 'compression-spring'
+            ? { kind: 'compression', wire, mean, pitch: num(g, 'pitch'), turns, ends: part.ends }
+            : part.kind === 'extension-spring'
+              ? { kind: 'extension', wire, mean, turns }
+              : { kind: 'torsion', wire, mean, pitch: num(g, 'pitch'), turns, legs: num(g, 'legs') };
+        return ok({ kind: 'spring', size });
       }
       case 'ring-gear': {
         const v = lengths({ module: part.module, teeth: part.teeth, width: part.width, outside: part.outside, pressureAngle: part.pressureAngle, helixAngle: part.helixAngle });
@@ -425,6 +649,85 @@ export class Regeneration {
         return v.ok ? ok({ kind: 'groove', length: num(v.value, 'length'), width: num(v.value, 'width'), depth: num(v.value, 'depth') }) : v;
       }
     }
+  }
+
+  /** Components read for the blocks they hold, once per regeneration. */
+  private readonly blockDocuments = new Map<string, Promise<ComponentDocument | undefined>>();
+
+  /** A block sketch: solved earlier in this run, or as last stored (later in the timeline, or in another component). */
+  private async blockSketch(insertion: SketchInsertion): Promise<Sketch | undefined> {
+    let timeline = this.timeline;
+    if (insertion.document) {
+      let loading = this.blockDocuments.get(insertion.document);
+      if (!loading) {
+        loading = this.engines.documents.load(asDocumentId(insertion.document)).then((d) => (d?.kind === 'component' ? d : undefined));
+        this.blockDocuments.set(insertion.document, loading);
+      }
+      timeline = (await loading)?.timeline ?? [];
+    }
+    const stored = timeline.find((item): item is Sketch => item.id === insertion.block && isSketch(item));
+    if (!stored?.block) return undefined;
+    const solved = insertion.document ? undefined : this.sketches.get(stored.id);
+    return solved && !solved.error ? solved.sketch : stored;
+  }
+
+  /**
+   * The curves, points and texts of a block placed in a sketch (ADR-54a): turned and scaled about the
+   * block's origin and moved to the insertion's point, fixed for the solver. What the block itself
+   * places of this sketch is left out, so a sketch never holds itself.
+   */
+  private async blockPieces(insertion: SketchInsertion, sketch: Sketch): Promise<Result<SketchEntity[]>> {
+    if (insertion.block === sketch.id && !insertion.document) return fail({ code: 'invalid-input', message: 'A block cannot be placed in itself.' });
+    const block = await this.blockSketch(insertion);
+    if (!block) return fail({ code: 'missing-input', message: `The block ${insertion.block} no longer exists. Explode or delete its placement.` });
+    const angle = this.value(insertion.angle, 'angle', 'Block angle');
+    if (!angle.ok) return angle;
+    const scale = this.value(insertion.scale, 'scalar', 'Block scale');
+    if (!scale.ok) return scale;
+    if (!(scale.value > 0)) return fail({ code: 'invalid-expression', message: 'A block is scaled by more than zero.' });
+    const origin = sketch.entities.find((e) => e.id === insertion.origin);
+    const at: Vec2 = origin?.kind === 'point' ? [origin.x, origin.y] : [0, 0];
+    const [cos, sin, s] = [Math.cos(angle.value), Math.sin(angle.value), scale.value];
+    const place = (x: number, y: number): Vec2 => [at[0] + s * (cos * x - sin * y), at[1] + s * (sin * x + cos * y)];
+    const placedHere = (id: string) => {
+      const owner = generatorOf(block, id);
+      return owner?.kind === 'block' && owner.block === sketch.id && !owner.document;
+    };
+    const content = block.entities.filter((e) => (e.kind === 'point' || isCurve(e) || e.kind === 'text') && !placedHere(e.id));
+    const id = (ref: string) => insertedId(insertion.id, ref);
+    const pieces: SketchEntity[] = [];
+    if (content.some((e) => references(e).includes(sketchOriginId))) {
+      pieces.push({ id: id(sketchOriginId), kind: 'point', x: at[0], y: at[1] });
+    }
+    const construction = (e: { readonly construction: boolean }) => e.construction || insertion.construction;
+    for (const e of content) {
+      switch (e.kind) {
+        case 'point': {
+          const [x, y] = place(e.x, e.y);
+          pieces.push({ id: id(e.id), kind: 'point', x, y });
+          break;
+        }
+        case 'line':
+          pieces.push({ ...e, id: id(e.id), start: id(e.start), end: id(e.end), construction: construction(e) });
+          break;
+        case 'circle':
+          pieces.push({ ...e, id: id(e.id), center: id(e.center), radius: e.radius * s, construction: construction(e) });
+          break;
+        case 'arc':
+          pieces.push({ ...e, id: id(e.id), center: id(e.center), start: id(e.start), end: id(e.end), construction: construction(e) });
+          break;
+        case 'ellipse':
+          pieces.push({ ...e, id: id(e.id), center: id(e.center), major: id(e.major), minorRadius: e.minorRadius * s, construction: construction(e) });
+          break;
+        case 'spline':
+          pieces.push({ ...e, id: id(e.id), points: e.points.map(id), construction: construction(e) });
+          break;
+        case 'text':
+          pieces.push({ ...e, id: id(e.id), anchor: id(e.anchor), height: e.height * s, angle: e.angle + angle.value, construction: construction(e), ...(e.along ? { along: { ...e.along, curve: id(e.along.curve), offset: e.along.offset * s } } : {}) });
+          break;
+      }
+    }
+    return ok(pieces);
   }
 
   /** The points an equation curve passes through, and the smooth curve through them. */
@@ -525,16 +828,28 @@ export class Regeneration {
   }
 
   private async feature(feature: Feature): Promise<Result<void>> {
+    if (feature.type === 'plugin') return this.pluginFeature(feature);
     if (feature.type === 'plane') {
       const frame = await this.constructionPlane(feature);
       if (!frame.ok) return frame;
       this.planes.set(feature.id, frame.value);
       return ok(undefined);
     }
+    if (feature.type === 'helix') {
+      const helix = await this.helix(feature);
+      if (!helix.ok) return helix;
+      this.helices.set(feature.id, helix.value);
+      return ok(undefined);
+    }
     const request = await this.request(feature);
     if (!request.ok) return request;
     const outcome = await this.engines.modeling.apply(request.value);
     if (outcome.error) return fail({ code: 'feature-failed', message: outcome.error });
+    // A spring made as a body of its own has a rate (CAD-161).
+    if (request.value.type === 'part' && request.value.solid.kind === 'spring') {
+      const before = new Set(this.bodies.map((b) => b.id));
+      for (const body of outcome.bodies) if (!before.has(body.id)) this.springs.set(body.id, request.value.solid.size);
+    }
     this.bodies = outcome.bodies;
     if (outcome.toolKey && isToolFeature(feature)) {
       this.tools.set(feature.id, { feature: feature.id, toolKey: outcome.toolKey, operation: feature.operation });
@@ -546,8 +861,66 @@ export class Regeneration {
     return ok(undefined);
   }
 
+  /**
+   * A plugin's feature: its parameters evaluated with the component's, its solids from the plugin (in
+   * the sandbox), each extruded in the feature's plane. Several solids of a new body become one body.
+   */
+  private async pluginFeature(feature: PluginFeature): Promise<Result<void>> {
+    const project = this.projectId === undefined ? undefined : await this.engines.projects?.find(this.projectId);
+    const plugin = project?.plugins?.find((p) => p.id === feature.plugin);
+    if (!plugin) return fail({ code: 'missing-input', message: `The plugin ${feature.plugin} ${feature.version} is not installed in this project. Install it from the Scripts panel.` });
+    const major = (version: string) => version.split('.')[0];
+    if (major(plugin.version) !== major(feature.version)) {
+      return fail({ code: 'missing-input', message: `It was made with ${plugin.name} ${feature.version}; the project has ${plugin.version}, which builds it differently. Make the feature again.` });
+    }
+    const definition = plugin.features.find((f) => f.name === feature.feature);
+    if (!definition) return fail({ code: 'missing-input', message: `${plugin.name} ${plugin.version} has no feature "${feature.feature}".` });
+    const values: Record<string, number | string> = {};
+    for (const parameter of definition.parameters) {
+      const expression = feature.parameters[parameter.name] ?? parameter.default;
+      if (parameter.kind === 'text') {
+        values[parameter.name] = expression;
+        continue;
+      }
+      const kind: ValueKind = parameter.kind === 'number' ? 'scalar' : parameter.kind;
+      const value = this.value(expression, kind, parameter.label ?? parameter.name);
+      if (!value.ok) return value;
+      values[parameter.name] = parameter.kind === 'angle' ? (value.value * 180) / Math.PI : value.value;
+    }
+    defaultPlugins ??= createPluginEngine();
+    const solids = await (this.engines.plugins ?? defaultPlugins).build(plugin, feature.feature, values);
+    if (!solids.ok) return solids;
+    const made: string[] = [];
+    for (const [index, solid] of solids.value.entries()) {
+      const before = new Set(this.bodies.map((b) => b.id));
+      const request = {
+        feature: feature.id,
+        bodies: this.bodies,
+        type: 'extrude' as const,
+        frame: solidFrame(feature.plane, solid),
+        profiles: [solidProfile(feature.id, index, solid)],
+        distance: solid.height,
+        direction: 'normal' as const,
+        operation: feature.operation,
+      };
+      const outcome = await this.engines.modeling.apply({ ...request, key: contentHash({ ...request, bodies: this.bodies.map((b) => b.key) }) });
+      if (outcome.error) return fail({ code: 'feature-failed', message: outcome.error });
+      this.bodies = outcome.bodies;
+      if (feature.operation === 'new-body') made.push(...this.bodies.filter((b) => !before.has(b.id)).map((b) => b.id));
+    }
+    // The solids of a new body touch rather than overlap (a floor and walls on it): join them as one.
+    const [first, ...rest] = made;
+    if (first !== undefined && rest.length) {
+      const request = { feature: feature.id, bodies: this.bodies, type: 'combine' as const, target: first, tools: rest, operation: 'join' as const, keepTools: false };
+      const outcome = await this.engines.modeling.apply({ ...request, key: contentHash({ ...request, bodies: this.bodies.map((b) => b.key) }) });
+      if (outcome.error) return fail({ code: 'feature-failed', message: outcome.error });
+      this.bodies = outcome.bodies;
+    }
+    return ok(undefined);
+  }
+
   /** The kernel request for a feature, with expressions evaluated and references resolved. */
-  private async request(feature: Exclude<Feature, { type: 'plane' }>): Promise<Result<ModelingRequest>> {
+  private async request(feature: Exclude<Feature, { type: 'plane' | 'helix' | 'plugin' }>): Promise<Result<ModelingRequest>> {
     const base = { feature: feature.id, bodies: this.bodies };
     const withKey = (body: WithoutKey<ModelingRequest>): Result<ModelingRequest> =>
       ok({ ...body, key: contentHash({ ...body, bodies: this.bodies.map((b) => b.key) }) } as ModelingRequest);
@@ -560,7 +933,8 @@ export class Regeneration {
         }
         const original = await this.engines.assets.fetch(document.assetId);
         if (!original) return fail({ code: 'missing-input', message: 'The original of its imported file is missing.' });
-        const sources = await this.engines.interchange.readSolids(original.bytes, format, `import:${document.assetId}`);
+        const { parts, key } = await boardParts(this.engines, document, original.bytes);
+        const sources = await this.engines.interchange.readSolids(original.bytes, format, `import:${key}`, parts);
         if (!sources.ok) return fail({ code: 'feature-failed', message: sources.error.message });
         return withKey({ ...base, type: 'insert', sources: sources.value });
       }
@@ -579,13 +953,29 @@ export class Regeneration {
         this.sheet = { frame: view.frame, profiles, rules: rules.value };
         return withKey({ ...base, type: 'extrude', frame: view.frame, profiles, distance: rules.value.thickness, direction: feature.direction, operation: 'new-body' });
       }
-      case 'edge-flange': {
-        if (!this.sheet) return fail({ code: 'missing-input', message: 'Edge flanges need a base flange earlier in the timeline.' });
-        const [length, angle] = [this.value(feature.length, 'length', 'Length'), this.value(feature.angle, 'angle', 'Angle')];
+      case 'edge-flange':
+      case 'hem':
+      case 'miter-flange': {
+        if (!this.sheet) return fail({ code: 'missing-input', message: 'Flanges and hems need a base flange earlier in the timeline.' });
+        const { thickness, bendRadius, relief } = this.sheet.rules;
+        // Earlier flanges matter only for the corners a relief is cut at.
+        const sheet = { thickness, bendRadius, ...(relief ? { relief, flanges: [...this.flanges] } : {}) };
+        if (feature.type === 'miter-flange') {
+          const path = this.path(feature.sketch);
+          if (!path.ok) return path;
+          if (path.value.flat.closed) return fail({ code: 'invalid-input', message: 'A miter flange profile is an open chain of lines.' });
+          return withKey({ ...base, type: 'miter-flange', edges: feature.edges, profile: path.value.pieces, frame: path.value.frame, ...sheet });
+        }
+        const length = this.value(feature.length, 'length', 'Length');
         if (!length.ok) return length;
+        if (feature.type === 'hem') {
+          const gap = feature.style === 'closed' ? ok(0) : this.value(feature.gap, 'length', 'Gap');
+          if (!gap.ok) return gap;
+          return withKey({ ...base, type: 'hem', edges: feature.edges, style: feature.style, gap: gap.value, length: length.value, ...sheet });
+        }
+        const angle = this.value(feature.angle, 'angle', 'Angle');
         if (!angle.ok) return angle;
-        const { thickness, bendRadius } = this.sheet.rules;
-        return withKey({ ...base, type: 'edge-flange', edges: feature.edges, length: length.value, angle: angle.value, thickness, bendRadius });
+        return withKey({ ...base, type: 'edge-flange', edges: feature.edges, length: length.value, angle: angle.value, ...sheet });
       }
       case 'extrude':
       case 'revolve': {
@@ -625,13 +1015,25 @@ export class Regeneration {
         return withKey({ ...base, type: 'draft', faces: feature.faces, plane: plane.value, angle: angle.value });
       }
       case 'rib': {
-        const [thickness, depth] = [this.value(feature.thickness, 'length', 'Thickness'), this.value(feature.depth, 'length', 'Depth')];
+        const next = feature.extent === 'next';
+        const [thickness, depth] = [this.value(feature.thickness, 'length', 'Thickness'), next ? ok(0) : this.value(feature.depth, 'length', 'Depth')];
         if (!thickness.ok) return thickness;
         if (!depth.ok) return depth;
         const path = this.path(feature.sketch);
         if (!path.ok) return path;
         if (path.value.flat.closed) return fail({ code: 'invalid-input', message: 'A rib is drawn as an open line or curve; closed outlines are extruded.' });
-        return withKey({ ...base, type: 'rib', frame: path.value.frame, path: path.value.pieces, thickness: thickness.value, depth: depth.value, direction: feature.direction });
+        return withKey({ ...base, type: 'rib', frame: path.value.frame, path: path.value.pieces, thickness: thickness.value, depth: next ? 'next' : depth.value, direction: feature.direction });
+      }
+      case 'wrap': {
+        const depth = this.value(feature.depth, 'length', 'Depth');
+        if (!depth.ok) return depth;
+        const view = this.sketches.get(feature.sketch);
+        if (!view || view.error) return fail({ code: 'missing-input', message: 'Its sketch is missing, later in the timeline or does not solve.' });
+        const profiles = view.profiles.filter((p) => feature.profiles.includes(p.id));
+        if (profiles.length < feature.profiles.length || profiles.length === 0) {
+          return fail({ code: 'missing-input', message: 'Some of its profiles no longer exist. Edit the feature and pick them again.' });
+        }
+        return withKey({ ...base, type: 'wrap', frame: view.frame, profiles, face: feature.face, method: feature.method, depth: depth.value, operation: feature.operation });
       }
       case 'shell': {
         const thickness = this.value(feature.thickness, 'length', 'Thickness');
@@ -656,6 +1058,8 @@ export class Regeneration {
         if (profiles.length < feature.profiles.length || profiles.length === 0) {
           return fail({ code: 'missing-input', message: 'Some of its profiles no longer exist. Edit the feature and pick them again.' });
         }
+        const helix = this.helices.get(feature.path);
+        if (helix) return withKey({ ...base, type: 'sweep', frame: view.frame, profiles, path: [{ kind: 'helix', ...helix } satisfies HelixPiece], closed: false, operation: feature.operation });
         const path = this.path(feature.path);
         if (!path.ok) return path;
         return withKey({ ...base, type: 'sweep', frame: view.frame, profiles, path: path.value.pieces, closed: path.value.flat.closed, operation: feature.operation });
@@ -668,6 +1072,7 @@ export class Regeneration {
         const count = this.value(feature.count, 'scalar', 'Count');
         if (!count.ok) return count;
         if (!Number.isInteger(count.value) || count.value < 2) return fail({ code: 'invalid-input', message: 'A pattern needs a whole number of at least 2 copies.' });
+        if (this.helices.has(feature.path)) return fail({ code: 'invalid-input', message: 'A pattern runs along the curves of a sketch, not a helix.' });
         const path = this.path(feature.path);
         if (!path.ok) return path;
         return withKey({ ...base, type: 'path-pattern', tools: tools as ToolInput[], placements: placementsAlong(path.value.flat, path.value.frame, count.value, feature.align) });
@@ -692,10 +1097,17 @@ export class Regeneration {
         const diameter = size(feature.diameter, 'Diameter');
         if (!diameter.ok) return diameter;
         let depth: number | undefined;
+        let point: number | undefined;
         if (feature.extent === 'blind') {
           const value = size(feature.depth, 'Depth');
           if (!value.ok) return value;
           depth = value.value;
+          if (feature.drillPoint) {
+            const angle = this.value(feature.pointAngle?.trim() || '118 deg', 'angle', 'Point angle');
+            if (!angle.ok) return angle;
+            if (!(angle.value > 0 && angle.value < Math.PI)) return fail({ code: 'invalid-input', message: 'The point angle is between 0° and 180°.' });
+            point = angle.value;
+          }
         }
         let bore: { diameter: number; depth: number } | undefined;
         let sink: { diameter: number; angle: number } | undefined;
@@ -713,7 +1125,7 @@ export class Regeneration {
         }
         // A fit widens the hole by its allowance and the printer's compensation.
         const widen = feature.fit ? fitAllowance[feature.fit] + this.compensation : 0;
-        const spec = { diameter: diameter.value + widen, ...(depth === undefined ? {} : { depth }), ...(bore ? { bore } : {}), ...(sink ? { sink } : {}), teardrop: feature.teardrop, bridge: feature.bridge && bore ? this.layer : 0 };
+        const spec = { diameter: diameter.value + widen, ...(depth === undefined ? {} : { depth }), ...(point === undefined ? {} : { point }), ...(bore ? { bore } : {}), ...(sink ? { sink } : {}), teardrop: feature.teardrop, bridge: feature.bridge && bore ? this.layer : 0 };
         return withKey({ ...base, type: 'hole', frame: view.frame, points: points as { id: string; at: Vec2 }[], spec });
       }
       case 'thread': {
@@ -791,7 +1203,12 @@ export class Regeneration {
     if (!bendRadius.ok) return bendRadius;
     const kFactor = this.value(feature.kFactor, 'scalar', 'K-factor');
     if (!kFactor.ok) return kFactor;
-    return ok({ thickness: thickness.value, bendRadius: bendRadius.value, kFactor: kFactor.value });
+    const rules = { thickness: thickness.value, bendRadius: bendRadius.value, kFactor: kFactor.value };
+    if (!feature.cornerRelief) return ok(rules);
+    const size = this.value(feature.reliefSize ?? '', 'length', 'Relief size');
+    if (!size.ok) return size;
+    if (!(size.value > 0)) return fail({ code: 'invalid-input', message: 'The relief size must be greater than zero.' });
+    return ok({ ...rules, relief: { shape: feature.cornerRelief, size: size.value } });
   }
 
   /** The curves of a sketch as a path in world coordinates, in order. */
@@ -809,6 +1226,29 @@ export class Regeneration {
           : { kind: 'line', start: world(p.start), end: world(p.end) },
     );
     return ok({ flat: path.value, frame: view.frame, pieces });
+  }
+
+  /** A helix feature in space (CAD-161): about its plane's normal through the plane's origin. */
+  private async helix(feature: Extract<Feature, { type: 'helix' }>): Promise<Result<HelixPath>> {
+    const frame = await this.frame(feature.plane);
+    if (!frame.ok) return frame;
+    const diameter = this.value(feature.diameter, 'length', 'Diameter');
+    if (!diameter.ok) return diameter;
+    const pitch = this.value(feature.pitch, 'length', 'Pitch');
+    if (!pitch.ok) return pitch;
+    const taper = this.value(feature.taper || '0 deg', 'angle', 'Taper');
+    if (!taper.ok) return taper;
+    const extent = feature.extent === 'turns' ? this.value(feature.turns, 'scalar', 'Turns') : this.value(feature.height, 'length', 'Height');
+    if (!extent.ok) return extent;
+    const height = feature.extent === 'turns' ? extent.value * pitch.value : extent.value;
+    const radius = diameter.value / 2;
+    if (!(radius > 0)) return fail({ code: 'invalid-input', message: 'The diameter must be greater than zero.' });
+    if (!(pitch.value > 0)) return fail({ code: 'invalid-input', message: 'The pitch must be greater than zero.' });
+    if (!(height > 0)) return fail({ code: 'invalid-input', message: feature.extent === 'turns' ? 'The turns must be more than zero.' : 'The height must be greater than zero.' });
+    if (!(Math.abs(taper.value) < (80 * Math.PI) / 180)) return fail({ code: 'invalid-input', message: 'The taper must be less than 80°.' });
+    if (!(radius + height * Math.tan(taper.value) > 0)) return fail({ code: 'invalid-input', message: 'The helix narrows to nothing before its end: use less taper.' });
+    const { origin, u, v } = frame.value;
+    return ok({ feature: feature.id, origin, axis: cross(u, v), x: u, radius, pitch: pitch.value, height, taper: taper.value, leftHanded: feature.leftHanded });
   }
 
   /** Where a construction plane lies, by its mode. */

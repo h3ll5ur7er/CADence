@@ -5,17 +5,21 @@ import { type DragTarget, PlanegcsSolver, type SolveOutcome } from './planegcs-s
 import { sketchFreedom, suggestConstraints } from './diagnostics';
 import { measured, sketchPath } from './path';
 import { findProfiles } from './profiles';
+import { referenceValues } from './measure';
 
 export type { DragTarget } from './planegcs-solver';
 export { chamfer, type EditResult, extend, fillet, offset, type SketchEdit, split, trim } from './editing';
 export { type DrawingRelations, inferRelations } from './relations';
 export { type PathPiece2, placesAlong, type SketchPath, sketchPath } from './path';
+export { measureDimension, referenceValues } from './measure';
 
 export interface SketchSolution extends SolveOutcome {
   /** Closed regions of the solved sketch, for features such as extrude. */
   readonly profiles: readonly Profile[];
   /** The outlines of its texts, by text id. */
   readonly texts: TextOutlines;
+  /** What its reference dimensions measure (mm, radians), by constraint id. */
+  readonly measured: ReadonlyMap<string, number>;
 }
 
 /**
@@ -56,7 +60,7 @@ class DefaultSketchEngine implements SketchEngine {
   async solve(sketch: Sketch, values: ReadonlyMap<string, number>, drag?: DragTarget, fonts?: FontFiles): Promise<SketchSolution> {
     const outcome = await this.solver.solve(sketch, values, drag);
     const texts = await this.textsOf(outcome.sketch, fonts);
-    return { ...outcome, profiles: findProfiles(outcome.sketch, texts), texts };
+    return { ...outcome, profiles: findProfiles(outcome.sketch, texts), texts, measured: referenceValues(outcome.sketch) };
   }
 
   freedom(sketch: Sketch, values: ReadonlyMap<string, number>): Promise<SketchFreedom> {

@@ -16,14 +16,15 @@ import type {
   Vec2,
   Vec3,
 } from '@core/contracts';
-import { type MotionFrame, sourceKey } from '@core/contracts';
+import { describeChange, isDimension, type MotionFrame, sourceKey } from '@core/contracts';
 import type { AssemblyCommand, AssemblyFormat, AssemblySession, AssemblyState, BomLine, CollisionOptions, CollisionReport, InstructionPicture, PlacedRef } from '@core/managers/assembly';
-import type { BrokenReference, DesignSession, DesignState, DrawingFormat, ExportOptions, SolidFormat } from '@core/managers/design';
+import type { BrokenReference, DesignSession, DesignState, DrawingFormat, ExportOptions, SketchView, SolidFormat } from '@core/managers/design';
 import type { ProjectManager } from '@core/managers/project';
 import { deflate, encodeGif, encodePng, type Pixels } from '@core/utilities/picture';
 import { boundsOf, type RasterMesh, rasterize, type RasterView, rasterViews, type Vec3 as RasterVec3 } from '@core/utilities/raster';
+import type { ViewerFormat } from '@core/utilities/scene';
 import { DrawingScript } from './drawing';
-import { CadenceError, type ExportTarget, unwrap } from './results';
+import { CadenceError, deliveredSince, type ExportTarget, unwrap } from './results';
 import { expandShape, roughValue, type ScriptCommand } from './shapes';
 
 /** How a picture of a component or an assembly is taken. */
@@ -172,6 +173,10 @@ interface SketchEntry {
   readonly error?: string;
   /** Closed regions: area (mm²), extent of the outline, and how many holes are cut out of it. */
   readonly profiles: readonly { readonly id: string; readonly area: number; readonly holes: number; readonly min: Vec2; readonly max: Vec2 }[];
+  /** What its reference dimensions measure (mm, or degrees for angles), with their names (ADR-54). */
+  readonly references?: readonly { readonly id: string; readonly name?: string; readonly value: number }[];
+  /** A block other sketches place (ADR-54a). */
+  readonly block?: true;
 }
 
 interface BodyEntry {
@@ -380,9 +385,9 @@ export class ComponentScript {
     return this.delivered(options.to, () => this.session.exportConfigurations());
   }
 
-  /** The shown bodies as one HTML file with a viewer, for people without CADence; returns the path. */
-  exportViewer(options: { readonly to?: string } = {}): Promise<string> {
-    return this.delivered(options.to, () => this.session.exportViewer());
+  /** The shown bodies as one HTML file with a viewer, for people without CADence, or as glTF or USDZ (augmented reality); returns the path. */
+  exportViewer(options: { readonly to?: string; readonly format?: ViewerFormat } = {}): Promise<string> {
+    return this.delivered(options.to, () => this.session.exportViewer(options.format));
   }
 
   /** Rough values of expressions from the parameters' values, for where shorthands start their points. */
@@ -451,6 +456,8 @@ export class ComponentScript {
                 status: view.status,
                 degreesOfFreedom: view.degreesOfFreedom,
                 ...(view.error ? { error: view.error } : {}),
+                ...referencesOf(view),
+                ...(view.sketch.block ? { block: true as const } : {}),
                 profiles: view.profiles.map((profile) => {
                   const xs = profile.outer.polygon.map((p) => p[0]);
                   const ys = profile.outer.polygon.map((p) => p[1]);
@@ -553,6 +560,11 @@ export class ComponentScript {
     return this.delivered(options.to, () => this.session.exportFlatPattern(format));
   }
 
+  /** The shown bodies as the file a plugin's exporter writes (CAD-174); returns its path. */
+  async exportWith(plugin: string, exporter: string, options: { readonly to?: string } = {}): Promise<string> {
+    return this.delivered(options.to, () => this.session.exportWith(plugin, exporter));
+  }
+
   properties(): Promise<BodyProperties[]> {
     return this.session.properties();
   }
@@ -585,7 +597,7 @@ export class ComponentScript {
     if (to) this.exports.deliverNextTo(to);
     const before = this.exports.delivered.length;
     unwrap(await write());
-    const path = this.exports.delivered[before];
+    const path = deliveredSince(this.exports, before);
     if (!path) throw new CadenceError('not-exported', 'Nothing was written.');
     return path;
   }
@@ -809,7 +821,7 @@ export class AssemblyScript {
     const picked = distinctMoments(frames, moments);
     const columns = Math.ceil(Math.sqrt(picked.length));
     const small = picked.map((i) => pixels(shown[i] as Shown[], { ...options, width: Math.round(width / 1.5), height: Math.round(height / 1.5), white: true, ...(bounds ? { bounds } : {}) }));
-    return { path: this.exports.delivered[before] as string, sheet: await encodePng(sheet(small, columns)), times: picked.map((i) => round((frames[i] as (typeof frames)[number]).time)) };
+    return { path: deliveredSince(this.exports, before) as string, sheet: await encodePng(sheet(small, columns)), times: picked.map((i) => round((frames[i] as (typeof frames)[number]).time)) };
   }
 
   async export(format: AssemblyFormat, options: { readonly to?: string } = {}): Promise<string> {
@@ -829,10 +841,10 @@ export class AssemblyScript {
     return this.delivered(options.to, () => this.session.exportBillOfMaterials());
   }
 
-  /** The assembly as one HTML file with a viewer (turn, measure, hide, explode); returns the path. */
-  async exportViewer(options: { readonly to?: string } = {}): Promise<string> {
+  /** The assembly as one HTML file with a viewer (turn, measure, hide, explode), or as glTF or USDZ (augmented reality); returns the path. */
+  async exportViewer(options: { readonly to?: string; readonly format?: ViewerFormat } = {}): Promise<string> {
     await this.loaded();
-    return this.delivered(options.to, () => this.session.exportViewer());
+    return this.delivered(options.to, () => this.session.exportViewer(options.format));
   }
 
   /**
@@ -861,7 +873,7 @@ export class AssemblyScript {
     if (to) this.exports.deliverNextTo(to);
     const before = this.exports.delivered.length;
     unwrap(await write());
-    return this.exports.delivered[before] as string;
+    return deliveredSince(this.exports, before) as string;
   }
 
   close(): void {
@@ -926,6 +938,12 @@ export class AssemblyScript {
   }
 }
 
+/** Two versions of a document compared: its changes in words and, for components, volumes in mm³. */
+export interface VersionsCompared {
+  readonly changes: readonly string[];
+  readonly volume?: { readonly before: number; readonly after: number; readonly added: number; readonly removed: number };
+}
+
 /**
  * The scripting API: the project manager as it is, plus components and assemblies opened for
  * scripting. Projects and documents are found by id or by name.
@@ -982,6 +1000,21 @@ export class Cadence {
     return this.opened(this.drawings, documentId, async () => new DrawingScript(unwrap(await this.core.drawingManager.open(documentId as DocumentId)), this.exports, () => this.drawings.delete(documentId), () => this.core.settled()));
   }
 
+  /**
+   * Two versions of a document compared in words (CAD-175): what changed in its timeline, sketches
+   * and parameters and, for components, the volume before and after and how much was added and removed.
+   * Without `to`, `from` is compared with the document as it is now.
+   */
+  async compareVersions(documentId: string, from: string, to?: string): Promise<VersionsCompared> {
+    const compared = unwrap(await this.projects.compareVersions(documentId as DocumentId, from, to));
+    const changes = compared.changes.map(describeChange);
+    if (compared.before.kind !== 'component' || compared.after.kind !== 'component') return { changes };
+    const built = unwrap(await this.core.designManager.compareBodies(compared.before, compared.after, compared.projectParameters));
+    const round = (mm3: number) => Math.round(mm3 * 1000) / 1000;
+    const { before, after, added, removed } = built.volume;
+    return { changes, volume: { before: round(before), after: round(after), added: round(added), removed: round(removed) } };
+  }
+
   /** Resolves once the work this process started is done: components rebuilt, results written (CAD-119). */
   settled(): Promise<void> {
     return this.core.settled();
@@ -1012,7 +1045,7 @@ export class Cadence {
     if (options.to) this.exports.deliverNextTo(options.to);
     const before = this.exports.delivered.length;
     unwrap(await this.projects.exportImported(documentId as DocumentId, format));
-    return this.exports.delivered[before] as string;
+    return deliveredSince(this.exports, before) as string;
   }
 
   /**
@@ -1077,3 +1110,12 @@ export class Cadence {
 
 export { CadenceError, type ExportTarget, unwrap };
 export type { ScriptCommand };
+
+/** A sketch's reference dimensions and what they measure, when it has any. */
+function referencesOf(view: SketchView): Pick<SketchEntry, 'references'> {
+  const references = view.sketch.constraints.filter(isDimension).flatMap((d) => {
+    const value = d.reference ? view.values.get(d.id) : undefined;
+    return value === undefined ? [] : [{ id: d.id, ...(d.name ? { name: d.name } : {}), value: round(d.kind === 'angle' ? (value * 180) / Math.PI : value) }];
+  });
+  return references.length ? { references } : {};
+}

@@ -6,18 +6,28 @@
   <button type="button" class="icon-btn about" aria-label="About CADence" title="About CADence" (click)="about.open()">
     <cad-icon name="info" />
   </button>
-  <label class="btn" title="Open a project archive (.cadence), or start a project from STEP, STL, OBJ, 3MF, DXF or SVG files">
+  @if (!layout.phone()) {
+    <button type="button" class="btn" title="A short tour of a first part: sketch, extrude, export" (click)="tour.start()">
+      <cad-icon name="help" />
+      <span class="label">Take the tour</span>
+    </button>
+  }
+  <label class="btn" title="Open a project archive (.cadence), or start a project from STEP, STL, OBJ, 3MF, KiCad board, DXF or SVG files">
     <cad-icon name="upload" />
-    Open file…
+    <span class="label">Open file…</span>
     <input #file type="file" multiple class="visually-hidden" [accept]="accept" (change)="picked(file)" />
   </label>
+  <button type="button" class="btn" title="Projects shared with you on a CADence server" (click)="sharedProjects.open()">
+    <cad-icon name="share" />
+    <span class="label">Shared projects…</span>
+  </button>
   <button type="button" class="btn" (click)="openRemote.open()">
     <cad-icon name="sync" />
-    Open from git…
+    <span class="label">Open from git…</span>
   </button>
-  <button type="button" class="btn btn-primary" (click)="createProject()">
+  <button type="button" class="btn btn-primary" data-tour="new-project" (click)="createProject()">
     <cad-icon name="plus" />
-    New project
+    <span class="label">New project</span>
   </button>
 </header>
 
@@ -40,7 +50,7 @@
                   <cad-icon name="component" [size]="40" />
                 </cad-thumbnail>
               </span>
-              <span class="name">{{ project.name }}</span>
+              <span class="name">{{ project.name }}@if (project.library) {<span class="badge" title="Other projects use its components">Library</span>}</span>
               <span class="meta">
                 {{ plural(project.documentCount, 'document') }} · edited {{ relativeTime(project.modifiedAt) }}
               </span>
@@ -91,6 +101,69 @@
   } @else if (projects.error()) {
     <p class="error" role="alert">Projects could not be loaded. Reload the page to try again.</p>
   }
+  @if (trash.value()?.length) {
+    <section class="trash" aria-label="Trash">
+      <div class="heading">
+        <button type="button" class="btn btn-ghost" [attr.aria-expanded]="trashOpen()" (click)="trashOpen.set(!trashOpen())">
+          <cad-icon name="trash" /> Trash
+        </button>
+        <span class="count">{{ trash.value()?.length }}</span>
+        @if (trashOpen()) {
+          <button type="button" class="btn btn-ghost empty-trash" (click)="emptyTrash()">Empty trash</button>
+        }
+      </div>
+      @if (trashOpen()) {
+        <p class="hint">What you delete stays here for 30 days, then it is deleted for good.</p>
+        <ul class="trash-list" aria-label="Deleted projects and documents">
+          @for (item of trash.value(); track item.id) {
+            <li>
+              <cad-icon [name]="item.kind === 'project' ? 'folder' : item.documentKind === 'imported' ? 'imported' : item.documentKind" [size]="16" />
+              <span class="what">
+                <span class="name">{{ item.name }}</span>
+                <span class="meta">
+                  @if (item.kind === 'project') {
+                    Project, {{ plural(item.documentCount, 'document') }}
+                  } @else {
+                    {{ kinds[item.documentKind] }} of {{ item.projectName }}
+                  }
+                  · deleted {{ relativeTime(item.trashedAt) }}
+                </span>
+              </span>
+              <button type="button" class="btn" [attr.aria-label]="'Restore ' + item.name" (click)="restore(item)">Restore</button>
+              <button type="button" class="icon-btn" [attr.aria-label]="'Delete ' + item.name + ' for good'" title="Delete for good" (click)="deleteForGood(item)">
+                <cad-icon name="trash" />
+              </button>
+            </li>
+          }
+        </ul>
+      }
+    </section>
+  }
+
+  @if (samples.value(); as list) {
+    @if (list.length > 0) {
+      <section class="samples" aria-labelledby="samples-heading">
+        <div class="heading">
+          <h2 id="samples-heading">Samples</h2>
+          <cad-help topic="new-project" />
+        </div>
+        <p class="lead">Finished projects to look around in and change. Opening one makes a project of your own from it.</p>
+        <ul class="grid" aria-label="Samples">
+          @for (sample of list; track sample.id) {
+            <li class="card sample">
+              <button type="button" class="card-link" [attr.aria-label]="'Open sample ' + sample.name" [disabled]="opening()" (click)="openSample(sample)">
+                <span class="thumb" aria-hidden="true">
+                  <svg viewBox="0 0 64 48"><path [attr.d]="picture(sample.id)" /></svg>
+                </span>
+                <span class="name">{{ sample.name }}</span>
+                <span class="meta">{{ sample.description }}</span>
+              </button>
+            </li>
+          }
+        </ul>
+      </section>
+    }
+  }
 </main>
 
 <cad-name-dialog />
@@ -99,3 +172,4 @@
 <cad-export-project-dialog />
 <cad-new-project-dialog />
 <cad-open-remote-dialog #openRemote (opened)="openProject($event)" />
+<cad-shared-projects-dialog #sharedProjects (opened)="openProject($event)" />

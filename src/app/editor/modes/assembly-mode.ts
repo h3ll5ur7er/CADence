@@ -7,6 +7,8 @@ import { relativeTime } from '../../shared/format';
 import { Icon } from '../../shared/icon';
 import { Shortcuts } from '../../shared/shortcuts';
 import { Viewport } from '../../viewport/viewport';
+import { Layout } from '../../shared/layout';
+import { type ArFile, PhoneBar } from '../phone-bar';
 import { grams, millimetres, point } from '../analysis/units';
 import { type AssemblySelection, AssemblyStore } from '../assembly/assembly-store';
 import { JointPanel } from '../assembly/joint-panel';
@@ -18,6 +20,9 @@ import { LinkPanel } from '../assembly/link-panel';
 import { PictureDialog } from '../picture-dialog';
 import { EditorStatus } from '../editor-status';
 import { ThumbnailSaver } from '../thumbnail-saver';
+import { ChangedElsewhereNotice } from '../changed-elsewhere';
+import { LibraryPanel } from '../assembly/library-panel';
+import { HelpLink } from '../../shared/help';
 
 const exportFormats: readonly { format: AssemblyFormat; label: string }[] = [
   { format: 'step', label: 'STEP (one solid per instance)' },
@@ -37,14 +42,24 @@ const positionOf = (m: Matrix4): Position => {
 /** Assembly mode: instances of components, joints between them, motion studies. */
 @Component({
   selector: 'cad-assembly-mode',
-  imports: [Viewport, PictureDialog, Icon, JointPanel, JointProperties, MotionPanel, PatternPanel, LinkPanel, ExplodePanel],
+  imports: [HelpLink, ChangedElsewhereNotice, LibraryPanel, Viewport, PictureDialog, Icon, JointPanel, JointProperties, MotionPanel, PatternPanel, LinkPanel, ExplodePanel, PhoneBar],
   providers: [AssemblyStore],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './assembly-mode.html',
   styleUrls: ['./mode-layout.scss', './editor-tools.scss', './assembly-mode.scss'],
+  host: { '[attr.data-layout]': 'layout.phone() ? "phone" : null', '[attr.data-sheet]': 'layout.phone() && store.panel() === "measure" ? "open" : null' },
 })
 export class AssemblyMode {
+  /** Opens the document again, with what another program changed (CAD-150). */
+  protected reopen(): void {
+    const { id, projectId } = this.document();
+    void this.store.open(id, projectId);
+  }
+
   readonly document = input.required<DocumentSummary>();
+  /** The phone layout: a viewer with touch tools (CAD-179). */
+  protected readonly layout = inject(Layout);
+  protected readonly arFile: ArFile = (format) => this.store.viewerFile(format);
   protected readonly status = inject(EditorStatus);
   protected readonly thumbnails = inject(ThumbnailSaver);
   protected readonly store = inject(AssemblyStore);

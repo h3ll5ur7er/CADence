@@ -89,6 +89,9 @@ Clients enter through one manager each: Home and the Imported viewer use the **P
 | **Analysis Engine** | | | | | | | | | | ● | |
 | **Interchange Engine** | | | | | | | | | | ● | |
 
+The **Plugin Engine** runs plugins' code in the sandbox: the Project Manager reads a plugin when it is installed, and the Design Manager builds plugin features and runs plugin exporters with it ([[Architecture/Decisions#ADR-60a]]).
+
+The **Revision Engine** (versions compared and merged by their items, [[Architecture/Decisions#ADR-61]]) serves the Project Manager (git sync, comparing versions) and the Design Manager (live editing). **Server Access** reaches a CADence server ([[Architecture/Server]]): the Project Manager shares projects there, the Design Manager edits live through its relay.
 Project Access, Document Access and Asset Access read and write the project store and asset store. Shape Access works on the in-worker shape cache, and External File Access on the host's file pickers, downloads and dialogs.
 
 ## Call rules
@@ -137,10 +140,12 @@ flowchart LR
 
 - **Managers and storage Resource Access stay on the main thread.** Tauri IPC is not available inside Web Workers, and IndexedDB works on both. Keeping them here keeps one code path for both hosts.
 - **Kernel-bound engines share one geometry worker.** OCCT shapes cannot cross thread boundaries cheaply, so Modeling, Analysis (geometric checks) and Interchange share the in-worker shape cache through Shape Access. Engines exchange shapes by key rather than by calling each other.
-- **Drawing views are drawn exactly in a views worker of their own**, a second kernel that is stopped when a view takes longer than 20 s (`stoppable` in Messaging), since WebAssembly cannot be interrupted; the Drawing Manager then draws that view from the triangles in the geometry worker ([[Architecture/Decisions#ADR-49]]). Scripts and the MCP server start it as a Node worker of the same module.
+- **Drawing views are drawn exactly in a views worker of their own**, a second kernel that is stopped when a view takes longer than 20 s (`stoppable` in Messaging), since WebAssembly cannot be interrupted; the Drawing Manager then draws that view from the triangles in the geometry worker ([[Architecture/Decisions#ADR-49]]) and has a second views worker, without a time limit, draw it exactly in the background ([[Architecture/Decisions#ADR-58]]). Scripts and the MCP server start it as a Node worker of the same module.
 - **A kernel that fails is replaced.** When the geometry kernel runs out of memory or traps, the next call loads a new one (in the browser, in the same worker; for the MCP server, a new Node geometry worker, `restartable` in Messaging), and the documents open on it are read again. The MCP server runs the kernel in a worker too, so it answers other requests while a long check runs, and a cancelled call stops the worker ([[Architecture/Decisions#ADR-52]]).
+- **The desktop app watches its project folders.** Changes other processes make (an agent's MCP server, a script) become the events other windows send, through the composition root (`Host.watch`, [[Architecture/Decisions#ADR-53]]).
 - **The viewport owns how the model is seen** (camera, projection, section); documents own how bodies look; the user's preferences (control scheme) are kept per install ([[Architecture/Decisions#ADR-24]]).
 - **The web app's files and kernels are cached by a service worker** (web only), so it runs offline; the desktop app bundles them ([[Architecture/Decisions#ADR-23]]).
+- **Scripts and plugins run in a sandbox of their own**: QuickJS in WebAssembly, which reaches nothing but what it is given. The app runs each script of its console in a Web Worker (`script.worker.ts`) and the command line in a worker thread, so Stop ends the worker; plugin features are pure and short, and are built where the Design Manager runs ([[Architecture/Decisions#ADR-60]]).
 - **Light engines run on the main thread.** Parameter and Kinematics are pure and synchronous (a solve takes well under a millisecond for home-sized assemblies); Sketch (planegcs, about 1 MB of WASM) is async. Any of them can move to a worker behind an async proxy once profiling shows a need.
 
 ## Technology
@@ -165,12 +170,13 @@ src/
   core/
     contracts/            Data contracts: document model, DTOs, commands, events
     managers/             project/  design/  assembly/
-    engines/              sketch/  parameter/  modeling/  kinematics/  analysis/  interchange/
-    access/               project/  document/  asset/  shape/  external-file/
+    engines/              sketch/  parameter/  modeling/  kinematics/  analysis/  interchange/  plugin/  revision/ …
+    access/               project/  document/  asset/  shape/  external-file/  version/  server/
     utilities/            messaging/  diagnostics/  math/  identity/
     composition/          composition roots: createBrowserCore, createDesktopCore, createInMemoryCore; node.ts: createNodeCore
-  workers/                geometry.worker.ts (hosts the kernel-bound engines)
+  workers/                geometry.worker.ts (hosts the kernel-bound engines), views.worker.ts, script.worker.ts (the script console's sandbox)
   automation/             Client in Node: scripting API, command line, MCP server (built by tools/automation/build.mjs)
+server/                   The CADence server: accounts, shared projects as git repositories, the live relay (built by tools/server/build.mjs)
 src-tauri/                Desktop shell (Rust)
 e2e/                      Playwright specs and evidence screenshots
 tools/architecture/       The architecture test (call rules over the import graph)

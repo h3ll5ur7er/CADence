@@ -1,6 +1,6 @@
 import { adopt, type NamedShape } from '@core/access/shape';
 import type { PlaneFrame, ThreadMarker, Vec2, Vec3 } from '@core/contracts';
-import { assembleWire, draw, type Drawing, type Face, getOC, makeHelix, makeLine, Plane, type Shape3D } from 'replicad';
+import { assembleWire, draw, type Drawing, type Face, getOC, makeCylinder, makeHelix, makeLine, Plane, type Shape3D } from 'replicad';
 import { add3, cross3, dot3, length3, normalize3, normalOf, scale3, sub3, toWorld } from './geometry';
 import { nameShape, namedSurfaces } from './naming';
 import type { Surface } from './surfaces';
@@ -9,6 +9,8 @@ import type { Surface } from './surfaces';
 export interface HoleSpec {
   readonly diameter: number;
   readonly depth?: number;
+  /** Blind holes: the angle (radians) of a drill point below the depth (absent: a flat floor). */
+  readonly point?: number;
   readonly bore?: { readonly diameter: number; readonly depth: number };
   readonly sink?: { readonly diameter: number; readonly angle: number };
   /** A pointed top, so a hole lying on its side prints without support. */
@@ -30,8 +32,8 @@ function teardrop(radius: number): Drawing {
 
 /**
  * One hole's cutting tool at `at`, going `down` into the material. Revolved from its half section,
- * or, as a teardrop, extruded from its outline; faces named `wall`, `bore`, `sink`, `floor`, `tip`
- * with the point's id.
+ * or, as a teardrop, extruded from its outline; faces named `wall`, `bore`, `sink`, `floor`, `tip`,
+ * `point` (a drill point's cone) with the point's id.
  */
 function oneHole(feature: string, id: string, at: Vec3, down: Vec3, across: Vec3, spec: HoleSpec, depth: number): NamedShape {
   const up = scale3(down, -1);
@@ -79,11 +81,21 @@ function oneHole(feature: string, id: string, at: Vec3, down: Vec3, across: Vec3
   }
   if (depth <= start + 1e-9) throw new HoleError('The hole is not deeper than its counterbore or countersink.');
   cylinder(r, start, depth);
+  // A drill point: the cone a twist drill leaves, below the depth to the full diameter.
+  const tip = spec.point === undefined ? 0 : r / Math.tan(spec.point / 2);
+  if (tip > 0)
+    revolve([
+      [0, -depth],
+      [r, -depth],
+      [0, -depth - tip],
+    ]);
   const [first, ...more] = pieces as [Shape3D, ...Shape3D[]];
   const shape = more.reduce((all, piece) => all.fuse(piece), first);
   const axisDistance = (p: Vec3) => length3(cross3(sub3(p, at), down));
+  const below = (face: Face) => dot3(sub3(face.center.toTuple() as Vec3, at), down) > depth + 1e-6;
   const fresh = (face: Face, surface: Surface): string => {
     const role = (() => {
+      if (tip > 0 && surface.type !== 'plane' && surface.type !== 'cylinder' && below(face)) return 'point';
       if (surface.type === 'cylinder') return near(surface.radius, r) ? 'wall' : 'bore';
       if (surface.type === 'plane') return Math.abs(dot3(surface.normal, down)) > 1 - 1e-6 ? 'floor' : 'tip';
       // The countersink is a cone, which the kernel build cannot read: the one other surface of a hole.
@@ -145,15 +157,11 @@ export function threadPlacement(face: Face, axis: { origin: Vec3; direction: Vec
  */
 export function threadGroove(marker: ThreadMarker, faceLength: number): Shape3D {
   const oc = getOC();
-  const { origin, direction, radius, pitch, diameter, internal } = marker;
-  // Internal threads cut outwards from the hole to the major diameter; external ones inwards to the minor diameter.
-  const depth = internal ? diameter / 2 - radius : 0.6134 * pitch;
+  const { origin, direction, radius, internal } = marker;
+  const { depth, overlap, half, length } = grooveOf(marker, faceLength);
   if (!(depth > 0)) throw new HoleError('This hole is already as wide as the thread.');
-  const overlap = 0.05 * pitch;
-  const half = (depth + overlap) * Math.tan(Math.PI / 6);
-  const length = Math.min(marker.length, faceLength - half - overlap);
-  if (!(length > pitch)) throw new HoleError('The face is too short for this thread.');
-  const helix = makeHelix(pitch, length, radius, [...origin], [...direction]);
+  if (!(length > marker.pitch)) throw new HoleError('The face is too short for this thread.');
+  const helix = makeHelix(marker.pitch, length, radius, [...origin], [...direction]);
   const start = helix.edges[0]?.startPoint.toTuple() as Vec3;
   const out = normalize3(sub3(start, add3(origin, scale3(direction, dot3(sub3(start, origin), direction)))));
   const inward = internal ? out : scale3(out, -1);
@@ -171,5 +179,56 @@ export function threadGroove(marker: ThreadMarker, faceLength: number): Shape3D 
   } finally {
     builder.delete();
     binormal.delete();
+  }
+}
+
+/** The size of a thread's groove: how deep, how far past the face it reaches, half its width along the axis, and how long its helix is. */
+function grooveOf(marker: ThreadMarker, faceLength: number): { depth: number; overlap: number; half: number; length: number } {
+  // Internal threads cut outwards from the hole to the major diameter; external ones inwards to the minor diameter.
+  const depth = marker.internal ? marker.diameter / 2 - marker.radius : 0.6134 * marker.pitch;
+  const overlap = 0.05 * marker.pitch;
+  const half = (depth + overlap) * Math.tan(Math.PI / 6);
+  return { depth, overlap, half, length: Math.min(marker.length, faceLength - half - overlap) };
+}
+
+/**
+ * A body with the groove of a modelled thread filled in again (CAD-166): drawings show threads as
+ * lines (ISO 6410), and the kernel's hidden-line removal of a helix can take minutes (ADR-49). The
+ * groove is filled by a cylinder a little wider than it, then the wall turned down (a shaft) or
+ * bored out (a hole) to the face's radius and what stands out past the thread's open end taken off.
+ * None of these tools touches the groove's flanks, so no helix is intersected.
+ */
+export function threadFilled(body: Shape3D, marker: ThreadMarker, faceLength: number): Shape3D {
+  const { origin, direction, radius, internal } = marker;
+  const { overlap, half, length } = grooveOf(marker, faceLength);
+  // Along the axis from the open end: the groove reaches from −half to its helix's end plus half.
+  const [from, to] = [-half - overlap, length + half + overlap / 2];
+  const outer = internal ? marker.diameter / 2 + overlap : radius + 2 * overlap;
+  const cylinder = (r: number, a: number, b: number) => makeCylinder(r, b - a, [...add3(origin, scale3(direction, a))], [...direction]) as Shape3D;
+  const owned: Shape3D[] = [];
+  const step = (shape: Shape3D, next: Shape3D) => {
+    owned.push(shape);
+    return next;
+  };
+  try {
+    const fill = cylinder(outer, from, to);
+    owned.push(fill);
+    let shape = body.fuse(fill) as Shape3D;
+    if (internal) {
+      const bore = cylinder(radius, from, to);
+      owned.push(bore);
+      shape = step(shape, shape.cut(bore) as Shape3D);
+    } else {
+      const turned = cylinder(outer + overlap, from, to).cut(cylinder(radius, from - 1, to + 1)) as Shape3D;
+      owned.push(turned);
+      shape = step(shape, shape.cut(turned) as Shape3D);
+    }
+    // Past the open end, where the fill stands out of the body.
+    const beyond = cylinder(outer + 2 * overlap, from - overlap, 0);
+    owned.push(beyond);
+    shape = step(shape, shape.cut(beyond) as Shape3D);
+    return step(shape, shape.simplify() as Shape3D);
+  } finally {
+    for (const shape of owned) shape.delete();
   }
 }

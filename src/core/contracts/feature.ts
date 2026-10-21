@@ -17,6 +17,18 @@ export interface TopologyRef {
   readonly body: string;
   readonly name: string;
   readonly hint?: Vec3;
+  /** What it was like when it was picked (recorded by the Design Manager): repairs look for its like (CAD-157). */
+  readonly shape?: RefShape;
+}
+
+/**
+ * The shape of a face or edge: its kind of surface or curve (`plane`, `cylinder`, `line`, `circle`, …),
+ * its size (area in mm², length in mm) and, for round ones, its radius.
+ */
+export interface RefShape {
+  readonly type: string;
+  readonly size: number;
+  readonly radius?: number;
 }
 
 /** The persistent name of a vertex: the names of the edges that meet there, in a fixed order. */
@@ -80,14 +92,32 @@ export interface LoftFeature extends FeatureBase {
   readonly operation: BodyOperation;
 }
 
-/** Sweeps sketch profiles along a path: the curves of another sketch, joined end to end. */
+/** Sweeps sketch profiles along a path: the curves of another sketch, joined end to end, or a helix. */
 export interface SweepFeature extends FeatureBase {
   readonly type: 'sweep';
   readonly sketch: string;
   readonly profiles: readonly string[];
-  /** The sketch whose curves are the path. */
+  /** The sketch whose curves are the path, or a helix feature (CAD-161). */
   readonly path: string;
   readonly operation: BodyOperation;
+}
+
+/**
+ * A helix (CAD-161): a path for sweeps (springs, threads of any profile) about the normal of a plane,
+ * through the plane's origin, starting on its u axis at half the diameter. It rises `pitch` per turn,
+ * for `turns` turns or to `height` (`extent`), widening by the `taper` angle as it rises (narrowing
+ * when negative); right-handed unless `leftHanded`. It makes no body.
+ */
+export interface HelixFeature extends FeatureBase {
+  readonly type: 'helix';
+  readonly plane: PlaneRef;
+  readonly diameter: string;
+  readonly pitch: string;
+  readonly extent: 'turns' | 'height';
+  readonly turns: string;
+  readonly height: string;
+  readonly taper: string;
+  readonly leftHanded: boolean;
 }
 
 /** Repeats the effect of earlier features along a path (the curves of a sketch), evenly spaced. */
@@ -120,6 +150,9 @@ export interface HoleFeature extends FeatureBase {
   readonly bridge: boolean;
   /** How tightly what goes in fits: its allowance (and the printer's hole compensation) widens the hole. */
   readonly fit?: FitClass;
+  /** Blind holes: a drill point (a cone of `pointAngle`, 118° when empty) below the depth instead of a flat floor. */
+  readonly drillPoint?: boolean;
+  readonly pointAngle?: string;
 }
 
 /** A part (standard, gear or for printing) at points of a sketch, on its plane (contracts/parts.ts). */
@@ -175,6 +208,10 @@ export interface ThreadMarker {
   /** The thread's major (nominal) diameter. */
   readonly diameter: number;
   readonly internal: boolean;
+  /** The body it is on, so component results carry it for drawings (CAD-166). */
+  readonly body?: string;
+  /** Its groove is cut into the body; `faceLength` is the length of the face it is on, to fill the groove again for drawings. */
+  readonly modelled?: { readonly faceLength: number };
 }
 
 /**
@@ -190,9 +227,15 @@ export interface BaseFlangeFeature extends FeatureBase {
   readonly bendRadius: string;
   /** Where the neutral layer lies in the sheet, from the inside of a bend (0) to the outside (1). */
   readonly kFactor: string;
+  /** The cut where two flanges meet at a corner of the sheet (absent: none). */
+  readonly cornerRelief?: CornerRelief;
+  /** The relief's size: the round's diameter, the square's side, the tear's length. */
+  readonly reliefSize?: string;
 }
 
-/** Flanges bent up from straight edges of the base flange: a bend, then a straight piece. */
+export type CornerRelief = 'round' | 'square' | 'tear';
+
+/** Flanges bent up from straight edges of the sheet (the base flange or a flange): a bend, then a straight piece. */
 export interface EdgeFlangeFeature extends FeatureBase {
   readonly type: 'edge-flange';
   readonly edges: readonly TopologyRef[];
@@ -200,16 +243,77 @@ export interface EdgeFlangeFeature extends FeatureBase {
   readonly angle: string;
 }
 
-/** Where an edge flange stands, for unfolding: its edge, the directions away from and above the sheet. */
+export type HemStyle = 'closed' | 'open' | 'teardrop';
+
+/**
+ * Edges of the sheet folded back onto it: `closed` lies flat on the sheet, `open` leaves `gap` between
+ * them (a half circle of that diameter), `teardrop` bends round a loop of that diameter until its end
+ * comes back down to the sheet. `length` is the straight piece after the bend.
+ */
+export interface HemFeature extends FeatureBase {
+  readonly type: 'hem';
+  readonly edges: readonly TopologyRef[];
+  readonly style: HemStyle;
+  readonly gap: string;
+  readonly length: string;
+}
+
+/**
+ * A flange of several bends along a chain of connected straight edges of one face, mitred where the
+ * edges meet. The profile is a sketch of straight lines drawn square to one of the edges: each line is
+ * a straight piece as long as the line, after a bend of the sheet's radius by the angle the line turns.
+ */
+export interface MiterFlangeFeature extends FeatureBase {
+  readonly type: 'miter-flange';
+  readonly edges: readonly TopologyRef[];
+  readonly sketch: string;
+}
+
+/** One bend of a flange, then a straight piece: by `angle` (radians, positive towards `up`) round an inside `radius`. */
+export interface FlangePiece {
+  readonly angle: number;
+  readonly radius: number;
+  readonly length: number;
+}
+
+/**
+ * Where a flange (edge flange, hem or a piece of a miter flange) stands, for unfolding: its edge on
+ * the face the first bend turns towards, the directions away from the sheet and out of that face, and
+ * its bends and straight pieces from the edge outwards.
+ */
 export interface FlangeMarker {
   readonly feature: string;
   readonly start: Vec3;
   readonly end: Vec3;
   readonly away: Vec3;
   readonly up: Vec3;
-  readonly length: number;
-  /** Radians. */
-  readonly angle: number;
+  readonly pieces: readonly FlangePiece[];
+  /**
+   * Mitred ends (miter flanges): how far the flange reaches past its edge's start and end per
+   * millimetre away from the edge (0: square ends; negative: short of them).
+   */
+  readonly miter?: { readonly start: number; readonly end: number };
+}
+
+/**
+ * Corners where two flanges meet, for relief cuts: an end the two share on the same face, where
+ * neither is mitred and their edges are not in line. `first` and `second` index `markers`.
+ */
+export function flangeCorners(markers: readonly FlangeMarker[]): { readonly at: Vec3; readonly first: number; readonly second: number }[] {
+  const near = (a: Vec3, b: Vec3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < 1e-6;
+  const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const ends = (m: FlangeMarker) => [
+    { at: m.start, square: !m.miter || Math.abs(m.miter.start) < 1e-9 },
+    { at: m.end, square: !m.miter || Math.abs(m.miter.end) < 1e-9 },
+  ];
+  const corners: { at: Vec3; first: number; second: number }[] = [];
+  markers.forEach((m, i) =>
+    markers.forEach((n, j) => {
+      if (j <= i || dot(m.up, n.up) < 1 - 1e-6 || Math.abs(dot(m.away, n.away)) > 1 - 1e-6) return;
+      for (const a of ends(m)) for (const b of ends(n)) if (a.square && b.square && near(a.at, b.at)) corners.push({ at: a.at, first: i, second: j });
+    }),
+  );
+  return corners;
 }
 
 /** Rounds (fillet) or bevels (chamfer) edges. */
@@ -236,6 +340,24 @@ export interface RibFeature extends FeatureBase {
   readonly thickness: string;
   readonly depth: string;
   readonly direction: 'normal' | 'reverse' | 'symmetric';
+  /** `next`: up to the next face in its direction (each way when symmetric), `depth` unused; absent: `depth`. */
+  readonly extent?: 'depth' | 'next';
+}
+
+/**
+ * Profiles of a sketch laid onto a face of a body and raised out of it (emboss) or cut into it
+ * (engrave) by a depth along the face's normal (ADR-54b). `wrap` rolls them onto a cylinder or cone,
+ * keeping lengths along the surface (the sketch plane lies along the axis, and where it is nearest
+ * the face is where the sketch touches it); `project` casts them onto any face along the sketch's normal.
+ */
+export interface WrapFeature extends FeatureBase {
+  readonly type: 'wrap';
+  readonly sketch: string;
+  readonly profiles: readonly string[];
+  readonly face: TopologyRef;
+  readonly method: 'wrap' | 'project';
+  readonly depth: string;
+  readonly operation: 'emboss' | 'engrave';
 }
 
 /** Hollows a body: the selected faces are removed, the walls get the given thickness (inward). */
@@ -323,13 +445,35 @@ export interface ScaleFeature extends FeatureBase {
   readonly factor: string;
 }
 
+/**
+ * A feature a plugin of the project builds from its parameters: solids from outlines in a plane,
+ * made again on every regeneration ([[Architecture/Decisions#ADR-60a]]).
+ */
+export interface PluginFeature extends FeatureBase {
+  readonly type: 'plugin';
+  /** The plugin's id, and the version the feature was made with. */
+  readonly plugin: string;
+  readonly version: string;
+  /** The feature's name within the plugin. */
+  readonly feature: string;
+  readonly plane: 'XY' | 'XZ' | 'YZ';
+  /** Expressions by parameter name, evaluated with the component's parameters. */
+  readonly parameters: Readonly<Record<string, string>>;
+  readonly operation: BodyOperation;
+}
+
 export type Feature =
+  | PluginFeature
   | PartFeature
+  | HelixFeature
   | InsertFeature
   | BaseFlangeFeature
   | EdgeFlangeFeature
+  | HemFeature
+  | MiterFlangeFeature
   | DraftFeature
   | RibFeature
+  | WrapFeature
   | HoleFeature
   | ThreadFeature
   | LoftFeature

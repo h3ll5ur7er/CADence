@@ -7,8 +7,12 @@ import type { DrawingFormat, SolidFormat } from '@core/managers/design';
 import { type AssemblyPictureOptions, type Cadence, CadenceError, type SummaryFilter, unwrap } from './api';
 import type { ScriptCommand } from './shapes';
 import { drawingTools } from './tools/drawings';
+import { libraryTools } from './tools/libraries';
 import { modelTools } from './tools/models';
 import { projectTools } from './tools/projects';
+import { scriptTools } from './tools/scripts';
+import type { ScriptSandbox } from './script';
+import { prompts, resourcesOf, type Resource } from './resources';
 import { type Captioned, documentArg, runAll, number, object, point, type Progress, projectArg, string, strings, type Tool } from './tools/schema';
 
 /** A JSON-RPC 2.0 message as MCP clients send it (newline-delimited JSON over stdio). */
@@ -34,17 +38,19 @@ Model a part:
 3. get_component lists the component: parameters, timeline, sketches, and bodies with their faces (centre) and edges (middle). Filter it to keep answers small: only ["faces"], body, match "f:pocket:*", near [x,y,z]. Features such as fillet take {"kind":"edge","body":"<body id>","name":"<edge name>","hint":[x,y,z]}; the hint (its centre or middle) picks the right piece when a name is split (~1, ~2).
 4. component_properties, check_component (print or laser rules) and export_component (STEP, STL, OBJ, 3MF; DXF or SVG of a sketch or a flat pattern).
 5. render_picture shows a component or an assembly, to check what was made: from a view or a direction, zoomed onto chosen bodies or instances (focus), with others hidden or see-through (ghost).
+6. Sketcher extras: a dimension with "reference": true measures without driving (get_component lists its value; with a "name", parameters and later features read it); make-block turns sketch geometry into a block sketch that {"kind":"block","block":"<sketch>","origin":"<point>","angle":"0 deg","scale":"1"} places again, in this or another component of the project ("document"); the feature "wrap" embosses or engraves profiles (text too) onto a cylinder, cone or any face.
 Assemble:
 1. create_document with kind "assembly", then edit_assembly with commands, e.g. [{"type":"insert-instance","instance":{"id":"base","component":"<component id>","name":"","transform":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"grounded":true}}]. Transforms are 4 x 4, column-major, mm (translation at 12, 13, 14).
 2. A joint lays instance b's frame on instance a's: {"type":"add-joint","joint":{"id":"j1","name":"","type":"revolute","a":{"instance":"base","ref":{"kind":"face","body":"<body>","name":"<face>"}},"b":{"instance":"arm"},"flip":false,"values":[0],"limits":[null]}}.
    A side's frame: without ref, the component's origin (its XY plane, z up); on a flat face, its centre and outward normal; on a round face or a circular edge, its axis. "offset":{"translate":[x,y,z],"lean":degrees,"tilt":degrees,"angle":degrees} moves a frame along its own axes, turns it about its z (lean), tilts it about its new x (lean and tilt point a joint along any direction no face has), then turns it about its new z. flip turns b over (its z against a's). values move b along or about the frame's z, in mm or degrees, in the order of jointDofs (revolute: angle; slider: distance; cylindrical: angle, distance).
-3. get_assembly lists instances (where they are), joints (with why they fail), links, patterns, motion studies and exploded views. set-link makes one joint drive another (gears, planetary sets; a cam with a profile of [angle, lift] pairs moves its follower), set-pattern copies instances, add-study keys or drives joints over time, set-exploded-view takes the assembly apart (steps may name pattern copies, "<pattern>/<instance>/<n>", and "radial": true moves each part away from the axis along the direction).
+3. get_assembly lists instances (where they are), joints (with why they fail), links, patterns, motion studies and exploded views. set-link makes one joint drive another (gears, bevel gears, worms, planetary sets; a cam with a profile of [angle, lift] pairs moves its follower), set-pattern copies instances, add-study keys or drives joints over time, set-exploded-view takes the assembly apart (steps may name pattern copies, "<pattern>/<instance>/<n>", and "radial": true moves each part away from the axis along the direction).
 4. render_picture with explode (and steps) or study and time shows it apart or moving; animate_study writes a GIF and shows a sheet of moments; check_assembly finds overlaps and collisions (with "seconds" to limit a long study check); assembly_properties gives the mass and the bill of materials.
 Draw:
-1. create_document with kind "drawing" (an A3 sheet at 1:1), then edit_drawing: set-sheet (size, orientation, scale), set-title-block, add-view {"id":"front","source":"<component or assembly id>","direction":"front","at":[x,y]} (front, back, top, bottom, left, right, iso; section, detail, scale, label). Sheet coordinates are mm from the bottom left.
-2. get_drawing lists the views' boxes on the sheet and their anchors: points, circles and lines by persistent name, where they are on the sheet. Annotations attach to anchors: dimensions (linear, horizontal, vertical, radius, diameter, angle), center marks and lines, hole callouts; notes, balloons and parts lists sit at sheet points.
+1. create_document with kind "drawing" (an A3 sheet at 1:1), then edit_drawing: set-sheet (size, orientation, scale), set-title-block, add-view {"id":"front","source":"<component or assembly id>","direction":"front","at":[x,y]} (front, back, top, bottom, left, right, iso; section (full, offset or half), detail, scale, label). Sheet coordinates are mm from the bottom left.
+2. get_drawing lists the views' boxes on the sheet and their anchors: points, circles and lines by persistent name, where they are on the sheet. Annotations attach to anchors: dimensions (linear, horizontal, vertical, radius, diameter, angle; with tolerances and ISO fits), center marks and lines, hole and thread callouts, surface finish symbols; notes, balloons and parts lists sit at sheet points.
 3. render_picture of a drawing shows the sheet as the PDF prints it (focus [view id] zooms onto a view); export_drawing writes PDF or DXF.
-Lengths are expressions ("6 mm", "2 * wall", "1 in"); plain numbers are millimetres. command_reference has every command, feature, part, assembly and drawing type as TypeScript, by topic (commands, sketch, features, document, assembly, drawing).`;
+Lengths are expressions ("6 mm", "2 * wall", "1 in"); plain numbers are millimetres. command_reference has every command, feature, part, assembly and drawing type as TypeScript, by topic (commands, sketch, features, parts, document, assembly, drawing); the same and the user guide are resources (cadence://reference/<topic>, cadence://guide/<page>).
+Many steps at once: run_script runs a whole script against the scripting API (loops, calculations, many parts or sheets) in a sandbox, and answers with what it returned, printed and changed (cadence://reference/scripts).`;
 
 /** The MCP server: CADence's scripting API as tools (docs/User-guide/Automation.md). */
 export class McpServer {
@@ -57,12 +63,19 @@ export class McpServer {
     private readonly version: string,
     /** Where files go when a tool is given no path, for the agent to know. */
     private readonly exportsFolder?: string,
+    /** The user guide's pages by name, as resources (CAD-172). */
+    guide: Readonly<Record<string, string>> = {},
+    /** Runs scripts (run_script): a worker of their own in the command line; this thread in tests. */
+    private readonly sandbox?: ScriptSandbox,
   ) {
     this.tools = this.createTools();
+    this.resources = resourcesOf(reference, guide);
   }
 
-  /** Tool calls in progress, by request id: whether they were cancelled. */
-  private readonly running = new Map<string | number, { cancelled: boolean }>();
+  private readonly resources: readonly Resource[];
+
+  /** Tool calls in progress, by request id: whether they were cancelled, and how to stop them. */
+  private readonly running = new Map<string | number, { cancelled: boolean; readonly stop: AbortController }>();
 
   /**
    * The response to a message; undefined for notifications, and for a request cancelled meanwhile.
@@ -75,6 +88,7 @@ export class McpServer {
       const call = this.running.get(params['requestId'] as string | number);
       if (call && !call.cancelled) {
         call.cancelled = true;
+        call.stop.abort();
         this.cadence.stop();
       }
       return undefined;
@@ -86,7 +100,7 @@ export class McpServer {
         const requested = String(params['protocolVersion'] ?? '');
         return reply({
           protocolVersion: protocolVersions.includes(requested) ? requested : protocolVersions[0],
-          capabilities: { tools: {} },
+          capabilities: { tools: {}, resources: {}, prompts: {} },
           serverInfo: { name: 'cadence', version: this.version },
           instructions: this.exportsFolder ? `${instructions}
 Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a path.` : instructions,
@@ -96,15 +110,34 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
         return reply({});
       case 'tools/list':
         return reply({ tools: this.tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
+      case 'resources/list':
+        return reply({ resources: this.resources.map(({ text, ...resource }) => ({ ...resource, size: text.length })) });
+      case 'resources/templates/list':
+        return reply({ resourceTemplates: [] });
+      case 'resources/read': {
+        const resource = this.resources.find((r) => r.uri === params['uri']);
+        if (!resource) return { jsonrpc: '2.0', id, error: { code: -32002, message: `No resource ${String(params['uri'])}.`, data: { uri: params['uri'] } } };
+        return reply({ contents: [{ uri: resource.uri, mimeType: resource.mimeType, text: resource.text }] });
+      }
+      case 'prompts/list':
+        return reply({ prompts: prompts.map(({ name, title, description, arguments: args }) => ({ name, title, description, arguments: args })) });
+      case 'prompts/get': {
+        const prompt = prompts.find((p) => p.name === params['name']);
+        if (!prompt) return { jsonrpc: '2.0', id, error: { code: -32602, message: `No prompt ${String(params['name'])}. Prompts: ${prompts.map((p) => p.name).join(', ')}.` } };
+        const args = (params['arguments'] ?? {}) as Record<string, string>;
+        const missing = prompt.arguments.filter((a) => a.required && !args[a.name]?.trim()).map((a) => a.name);
+        if (missing.length) return { jsonrpc: '2.0', id, error: { code: -32602, message: `The prompt ${prompt.name} needs ${missing.join(', ')}.` } };
+        return reply({ description: prompt.description, messages: [{ role: 'user', content: { type: 'text', text: prompt.text(args) } }] });
+      }
       case 'tools/call': {
         const token = (params['_meta'] as { progressToken?: string | number } | undefined)?.progressToken;
         const progress: Progress = (done, total, text) => {
           if (token !== undefined) notify({ jsonrpc: '2.0', method: 'notifications/progress', params: { progressToken: token, progress: done, total, message: text } });
         };
-        const call = { cancelled: false };
+        const call = { cancelled: false, stop: new AbortController() };
         this.running.set(id, call);
         try {
-          const answer = await this.call(String(params['name']), (params['arguments'] ?? {}) as Record<string, unknown>, progress);
+          const answer = await this.call(String(params['name']), (params['arguments'] ?? {}) as Record<string, unknown>, progress, call.stop.signal);
           return call.cancelled ? undefined : reply(answer);
         } finally {
           this.running.delete(id);
@@ -115,21 +148,21 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
     }
   }
 
-  private async call(name: string, args: Record<string, unknown>, progress: Progress): Promise<Record<string, unknown>> {
+  private async call(name: string, args: Record<string, unknown>, progress: Progress, signal: AbortSignal): Promise<Record<string, unknown>> {
     const tool = this.tools.find((t) => t.name === name);
     if (!tool) return { content: [{ type: 'text', text: `Unknown tool ${name}.` }], isError: true };
     await this.cadence.kernelRestarted();
-    const answer = await this.answer(tool, args, progress);
+    const answer = await this.answer(tool, args, progress, signal);
     // A kernel that failed during the call (out of memory) has started again: say so (CAD-133).
     if (!(await this.cadence.kernelRestarted())) return answer;
     const note = 'The geometry kernel failed during this call and started again; documents open here are read again from their files. Unsaved results are lost; saved documents are not.';
     return { ...answer, content: [...(answer['content'] as unknown[]), { type: 'text', text: note }] };
   }
 
-  private async answer(tool: Tool, args: Record<string, unknown>, progress: Progress): Promise<Record<string, unknown>> {
+  private async answer(tool: Tool, args: Record<string, unknown>, progress: Progress, signal: AbortSignal): Promise<Record<string, unknown>> {
     const image = (bytes: Uint8Array) => ({ type: 'image', data: Buffer.from(bytes).toString('base64'), mimeType: 'image/png' });
     try {
-      const result = await tool.run(args, progress);
+      const result = await tool.run(args, progress, signal);
       // Pictures go back as images the agent can look at.
       if (result instanceof Uint8Array) return { content: [image(result)] };
       if (result && typeof result === 'object' && 'picture' in result) {
@@ -228,19 +261,28 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
       },
       {
         name: 'delete_document',
-        description: 'Deletes a component, an assembly or an imported file from its project, for good (the project history keeps earlier versions).',
+        description: 'Moves a component, an assembly, a drawing or an imported file to the trash, where it stays for 30 days with its history (trash restores it).',
         inputSchema: object({ document: documentArg }, ['document']),
         run: async (args) => {
           const document = await cadence.document(String(args['document']));
           cadence.forget(document.id);
           await cadence.projects.deleteDocument(document.id as DocumentId);
-          return `Deleted ${document.name}.`;
+          return `Moved ${document.name} to the trash (restore it with trash).`;
         },
       },
       {
         name: 'import_file',
-        description: 'Imports a file (STEP, STL, OBJ, 3MF, DXF, SVG, PNG, JPEG) from disk into a project; with replace, puts it in place of an imported document (instances and sketches that use it follow).',
-        inputSchema: object({ project: projectArg, path: string('Path of the file on this computer.'), replace: string('An imported document to replace (id).') }, ['project', 'path']),
+        description:
+          'Imports a file (STEP, STL, OBJ, 3MF, KiCad board, DXF, SVG, PNG, JPEG) from disk into a project; with replace, puts it in place of an imported document (instances and sketches that use it follow). A KiCad board (.kicad_pcb) answers with its holes, whose walls are named for joints (hole:<reference>); with triangles, a mesh is also kept repaired and simplified to about that many triangles, so it can be used as a solid.',
+        inputSchema: object(
+          {
+            project: projectArg,
+            path: string('Path of the file on this computer.'),
+            replace: string('An imported document to replace (id).'),
+            triangles: number('For a mesh (STL, OBJ, 3MF): also keep a copy, repaired and simplified to about this many triangles (up to 100,000 become solids).'),
+          },
+          ['project', 'path'],
+        ),
         run: async (args) => {
           const path = String(args['path']);
           if (args['replace'] !== undefined) {
@@ -250,7 +292,17 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
             return `Replaced ${document.name}.`;
           }
           const imported = unwrap(await cadence.projects.importFile(await projectId(args), { name: basename(path), bytes: new Uint8Array(await readFile(path)) }));
-          return { id: imported.id, name: imported.name, kind: imported.kind };
+          const answer: Record<string, unknown> = { id: imported.id, name: imported.name, kind: imported.kind };
+          if (imported.format === 'kicad_pcb') {
+            const content = unwrap(await cadence.projects.previewImported(imported.id));
+            if (content.kind === 'model' && content.board) answer['board'] = content.board;
+          }
+          if (args['triangles'] !== undefined) {
+            const preview = unwrap(await cadence.projects.previewSimplified(imported.id, Number(args['triangles'])));
+            const simplified = unwrap(await cadence.projects.simplifyImported(imported.id, Number(args['triangles'])));
+            answer['simplified'] = { id: simplified.id, name: simplified.name, triangles: preview.content.triangles, of: preview.before, repair: preview.repair };
+          }
+          return answer;
         },
       },
       {
@@ -312,7 +364,7 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
       },
       {
         name: 'component_properties',
-        description: 'Volume (mm³), surface area (mm²), mass (g, from the material), centre of mass and bounding box of each body.',
+        description: 'Volume (mm³), surface area (mm²), mass (g, from the material), centre of mass and bounding box of each body; a spring part made as a body has its rate (N/mm, a torsion spring N·mm/°) and lengths.',
         inputSchema: object({ document: documentArg }, ['document']),
         run: async (args) => (await component(args)).properties(),
       },
@@ -325,11 +377,12 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
       {
         name: 'export_component',
         description:
-          'Writes a component to a file: its bodies as STEP, STL, OBJ or 3MF; a sketch, or the flat pattern of a sheet metal part, as DXF or SVG; html: a viewer for people without CADence; csv: the configuration table. Returns the path.',
+          'Writes a component to a file: its bodies as STEP, STL, OBJ or 3MF; a sketch, or the flat pattern of a sheet metal part, as DXF or SVG; html: a viewer for people without CADence; glb (glTF) or usdz: for other viewers and augmented reality, in metres; csv: the configuration table; plugin: with a plugin exporter of its project (exporter "<plugin id>/<exporter>", list_scripts). Returns the path.',
         inputSchema: object(
           {
             document: documentArg,
-            format: { type: 'string', enum: ['step', 'stl', 'obj', '3mf', 'dxf', 'svg', 'html', 'csv'] },
+            format: { type: 'string', enum: ['step', 'stl', 'obj', '3mf', 'dxf', 'svg', 'html', 'glb', 'usdz', 'csv', 'plugin'] },
+            exporter: string('For plugin: "<plugin id>/<exporter>".'),
             sketch: string('For DXF and SVG: the sketch id.'),
             flatPattern: { type: 'boolean', description: 'For DXF and SVG: the flat pattern instead of a sketch.' },
             path: string('Where to write the file (default: the exports folder).'),
@@ -340,8 +393,14 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
           const script = await component(args);
           const format = String(args['format']);
           const to = args['path'] === undefined ? {} : { to: String(args['path']) };
-          if (format === 'html') return script.exportViewer(to);
+          if (format === 'html' || format === 'glb' || format === 'usdz') return script.exportViewer({ ...to, format });
           if (format === 'csv') return script.exportConfigurations(to);
+          if (format === 'plugin') {
+            const exporter = String(args['exporter'] ?? '');
+            const slash = exporter.lastIndexOf('/');
+            if (slash <= 0) throw new CadenceError('usage', 'A plugin export needs exporter "<plugin id>/<exporter>" (list_scripts lists them).');
+            return script.exportWith(exporter.slice(0, slash), exporter.slice(slash + 1), to);
+          }
           if (format !== 'dxf' && format !== 'svg') return script.export(format as SolidFormat, to);
           if (args['flatPattern']) return script.exportFlatPattern(format as DrawingFormat, to);
           if (!args['sketch']) throw new CadenceError('no-sketch', 'DXF and SVG need a sketch id or flatPattern.');
@@ -417,11 +476,11 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
       {
         name: 'export_assembly',
         description:
-          'Writes an assembly to a file: STEP (one named solid per instance), 3MF, STL or OBJ; csv: the bill of materials; html: a viewer for people without CADence (turn, measure, hide, explode); pdf: build instructions from an exploded view (explode), the parts list and a page per step. Returns the path.',
+          'Writes an assembly to a file: STEP (one named solid per instance), 3MF, STL or OBJ; csv: the bill of materials; html: a viewer for people without CADence (turn, measure, hide, explode); glb (glTF) or usdz: for other viewers and augmented reality, in metres; pdf: build instructions from an exploded view (explode), the parts list and a page per step. Returns the path.',
         inputSchema: object(
           {
             document: documentArg,
-            format: { type: 'string', enum: ['step', '3mf', 'stl', 'obj', 'csv', 'html', 'pdf'] },
+            format: { type: 'string', enum: ['step', '3mf', 'stl', 'obj', 'csv', 'html', 'glb', 'usdz', 'pdf'] },
             explode: string('For pdf: the exploded view whose steps the instructions follow.'),
             path: string('Where to write the file (default: the exports folder).'),
           },
@@ -432,7 +491,7 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
           const to = args['path'] === undefined ? {} : { to: String(args['path']) };
           const format = String(args['format']);
           if (format === 'csv') return script.exportBillOfMaterials(to);
-          if (format === 'html') return script.exportViewer(to);
+          if (format === 'html' || format === 'glb' || format === 'usdz') return script.exportViewer({ ...to, format });
           if (format === 'pdf') {
             if (args['explode'] === undefined) throw new CadenceError('usage', 'Build instructions follow an exploded view: give its id as explode.');
             return script.exportInstructions(String(args['explode']), to);
@@ -481,7 +540,7 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
       {
         name: 'command_reference',
         description:
-          'The TypeScript types of the commands and contracts, with their documentation, by topic: commands (design commands and shorthands), sketch (entities and constraints), features (features and parts: gears, ring gears, screws, bearings …), document (components, materials, checks, appearance), assembly (assembly commands, instances, joints, links, studies, exploded views), drawing (drawing commands, sheets, views, annotations). Without a topic, the list of topics.',
+          'The TypeScript types of the commands and contracts, with their documentation, by topic: commands (design commands and shorthands), sketch (entities and constraints), features (the features), parts (the parts features place: gears, ring gears, bevel gears, worms, springs, screws, bearings …), document (components, materials, checks, appearance), assembly (assembly commands, instances, joints, links, studies, exploded views), drawing (drawing commands, sheets, views, annotations). Without a topic, the list of topics.',
         inputSchema: object({ topic: { type: 'string', enum: Object.keys(this.reference) } }),
         run: async (args) => {
           const topic = args['topic'] === undefined ? undefined : String(args['topic']);
@@ -494,6 +553,8 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
       ...drawingTools(cadence),
       ...modelTools(cadence),
       ...projectTools(cadence),
+      ...libraryTools(cadence),
+      ...scriptTools(cadence, this.exportsFolder, this.sandbox),
     ];
   }
 }

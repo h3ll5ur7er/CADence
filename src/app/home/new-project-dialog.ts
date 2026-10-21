@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, type ElementRef, signal, viewChild } from '@angular/core';
 import { ModalDialog } from '../shared/dialogs';
+import { HelpLink } from '../shared/help';
 
 /** A template as the app lists it (public/templates/index.json). */
 export interface TemplateEntry {
@@ -22,15 +23,19 @@ const pictures: Readonly<Record<string, string>> = {
   enclosure: 'M12 22l20-9 20 9v13l-20 9-20-9zM12 22l20 9 20-9M32 31v13M18 23v5M26 19v5M38 27v5M46 23v5',
 };
 
+/** A template's line picture (64 × 48); an empty project's for templates without one. */
+export const templatePicture = (id: string): string => pictures[id] ?? pictures['empty'] ?? '';
+
 /** Asks for a new project's name and what it starts from: nothing, or a template. */
 @Component({
   selector: 'cad-new-project-dialog',
+  imports: [HelpLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   styleUrl: '../shared/dialogs.scss',
   template: `
     <dialog #dialog class="dialog new-project" aria-labelledby="new-project-heading" (close)="finish(undefined)">
       <form (submit)="submit($event)">
-        <h2 id="new-project-heading">New project</h2>
+        <h2 id="new-project-heading">New project <cad-help topic="new-project" /></h2>
         <fieldset class="templates">
           <legend>Start from</legend>
           @for (choice of choices(); track choice.id) {
@@ -89,7 +94,7 @@ export class NewProjectDialog extends ModalDialog<NewProject | undefined> {
   }
 
   protected picture(id: string): string {
-    return pictures[id] ?? pictures['empty'] ?? '';
+    return templatePicture(id);
   }
 
   protected choose(choice: TemplateEntry): void {

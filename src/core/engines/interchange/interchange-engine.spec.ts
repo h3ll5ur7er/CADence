@@ -10,6 +10,7 @@ import { readStl } from './mesh-readers';
 import { maxSeparateSolids, store } from './solid-readers';
 import { meshVolume, writeStl } from './solids';
 import { readZip } from '@core/utilities/archive';
+import { scan } from './testing';
 
 const engine = createInterchangeEngine();
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
@@ -232,6 +233,25 @@ describe('InterchangeEngine imports', () => {
     const display = ok(await engine.readMesh(big, 'stl', 'asset-big'));
     expect(display.triangles).toBe(triangles);
   });
+
+  it('repairs open meshes before they become solids (CAD-169)', async () => {
+    const open = { ...cubeMesh, indices: cubeMesh.indices.slice(0, -3) };
+    const [key] = ok(await engine.readSolids(writeStl([open]), 'stl', 'asset-open-cube'));
+    expect(volumeOf(key as string)).toBeCloseTo(1000, 6);
+  });
+
+  it('simplifies a 500,000-triangle scan into a mesh that becomes a solid (CAD-169)', async () => {
+    const big = writeStl([scan(501, 500)]);
+    expect(await engine.readSolids(big, 'stl', 'asset-scan')).toMatchObject({ ok: false, error: { message: expect.stringContaining('Simplify it first') } });
+    const simple = ok(await engine.simplifyMesh(big, 'stl', 3000, 'preview-scan'));
+    expect(simple.before).toBeGreaterThan(499_000);
+    expect(simple.preview.triangles).toBeLessThanOrEqual(3000);
+    expect(simple.preview.usableAsSolid).toBe(true);
+    expect(simple.repair).toMatchObject({ closedHoles: 0, flippedTriangles: 0 });
+    const [key] = ok(await engine.readSolids(simple.file, 'stl', 'asset-scan-simple'));
+    expect(volumeOf(key as string) / ((4 / 3) * Math.PI * 20 ** 3)).toBeCloseTo(1, 1);
+    expect(await engine.simplifyMesh(big, 'stl', 2, 'preview-scan')).toMatchObject({ ok: false });
+  }, 120_000);
 
   it('prepares meshes for display with their volume, extent and fold edges', async () => {
     const display = ok(await engine.readMesh(writeStl([cubeMesh]), 'stl', 'asset-cube'));

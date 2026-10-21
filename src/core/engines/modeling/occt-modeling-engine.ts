@@ -1,11 +1,12 @@
-import { find, kernelFailure, type NamedShape, piecesOf, place, type ShapeAccess } from '@core/access/shape';
-import { type BodyMesh, fail, type Matrix4, ok, type PlaneFrame, type Result, type TopologyRef, type Vec2, type Vec3 } from '@core/contracts';
+import { edgesOf, facesOf, find, kernelFailure, type NamedShape, piecesOf, place, type ShapeAccess } from '@core/access/shape';
+import { type BodyDifference, type BodyMesh, fail, type Matrix4, ok, type PlaneFrame, type Result, type ThreadMarker, type TopologyRef, type Vec2, type Vec3 } from '@core/contracts';
+import { transformPoint } from '@core/utilities/math';
 import { type Edge, type Face, getOC, makeCompound, makeVertex, measureVolume, type Shape3D, Vertex } from 'replicad';
 import { combine, type LoadedBody, renameCopy } from './bodies';
 import { BodyOperationError, combineBodies, splitBody, transformBodies } from './body-operations';
-import { DraftRibError, draftFaces, ribTool } from './draft-rib';
+import { DraftRibError, draftFaces, ribToNext, ribTool } from './draft-rib';
 import { drawingView, type ViewGeometry, type ViewRequest } from './drawing-view';
-import { edgeFlanges, FlangeError } from './flanges';
+import { edgeFlanges, FlangeError, hems, miterFlange } from './flanges';
 import { HoleError, holeTool, threadGroove, threadPlacement } from './holes';
 import { GearError } from './gears';
 import { PartError, partTool } from './parts';
@@ -16,11 +17,14 @@ import { readSnapshot, snapshotOf } from './results';
 import { tessellate } from './tessellation';
 import { extrudeTool, loftTool, RevolveError, revolveTool, sweepTool } from './tools';
 import { BooleanError, cut, valid } from './booleans';
+import { WrapError, wrapTool } from './wrap';
 
 /** A failure the user can act on, as opposed to a defect. */
 class FeatureError extends Error {}
 
 const outcomeCacheSize = 500;
+/** Less than this (mm³) left of a body without the other version's bodies is where both versions agree. */
+const unchanged = 1e-3;
 
 export class OcctModelingEngine implements ModelingEngine {
   private readonly outcomes = new Map<string, ModelingOutcome>();
@@ -35,7 +39,7 @@ export class OcctModelingEngine implements ModelingEngine {
     try {
       outcome = this.compute(request);
     } catch (error) {
-      const known = error instanceof FeatureError || error instanceof BooleanError || error instanceof GearError || error instanceof BodyOperationError || error instanceof HoleError || error instanceof PartError || error instanceof DraftRibError || error instanceof FlangeError || error instanceof RevolveError;
+      const known = error instanceof FeatureError || error instanceof BooleanError || error instanceof GearError || error instanceof BodyOperationError || error instanceof HoleError || error instanceof PartError || error instanceof DraftRibError || error instanceof FlangeError || error instanceof RevolveError || error instanceof WrapError;
       // A kernel that ran out of memory starts again before the next feature (CAD-133).
       const failure = known ? undefined : kernelFailure(describe(error));
       if (failure) this.shapes.report(describe(error));
@@ -129,16 +133,28 @@ export class OcctModelingEngine implements ModelingEngine {
     return this.shapes.generation();
   }
 
-  async snapshot(bodies: readonly BodyState[]): Promise<Uint8Array> {
+  async snapshot(bodies: readonly BodyState[], threads: readonly ThreadMarker[] = []): Promise<Uint8Array> {
     await this.shapes.ready();
-    return snapshotOf(this.load(bodies).map((b) => ({ id: b.state.id, named: b.named })));
+    return snapshotOf(this.load(bodies).map((b) => ({ id: b.state.id, named: { ...b.named, threads: threads.filter((t) => t.body === b.state.id) } })));
   }
 
   async snapshotPlaced(parts: readonly { readonly id: string; readonly body: BodyState; readonly transform: Matrix4 }[]): Promise<Uint8Array> {
     await this.shapes.ready();
     const loaded = this.load(parts.map((p) => p.body));
-    // Names stay with the stored shape: placed copies are for drawings, not references.
-    const placed = parts.map(({ id, transform }, i) => ({ id, named: { shape: place((loaded[i] as LoadedBody).named.shape, transform), faces: new Map(), edges: new Map() } }));
+    // Placed copies keep their names in topological order, which a placed copy keeps, so drawings can
+    // dimension each part (CAD-167); their threads move with them (CAD-166).
+    const placed = parts.map(({ id, transform }, i) => {
+      const named = (loaded[i] as LoadedBody).named;
+      const shape = place(named.shape, transform);
+      const rename = <T extends { hashCode: number }>(names: ReadonlyMap<number, string>, from: readonly T[], to: readonly T[]) =>
+        new Map(from.flatMap((item, k) => (names.has(item.hashCode) && to[k] ? [[(to[k] as T).hashCode, names.get(item.hashCode) as string] as const] : [])));
+      const threads = named.threads?.map((t) => {
+        const tip = transformPoint(transform, [t.origin[0] + t.direction[0], t.origin[1] + t.direction[1], t.origin[2] + t.direction[2]]);
+        const origin = transformPoint(transform, t.origin);
+        return { ...t, body: id, origin, direction: normalize3(sub3(tip, origin)) };
+      });
+      return { id, named: { shape, faces: rename(named.faces, facesOf(named.shape), facesOf(shape)), edges: rename(named.edges, edgesOf(named.shape), edgesOf(shape)), ...(threads ? { threads } : {}) } };
+    });
     try {
       return snapshotOf(placed);
     } finally {
@@ -162,6 +178,36 @@ export class OcctModelingEngine implements ModelingEngine {
   async tessellate(bodies: readonly BodyState[]): Promise<BodyMesh[]> {
     await this.shapes.ready();
     return this.load(bodies).map((b) => tessellate(b.state, b.named));
+  }
+
+  async compare(before: readonly BodyState[], after: readonly BodyState[]): Promise<Result<BodyDifference>> {
+    await this.shapes.ready();
+    try {
+      const [old, now] = [this.load(before), this.load(after)];
+      const total = (bodies: readonly LoadedBody[]) => bodies.reduce((sum, b) => sum + Math.abs(measureVolume(b.named.shape)), 0);
+      // Each body without the other version's bodies; pieces of no volume are where both agree.
+      const rest = (from: readonly LoadedBody[], without: readonly LoadedBody[], prefix: string) =>
+        from.flatMap((body) => {
+          const left = without.length ? cut(body.named.shape, ...without.map((b) => b.named.shape)) : body.named.shape;
+          try {
+            const volume = Math.abs(measureVolume(left));
+            if (volume < unchanged) return [];
+            const state = { id: `${prefix}:${body.state.id}`, key: `${prefix}:${body.state.key}` };
+            return [{ mesh: tessellate(state, { shape: left, faces: new Map(), edges: new Map() }), volume }];
+          } finally {
+            if (left !== body.named.shape) left.delete();
+          }
+        });
+      const [added, removed] = [rest(now, old, 'added'), rest(old, now, 'removed')];
+      const sum = (pieces: readonly { volume: number }[]) => pieces.reduce((s, p) => s + p.volume, 0);
+      return ok({
+        added: added.map((p) => p.mesh),
+        removed: removed.map((p) => p.mesh),
+        volume: { before: total(old), after: total(now), added: sum(added), removed: sum(removed) },
+      });
+    } catch (error) {
+      return fail({ code: 'compare-failed', message: `The versions' bodies could not be compared (${describe(error)}).` });
+    }
   }
 
   private compute(request: ModelingRequest): ModelingOutcome {
@@ -225,14 +271,22 @@ export class OcctModelingEngine implements ModelingEngine {
           request.type,
           request.endSize === undefined ? undefined : positive(request.endSize, 'end radius'),
         );
-      case 'edge-flange': {
+      case 'edge-flange':
+      case 'hem':
+      case 'miter-flange': {
         if (request.edges.length === 0) throw new FeatureError('Select the edges to put flanges on.');
         const bodyId = (request.edges[0] as TopologyRef).body;
         const body = bodies.find((b) => b.state.id === bodyId);
         if (!body || request.edges.some((r) => r.body !== bodyId)) throw new FeatureError('Select edges of one sheet.');
         const edges = request.edges.map((ref) => ({ ref, edge: this.element(body, ref) as Edge }));
         const rules = { thickness: positive(request.thickness, 'sheet thickness'), bendRadius: request.bendRadius };
-        const { named, markers } = edgeFlanges(request.feature, body.named, edges, rules, positive(request.length, 'flange length'), request.angle);
+        const corners = { ...(request.relief ? { relief: { shape: request.relief.shape, size: positive(request.relief.size, 'relief size') } } : {}), earlier: request.flanges ?? [] };
+        const { named, markers } =
+          request.type === 'edge-flange'
+            ? edgeFlanges(request.feature, body.named, edges, rules, positive(request.length, 'flange length'), request.angle, corners)
+            : request.type === 'hem'
+              ? hems(request.feature, body.named, edges, rules, request.style, request.gap, positive(request.length, 'hem length'), corners)
+              : miterFlange(request.feature, body.named, edges, rules, request.profile, cross3(request.frame.u, request.frame.v), corners);
         const state = { id: body.state.id, key: `${request.key}:${body.state.id}` };
         return { ...this.store({ bodies: bodies.map((b) => (b === body ? state : b.state)), stored: [[state.key, named]] }), flanges: markers };
       }
@@ -247,10 +301,28 @@ export class OcctModelingEngine implements ModelingEngine {
         return this.store({ bodies: bodies.map((b) => (b === body ? state : b.state)), stored: [[state.key, named]] });
       }
       case 'rib': {
-        const tool = ribTool(request.feature, request.frame, request.path, positive(request.thickness, 'thickness'), positive(request.depth, 'depth'), request.direction);
+        const thickness = positive(request.thickness, 'thickness');
+        const tool =
+          request.depth === 'next'
+            ? ribToNext(request.feature, request.frame, request.path, thickness, request.direction, bodies.map((b) => b.named.shape), 2 * reach(bodies.map((b) => b.named.shape), request.frame.origin) + 1)
+            : ribTool(request.feature, request.frame, request.path, thickness, positive(request.depth, 'depth'), request.direction);
         const toolKey = `${request.key}:tool`;
         this.shapes.put(toolKey, tool);
         return { ...this.store(combine(bodies, tool, 'join', request.feature, request.key)), toolKey };
+      }
+      case 'wrap': {
+        const body = bodies.find((b) => b.state.id === request.face.body);
+        if (!body) throw new WrapError(`The body of ${request.face.name} no longer exists.`);
+        const face = this.element(body, request.face);
+        if (!('normalAt' in face)) throw new WrapError('Pick a face to wrap the sketch onto.');
+        // The face as the user sees it: all its pieces (a round face's halves), the picked one first.
+        const split = (name: string) => name.replace(/~\d+$/, '');
+        const others = request.face.hint ? [] : facesOf(body.named.shape).filter((f) => f.hashCode !== face.hashCode && split(body.named.faces.get(f.hashCode) ?? '') === split(request.face.name));
+        const pieces = [face as Face, ...others];
+        const tool = wrapTool(request.feature, request.frame, request.profiles, pieces, request.method, request.depth, request.operation);
+        const toolKey = `${request.key}:tool`;
+        this.shapes.put(toolKey, tool);
+        return { ...this.store(combine(bodies, tool, request.operation === 'emboss' ? 'join' : 'cut', request.feature, request.key)), toolKey };
       }
       case 'shell':
         return this.shell(request.feature, request.key, bodies, request.faces, positive(request.thickness, 'thickness'));
@@ -337,13 +409,13 @@ export class OcctModelingEngine implements ModelingEngine {
       const range = `${Math.round(low * 100) / 100} to ${Math.round(high * 100) / 100} mm`;
       throw new FeatureError(`An ${request.size} thread needs a ${place.internal ? 'hole' : 'shaft'} of ${range}; this one is ${Math.round(2 * place.radius * 100) / 100} mm.`);
     }
-    const thread = { feature: request.feature, size: request.size, origin: place.origin, direction: place.direction, radius: place.radius, length, pitch: p, diameter: d, internal: place.internal };
+    const thread: ThreadMarker = { feature: request.feature, size: request.size, origin: place.origin, direction: place.direction, radius: place.radius, length, pitch: p, diameter: d, internal: place.internal, body: body.state.id };
     if (!request.modelled) return { bodies: request.bodies, thread };
     const shape = cut(body.named.shape, threadGroove(thread, place.length));
     if (measureVolume(shape) > measureVolume(body.named.shape) - 1e-3 * thread.pitch ** 3) throw new FeatureError('The thread could not be cut. Try a shorter thread, or start it at the other end.');
     const named = nameShape(shape, namedSurfaces(body.named), () => `f:${request.feature}:flank`, request.feature);
     const state = { id: body.state.id, key: `${request.key}:${body.state.id}` };
-    return { ...this.store({ bodies: bodies.map((b) => (b === body ? state : b.state)), stored: [[state.key, named]] }), thread };
+    return { ...this.store({ bodies: bodies.map((b) => (b === body ? state : b.state)), stored: [[state.key, named]] }), thread: { ...thread, modelled: { faceLength: place.length } } };
   }
 
   private treatEdges(feature: string, key: string, bodies: LoadedBody[], refs: readonly TopologyRef[], size: number, kind: 'fillet' | 'chamfer', endSize?: number): ModelingOutcome {
@@ -425,7 +497,8 @@ export class OcctModelingEngine implements ModelingEngine {
       const imported = this.shapes.get(source);
       if (!imported) throw new FeatureError('The imported file has to be read again.');
       const id = i === 0 ? feature : `${feature}:${i + 1}`;
-      return [`${key}:${id}`, nameShape(imported.shape.clone(), [], () => undefined, feature)];
+      // Faces the file named (a circuit board's holes, CAD-170) keep their names; the others are named by position.
+      return [`${key}:${id}`, nameShape(imported.shape.clone(), namedSurfaces(imported), () => undefined, feature)];
     });
     const added = stored.map(([storedKey], i) => ({ id: i === 0 ? feature : `${feature}:${i + 1}`, key: storedKey }));
     return this.store({ bodies: [...bodies, ...added], stored });

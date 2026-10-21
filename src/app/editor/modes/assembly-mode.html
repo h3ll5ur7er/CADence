@@ -1,6 +1,8 @@
 <div class="stage">
+  <cad-changed-elsewhere [shown]="store.elsewhere.pending()" (reload)="reopen()" (keep)="store.elsewhere.pending.set(false)" />
   <cad-viewport
     #viewport
+    [compact]="layout.phone()"
     (thumbnail)="thumbnails.save($event)"
     [parts]="store.parts()"
     [pickable]="store.pickable()"
@@ -143,6 +145,7 @@
             } @empty {
               <button type="button" role="menuitem" disabled>No components in this project yet</button>
             }
+            <button type="button" role="menuitem" class="from-library" (click)="menu.set(undefined); store.openLibrary()">From a library…</button>
           </div>
         }
       </div>
@@ -191,6 +194,8 @@
               <button type="button" role="menuitem" (click)="exportAs(f.format)">{{ f.label }}</button>
             }
             <button type="button" role="menuitem" (click)="menu.set(undefined); store.exportViewer()">Viewer (HTML, to share)</button>
+            <button type="button" role="menuitem" (click)="menu.set(undefined); store.exportViewer('glb')">glTF (GLB, viewers and AR)</button>
+            <button type="button" role="menuitem" (click)="menu.set(undefined); store.exportViewer('usdz')">USDZ (AR on iPhone and iPad)</button>
             <button type="button" role="menuitem" (click)="menu.set(undefined); pictureDialog().ask(viewport, document().name)">Picture or turntable…</button>
           </div>
         }
@@ -212,12 +217,18 @@
       </p>
     }
   }
+
+  @if (layout.phone()) {
+    <cad-phone-bar [viewport]="viewport" [measurable]="true" [measuring]="store.panel() === 'measure'" [arFile]="arFile" (measure)="store.toggleMeasure()" />
+  }
 </div>
 
 <aside class="properties" aria-label="Properties">
   @let selection = store.selection();
   @if (store.panel() === 'joint') {
     <cad-joint-panel />
+  } @else if (store.panel() === 'library') {
+    <cad-library-panel />
   } @else if (store.panel() === 'pattern') {
     <cad-pattern-panel />
   } @else if (store.panel() === 'bom') {
@@ -250,6 +261,7 @@
     <p class="eyebrow">Inspect</p>
     <div class="head">
       <h2>Measure</h2>
+      <cad-help topic="assembly-measure" />
       <button type="button" class="icon-btn" aria-label="Close measure" (click)="store.toggleMeasure()">×</button>
     </div>
     <p class="hint">Click faces, edges and corners of any instances. One gives its size; two give the distance and angle between them.</p>

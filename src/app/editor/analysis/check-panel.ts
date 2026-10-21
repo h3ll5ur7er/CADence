@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/c
 import { type CheckStatus, manufacturingProfiles, type ManufacturingProfile } from '@core/contracts';
 import { Icon, type IconName } from '../../shared/icon';
 import { DesignStore } from '../sketch/design-store';
+import { HelpLink } from '../../shared/help';
 
 interface Field {
   readonly label: string;
@@ -16,12 +17,13 @@ const custom = 'custom';
 /** Manufacturability: the machine profile and how the design does against its rules. */
 @Component({
   selector: 'cad-check-panel',
-  imports: [Icon],
+  imports: [HelpLink, Icon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <p class="eyebrow">Inspect</p>
     <div class="head">
       <h2>Manufacturability</h2>
+      <cad-help topic="check" />
       <button type="button" class="icon-btn" aria-label="Close checks" (click)="store.openPanel(undefined)">×</button>
     </div>
     <label class="field wide">

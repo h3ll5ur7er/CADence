@@ -7,6 +7,7 @@ import {
   asDocumentId,
   asProjectId,
   type AssetId,
+  type Attachment,
   type CadDocument,
   type ConflictChoice,
   type CreatableDocumentKind,
@@ -17,24 +18,44 @@ import {
   type DocumentSummary,
   type DomainEvents,
   fail,
+  type ImportedDocument,
   type ImportFormat,
   isFontFormat,
   isModelFormat,
+  type LibraryLink,
+  type LibraryPart,
+  type LibrarySummary,
   ok,
   type Parameter,
   type Project,
   type ProjectId,
+  type ProjectPlugin,
   type ProjectRemote,
+  type ProjectScript,
   type ProjectSummary,
   type ProjectTemplate,
   type RemoteCredentials,
   type Result,
+  standardLibraryId,
   summarize,
   type SyncConflict,
   type SyncOutcome,
+  type TrashedDocument,
+  trashDays,
+  type TrashItem,
+  type ItemConflict,
+  type ProjectRole,
+  type ServerInfo,
+  type ServerSignIn,
+  type ServerUser,
+  type SharedProject,
 } from '@core/contracts';
+import { migrate, UnsupportedSchemaError } from '@core/access/document';
+import { type ServerAccess, ServerError } from '@core/access/server';
 import { InvalidVersionNameError, RemoteError, type Version, type VersionAccess, type VersionFile } from '@core/access/version';
-import type { InterchangeEngine } from '@core/engines/interchange';
+import { compareDocuments, mergeDocuments } from '@core/engines/revision';
+import type { InterchangeEngine, SimplifiedMesh } from '@core/engines/interchange';
+import { createPluginEngine, type PluginEngine } from '@core/engines/plugin';
 import { readZip, zip } from '@core/utilities/archive';
 import { range } from '@core/utilities/math';
 import { pictureSize } from '@core/utilities/picture';
@@ -42,8 +63,10 @@ import { loadFont } from '@core/utilities/text';
 import type { ParameterEngine } from '@core/engines/parameter';
 import type { Clock } from '@core/utilities/clock';
 import type { EventBus } from '@core/utilities/messaging';
-import { archiveFiles, copyOf, type ProjectBundle, readArchive, remapIds, templateBundle, withNewIds } from './project-bundles';
-import type { CreatedProject, ExternalFile, ImportedContent, ImportedView, ProjectManager } from './project-manager';
+import { archiveFiles, copyOf, extras, notesOf, type ProjectBundle, readArchive, remapIds, templateBundle, withNewIds } from './project-bundles';
+import { libraryCopies } from './project-libraries';
+import type { AttachmentInput, CreatedProject, ExternalFile, ImportedContent, ImportedView, LibraryUpdate, ProjectManager, SimplifiedImport, StoreChange, VersionComparison } from './project-manager';
+import { findStandardPart, standardComponent, standardLibraryName, standardLibraryParts, standardParts } from './standard-library';
 
 export interface ProjectManagerDependencies {
   readonly projects: ProjectAccess;
@@ -55,11 +78,15 @@ export interface ProjectManagerDependencies {
   readonly parameters: ParameterEngine;
   /** Each project's version history. */
   readonly versions: VersionAccess;
+  /** CADence servers, where projects are shared (CAD-177); absent: no sharing on this host. */
+  readonly server?: ServerAccess;
   /** How long after the last save a version is recorded (ms). */
   readonly versionDelay?: number;
   readonly events: EventBus<DomainEvents>;
   readonly clock: Clock;
   readonly newId: () => string;
+  /** Reads the plugins installed into projects (CAD-174); one of the script sandbox by default. */
+  readonly plugins?: PluginEngine;
 }
 
 const maxNameLength = 80;
@@ -96,6 +123,7 @@ const mediaTypes: Readonly<Record<ImportFormat, string>> = {
   stl: 'model/stl',
   obj: 'model/obj',
   '3mf': 'model/3mf',
+  kicad_pcb: 'application/x-kicad-pcb',
   dxf: 'image/vnd.dxf',
   svg: 'image/svg+xml',
   png: 'image/png',
@@ -111,6 +139,7 @@ const formatsByExtension: Readonly<Record<string, ImportFormat>> = {
   stl: 'stl',
   obj: 'obj',
   '3mf': '3mf',
+  kicad_pcb: 'kicad_pcb',
   dxf: 'dxf',
   svg: 'svg',
   png: 'png',
@@ -138,8 +167,33 @@ function validName(name: string): Result<string> {
   return ok(trimmed);
 }
 
+/** A server sign-in as git's: the token is the password. */
+const credentialsOf = (signIn: ServerSignIn): RemoteCredentials => ({ username: 'token', password: signIn.token });
+
 const unknownProject = (id: ProjectId) => fail({ code: 'unknown-project', message: `Project ${id} does not exist.` });
+const notInTrash = (id: string) => fail({ code: 'not-in-trash', message: `Nothing in the trash has the id ${id}.` });
+const day = 24 * 60 * 60 * 1000;
+/** When something put in the trash at `time` is deleted for good. */
+const expiry = (time: string) => new Date(Date.parse(time) + trashDays * day).toISOString();
+/** The project with these documents in its trash (none: no trash). */
+const withTrash = (project: Project, trash: readonly TrashedDocument[]): Project => {
+  const { trash: _, ...rest } = project;
+  return trash.length ? { ...rest, trash } : rest;
+};
+/** The settings a project's versions keep: what travels with it to other devices (not its trash or remote). */
+const settingsText = (project: Project) => JSON.stringify({ name: project.name, parameters: project.parameters ?? [], ...notesOf(project), ...extras(project) }, null, 2);
+
+/** Media types of files kept as attachments, by extension. */
+const attachmentTypes: Readonly<Record<string, string>> = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
+  pdf: 'application/pdf', txt: 'text/plain', md: 'text/markdown', csv: 'text/csv', json: 'application/json',
+  step: 'model/step', stp: 'model/step', stl: 'model/stl', zip: 'application/zip',
+};
+const attachmentType = (name: string) => attachmentTypes[name.slice(name.lastIndexOf('.') + 1).toLowerCase()] ?? 'application/octet-stream';
+/** The largest file kept with a project. */
+const maxAttachmentSize = 100 * 1024 * 1024;
 const invalidRemote = () => fail({ code: 'invalid-remote', message: 'A remote is a git repository address starting with https:// (or http://).' });
+const unknownLibrary = (library: string) => fail({ code: 'unknown-library', message: `No library ${library} on this device (list_libraries).` });
 const unknownDocument = (id: DocumentId) =>
   fail({ code: 'unknown-document', message: `Document ${id} does not exist.` });
 
@@ -159,9 +213,24 @@ export class DefaultProjectManager implements ProjectManager {
   private readonly pending = new Map<ProjectId, ReturnType<typeof setTimeout>>();
   /** One recording or sync at a time. */
   private recording: Promise<unknown> = Promise.resolve();
+  /** Who follows what lists show (`watch`). */
+  private readonly watchers = new Set<(change: StoreChange) => void>();
+  /** The last simplified mesh previewed, kept so keeping it does not simplify it again. */
+  private simplified: { readonly id: DocumentId; readonly assetId: AssetId; readonly triangles: number; readonly mesh: SimplifiedMesh } | undefined;
+  private plugins: PluginEngine | undefined;
 
   constructor(private readonly deps: ProjectManagerDependencies) {
     deps.events.subscribe('documentSaved', ({ projectId }) => this.scheduleVersion(projectId));
+    // What lists show: documents changed elsewhere (tabs, windows, processes: CAD-150), renamed, restored or deleted, and projects.
+    const tell = (change: StoreChange) => this.watchers.forEach((listener) => listener(change));
+    for (const event of ['documentChanged', 'documentCreated', 'documentRenamed', 'documentRestored'] as const) deps.events.subscribe(event, ({ documentId }) => tell({ kind: 'document', documentId }));
+    deps.events.subscribe('documentDeleted', ({ documentId }) => tell({ kind: 'document', documentId, gone: true }));
+    for (const event of ['projectDeleted', 'projectChanged', 'projectParametersChanged'] as const) deps.events.subscribe(event, ({ projectId }) => tell({ kind: 'projects', projectId }));
+  }
+
+  watch(listener: (change: StoreChange) => void): () => void {
+    this.watchers.add(listener);
+    return () => this.watchers.delete(listener);
   }
 
   /** Records a version once the project has been left alone for a moment. */
@@ -176,8 +245,9 @@ export class DefaultProjectManager implements ProjectManager {
     );
   }
 
-  recordVersion(id: ProjectId, message?: string): Promise<void> {
-    return this.serially(() => this.record(id, message));
+  async recordVersion(id: ProjectId, message?: string): Promise<void> {
+    // A new version of a library reaches the projects that follow it (CAD-151).
+    if (await this.serially(() => this.record(id, message))) await this.followLibrary(id);
   }
 
   /** Runs after the recordings and syncs before it, so they never interleave. */
@@ -187,9 +257,10 @@ export class DefaultProjectManager implements ProjectManager {
     return run;
   }
 
-  private async record(id: ProjectId, message?: string): Promise<void> {
+  /** Records a version; answers whether it was a new version of a library. */
+  private async record(id: ProjectId, message?: string): Promise<boolean> {
     const project = await this.deps.projects.find(id);
-    if (!project) return;
+    if (!project) return false;
     const documents = await Promise.all((await this.deps.documents.enumerate(id)).map((d) => this.deps.documents.load(d.id)));
     const files: VersionFile[] = documents.flatMap((d) => (d ? [{ path: documentPath(d.id), text: versionText(d) }] : []));
     for (const document of documents) {
@@ -197,9 +268,16 @@ export class DefaultProjectManager implements ProjectManager {
       const { assetId } = document;
       files.push({ path: originalPath(assetId), bytes: async () => (await this.deps.assets.fetch(assetId))?.bytes ?? new Uint8Array() });
     }
-    files.push({ path: settingsPath, text: JSON.stringify({ name: project.name, parameters: project.parameters ?? [] }, null, 2) });
+    // Attached files are kept like originals (CAD-149).
+    for (const attachment of project.attachments ?? []) {
+      if (attachment.kind !== 'file') continue;
+      const { assetId } = attachment;
+      files.push({ path: originalPath(assetId), bytes: async () => (await this.deps.assets.fetch(assetId))?.bytes ?? new Uint8Array() });
+    }
+    files.push({ path: settingsPath, text: settingsText(project) });
     const summary = message ?? (await this.changes(id, files, documents.flatMap((d) => (d ? [d] : []))));
-    await this.deps.versions.record(id, files, summary, this.now());
+    const recorded = await this.deps.versions.record(id, files, summary, this.now());
+    return recorded !== undefined && project.library !== undefined;
   }
 
   /** What changed since the latest version: documents added, changed or removed. */
@@ -228,6 +306,43 @@ export class DefaultProjectManager implements ProjectManager {
     const earlier = (await this.deps.projects.find(document.projectId))?.copiedFrom?.[id] ?? [];
     const all = (await Promise.all([id, ...earlier].map((at) => this.deps.versions.versions(document.projectId, documentPath(at as DocumentId))))).flat();
     return [...new Map(all.map((v) => [v.id, v])).values()].sort((a, b) => (a.time < b.time ? 1 : a.time > b.time ? -1 : 0));
+  }
+
+  async compareVersions(id: DocumentId, from: string, to?: string): Promise<Result<VersionComparison>> {
+    const current = await this.deps.documents.load(id);
+    if (!current) return unknownDocument(id);
+    const project = await this.deps.projects.find(current.projectId);
+    const sides = await Promise.all([from, to].map((version) => (version === undefined ? { ok: true as const, value: { document: current, parameters: project?.parameters ?? [] } } : this.asIn(current, version))));
+    const [before, after] = sides as [Result<{ document: CadDocument; parameters: readonly Parameter[] }>, Result<{ document: CadDocument; parameters: readonly Parameter[] }>];
+    if (!before.ok) return before;
+    if (!after.ok) return after;
+    const projectChanges = compareDocuments({ parameters: before.value.parameters }, { parameters: after.value.parameters }).map((change) => ({
+      ...change,
+      path: `project/${change.path}`,
+      label: `Project ${change.label.charAt(0).toLowerCase()}${change.label.slice(1)}`,
+      area: 'project',
+    }));
+    return ok({
+      before: before.value.document,
+      after: after.value.document,
+      projectParameters: { before: before.value.parameters, after: after.value.parameters },
+      changes: [...compareDocuments(before.value.document as never, after.value.document as never), ...projectChanges],
+    });
+  }
+
+  /** A document and its project's parameters as they were in a version. */
+  private async asIn(current: CadDocument, version: string): Promise<Result<{ document: CadDocument; parameters: readonly Parameter[] }>> {
+    const { projectId, id } = current;
+    const text = (await this.deps.versions.read(projectId, version, documentPath(id))) ?? (await this.fromBeforeTheCopy(projectId, id, version));
+    if (text === undefined) return fail({ code: 'unknown-version', message: 'The document did not exist in that version.' });
+    try {
+      const document = { ...migrate(JSON.parse(text) as Record<string, unknown>), id, projectId } as CadDocument;
+      const settings = await this.deps.versions.read(projectId, version, settingsPath);
+      return ok({ document, parameters: settings ? ((JSON.parse(settings) as Pick<Project, 'parameters'>).parameters ?? []) : [] });
+    } catch (error) {
+      if (error instanceof UnsupportedSchemaError) return fail({ code: 'newer-version', message: error.message });
+      throw error;
+    }
   }
 
   async restoreDocument(id: DocumentId, version: string): Promise<Result<void>> {
@@ -286,10 +401,114 @@ export class DefaultProjectManager implements ProjectManager {
     if (!project) return unknownProject(id);
     const { remote } = project;
     if (!remote) return fail({ code: 'no-remote', message: 'The project is not shared with a git repository yet.' });
+    // Opened through a view link: the link is the sign-in.
+    const link = remote.server?.link;
+    const signIn = credentials ?? (link ? { username: 'link', password: link } : undefined);
     return this.serially(async () => {
       await this.record(id);
-      return this.exchange(id, remote, credentials, resolutions);
+      return this.exchange(id, remote, signIn, resolutions);
     });
+  }
+
+  /** A server call, its failures as results. */
+  private async onServer<T>(work: (server: ServerAccess) => Promise<T>): Promise<Result<T>> {
+    if (!this.deps.server) return fail({ code: 'no-server', message: 'This CADence cannot reach CADence servers.' });
+    try {
+      return ok(await work(this.deps.server));
+    } catch (error) {
+      if (error instanceof ServerError) return fail({ code: `server-${error.problem}`, message: error.message });
+      throw error;
+    }
+  }
+
+  /** The project on the server a project here is synced with. */
+  private async serverProjectOf(id: ProjectId, signIn: ServerSignIn): Promise<Result<string>> {
+    const project = await this.deps.projects.find(id);
+    if (!project) return unknownProject(id);
+    const server = project.remote?.server;
+    if (!server || server.url !== signIn.server) return fail({ code: 'not-shared', message: `${project.name} is not shared on ${signIn.server}.` });
+    return ok(server.project);
+  }
+
+  serverInfo(server: string): Promise<Result<ServerInfo>> {
+    return this.onServer((s) => s.info(server));
+  }
+
+  signInByName(server: string, name: string): Promise<Result<ServerSignIn>> {
+    return this.onServer((s) => s.signInByName(server, name));
+  }
+
+  serverUser(signIn: ServerSignIn): Promise<Result<ServerUser>> {
+    return this.onServer((s) => s.user(signIn));
+  }
+
+  async signOut(signIn: ServerSignIn): Promise<void> {
+    await this.onServer((s) => s.signOut(signIn));
+  }
+
+  sharedProjects(signIn: ServerSignIn): Promise<Result<SharedProject[]>> {
+    return this.onServer((s) => s.projects(signIn));
+  }
+
+  async shareProject(id: ProjectId, signIn: ServerSignIn): Promise<Result<SharedProject>> {
+    const project = await this.deps.projects.find(id);
+    if (!project) return unknownProject(id);
+    if (project.remote?.server) return this.sharing(id, signIn);
+    const created = await this.onServer((s) => s.createProject(signIn, project.name));
+    if (!created.ok) return created;
+    const { git, id: serverProject, role } = created.value;
+    const remote = await this.setRemote(id, { url: git, server: { url: signIn.server, project: serverProject, role } });
+    if (!remote.ok) return remote;
+    const synced = await this.syncProject(id, credentialsOf(signIn));
+    return synced.ok ? created : synced;
+  }
+
+  async sharing(id: ProjectId, signIn: ServerSignIn): Promise<Result<SharedProject>> {
+    const at = await this.serverProjectOf(id, signIn);
+    return at.ok ? this.onServer((s) => s.project(signIn, at.value)) : at;
+  }
+
+  async setMember(id: ProjectId, signIn: ServerSignIn, who: string, role: ProjectRole): Promise<Result<SharedProject>> {
+    const at = await this.serverProjectOf(id, signIn);
+    return at.ok ? this.onServer((s) => s.setMember(signIn, at.value, who, role)) : at;
+  }
+
+  async removeMember(id: ProjectId, signIn: ServerSignIn, userId: string): Promise<Result<SharedProject>> {
+    const at = await this.serverProjectOf(id, signIn);
+    return at.ok ? this.onServer((s) => s.removeMember(signIn, at.value, userId)) : at;
+  }
+
+  async addViewLink(id: ProjectId, signIn: ServerSignIn): Promise<Result<SharedProject>> {
+    const at = await this.serverProjectOf(id, signIn);
+    return at.ok ? this.onServer((s) => s.addLink(signIn, at.value)) : at;
+  }
+
+  async removeViewLink(id: ProjectId, signIn: ServerSignIn, token: string): Promise<Result<SharedProject>> {
+    const at = await this.serverProjectOf(id, signIn);
+    return at.ok ? this.onServer((s) => s.removeLink(signIn, at.value, token)) : at;
+  }
+
+  async openShared(signIn: ServerSignIn, serverProject: string): Promise<Result<ProjectSummary>> {
+    const here = (await this.deps.projects.enumerate()).find((p) => p.remote?.server?.url === signIn.server && p.remote.server.project === serverProject && !p.remote.server.link);
+    if (here) {
+      const synced = await this.syncProject(here.id, credentialsOf(signIn));
+      return synced.ok ? ok(await this.summarizeProject((await this.deps.projects.find(here.id)) ?? here)) : synced;
+    }
+    const shared = await this.onServer((s) => s.project(signIn, serverProject));
+    if (!shared.ok) return shared;
+    return this.openRemoteProject({ url: shared.value.git, server: { url: signIn.server, project: serverProject, role: shared.value.role } }, credentialsOf(signIn));
+  }
+
+  async openViewLink(server: string, link: string): Promise<Result<ProjectSummary>> {
+    const found = await this.onServer((s) => s.link(server, link));
+    if (!found.ok) return found;
+    const url = server.replace(/\/+$/, '');
+    const here = (await this.deps.projects.enumerate()).find((p) => p.remote?.server?.url === url && p.remote.server.link === link);
+    if (here) {
+      const synced = await this.syncProject(here.id);
+      return synced.ok ? ok(await this.summarizeProject((await this.deps.projects.find(here.id)) ?? here)) : synced;
+    }
+    return this.openRemoteProject({ url: found.value.git, server: { url, project: found.value.project.id, role: 'viewer', link } }, { username: 'link', password: link });
   }
 
   async openRemoteProject(remote: ProjectRemote, credentials?: RemoteCredentials): Promise<Result<ProjectSummary>> {
@@ -301,7 +520,7 @@ export class DefaultProjectManager implements ProjectManager {
     await this.deps.projects.establish(project);
     const synced = await this.serially(() => this.exchange(project.id, remote, credentials, {}));
     if (!synced.ok) {
-      await this.deleteProject(project.id);
+      await this.purgeProject(project.id);
       return synced;
     }
     return ok(await this.summarizeProject((await this.deps.projects.find(project.id)) ?? project));
@@ -326,13 +545,13 @@ export class DefaultProjectManager implements ProjectManager {
         kind = 'pushed';
       } else if (!mine || common === mine) {
         await versions.advance(id, theirs);
-        await this.apply(id, theirs);
+        await this.apply(id, theirs, mine);
         kind = 'pulled';
       } else {
         const merged = await this.merge(id, common, mine, theirs, resolutions);
         if ('conflicts' in merged) return ok({ kind: 'conflicts', conflicts: merged.conflicts });
         const version = (await versions.record(id, merged.files, `Merged the changes from ${remote.url}`, this.now(), theirs)) as string;
-        await this.apply(id, version);
+        await this.apply(id, version, mine);
         await versions.push(id, remote, credentials);
         kind = 'merged';
       }
@@ -368,14 +587,46 @@ export class DefaultProjectManager implements ProjectManager {
       else if (sameBytes(ours, base)) kept = other;
       else if (resolutions[path]) kept = resolutions[path] === 'mine' ? ours : other;
       else {
-        conflicts.push({ path, name: this.conflictName(path, ours ?? other) });
-        continue;
+        // Both changed it: merged item by item; only items both changed differently are asked (CAD-176).
+        const combined = ours && other ? this.combine(path, base, ours, other, resolutions) : undefined;
+        if (!combined || combined.items.length) {
+          conflicts.push({ path, name: this.conflictName(path, ours ?? other), ...(combined ? { items: combined.items } : {}) });
+          continue;
+        }
+        kept = combined.bytes;
       }
       if (!kept) continue;
       const bytes = kept;
       files.push(isOriginal(path) ? { path, bytes: async () => bytes } : { path, text: new TextDecoder().decode(bytes) });
     }
     return conflicts.length ? { conflicts } : { files };
+  }
+
+  /**
+   * A document (or the project's settings) changed on both sides, merged by its items (Revision
+   * Engine); undefined when it cannot be (not JSON, or saved by a newer CADence). Item resolutions are
+   * given as `<path>#<item path>`.
+   */
+  private combine(
+    path: string,
+    base: Uint8Array | undefined,
+    ours: Uint8Array,
+    other: Uint8Array,
+    resolutions: Readonly<Record<string, ConflictChoice>>,
+  ): { bytes: Uint8Array; items: ItemConflict[] } | undefined {
+    if (path !== settingsPath && !documentPattern.test(path)) return undefined;
+    const read = (bytes: Uint8Array) => {
+      const json = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
+      return path === settingsPath ? json : (migrate(json) as unknown as Record<string, unknown>);
+    };
+    try {
+      const prefix = `${path}#`;
+      const chosen = Object.fromEntries(Object.entries(resolutions).flatMap(([key, choice]) => (key.startsWith(prefix) ? [[key.slice(prefix.length), choice]] : [])));
+      const merged = mergeDocuments(base ? read(base) : undefined, read(ours), read(other), { resolutions: chosen, time: this.now() });
+      return { bytes: new TextEncoder().encode(JSON.stringify(merged.document, null, 2)), items: [...merged.conflicts] };
+    } catch {
+      return undefined;
+    }
   }
 
   private conflictName(path: string, bytes: Uint8Array | undefined): string {
@@ -387,16 +638,28 @@ export class DefaultProjectManager implements ProjectManager {
     }
   }
 
-  /** Brings the project to a version's files: its settings, its documents and their originals. */
-  private async apply(id: ProjectId, version: string): Promise<void> {
+  /**
+   * Brings the project to a version's files: its settings, its documents and their originals.
+   * Documents it no longer has go to the trash, as `previous` had them.
+   */
+  private async apply(id: ProjectId, version: string, previous?: string): Promise<void> {
     const { versions, documents, assets, events } = this.deps;
     const project = await this.deps.projects.find(id);
     if (!project) return;
     const settings = await versions.read(id, version, settingsPath);
     if (settings) {
-      const { name, parameters } = JSON.parse(settings) as Pick<Project, 'name' | 'parameters'>;
-      await this.deps.projects.revise({ ...project, name, parameters: parameters ?? [], modifiedAt: this.now() });
-      if (JSON.stringify(parameters ?? []) !== JSON.stringify(project.parameters ?? [])) events.publish('projectParametersChanged', { projectId: id });
+      const { name, parameters, ...kept } = JSON.parse(settings) as Pick<Project, 'name' | 'parameters' | 'description' | 'attachments' | 'library' | 'scripts' | 'plugins'>;
+      const { description: _d, attachments: _a, library: _l, scripts: _scripts, plugins: _plugins, ...rest } = project;
+      for (const attachment of kept.attachments ?? []) {
+        if (attachment.kind !== 'file' || (await assets.fetch(attachment.assetId))) continue;
+        const bytes = await versions.readBytes(id, version, originalPath(attachment.assetId));
+        if (bytes) await assets.keep({ id: attachment.assetId, projectId: id, name: attachment.name, byteLength: bytes.length, bytes });
+      }
+      await this.deps.projects.revise({ ...rest, name, parameters: parameters ?? [], ...notesOf(kept), ...extras(kept), modifiedAt: this.now() });
+      // Plugins build features: a change of them is a change of what components are made with.
+      const before = JSON.stringify([project.parameters ?? [], project.plugins ?? []]);
+      if (JSON.stringify([parameters ?? [], kept.plugins ?? []]) !== before) events.publish('projectParametersChanged', { projectId: id });
+      events.publish('projectChanged', { projectId: id });
     }
     const kept = new Set<string>();
     for (const path of await versions.files(id, version)) {
@@ -413,20 +676,27 @@ export class DefaultProjectManager implements ProjectManager {
       await documents.store(document);
       events.publish('documentRestored', { documentId: document.id });
     }
-    for (const document of await documents.enumerate(id)) {
-      if (!kept.has(document.id)) await this.discardDocument(document.id);
+    const gone = (await documents.enumerate(id)).filter((d) => !kept.has(d.id));
+    for (const document of gone) await this.discardDocument(document.id);
+    const now = await this.deps.projects.find(id);
+    if (now && previous && gone.length) {
+      const trashedAt = this.now();
+      const trashed = gone.map(({ id: documentId, name, kind }): TrashedDocument => ({ id: documentId, name, kind, trashedAt, version: previous }));
+      await this.deps.projects.revise(withTrash(now, [...(now.trash ?? []).filter((t) => !kept.has(t.id) && !gone.some((g) => g.id === t.id)), ...trashed]));
     }
   }
 
   async listProjects(): Promise<ProjectSummary[]> {
-    const projects = await this.deps.projects.enumerate();
+    await this.purgeExpired();
+    const projects = (await this.deps.projects.enumerate()).filter((p) => !p.trashedAt);
     const summaries = await Promise.all(projects.map((p) => this.summarizeProject(p)));
     return summaries.sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
   }
 
   async findProject(id: ProjectId): Promise<ProjectSummary | undefined> {
     const project = await this.deps.projects.find(id);
-    return project && this.summarizeProject(project);
+    // A project in the trash is not found until it is restored.
+    return project && !project.trashedAt ? this.summarizeProject(project) : undefined;
   }
 
   async createProject(name: string): Promise<Result<CreatedProject>> {
@@ -458,7 +728,61 @@ export class DefaultProjectManager implements ProjectManager {
     return ok(undefined);
   }
 
+  async setProjectScripts(id: ProjectId, scripts: readonly ProjectScript[]): Promise<Result<void>> {
+    const project = await this.deps.projects.find(id);
+    if (!project) return unknownProject(id);
+    const names = new Set<string>();
+    for (const script of scripts) {
+      const name = validName(script.name);
+      if (!name.ok) return name;
+      if (names.has(script.name.trim())) return fail({ code: 'duplicate-name', message: `Two scripts are named “${script.name.trim()}”.` });
+      names.add(script.name.trim());
+      const parameter = script.parameters.find((p) => !/^[A-Za-z_$][\w$]*$/.test(p.name));
+      if (parameter) return fail({ code: 'invalid-name', message: `“${parameter.name}” cannot name a parameter: use letters, digits and _, not starting with a digit.` });
+    }
+    const { scripts: _scripts, ...rest } = project;
+    const kept = scripts.map((s) => ({ ...s, name: s.name.trim() }));
+    await this.deps.projects.revise({ ...rest, ...(kept.length ? { scripts: kept } : {}), modifiedAt: this.now() });
+    this.scheduleVersion(id);
+    return ok(undefined);
+  }
+
+  async installPlugin(id: ProjectId, source: string): Promise<Result<ProjectPlugin>> {
+    const project = await this.deps.projects.find(id);
+    if (!project) return unknownProject(id);
+    this.plugins ??= this.deps.plugins ?? createPluginEngine();
+    const read = await this.plugins.read(source);
+    if (!read.ok) return read;
+    const plugins = [...(project.plugins ?? []).filter((p) => p.id !== read.value.id), read.value].sort((a, b) => a.name.localeCompare(b.name));
+    await this.deps.projects.revise({ ...project, plugins, modifiedAt: this.now() });
+    // Its features regenerate with the new version, as with new parameters.
+    this.deps.events.publish('projectParametersChanged', { projectId: id });
+    this.scheduleVersion(id);
+    return ok(read.value);
+  }
+
+  async removePlugin(id: ProjectId, pluginId: string): Promise<Result<void>> {
+    const project = await this.deps.projects.find(id);
+    if (!project) return unknownProject(id);
+    if (!project.plugins?.some((p) => p.id === pluginId)) return fail({ code: 'unknown-plugin', message: `The project has no plugin ${pluginId}.` });
+    const { plugins: _plugins, ...rest } = project;
+    const plugins = project.plugins.filter((p) => p.id !== pluginId);
+    await this.deps.projects.revise({ ...rest, ...(plugins.length ? { plugins } : {}), modifiedAt: this.now() });
+    this.deps.events.publish('projectParametersChanged', { projectId: id });
+    this.scheduleVersion(id);
+    return ok(undefined);
+  }
+
   async deleteProject(id: ProjectId): Promise<void> {
+    const project = await this.deps.projects.find(id);
+    if (!project || project.trashedAt) return;
+    // It stays as it is, documents and history, until it is restored or deleted for good (CAD-148).
+    await this.deps.projects.revise({ ...project, trashedAt: this.now() });
+    this.deps.events.publish('projectDeleted', { projectId: id });
+  }
+
+  /** Deletes a project for good: its documents, assets and history. */
+  private async purgeProject(id: ProjectId): Promise<void> {
     for (const document of await this.deps.documents.enumerate(id)) {
       await this.discardDocument(document.id);
     }
@@ -510,8 +834,306 @@ export class DefaultProjectManager implements ProjectManager {
   async deleteDocument(id: DocumentId): Promise<void> {
     const document = await this.deps.documents.load(id);
     if (!document) return;
+    // Its last state goes into the history first: the trash brings it back from there (CAD-148).
+    await this.recordVersion(document.projectId);
+    const version = await this.deps.versions.latest(document.projectId);
     await this.discardDocument(id);
+    const project = await this.deps.projects.find(document.projectId);
+    if (project && version) {
+      const entry: TrashedDocument = { id, name: document.name, kind: document.kind, trashedAt: this.now(), version };
+      await this.deps.projects.revise(withTrash(project, [...(project.trash ?? []).filter((t) => t.id !== id), entry]));
+    }
     await this.touchProject(document.projectId);
+  }
+
+  async listTrash(): Promise<TrashItem[]> {
+    await this.purgeExpired();
+    const items: TrashItem[] = [];
+    for (const project of await this.deps.projects.enumerate()) {
+      if (project.trashedAt) {
+        const documentCount = (await this.deps.documents.enumerate(project.id)).length;
+        items.push({ kind: 'project', id: project.id, name: project.name, trashedAt: project.trashedAt, expiresAt: expiry(project.trashedAt), documentCount });
+        continue;
+      }
+      for (const entry of project.trash ?? []) {
+        const { id, name, kind: documentKind, trashedAt } = entry;
+        items.push({ kind: 'document', id, name, documentKind, projectId: project.id, projectName: project.name, trashedAt, expiresAt: expiry(trashedAt) });
+      }
+    }
+    return items.sort((a, b) => b.trashedAt.localeCompare(a.trashedAt));
+  }
+
+  async restoreFromTrash(id: ProjectId | DocumentId): Promise<Result<TrashItem>> {
+    const item = (await this.listTrash()).find((i) => i.id === id);
+    if (!item) return notInTrash(id);
+    const project = await this.deps.projects.find(item.kind === 'project' ? item.id : item.projectId);
+    if (!project) return notInTrash(id);
+    if (item.kind === 'project') {
+      const { trashedAt: _, ...rest } = project;
+      await this.deps.projects.revise({ ...rest, modifiedAt: this.now() });
+      this.deps.events.publish('projectChanged', { projectId: project.id });
+      return ok(item);
+    }
+    const entry = project.trash?.find((t) => t.id === id) as TrashedDocument;
+    const text = await this.deps.versions.read(project.id, entry.version, documentPath(entry.id));
+    if (text === undefined) return fail({ code: 'lost', message: `The history of ${project.name} no longer has ${entry.name}.` });
+    const document = { ...(JSON.parse(text) as CadDocument), id: entry.id, projectId: project.id, modifiedAt: this.now() } as CadDocument;
+    if (document.kind === 'imported' && !(await this.deps.assets.fetch(document.assetId))) {
+      const bytes = await this.deps.versions.readBytes(project.id, entry.version, originalPath(document.assetId));
+      if (bytes) await this.deps.assets.keep({ id: document.assetId, projectId: project.id, name: document.fileName, byteLength: bytes.length, bytes });
+    }
+    await this.deps.documents.store(document);
+    await this.deps.projects.revise(withTrash({ ...project, modifiedAt: this.now() }, (project.trash ?? []).filter((t) => t.id !== id)));
+    await this.recordVersion(project.id, `Restored ${document.name} from the trash`);
+    this.deps.events.publish('documentRestored', { documentId: document.id });
+    return ok(item);
+  }
+
+  async deleteFromTrash(id: ProjectId | DocumentId): Promise<Result<void>> {
+    for (const project of await this.deps.projects.enumerate()) {
+      if (project.id === id && project.trashedAt) {
+        await this.purgeProject(project.id);
+        return ok(undefined);
+      }
+      if (project.trash?.some((t) => t.id === id)) {
+        // Earlier versions stay in the project's history, as for every change.
+        await this.deps.projects.revise(withTrash(project, project.trash.filter((t) => t.id !== id)));
+        return ok(undefined);
+      }
+    }
+    return notInTrash(id);
+  }
+
+  async emptyTrash(): Promise<void> {
+    await this.purgeExpired(Infinity);
+  }
+
+  /** Deletes for good what has been in the trash longer than `days`. */
+  private async purgeExpired(days = trashDays): Promise<void> {
+    const limit = this.deps.clock().getTime() - days * day;
+    const expired = (time: string) => !Number.isFinite(limit) || Date.parse(time) <= limit;
+    for (const project of await this.deps.projects.enumerate()) {
+      if (project.trashedAt && expired(project.trashedAt)) {
+        await this.purgeProject(project.id);
+        continue;
+      }
+      const kept = (project.trash ?? []).filter((t) => !expired(t.trashedAt));
+      if (kept.length !== (project.trash?.length ?? 0)) await this.deps.projects.revise(withTrash(project, kept));
+    }
+  }
+
+  async setProjectDescription(id: ProjectId, description: string): Promise<Result<void>> {
+    return this.reviseProject(id, (project) => {
+      const { description: _, ...rest } = project;
+      return description.trim() ? { ...rest, description } : rest;
+    });
+  }
+
+  async addAttachment(id: ProjectId, input: AttachmentInput): Promise<Result<Attachment>> {
+    const project = await this.deps.projects.find(id);
+    if (!project) return unknownProject(id);
+    const addedAt = this.now();
+    let attachment: Attachment;
+    if ('link' in input) {
+      const url = input.link.url.trim();
+      if (!/^(https?:\/\/[^\s/]+|mailto:\S+@)\S*$/.test(url)) return fail({ code: 'invalid-link', message: 'A link starts with https://, http:// or mailto:.' });
+      attachment = { id: this.deps.newId(), kind: 'link', name: input.link.name?.trim().slice(0, maxNameLength) || url, url, addedAt };
+    } else {
+      const { name, bytes } = input.file;
+      if (!name.trim()) return fail({ code: 'invalid-name', message: 'An attached file needs a name.' });
+      if (bytes.byteLength > maxAttachmentSize) return fail({ code: 'too-large', message: `Files up to ${maxAttachmentSize / 1024 / 1024} MB can be attached.` });
+      const assetId = asAssetId(this.deps.newId());
+      await this.deps.assets.keep({ id: assetId, projectId: id, name, byteLength: bytes.byteLength, bytes });
+      attachment = { id: this.deps.newId(), kind: 'file', name: name.trim(), mediaType: attachmentType(name), byteLength: bytes.byteLength, assetId, addedAt };
+    }
+    const revised = await this.reviseProject(id, (p) => ({ ...p, attachments: [...(p.attachments ?? []), attachment] }));
+    return revised.ok ? ok(attachment) : revised;
+  }
+
+  async removeAttachment(id: ProjectId, attachmentId: string): Promise<Result<void>> {
+    const project = await this.deps.projects.find(id);
+    const attachment = project?.attachments?.find((a) => a.id === attachmentId);
+    if (!project) return unknownProject(id);
+    if (!attachment) return fail({ code: 'unknown-attachment', message: `${project.name} has no attachment ${attachmentId}.` });
+    if (attachment.kind === 'file') await this.deps.assets.release(attachment.assetId);
+    return this.reviseProject(id, (p) => {
+      const { attachments: _, ...rest } = p;
+      const kept = (p.attachments ?? []).filter((a) => a.id !== attachmentId);
+      return kept.length ? { ...rest, attachments: kept } : rest;
+    });
+  }
+
+  async attachmentFile(id: ProjectId, attachmentId: string): Promise<Result<{ readonly attachment: Attachment; readonly bytes: Uint8Array }>> {
+    const project = await this.deps.projects.find(id);
+    const attachment = project?.attachments?.find((a) => a.id === attachmentId);
+    if (attachment?.kind !== 'file') return fail({ code: 'unknown-attachment', message: `No attached file ${attachmentId}.` });
+    const asset = await this.deps.assets.fetch(attachment.assetId);
+    if (!asset) return fail({ code: 'missing-original', message: `The file of ${attachment.name} is missing.` });
+    return ok({ attachment, bytes: asset.bytes });
+  }
+
+  /** Changes a project's record; its version follows a few seconds later. */
+  private async reviseProject(id: ProjectId, change: (project: Project) => Project): Promise<Result<void>> {
+    const project = await this.deps.projects.find(id);
+    if (!project) return unknownProject(id);
+    await this.deps.projects.revise({ ...change(project), modifiedAt: this.now() });
+    this.scheduleVersion(id);
+    this.deps.events.publish('projectChanged', { projectId: id });
+    return ok(undefined);
+  }
+
+  async setLibrary(id: ProjectId, library: boolean): Promise<Result<void>> {
+    return this.reviseProject(id, (project) => {
+      const { library: _, ...rest } = project;
+      return library ? { ...rest, library: project.library ?? { id: this.deps.newId() } } : rest;
+    });
+  }
+
+  async listLibraries(): Promise<LibrarySummary[]> {
+    const libraries: LibrarySummary[] = [{ id: standardLibraryId, name: standardLibraryName, partCount: standardParts.length }];
+    for (const project of (await this.deps.projects.enumerate()).filter((p) => p.library && !p.trashedAt).sort((a, b) => a.name.localeCompare(b.name))) {
+      const parts = (await this.deps.documents.enumerate(project.id)).filter((d) => d.kind === 'component' && !d.library);
+      libraries.push({ id: (project.library as { id: string }).id, name: project.name, projectId: project.id, partCount: parts.length });
+    }
+    return libraries;
+  }
+
+  async libraryParts(library: string): Promise<Result<LibraryPart[]>> {
+    if (library === standardLibraryId) return ok(standardLibraryParts());
+    const project = await this.libraryProject(library);
+    if (!project) return unknownLibrary(library);
+    const parts = (await this.listDocuments(project.id)).filter((d) => d.kind === 'component' && !d.library);
+    return ok(parts.map(({ id, name }) => ({ id, name })));
+  }
+
+  async useLibraryPart(projectId: ProjectId, library: string, part: string, options: { readonly follow?: LibraryLink['follow'] } = {}): Promise<Result<DocumentSummary>> {
+    const project = await this.deps.projects.find(projectId);
+    if (!project || project.trashedAt) return unknownProject(projectId);
+    const mine = await this.loadAll(projectId);
+    if (library === standardLibraryId) {
+      const standard = findStandardPart(part);
+      if (!standard) return fail({ code: 'unknown-part', message: `The standard parts have no ${part}; they are named like ISO 4762 M3 × 12 or screw-M3-12.` });
+      const taken = mine.find((d) => d.library?.library === standardLibraryId && d.library.document === standard.key);
+      if (taken) return ok(summarize(taken));
+      const document = standardComponent(standard, projectId, this.deps.newId(), this.now());
+      await this.deps.documents.store(document);
+      await this.touchProject(projectId);
+      this.deps.events.publish('documentCreated', { projectId, documentId: document.id });
+      return ok(summarize(document));
+    }
+    const source = await this.libraryProject(library);
+    if (!source) return unknownLibrary(library);
+    if (source.id === projectId) return fail({ code: 'same-project', message: `${source.name} is this project: its assemblies insert its components directly.` });
+    const parts = await this.loadAll(source.id);
+    const component = parts.find((d) => d.kind === 'component' && !d.library && (d.id === part || d.name === part));
+    if (!component) return fail({ code: 'unknown-part', message: `The library ${source.name} has no component ${part}.` });
+    // Taken before: the project keeps the version it took (an update brings a newer one).
+    const taken = mine.find((d) => d.kind === 'component' && d.library?.library === library && d.library.document === component.id);
+    if (taken) return ok(summarize(taken));
+    await this.recordVersion(source.id);
+    const version = (await this.deps.versions.latest(source.id)) ?? 'none';
+    return ok(await this.take(projectId, source, component, parts, mine, version, options.follow ?? 'asked'));
+  }
+
+  async libraryUpdates(projectId: ProjectId): Promise<LibraryUpdate[]> {
+    const parts = (await this.deps.documents.enumerate(projectId)).filter((d) => d.kind === 'component' && d.library && d.library.library !== standardLibraryId);
+    const updates: LibraryUpdate[] = [];
+    for (const library of new Set(parts.map((d) => (d.library as LibraryLink).library))) {
+      const source = await this.libraryProject(library);
+      if (!source) continue;
+      await this.recordVersion(source.id);
+      const latest = await this.deps.versions.latest(source.id);
+      if (!latest) continue;
+      for (const document of parts.filter((d) => d.library?.library === library)) {
+        const link = document.library as LibraryLink;
+        if (link.version !== latest && (await this.changedBetween(source.id, link.document, link.version, latest))) updates.push({ document, link, latest });
+      }
+    }
+    return updates;
+  }
+
+  async updateLibraryParts(projectId: ProjectId, documents?: readonly DocumentId[]): Promise<Result<DocumentSummary[]>> {
+    if (!(await this.deps.projects.find(projectId))) return unknownProject(projectId);
+    const updates = (await this.libraryUpdates(projectId)).filter((u) => !documents || documents.includes(u.document.id));
+    const updated: DocumentSummary[] = [];
+    for (const update of updates) {
+      const source = await this.libraryProject(update.link.library);
+      const parts = source ? await this.loadAll(source.id) : [];
+      const part = parts.find((d) => d.id === update.link.document);
+      // A part the library no longer has stays as it is.
+      if (!source || !part) continue;
+      updated.push(await this.take(projectId, source, part, parts, await this.loadAll(projectId), update.latest, update.link.follow));
+    }
+    return ok(updated);
+  }
+
+  async setLibraryFollow(id: DocumentId, follow: LibraryLink['follow']): Promise<Result<void>> {
+    const document = await this.deps.documents.load(id);
+    if (!document) return unknownDocument(id);
+    if (!document.library) return fail({ code: 'not-a-library-part', message: `${document.name} is not from a library.` });
+    await this.deps.documents.store({ ...document, library: { ...document.library, follow } });
+    await this.touchProject(document.projectId);
+    return ok(undefined);
+  }
+
+  /** Brings a library's new version to the projects whose parts of it follow it (`follow: 'always'`). */
+  private async followLibrary(id: ProjectId): Promise<void> {
+    const source = await this.deps.projects.find(id);
+    const library = source?.library?.id;
+    const latest = await this.deps.versions.latest(id);
+    if (!source || !library || source.trashedAt || !latest) return;
+    for (const project of await this.deps.projects.enumerate()) {
+      if (project.id === id || project.trashedAt) continue;
+      const followers = (await this.deps.documents.enumerate(project.id)).filter((d) => d.kind === 'component' && d.library?.library === library && d.library.follow === 'always' && d.library.version !== latest);
+      if (!followers.length) continue;
+      const parts = await this.loadAll(id);
+      for (const follower of followers) {
+        const link = follower.library as LibraryLink;
+        const part = parts.find((d) => d.id === link.document);
+        if (part && (await this.changedBetween(id, part.id, link.version, latest))) await this.take(project.id, source, part, parts, await this.loadAll(project.id), latest, 'always');
+      }
+    }
+  }
+
+  /** Whether a library's part (or the project parameters it uses) differs between two of its versions. */
+  private async changedBetween(library: ProjectId, part: string, from: string, to: string): Promise<boolean> {
+    const read = (version: string) => Promise.all([documentPath(part as DocumentId), settingsPath].map((path) => this.deps.versions.read(library, version, path)));
+    const [[partBefore, settingsBefore], [partNow, settingsNow]] = await Promise.all([read(from), read(to)]);
+    const parameters = (settings: string | undefined) => JSON.stringify(settings ? (JSON.parse(settings) as Project).parameters ?? [] : []);
+    return partBefore !== partNow || parameters(settingsBefore) !== parameters(settingsNow);
+  }
+
+  /** Stores a library part (and what it uses) in a project, as the library's version `version` has it. */
+  private async take(projectId: ProjectId, source: Project, part: CadDocument, parts: readonly CadDocument[], mine: readonly CadDocument[], version: string, follow: LibraryLink['follow']): Promise<DocumentSummary> {
+    const library = (source.library as { id: string }).id;
+    const taken = mine.filter((d) => d.library?.library === library);
+    const link = { library, libraryName: source.name, version, follow };
+    const copies = libraryCopies({ part, library: parts, parameters: source.parameters ?? [], link, taken, projectId, now: this.now(), newId: this.deps.newId });
+    for (const [asset, theirs] of copies.originals) {
+      const bytes = (await this.deps.assets.fetch(asAssetId(theirs)))?.bytes;
+      const owner = copies.documents.find((d) => d.kind === 'imported' && d.assetId === asset);
+      if (bytes && owner?.kind === 'imported') await this.deps.assets.keep({ id: asAssetId(asset), projectId, name: owner.fileName, byteLength: bytes.length, bytes });
+    }
+    for (const document of copies.documents) {
+      await this.deps.documents.store(document);
+      // Open assemblies and drawings of an earlier version read it again.
+      if (taken.some((d) => d.id === document.id)) {
+        if (document.kind === 'component') await this.deps.assets.discardResult(document.id);
+        this.deps.events.publish('documentRestored', { documentId: document.id });
+      } else this.deps.events.publish('documentCreated', { projectId, documentId: document.id });
+    }
+    await this.touchProject(projectId);
+    return summarize(copies.documents[0] as CadDocument);
+  }
+
+  /** The project holding a library here (not in the trash). */
+  private async libraryProject(library: string): Promise<Project | undefined> {
+    return (await this.deps.projects.enumerate()).find((p) => p.library?.id === library && !p.trashedAt);
+  }
+
+  /** A project's documents, loaded. */
+  private async loadAll(projectId: ProjectId): Promise<CadDocument[]> {
+    return (await Promise.all((await this.deps.documents.enumerate(projectId)).map((d) => this.deps.documents.load(d.id)))).filter((d): d is CadDocument => d !== undefined);
   }
 
   async importFile(projectId: ProjectId, file: ExternalFile): Promise<Result<DocumentSummary>> {
@@ -549,6 +1171,7 @@ export class DefaultProjectManager implements ProjectManager {
     };
     await this.deps.documents.store(document);
     await this.touchProject(projectId);
+    this.deps.events.publish('documentCreated', { projectId, documentId: document.id });
     return ok(summarize(document));
   }
 
@@ -557,7 +1180,7 @@ export class DefaultProjectManager implements ProjectManager {
     if (document?.kind !== 'imported') return fail({ code: 'unknown-document', message: `Imported file ${id} does not exist.` });
     const format = formatOf(file.name);
     if (!format || isDrawing(format) !== isDrawing(document.format)) {
-      return fail({ code: 'unsupported-format', message: isDrawing(document.format) ? 'Replace a drawing by a DXF or SVG file.' : 'Replace a 3D file by a STEP, STL, OBJ or 3MF file.' });
+      return fail({ code: 'unsupported-format', message: isDrawing(document.format) ? 'Replace a drawing by a DXF or SVG file.' : 'Replace a 3D file by a STEP, STL, OBJ, 3MF or KiCad board file.' });
     }
     const assetId = asAssetId(this.deps.newId());
     await this.deps.assets.keep({ id: assetId, projectId: document.projectId, name: file.name, byteLength: file.bytes.byteLength, bytes: file.bytes });
@@ -582,7 +1205,9 @@ export class DefaultProjectManager implements ProjectManager {
     // The copy takes the history with it (CAD-147).
     const { bundle, ids } = copyOf(await this.bundleOf(project), this.deps.newId);
     const history = await this.deps.versions.exportHistory(id);
-    const copy = await this.createFromBundle({ ...bundle, name: copyName(project.name) }, history.length ? copiedFrom(ids, project.copiedFrom) : undefined);
+    // A copy of a library is a library of its own.
+    const library = bundle.library ? { library: { id: this.deps.newId() } } : {};
+    const copy = await this.createFromBundle({ ...bundle, ...library, name: copyName(project.name) }, history.length ? copiedFrom(ids, project.copiedFrom) : undefined);
     if (history.length) await this.deps.versions.importHistory(copy.id, history);
     await this.recordVersion(copy.id, `Duplicated from ${project.name}`);
     return ok(await this.summarizeProject(copy));
@@ -601,32 +1226,57 @@ export class DefaultProjectManager implements ProjectManager {
     await this.keepOriginals(document.projectId, [copy], bundle.originals);
     await this.deps.documents.store(copy);
     await this.touchProject(document.projectId);
+    this.deps.events.publish('documentCreated', { projectId: document.projectId, documentId: copy.id });
     return ok(summarize(copy));
   }
 
-  async exportProject(id: ProjectId, options: { readonly history?: boolean } = {}): Promise<Result<void>> {
+  async exportProject(id: ProjectId, options: { readonly history?: boolean; readonly libraries?: boolean } = {}): Promise<Result<void>> {
     const project = await this.deps.projects.find(id);
     if (!project) return unknownProject(id);
-    if (options.history) await this.recordVersion(id);
-    const history = options.history ? await this.deps.versions.exportHistory(id) : [];
-    const bytes = zip(archiveFiles(await this.bundleOf(project), history));
+    const bytes = zip([...(await this.archiveOf(project, options.history)), ...(options.libraries ? await this.librariesOf(project) : [])]);
     await this.deps.externalFiles.deliver({ name: `${project.name}.cadence`, mediaType: 'application/zip', bytes });
     return ok(undefined);
+  }
+
+  /** A project's archive files, with its history if asked. */
+  private async archiveOf(project: Project, history?: boolean): Promise<{ name: string; bytes: Uint8Array }[]> {
+    if (history) await this.recordVersion(project.id);
+    return archiveFiles(await this.bundleOf(project), history ? await this.deps.versions.exportHistory(project.id) : []);
+  }
+
+  /** The libraries a project uses, each an archive of its own inside the project's (`libraries/<id>.cadence`). */
+  private async librariesOf(project: Project): Promise<{ name: string; bytes: Uint8Array }[]> {
+    const used = new Set((await this.deps.documents.enumerate(project.id)).flatMap((d) => (d.library && d.library.library !== standardLibraryId ? [d.library.library] : [])));
+    const files: { name: string; bytes: Uint8Array }[] = [];
+    for (const library of used) {
+      const source = await this.libraryProject(library);
+      if (source) files.push({ name: `libraries/${library}.cadence`, bytes: zip(await this.archiveOf(source, true)) });
+    }
+    return files;
   }
 
   async importProject(file: ExternalFile): Promise<Result<ProjectSummary>> {
     const notArchive = fail({ code: 'not-an-archive', message: `${file.name} is not a CADence project archive.` });
     let archive: ReturnType<typeof readArchive>;
+    let files: ReadonlyMap<string, Uint8Array>;
     try {
-      archive = readArchive(await readZip(file.bytes));
+      files = await readZip(file.bytes);
+      archive = readArchive(files);
     } catch {
       return notArchive;
     }
     if (!archive) return notArchive;
+    // Libraries it brings along that this device does not have become projects too (CAD-151).
+    for (const [path, bytes] of files) {
+      const library = /^libraries\/(.+)\.cadence$/.exec(path)?.[1];
+      if (library && !(await this.libraryProject(library))) await this.importProject({ name: `${library}.cadence`, bytes });
+    }
     // Documents keep their ids unless this device has them already: then the project is a copy,
     // which keeps the history too, knowing the ids its documents had there (CAD-147).
     const taken = (await Promise.all(archive.bundle.documents.map((d) => this.deps.documents.load(d.id)))).some(Boolean);
     const copied = taken ? copyOf(archive.bundle, this.deps.newId) : undefined;
+    // A copy of a library beside its original is a library of its own.
+    if (copied?.bundle.library) Object.assign(copied, { bundle: { ...copied.bundle, library: { id: this.deps.newId() } } });
     const project = await this.createFromBundle(copied?.bundle ?? archive.bundle, copied && archive.history.length ? copiedFrom(copied.ids, archive.bundle.copiedFrom) : archive.bundle.copiedFrom);
     if (archive.history.length) await this.deps.versions.importHistory(project.id, archive.history);
     if (copied || !archive.history.length) await this.recordVersion(project.id, copied ? `Imported from ${file.name} as a copy` : `Imported from ${file.name}`);
@@ -653,7 +1303,11 @@ export class DefaultProjectManager implements ProjectManager {
       const asset = await this.deps.assets.fetch(document.assetId);
       if (asset) originals.set(document.assetId, asset.bytes);
     }
-    return { name: project.name, parameters: project.parameters ?? [], documents, originals, ...(project.copiedFrom ? { copiedFrom: project.copiedFrom } : {}) };
+    for (const attachment of project.attachments ?? []) {
+      const asset = attachment.kind === 'file' ? await this.deps.assets.fetch(attachment.assetId) : undefined;
+      if (attachment.kind === 'file' && asset) originals.set(attachment.assetId, asset.bytes);
+    }
+    return { name: project.name, parameters: project.parameters ?? [], documents, originals, ...(project.copiedFrom ? { copiedFrom: project.copiedFrom } : {}), ...notesOf(project), ...extras(project) };
   }
 
   /** A new project holding the bundle's documents and originals as they are (ids included). */
@@ -666,10 +1320,16 @@ export class DefaultProjectManager implements ProjectManager {
       modifiedAt: now,
       parameters: bundle.parameters,
       ...(copied ? { copiedFrom: copied } : {}),
+      ...notesOf(bundle),
+      ...extras(bundle),
     };
     await this.deps.projects.establish(project);
     const documents = bundle.documents.map((d) => ({ ...d, projectId: project.id }) as CadDocument);
     await this.keepOriginals(project.id, documents, bundle.originals);
+    for (const attachment of bundle.attachments ?? []) {
+      const bytes = attachment.kind === 'file' ? bundle.originals.get(attachment.assetId) : undefined;
+      if (attachment.kind === 'file' && bytes) await this.deps.assets.keep({ id: attachment.assetId, projectId: project.id, name: attachment.name, byteLength: bytes.byteLength, bytes });
+    }
     for (const document of documents) await this.deps.documents.store(document);
     return project;
   }
@@ -732,9 +1392,43 @@ export class DefaultProjectManager implements ProjectManager {
       if (!size) return fail({ code: 'unreadable', message: `${document.fileName} is not a PNG or JPEG picture.` });
       return ok({ kind: 'picture', width: size.width, height: size.height, mediaType: size.mediaType, bytes });
     }
-    const model = await this.deps.interchange.readMesh(bytes, document.format, `preview:${document.assetId}`);
+    const { parts, key } = await this.boardParts(document, bytes);
+    const model = await this.deps.interchange.readMesh(bytes, document.format, `preview:${key}`, parts);
     if (!model.ok) return model;
     return ok({ kind: 'model', ...model.value });
+  }
+
+  async previewSimplified(id: DocumentId, triangles: number): Promise<Result<SimplifiedImport>> {
+    const simplified = await this.simplify(id, triangles);
+    if (!simplified.ok) return simplified;
+    const { preview, before, repair } = simplified.value.mesh;
+    return ok({ content: { kind: 'model', ...preview }, before, repair });
+  }
+
+  async simplifyImported(id: DocumentId, triangles: number): Promise<Result<DocumentSummary>> {
+    const simplified = await this.simplify(id, triangles);
+    if (!simplified.ok) return simplified;
+    const { document, mesh } = simplified.value;
+    this.simplified = undefined;
+    const name = `${document.name.slice(0, maxNameLength - 13)} (simplified)`;
+    return this.importFile(document.projectId, { name: `${name}.${document.format}`, bytes: mesh.file });
+  }
+
+  /** A mesh file repaired and simplified, once per document and size. */
+  private async simplify(id: DocumentId, triangles: number): Promise<Result<{ document: ImportedDocument; mesh: SimplifiedMesh }>> {
+    const original = await this.original(id);
+    if (!original.ok) return original;
+    const { document, bytes } = original.value;
+    const format = document.format;
+    if (format !== 'stl' && format !== 'obj' && format !== '3mf') {
+      return fail({ code: 'unsupported-format', message: 'Only meshes (STL, OBJ, 3MF) are simplified; other files hold exact solids or drawings.' });
+    }
+    const kept = this.simplified;
+    if (kept?.id === id && kept.assetId === document.assetId && kept.triangles === triangles) return ok({ document, mesh: kept.mesh });
+    const result = await this.deps.interchange.simplifyMesh(bytes, format, triangles, `simplified:${document.assetId}`);
+    if (!result.ok) return result;
+    this.simplified = { id, assetId: document.assetId, triangles, mesh: result.value };
+    return ok({ document, mesh: result.value });
   }
 
   async deliverFile(file: { readonly name: string; readonly mediaType: string; readonly bytes: Uint8Array }): Promise<void> {
@@ -745,14 +1439,37 @@ export class DefaultProjectManager implements ProjectManager {
     const original = await this.original(id);
     if (!original.ok) return original;
     const { document, bytes } = original.value;
-    const converted = await this.deps.interchange.convert(bytes, document.format, format);
+    const { parts } = isModelFormat(document.format) ? await this.boardParts(document, bytes) : {};
+    const converted = await this.deps.interchange.convert(bytes, document.format, format, parts);
     if (!converted.ok) return converted;
     await this.deps.externalFiles.deliver({ name: `${document.name}.${format}`, mediaType: mediaTypes[format], bytes: converted.value });
     return ok(undefined);
   }
 
+  /**
+   * A circuit board's parts: the project's imported STEP files named like the 3D models its parts
+   * refer to (CAD-170), and a key for its solids that changes when they do.
+   */
+  private async boardParts(document: ImportedDocument, bytes: Uint8Array): Promise<{ parts?: ReadonlyMap<string, Uint8Array>; key: string }> {
+    if (document.format !== 'kicad_pcb') return { key: document.assetId };
+    // A copy: the geometry worker takes the bytes it is sent.
+    const wanted = new Set(await this.deps.interchange.partFiles(bytes.slice(), document.format));
+    const parts = new Map<string, Uint8Array>();
+    const used: string[] = [];
+    for (const summary of await this.deps.documents.enumerate(document.projectId)) {
+      const name = summary.name.toLowerCase();
+      if (summary.format !== 'step' || !wanted.has(name) || parts.has(name)) continue;
+      const step = await this.deps.documents.load(summary.id);
+      const asset = step?.kind === 'imported' ? await this.deps.assets.fetch(step.assetId) : undefined;
+      if (!asset || step?.kind !== 'imported') continue;
+      parts.set(name, asset.bytes);
+      used.push(step.assetId);
+    }
+    return { parts, key: [document.assetId, ...used.sort()].join('+') };
+  }
+
   /** An imported document with the bytes of its original file. */
-  private async original(id: DocumentId): Promise<Result<{ document: Extract<CadDocument, { kind: 'imported' }>; bytes: Uint8Array }>> {
+  private async original(id: DocumentId): Promise<Result<{ document: ImportedDocument; bytes: Uint8Array }>> {
     const document = await this.deps.documents.load(id);
     if (document?.kind !== 'imported') return fail({ code: 'unknown-document', message: `Imported file ${id} does not exist.` });
     const asset = await this.deps.assets.fetch(document.assetId);
@@ -781,6 +1498,7 @@ export class DefaultProjectManager implements ProjectManager {
           ? { ...header, kind, sheet: { size: 'A3', orientation: 'landscape', scale: 1 }, titleBlock: { title: name, number: '', drawnBy: '', material: '', revision: 'A' }, views: [], annotations: [] }
           : { ...header, kind, instances: [], joints: [], motionStudies: [] };
     await this.deps.documents.store(document);
+    this.deps.events.publish('documentCreated', { projectId, documentId: document.id });
     return summarize(document);
   }
 

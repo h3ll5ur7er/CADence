@@ -14,11 +14,23 @@
       <span class="mode-chip" [attr.data-kind]="doc.kind">{{ kindLabels[doc.kind] }}</span>
     }
   </nav>
+  <button type="button" class="icon-btn" aria-label="Project notes" title="Project notes, attachments and library" [disabled]="!project.value()" (click)="openNotes()">
+    <cad-icon name="note" />
+  </button>
+  @if (project.value()?.remote?.server; as server) {
+    <span class="shared-chip" data-testid="shared-chip" [title]="'Shared on ' + server.url">{{ server.link || server.role === 'viewer' ? 'View only' : 'Shared' }}</span>
+  }
+  <button type="button" class="icon-btn" aria-label="Share" title="Share with others" [disabled]="!project.value()" (click)="openShare()">
+    <cad-icon name="share" />
+  </button>
   <button type="button" class="icon-btn sync" aria-label="Sync with git" title="Sync with git" [disabled]="!project.value()" (click)="openSync()">
     <cad-icon name="sync" />
     @if (project.value()?.remote) {
       <span class="synced-dot" aria-hidden="true"></span>
     }
+  </button>
+  <button type="button" class="icon-btn" aria-label="Scripts and plugins" title="Scripts and plugins" [disabled]="!project.value()" (click)="openScripts()">
+    <cad-icon name="script" />
   </button>
   <button type="button" class="icon-btn" aria-label="About CADence" title="About CADence" (click)="about.open()">
     <cad-icon name="info" />
@@ -28,6 +40,9 @@
   </button>
 </header>
 
+@if (layout.phone() && layout.drawer()) {
+  <button type="button" class="scrim" aria-label="Close documents" (click)="layout.drawer.set(false)"></button>
+}
 <aside class="sidebar" aria-label="Project">
   <cad-documents-panel
     [documents]="documents.value() ?? []"
@@ -41,6 +56,8 @@
     (history)="historyDialog.open($event)"
     (duplicate)="duplicate($event)"
     (replace)="replace($event.document, $event.file)"
+    [updates]="updates.value() ?? emptySet"
+    (update)="updatePart($event)"
   />
   @if (message(); as text) {
     <p class="message" role="alert">{{ text }}</p>
@@ -55,11 +72,13 @@
       <h1>Project not found</h1>
       <p>It may have been deleted. <a routerLink="/">Back to all projects</a></p>
     </div>
+  } @else if (comparing(); as request) {
+    <cad-compare-view [request]="request" (closed)="comparing.set(undefined)" />
   } @else if (active(); as doc) {
     @switch (doc.kind) {
       @case ('component') {
         @defer (on immediate) {
-          <cad-component-mode [document]="doc" />
+          <cad-component-mode [document]="doc" [readAgain]="readsAgain()" />
         }
       }
       @case ('assembly') {
@@ -74,7 +93,7 @@
       }
       @case ('imported') {
         @defer (on immediate) {
-          <cad-imported-mode [document]="doc" />
+          <cad-imported-mode [document]="doc" (created)="opened($event)" />
         }
       }
     }
@@ -104,5 +123,8 @@
 <cad-settings-dialog #settings />
 <cad-about-dialog #about />
 <cad-confirm-dialog />
-<cad-history-dialog #historyDialog (restored)="documents.reload(); project.reload()" />
+<cad-history-dialog #historyDialog (restored)="documents.reload(); project.reload()" (compare)="compare($event)" />
 <cad-sync-dialog (synced)="refresh()" />
+<cad-project-dialog (changed)="project.reload()" />
+<cad-scripts-dialog (changed)="readAgain()" />
+<cad-share-dialog (changed)="readAgain()" />

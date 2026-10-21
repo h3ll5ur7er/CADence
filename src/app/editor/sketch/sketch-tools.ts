@@ -25,7 +25,10 @@ export type TransformTool = 'move' | 'rotate';
 /** Tools that copy the selection: across a line clicked next, or around a point clicked next. */
 export type CopyTool = 'mirror' | 'circular-pattern';
 
-export type Tool = 'select' | 'line' | 'rectangle' | 'circle' | 'arc' | 'point' | 'dimension' | 'project' | 'text' | ShapeTool | EditTool | TransformTool | CopyTool;
+/** Block tools: the base point of a block made of the selection, and where a block is placed (ADR-54a). */
+export type BlockTool = 'block-base' | 'place-block';
+
+export type Tool = 'select' | 'line' | 'rectangle' | 'circle' | 'arc' | 'point' | 'dimension' | 'project' | 'text' | ShapeTool | EditTool | TransformTool | CopyTool | BlockTool;
 
 /** What the text tool places. */
 export interface TextDraft {

@@ -9,6 +9,7 @@
   "include": [
     "src/**/*.d.ts",
     "src/**/*.spec.ts",
+    "server/**/*.ts",
     "tools/**/*.ts"
   ]
 }

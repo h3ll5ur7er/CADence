@@ -1,5 +1,5 @@
 import { SketchBuilder } from '@core/contracts/testing/sketch-builder';
-import { hitTest } from './sketch-overlay';
+import { dimensionLabels, hitTest } from './sketch-overlay';
 
 describe('sketch hit testing', () => {
   const b = new SketchBuilder();
@@ -22,3 +22,29 @@ describe('sketch hit testing', () => {
     expect(hitTest(sketch, [55, 0], 0.3)).toBeUndefined();
   });
 });
+
+describe('dimension labels', () => {
+  it('shows a reference dimension in brackets, beside the other side of its line (CAD-153)', () => {
+    const sketch = {
+      id: 's',
+      type: 'sketch' as const,
+      name: 'Sketch',
+      suppressed: false,
+      plane: 'XY' as const,
+      entities: [
+        { id: 'a', kind: 'point' as const, x: 0, y: 0 },
+        { id: 'b', kind: 'point' as const, x: 40, y: 0 },
+      ],
+      constraints: [
+        { id: 'd', kind: 'distance' as const, points: ['a', 'b'] as const, expression: '40' },
+        { id: 'r', kind: 'distance' as const, points: ['a', 'b'] as const, expression: '', reference: true },
+      ],
+    };
+    const identity = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+    const [driving, reference] = dimensionLabels(sketch, new Map([['d', 40], ['r', 40]]), identity);
+    expect(driving).toMatchObject({ text: '40' });
+    expect(reference).toMatchObject({ text: '(40)', reference: true });
+    expect(Math.sign((reference?.y ?? 0) - 0)).toBe(-Math.sign((driving?.y ?? 0) - 0));
+  });
+});
+

@@ -1,9 +1,10 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
-import { type Material, materials, type SimulationLoad, type TopologyRef, type Vec3 } from '@core/contracts';
+import { bodyMaterial, type Material, materials, type SimulationLoad, type TopologyRef, type Vec3 } from '@core/contracts';
 import { Icon } from '../../shared/icon';
 import { bodyNames } from '../modeling/body-names';
 import { DesignStore } from '../sketch/design-store';
 import { lengthIn } from './units';
+import { HelpLink } from '../../shared/help';
 
 /** Directions a force can push in, besides into its face. */
 const axes: readonly { readonly label: string; readonly direction: Vec3 }[] = [
@@ -21,12 +22,13 @@ const mpa = (value: number) => `${Number(value.toPrecision(3)).toLocaleString('e
 /** A linear static strength check (CAD-93): fixed faces, loads, and the stresses and deflection they cause. */
 @Component({
   selector: 'cad-simulate-panel',
-  imports: [Icon],
+  imports: [HelpLink, Icon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <p class="eyebrow">Inspect</p>
     <div class="head">
       <h2>Strength</h2>
+      <cad-help topic="strength" />
       <button type="button" class="icon-btn" aria-label="Close strength check" (click)="store.openPanel(undefined)">×</button>
     </div>
     <p class="hint">Click faces in the view to hold them fixed or to load them, then run the check.</p>
@@ -165,11 +167,18 @@ export class SimulatePanel {
     return bodyNames(state?.bodies.map((b) => b.body) ?? [], state?.document.timeline ?? []);
   });
 
+  /** The materials of the held bodies, each with its stiffness and strength (CAD-158). */
   protected readonly materialNote = computed(() => {
-    const own: Material = this.store.state()?.document.material ?? (materials[0] as Material);
-    const m = { ...materials.find((c) => c.name === own.name), ...own };
-    if (!m.youngsModulus) return `${m.name} has no stiffness to calculate with: choose a material from the list in the browser.`;
-    return `${m.name}: stiffness ${(m.youngsModulus / 1000).toLocaleString('en-US')} GPa${m.yieldStrength ? `, yields at ${m.yieldStrength} MPa` : ''}.`;
+    const document = this.store.state()?.document;
+    const held = [...new Set(this.setup().fixed.map((f) => f.body))];
+    const used = document ? [...new Map((held.length ? held : ['']).map((b) => [bodyMaterial(document, b).name, bodyMaterial(document, b)])).values()] : [materials[0] as Material];
+    return used
+      .map((own) => {
+        const m = { ...materials.find((c) => c.name === own.name), ...own };
+        if (!m.youngsModulus) return `${m.name} has no stiffness to calculate with: choose a material from the list in the browser.`;
+        return `${m.name}: stiffness ${(m.youngsModulus / 1000).toLocaleString('en-US')} GPa${m.yieldStrength ? `, yields at ${m.yieldStrength} MPa` : ''}.`;
+      })
+      .join(' ');
   });
 
   protected faceLabel(face: TopologyRef): string {

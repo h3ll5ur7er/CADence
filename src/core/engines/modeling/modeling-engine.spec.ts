@@ -45,6 +45,26 @@ async function names(bodies: readonly BodyState[]) {
 }
 
 describe('ModelingEngine', () => {
+  it('compares two versions of a plate: the hole cut is removed material, a thicker plate added (CAD-175)', async () => {
+    const before = ok(await plate(5, 'compare-before'));
+    const after = ok(
+      await engine.apply({ type: 'extrude', feature: 'hole', key: 'compare-hole', bodies: before, frame: XY, profiles: [profile(circleLoop(20, 20, 4, 'hole'))], distance: 5, direction: 'normal', operation: 'cut' }),
+    );
+    const compared = await engine.compare(before, after);
+    if (!compared.ok) throw new Error(compared.error.message);
+    expect(compared.value.added).toEqual([]);
+    expect(compared.value.removed.map((m) => m.body)).toEqual(['removed:plate']);
+    expect(compared.value.volume.removed).toBeCloseTo(Math.PI * 16 * 5, 0);
+    expect(compared.value.volume.before - compared.value.volume.after).toBeCloseTo(compared.value.volume.removed, 3);
+    // The other way round, and against a thicker plate.
+    const back = await engine.compare(after, before);
+    expect(back.ok && back.value.added.map((m) => m.body)).toEqual(['added:plate']);
+    const thicker = await engine.compare(before, ok(await plate(8, 'compare-thicker')));
+    expect(thicker.ok && thicker.value.volume.added).toBeCloseTo(80 * 40 * 3, 0);
+    const same = await engine.compare(before, before);
+    expect(same.ok && [same.value.added.length, same.value.removed.length]).toEqual([0, 0]);
+  });
+
   it('extrudes a profile and names faces by how they were made', async () => {
     const bodies = ok(await plate());
     expect(bodies).toEqual([{ id: 'plate', key: 'plate-5:plate' }]);
@@ -572,6 +592,17 @@ describe('component results and joint frames', () => {
       expect((await names(sunk)).faces).toContain('f:h:sink:p1');
     });
 
+    it('ends blind holes in a 118° drill point (CAD-156)', async () => {
+      const bodies = ok(await plate());
+      const angle = (118 * Math.PI) / 180;
+      const pointed = ok(await hole(bodies, 'h-point', [{ id: 'p1', at: [10, 10] }], { depth: 3, point: angle }));
+      const tip = 2.5 / Math.tan(angle / 2);
+      expect(await volume(pointed)).toBeCloseTo(plain - Math.PI * 6.25 * 3 - (Math.PI * 6.25 * tip) / 3, 2);
+      const faces = (await names(pointed)).faces;
+      expect(faces).toEqual(expect.arrayContaining(['f:h:wall:p1', 'f:h:point:p1']));
+      expect(faces).not.toContain('f:h:floor:p1');
+    });
+
     it('drills teardrop holes on their side, pointing up', async () => {
       const bodies = ok(await plate());
       const front = { origin: [0, 0, 0] as const, u: [1, 0, 0] as const, v: [0, 0, 1] as const }; // facing -Y: into the plate is +Y
@@ -663,6 +694,41 @@ describe('component results and joint frames', () => {
       expect(added).toBeGreaterThan(40 * 2 * 10 - 1e-6);
       expect(added).toBeLessThan((40 + 2) * 2 * 10 + 1e-6);
     });
+
+    describe('up to the next face (CAD-156)', () => {
+      // A plate with a 30 mm wall at each end: x 0 to 5 and 75 to 80.
+      const walls = async () => {
+        const base = ok(await plate());
+        const top: PlaneFrame = { ...XY, origin: [0, 0, 5] };
+        const wall = (key: string, x: number, bodies: readonly BodyState[]) =>
+          engine.apply({ type: 'extrude', feature: key, key: `walls-${key}`, bodies, frame: top, profiles: [profile(rectangleLoop(x, 0, 5, 40, key))], distance: 30, direction: 'normal', operation: 'join' });
+        return ok(await wall('wb', 75, ok(await wall('wa', 0, base))));
+      };
+      const upright = (x: number): PlaneFrame => ({ origin: [x, 0, 0], u: [0, 1, 0], v: [0, 0, 1] }); // normal +X
+      const line = (x: number) => [{ kind: 'line' as const, start: [x, 20, 5] as const, end: [x, 20, 35] as const }];
+      const rib = (bodies: readonly BodyState[], key: string, x: number, direction: 'normal' | 'reverse' | 'symmetric') =>
+        engine.apply({ type: 'rib', feature: 'rib', key, bodies, frame: upright(x), path: line(x), thickness: 2, depth: 'next', direction });
+
+      it('runs from one wall to the next', async () => {
+        const bodies = await walls();
+        const before = await volume(bodies);
+        const ribbed = ok(await rib(bodies, 'rib-next', 5, 'normal'));
+        expect(ribbed.map((b) => b.id)).toEqual(['plate']);
+        expect((await volume(ribbed)) - before).toBeCloseTo(70 * 2 * 30, 3);
+        expect((await names(ribbed)).faces.some((f) => f.startsWith('f:rib:side'))).toBe(true);
+      });
+
+      it('runs both ways from a plane between the walls', async () => {
+        const bodies = await walls();
+        const ribbed = ok(await rib(bodies, 'rib-both', 40, 'symmetric'));
+        expect((await volume(ribbed)) - (await volume(bodies))).toBeCloseTo(70 * 2 * 30, 3);
+      });
+
+      it('says when nothing is in its way', async () => {
+        const outcome = await rib(await walls(), 'rib-out', 5, 'reverse');
+        expect(outcome.error).toBe('The rib meets no face in its direction: give it a depth instead.');
+      });
+    });
   });
 
   describe('sheet metal', () => {
@@ -678,6 +744,92 @@ describe('component results and joint frames', () => {
       const faces = (await names(bodies)).faces;
       expect(faces.some((f) => f.startsWith('f:fl:bend:'))).toBe(true);
       expect(faces.some((f) => f.startsWith('f:fl:flange:'))).toBe(true);
+    });
+
+    /** The edge of a body whose middle is nearest a point, as a reference. */
+    const edgeAt = (bodies: readonly BodyState[], at: readonly [number, number, number]): TopologyRef => {
+      const named = shapes.get((bodies[0] as BodyState).key) as NamedShape;
+      const distance = (e: (typeof named.shape.edges)[number]) => Math.hypot(...e.pointAt(0.5).toTuple().map((v, i) => v - (at[i] as number)));
+      const edge = [...named.shape.edges].sort((a, b) => distance(a) - distance(b))[0];
+      return { kind: 'edge', body: (bodies[0] as BodyState).id, name: named.edges.get(edge?.hashCode ?? -1) as string, hint: [...at] };
+    };
+    const sheetRules = { thickness: 2, bendRadius: 2 };
+    const flangeVolume = (length: number, edge: number) => ((Math.PI / 4) * (4 * 4 - 2 * 2) + length * 2) * edge;
+
+    it('bends a flange from the top edge of another flange', async () => {
+      const sheet = ok(await plate(2, 'sheet-2'));
+      const first = await engine.apply({ type: 'edge-flange', feature: 'fl', key: 'fl', bodies: sheet, edges: [edgeAt(sheet, [80, 20, 2])], length: 20, angle: Math.PI / 2, ...sheetRules });
+      // The flange stands from x = 82 to 84 up to z = 24; its outer top edge bends out again.
+      const second = await engine.apply({ type: 'edge-flange', feature: 'fl2', key: 'fl2', bodies: ok(first), edges: [edgeAt(ok(first), [84, 20, 24])], length: 10, angle: Math.PI / 2, ...sheetRules, flanges: first.flanges ?? [] });
+      expect((await volume(ok(second))) - 80 * 40 * 2).toBeCloseTo(flangeVolume(20, 40) + flangeVolume(10, 40), 1);
+      expect(second.flanges?.[0]).toMatchObject({ away: [expect.closeTo(0, 9), expect.closeTo(0, 9), expect.closeTo(1, 9)], up: [expect.closeTo(1, 9), expect.closeTo(0, 9), expect.closeTo(0, 9)] });
+    });
+
+    it('cuts round reliefs where the flanges of a box meet', async () => {
+      const sheet = ok(await plate(2, 'sheet-2'));
+      const edges = ([[80, 20, 2], [40, 40, 2], [0, 20, 2], [40, 0, 2]] as const).map((at) => edgeAt(sheet, at));
+      const box = await engine.apply({ type: 'edge-flange', feature: 'fl', key: 'box', bodies: sheet, edges, length: 20, angle: Math.PI / 2, ...sheetRules });
+      const relieved = await engine.apply({ type: 'edge-flange', feature: 'fl', key: 'box-relief', bodies: sheet, edges, length: 20, angle: Math.PI / 2, ...sheetRules, relief: { shape: 'round', size: 4 } });
+      const plain = await volume(ok(box));
+      expect(plain - 80 * 40 * 2).toBeCloseTo(flangeVolume(20, 2 * (80 + 40)), 1);
+      // Each corner loses three quarters of a round of the sheet, and some of the bends beside it.
+      const lost = plain - (await volume(ok(relieved)));
+      expect(lost).toBeGreaterThan(4 * 0.75 * Math.PI * 4 * 2);
+      expect(lost).toBeLessThan(4 * Math.PI * 4 * 4);
+      const faces = (await names(ok(relieved))).faces;
+      expect(['f:fl:relief:1', 'f:fl:relief:2', 'f:fl:relief:3', 'f:fl:relief:4'].every((f) => faces.includes(f))).toBe(true);
+    });
+
+    it('folds hems back over the sheet: closed, open and teardrop', async () => {
+      const sheet = ok(await plate(2, 'sheet-2'));
+      const edges = [edgeAt(sheet, [80, 20, 2])];
+      const hem = (style: 'closed' | 'open' | 'teardrop', gap: number) => engine.apply({ type: 'hem', feature: 'h', key: `hem-${style}-${gap}`, bodies: sheet, edges, style, gap, length: 10, ...sheetRules });
+      // Open: half a ring round half the gap, then 10 mm back over the sheet.
+      const open = await hem('open', 2);
+      expect((await volume(ok(open))) - 80 * 40 * 2).toBeCloseTo(((Math.PI / 2) * (3 * 3 - 1 * 1) + 10 * 2) * 40, 1);
+      expect(open.flanges?.[0]?.pieces).toEqual([{ angle: Math.PI, radius: 1, length: 10 }]);
+      // Closed: half a round of the thickness, the hem lying on the sheet.
+      const closed = await hem('closed', 0);
+      expect((await volume(ok(closed))) - 80 * 40 * 2).toBeCloseTo(((Math.PI / 2) * 2 * 2 + 10 * 2) * 40, 1);
+      expect(ok(closed)).toHaveLength(1);
+      // Teardrop: further than half a turn, its end back down to a tenth of the thickness above the sheet.
+      const teardrop = await hem('teardrop', 4);
+      const [piece] = teardrop.flanges?.[0]?.pieces ?? [];
+      expect(piece?.angle).toBeGreaterThan(Math.PI);
+      expect(2 * (1 - Math.cos(piece?.angle ?? 0)) + 10 * Math.sin(piece?.angle ?? 0)).toBeCloseTo(0.2, 9);
+      expect(ok(teardrop)).toHaveLength(1);
+      expect((await hem('teardrop', 30)).error).toMatch(/longer than half its gap/);
+    });
+
+    it('runs a miter flange along a chain of edges, mitred at the corner', async () => {
+      const sheet = ok(await plate(2, 'sheet-2'));
+      const edges = [edgeAt(sheet, [80, 20, 2]), edgeAt(sheet, [40, 40, 2])];
+      // The profile, drawn on the front face (square to the right edge): 15 mm straight up, then 5 mm inwards.
+      const front = { origin: [0, 0, 0] as const, u: [1, 0, 0] as const, v: [0, 0, 1] as const };
+      const profile = [
+        { kind: 'line' as const, start: [80, 0, 2] as const, end: [80, 0, 17] as const },
+        { kind: 'line' as const, start: [80, 0, 17] as const, end: [75, 0, 17] as const },
+      ];
+      const mitred = await engine.apply({ type: 'miter-flange', feature: 'm', key: 'miter', bodies: sheet, edges, profile, frame: front, ...sheetRules });
+      expect(ok(mitred)).toHaveLength(1);
+      expect(mitred.flanges?.map((f) => f.pieces.map((p) => [p.angle, p.length]))).toEqual([
+        [
+          [expect.closeTo(Math.PI / 2, 9), expect.closeTo(15, 9)],
+          [expect.closeTo(Math.PI / 2, 9), expect.closeTo(5, 9)],
+        ],
+        [
+          [expect.closeTo(Math.PI / 2, 9), expect.closeTo(15, 9)],
+          [expect.closeTo(Math.PI / 2, 9), expect.closeTo(5, 9)],
+        ],
+      ]);
+      // Both pieces reach past the corner they share, as far as they stand away from it.
+      expect(mitred.flanges?.flatMap((f) => [f.start, f.end].map((p, i) => (p[0] === 80 && p[1] === 40 ? (i ? f.miter?.end : f.miter?.start) : 0)))).toEqual(expect.arrayContaining([expect.closeTo(1, 9)]));
+      const straight = await engine.apply({ type: 'miter-flange', feature: 'm', key: 'miter-straight', bodies: sheet, edges: [edges[0] as TopologyRef], profile, frame: front, ...sheetRules });
+      // The corner adds a little to two square-ended pieces: their mitred ends meet.
+      const [one, two] = [(await volume(ok(straight))) - 80 * 40 * 2, (await volume(ok(mitred))) - 80 * 40 * 2];
+      expect(two).toBeGreaterThan(one * 3);
+      const tilted = { origin: [0, 0, 0] as const, u: [1, 0, 0] as const, v: [0, 1, 0] as const };
+      expect((await engine.apply({ type: 'miter-flange', feature: 'm', key: 'miter-tilted', bodies: sheet, edges, profile, frame: tilted, ...sheetRules })).error).toMatch(/square to one of the edges/);
     });
   });
 });

@@ -2,16 +2,19 @@ import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/c
 import type { JointType } from '@core/contracts';
 import { AssemblyStore, type DraftSide } from './assembly-store';
 import { jointTypes } from './joint-types';
+import { HelpLink } from '../../shared/help';
 
 /** Draws a new joint: its type, then a face or edge on each of two instances. */
 @Component({
   selector: 'cad-joint-panel',
+  imports: [HelpLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (store.jointDraft(); as draft) {
       <p class="eyebrow">Assemble</p>
       <div class="head">
         <h2>New joint</h2>
+        <cad-help topic="joints" />
         <button type="button" class="icon-btn" aria-label="Cancel joint" (click)="store.cancelJoint()">×</button>
       </div>
       <label class="field">

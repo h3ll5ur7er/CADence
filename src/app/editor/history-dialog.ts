@@ -2,6 +2,8 @@ import { ChangeDetectionStrategy, Component, type ElementRef, inject, output, si
 import type { DocumentSummary, Version } from '@core/contracts';
 import { PROJECT_MANAGER } from '../core.providers';
 import { relativeTime } from '../shared/format';
+import type { CompareRequest } from './compare-view';
+import { HelpLink } from '../shared/help';
 
 /**
  * A document's version history: when it changed and what changed, the names of versions, and
@@ -9,16 +11,25 @@ import { relativeTime } from '../shared/format';
  */
 @Component({
   selector: 'cad-history-dialog',
+  imports: [HelpLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   styleUrl: '../shared/dialogs.scss',
   template: `
     <dialog #dialog class="dialog history" aria-labelledby="history-heading" (close)="document.set(undefined)">
       @if (document(); as doc) {
-        <h2 id="history-heading">History of {{ doc.name }}</h2>
-        <p class="hint">Versions are recorded a few seconds after changes. Name one to find it again; restoring keeps the history.</p>
+        <h2 id="history-heading">History of {{ doc.name }} <cad-help topic="versions" /></h2>
+        <p class="hint">Versions are recorded a few seconds after changes. Name one to find it again; restoring keeps the history. Tick two versions (or one, to compare it with now) to compare them.</p>
         <ol class="versions" aria-label="Versions">
           @for (version of versions(); track version.id; let latest = $first) {
             <li>
+              <input
+                type="checkbox"
+                class="pick"
+                [checked]="picked().includes(version.id)"
+                [disabled]="!picked().includes(version.id) && picked().length >= 2"
+                [attr.aria-label]="'Compare the version from ' + relativeTime(version.time)"
+                (change)="pick(version)"
+              />
               <div class="what">
                 <span class="message">{{ version.message }}</span>
                 <span class="when">{{ relativeTime(version.time) }}</span>
@@ -51,6 +62,7 @@ import { relativeTime } from '../shared/format';
           <p class="error" role="alert">{{ message }}</p>
         }
         <div class="actions end">
+          <button type="button" class="btn" [disabled]="!picked().length" (click)="compareChosen()">{{ picked().length === 2 ? 'Compare the two' : 'Compare with now' }}</button>
           <button type="button" class="btn btn-primary" (click)="dialog.close()">Close</button>
         </div>
       }
@@ -60,7 +72,8 @@ import { relativeTime } from '../shared/format';
     .history { width: min(560px, calc(100vw - 32px)); }
     .versions { display: grid; gap: var(--space-2); max-height: 50vh; overflow: auto; margin: var(--space-3) 0; padding: 0; list-style: none; }
     .versions li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius); }
-    .what { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); min-width: 0; }
+    .pick { flex: none; margin: 0; }
+    .what { flex: 1; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); min-width: 0; }
     .message { font-weight: 500; }
     .when { color: var(--text-muted); font-size: 12px; }
     .name { padding: 1px 6px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-strong); font-size: 11px; }
@@ -76,6 +89,10 @@ import { relativeTime } from '../shared/format';
 export class HistoryDialog {
   /** A document was restored: what shows it should load it again. */
   readonly restored = output<DocumentSummary>();
+  /** Two versions to compare (CAD-175). */
+  readonly compare = output<CompareRequest>();
+  /** The versions ticked for comparing, by id. */
+  protected readonly picked = signal<readonly string[]>([]);
   protected readonly document = signal<DocumentSummary | undefined>(undefined);
   protected readonly versions = signal<readonly Version[]>([]);
   protected readonly naming = signal<string | undefined>(undefined);
@@ -88,6 +105,7 @@ export class HistoryDialog {
     this.document.set(document);
     this.error.set(undefined);
     this.naming.set(undefined);
+    this.picked.set([]);
     // What is not recorded yet becomes the latest version first.
     await this.projects.recordVersion(document.projectId);
     await this.load();
@@ -114,6 +132,20 @@ export class HistoryDialog {
       this.restored.emit(document);
       await this.load();
     }
+  }
+
+  protected pick(version: Version): void {
+    this.picked.update((ids) => (ids.includes(version.id) ? ids.filter((id) => id !== version.id) : [...ids, version.id]));
+  }
+
+  /** The older of the ticked versions against the newer one, or against the document now. */
+  protected compareChosen(): void {
+    const document = this.document();
+    const chosen = this.versions().filter((v) => this.picked().includes(v.id));
+    const [newer, older] = chosen.length === 2 ? chosen : [undefined, chosen[0]];
+    if (!document || !older) return;
+    this.compare.emit({ document, from: older, ...(newer ? { to: newer } : {}) });
+    this.dialog().nativeElement.close();
   }
 
   private async load(): Promise<void> {

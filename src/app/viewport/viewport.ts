@@ -13,7 +13,7 @@ import {
   untracked,
   viewChild,
 } from '@angular/core';
-import type { Appearance, BodyMesh, PlaneFrame, ThreadMarker, Vec3 } from '@core/contracts';
+import type { Appearance, BodyMesh, HelixPath, PlaneFrame, ThreadMarker, Vec3 } from '@core/contracts';
 import { Icon } from '../shared/icon';
 import { mouseBindings } from '../shared/keymap';
 import { Shortcuts } from '../shared/shortcuts';
@@ -25,6 +25,7 @@ import type { SketchDisplay } from './sketch-display';
 import type { Affine } from './sketch-planes';
 import { ViewCube } from './view-cube';
 import { type MoveHandle, type PartDisplay, type RendererBackend, type StandardView, ViewportScene, type ViewportTheme } from './viewport-scene';
+import { HelpLink } from '../shared/help';
 
 function readTheme(element: HTMLElement): ViewportTheme {
   const style = getComputedStyle(element);
@@ -73,7 +74,7 @@ const thumbnailDelay = 1500;
 
 @Component({
   selector: 'cad-viewport',
-  imports: [ViewCube, Icon],
+  imports: [HelpLink, ViewCube, Icon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
     '[attr.data-projection]': 'settings.projection()',
@@ -83,33 +84,35 @@ const thumbnailDelay = 1500;
     <canvas #canvas aria-label="3D viewport"></canvas>
     <ng-content />
     <cad-view-cube class="cube" (viewSelected)="showView($event)" (pointerdown)="$event.stopPropagation()">
-      <button type="button" class="icon-btn tool" aria-label="Zoom to fit" title="Zoom to fit" (click)="zoomToFit()">
-        <cad-icon name="fit" />
-      </button>
-      <button
-        type="button"
-        class="icon-btn tool"
-        [attr.aria-label]="orthographic() ? 'Perspective view' : 'Orthographic view'"
-        [title]="orthographic() ? 'Switch to perspective' : 'Switch to orthographic'"
-        [attr.aria-pressed]="orthographic()"
-        [class.on]="orthographic()"
-        (click)="toggleProjection()"
-      >
-        <cad-icon [name]="orthographic() ? 'orthographic' : 'perspective'" />
-      </button>
-      <button type="button" class="icon-btn tool" aria-label="Section view" title="Section view" [attr.aria-pressed]="!!section()" [class.on]="!!section()" (click)="toggleSection()">
-        <cad-icon name="section" />
-      </button>
-      <button type="button" class="icon-btn tool" aria-label="Surface analysis" title="Surface analysis: zebra, curvature, draft" [attr.aria-pressed]="!!analysis()" [class.on]="!!analysis()" (click)="toggleAnalysis()">
-        <cad-icon name="analysis" />
-      </button>
-      <button type="button" class="icon-btn tool" aria-label="Realistic lighting" title="Realistic lighting: reflections and shadows" [attr.aria-pressed]="settings.realistic()" [class.on]="settings.realistic()" (click)="settings.realistic.set(!settings.realistic())">
-        <cad-icon name="light" />
-      </button>
+      @if (!compact()) {
+        <button type="button" class="icon-btn tool" aria-label="Zoom to fit" title="Zoom to fit" (click)="zoomToFit()">
+          <cad-icon name="fit" />
+        </button>
+        <button
+          type="button"
+          class="icon-btn tool"
+          [attr.aria-label]="orthographic() ? 'Perspective view' : 'Orthographic view'"
+          [title]="orthographic() ? 'Switch to perspective' : 'Switch to orthographic'"
+          [attr.aria-pressed]="orthographic()"
+          [class.on]="orthographic()"
+          (click)="toggleProjection()"
+        >
+          <cad-icon [name]="orthographic() ? 'orthographic' : 'perspective'" />
+        </button>
+        <button type="button" class="icon-btn tool" aria-label="Section view" title="Section view" [attr.aria-pressed]="!!section()" [class.on]="!!section()" (click)="toggleSection()">
+          <cad-icon name="section" />
+        </button>
+        <button type="button" class="icon-btn tool" aria-label="Surface analysis" title="Surface analysis: zebra, curvature, draft" [attr.aria-pressed]="!!analysis()" [class.on]="!!analysis()" (click)="toggleAnalysis()">
+          <cad-icon name="analysis" />
+        </button>
+        <button type="button" class="icon-btn tool" aria-label="Realistic lighting" title="Realistic lighting: reflections and shadows" [attr.aria-pressed]="settings.realistic()" [class.on]="settings.realistic()" (click)="settings.realistic.set(!settings.realistic())">
+          <cad-icon name="light" />
+        </button>
+      }
     </cad-view-cube>
     @if (section(); as s) {
       <form class="section-panel" aria-label="Section view" (pointerdown)="$event.stopPropagation()" (submit)="$event.preventDefault()">
-        <p class="eyebrow">Section view</p>
+        <p class="eyebrow">Section view <cad-help topic="section" /></p>
         <label class="field">
           Plane
           <select id="section-plane" [value]="s.plane" (change)="setSectionPlane($any($event.target).value)">
@@ -136,7 +139,7 @@ const thumbnailDelay = 1500;
     }
     @if (analysis(); as a) {
       <form class="section-panel analysis-panel" aria-label="Surface analysis" (pointerdown)="$event.stopPropagation()" (submit)="$event.preventDefault()">
-        <p class="eyebrow">Surface analysis</p>
+        <p class="eyebrow">Surface analysis <cad-help topic="analysis" /></p>
         <label class="field">
           Show
           <select id="analysis-kind" (change)="setAnalysisKind($any($event.target).value)">
@@ -174,6 +177,8 @@ const thumbnailDelay = 1500;
 })
 export class Viewport {
   readonly showOrigin = input(true);
+  /** The phone layout (CAD-179): the cube alone, its tools left to the phone's bar. */
+  readonly compact = input(false);
   readonly sketches = input<readonly SketchDisplay[]>([]);
   readonly bodies = input<readonly BodyMesh[]>([]);
   /** How the component's bodies are shown, by body id. */
@@ -195,6 +200,8 @@ export class Viewport {
   readonly measureLine = input<readonly [Vec3, Vec3] | undefined>(undefined);
   /** Threads, drawn as helices on their faces. */
   readonly threads = input<readonly ThreadMarker[]>([]);
+  /** Helix features, drawn as curves (CAD-161). */
+  readonly helices = input<readonly HelixPath[]>([]);
   /** Results of a strength check drawn on the bodies. */
   readonly field = input<StressField | undefined>(undefined);
   readonly backendReady = output<RendererBackend>();
@@ -284,6 +291,7 @@ export class Viewport {
     effect(() => this.scene()?.setField(this.field()));
     effect(() => this.scene()?.setMeasureLine(this.measureLine()));
     effect(() => this.scene()?.setThreads(this.threads()));
+    effect(() => this.scene()?.setHelices(this.helices()));
     effect(() => this.scene()?.setHandle(this.handle()));
     effect(() => this.scene()?.setAnalysis(this.analysis()));
     effect(() => void this.scene()?.setRealistic(this.settings.realistic()));

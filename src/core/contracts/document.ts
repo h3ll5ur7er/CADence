@@ -28,11 +28,12 @@ export function lengthExpression(typed: string, unit: LengthUnit): string {
   const text = typed.trim();
   return unit !== 'mm' && /^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(text) ? `${text} ${unit}` : text;
 }
-export type ImportFormat = 'step' | 'stl' | 'obj' | '3mf' | 'dxf' | 'svg' | 'png' | 'jpg' | 'ttf' | 'otf' | 'woff';
+export type ImportFormat = 'step' | 'stl' | 'obj' | '3mf' | 'kicad_pcb' | 'dxf' | 'svg' | 'png' | 'jpg' | 'ttf' | 'otf' | 'woff';
 
-/** 3D files: what components insert as bodies and assemblies as parts. */
-export type ModelFormat = 'step' | 'stl' | 'obj' | '3mf';
-export const isModelFormat = (format: ImportFormat | undefined): format is ModelFormat => format === 'step' || format === 'stl' || format === 'obj' || format === '3mf';
+/** 3D files: what components insert as bodies and assemblies as parts; KiCad boards are made into solids (CAD-170). */
+export type ModelFormat = 'step' | 'stl' | 'obj' | '3mf' | 'kicad_pcb';
+export const isModelFormat = (format: ImportFormat | undefined): format is ModelFormat =>
+  format === 'step' || format === 'stl' || format === 'obj' || format === '3mf' || format === 'kicad_pcb';
 
 export interface DocumentSummary {
   readonly id: DocumentId;
@@ -43,6 +44,26 @@ export interface DocumentSummary {
   readonly modifiedAt: Timestamp;
   /** Imported documents: the file format, so lists can tell drawings from 3D files. */
   readonly format?: ImportFormat;
+  /** A library's part used in this project: kept as the library had it in a version (CAD-151). */
+  readonly library?: LibraryLink;
+}
+
+/**
+ * Where a document used from a library comes from (docs/Architecture/Decisions.md#ADR-53a): the
+ * library's own id, the document there and the library version it is a copy of. Such documents are
+ * read only; an update replaces them by a newer version of the library's.
+ */
+export interface LibraryLink {
+  /** `Project.library.id` of the library, or `standard`. */
+  readonly library: string;
+  /** The library's name when the part was taken, for when it is not on this device. */
+  readonly libraryName: string;
+  /** The document's id in the library, or a standard part's key. */
+  readonly document: string;
+  /** The library's version: an id of its history (`standard-1` for the built-in catalogue). */
+  readonly version: string;
+  /** `always`: newer versions of the library replace it on their own; `asked`: when asked. */
+  readonly follow: 'asked' | 'always';
 }
 
 /** Persisted design intent; see docs/Architecture/Document-model.md. */
@@ -62,7 +83,10 @@ export type TimelineItem = Sketch | Feature;
 
 export const isSketch = (item: TimelineItem): item is Sketch => item.type === 'sketch';
 
-/** A group of consecutive timeline items, from `first` to `last` in timeline order; folders do not nest. */
+/**
+ * A group of consecutive timeline items, from `first` to `last` in timeline order. Folders nest: two
+ * folders are apart or one holds the other (of two with the same items, the earlier one).
+ */
 export interface TimelineFolder {
   readonly id: string;
   readonly name: string;
@@ -75,6 +99,36 @@ export interface TimelineFolder {
 export function folderItems(folder: TimelineFolder, timeline: readonly TimelineItem[]): string[] {
   const [from, to] = [timeline.findIndex((i) => i.id === folder.first), timeline.findIndex((i) => i.id === folder.last)];
   return from < 0 || to < from ? [] : timeline.slice(from, to + 1).map((i) => i.id);
+}
+
+/** A folder where it is: its items' places in the timeline, and the folder it is in (none: at the top). */
+export interface PlacedFolder {
+  readonly folder: TimelineFolder;
+  readonly from: number;
+  readonly to: number;
+  readonly parent?: string;
+  /** How many folders hold it. */
+  readonly depth: number;
+}
+
+/** The folders that have items, each with the folder it is in (CAD-157), outer ones before the ones they hold. */
+export function nestFolders(folders: readonly TimelineFolder[], timeline: readonly TimelineItem[]): PlacedFolder[] {
+  const placed = folders.flatMap((folder, order) => {
+    const [from, to] = [timeline.findIndex((i) => i.id === folder.first), timeline.findIndex((i) => i.id === folder.last)];
+    return from < 0 || to < from ? [] : [{ folder, from, to, order }];
+  });
+  // Outer first: earlier start, then later end, then the order they were made in.
+  placed.sort((a, b) => a.from - b.from || b.to - a.to || a.order - b.order);
+  const result: PlacedFolder[] = [];
+  const open: PlacedFolder[] = [];
+  for (const { folder, from, to } of placed) {
+    while (open.length && !((open.at(-1) as PlacedFolder).to >= to && (open.at(-1) as PlacedFolder).from <= from)) open.pop();
+    const parent = open.at(-1);
+    const entry: PlacedFolder = { folder, from, to, depth: open.length, ...(parent ? { parent: parent.folder.id } : {}) };
+    result.push(entry);
+    open.push(entry);
+  }
+  return result;
 }
 
 /** A named variant of a component: other values for some of its (or its project's) parameters. */
@@ -101,8 +155,10 @@ export interface ComponentDocument extends DocumentBase {
    * items are inserted before them. 0 puts the rollback marker at the end.
    */
   readonly rollbackIndex: number;
-  /** For mass; `materials[0]` when absent. */
+  /** For mass; `materials[0]` when absent. The default of every body without one of its own. */
   readonly material?: Material;
+  /** What bodies are made of, by body id, where it is not the component's material (CAD-158). */
+  readonly bodyMaterials?: Readonly<Record<string, Material>>;
   /** The machine the component is made on, for validation; `manufacturingProfiles[0]` when absent. */
   readonly process?: ManufacturingProfile;
   /** How bodies are shown, by body id; bodies without an entry use the defaults. */
@@ -145,14 +201,17 @@ export type CadDocument = ComponentDocument | AssemblyDocument | DrawingDocument
 
 /**
  * 2: assemblies got motion studies. 3: the fields added by phases 21 to 33 (joint leans, view
- * configurations, …), so that older apps refuse documents they would show wrongly (CAD-145). Raise it
- * whenever a field is added that an older app must not ignore.
+ * configurations, …), so that older apps refuse documents they would show wrongly (CAD-145). 4: reference
+ * dimensions, sketch blocks and wraps (phase 35); drill points, ribs up to the next face, nested folders and
+ * bodies' own materials (phase 36); gear shifts, bevel gears, worms, springs and helices (phase 37); hems,
+ * miter flanges and corner reliefs (phase 38); plugin features (phase 41). Raise it whenever a field is
+ * added that an older app must not ignore.
  */
-export const currentSchemaVersion = 3;
+export const currentSchemaVersion = 4;
 
 export function summarize(document: CadDocument): DocumentSummary {
-  const { id, projectId, kind, name, createdAt, modifiedAt } = document;
-  return { id, projectId, kind, name, createdAt, modifiedAt, ...(document.kind === 'imported' ? { format: document.format } : {}) };
+  const { id, projectId, kind, name, createdAt, modifiedAt, library } = document;
+  return { id, projectId, kind, name, createdAt, modifiedAt, ...(document.kind === 'imported' ? { format: document.format } : {}), ...(library ? { library } : {}) };
 }
 
 /** Imported documents a part or assembly can use as a solid. */

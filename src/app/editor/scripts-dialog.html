@@ -1,0 +1,163 @@
+<dialog #dialog class="dialog scripts" aria-labelledby="scripts-heading" (close)="stop()">
+  <div class="head">
+    <h2 id="scripts-heading">Scripts of {{ project()?.name }}</h2>
+    <button type="button" class="icon-close" aria-label="Close" (click)="dialog.close()"><cad-icon name="cross" /></button>
+  </div>
+  <p class="hint">Scripts run against this project in a sandbox, with the scripting API only. Kept scripts are saved with the project and asked for their parameters before each run.</p>
+
+  <div class="layout">
+    <nav class="side" aria-label="Scripts and plugins">
+      <h3>Kept scripts</h3>
+      <ul class="kept">
+        @for (script of scripts(); track script.id) {
+          <li>
+            <button type="button" class="item" [class.active]="script.id === selected()" [attr.aria-current]="script.id === selected() ? 'true' : null" (click)="select(script)">
+              {{ script.name }}
+            </button>
+          </li>
+        } @empty {
+          <li class="none">None yet: save the script on the right.</li>
+        }
+      </ul>
+      <button type="button" class="btn" (click)="newScript()"><cad-icon name="plus" /> New script</button>
+
+      <h3>Plugins</h3>
+      <ul class="plugins">
+        @for (plugin of plugins(); track plugin.id) {
+          <li class="plugin" [attr.data-plugin]="plugin.id">
+            <div class="plugin-head">
+              <strong>{{ plugin.name }}</strong> <span class="version">{{ plugin.version }}</span>
+              <button type="button" class="btn btn-ghost small" [attr.aria-label]="'Remove ' + plugin.name" (click)="removePlugin(plugin)"><cad-icon name="trash" [size]="14" /></button>
+            </div>
+            @for (generator of plugin.generators; track generator.name) {
+              <button type="button" class="btn small" [disabled]="running()" (click)="runGenerator(plugin, generator)"><cad-icon name="play" [size]="14" /> {{ generator.label }}…</button>
+            }
+            @for (feature of plugin.features; track feature.name) {
+              <button type="button" class="btn small" [disabled]="running() || !component()" [title]="component() ? 'Adds it to ' + component()?.name : 'Open a component to add it'" (click)="addFeature(plugin, feature)">
+                <cad-icon name="plus" [size]="14" /> {{ feature.label }}…
+              </button>
+            }
+            @for (exporter of plugin.exporters; track exporter.name) {
+              <button type="button" class="btn small" [disabled]="running() || !component()" [title]="component() ? 'Exports ' + component()?.name : 'Open a component to export it'" (click)="exportWith(plugin, exporter)">
+                <cad-icon name="download" [size]="14" /> {{ exporter.label }}
+              </button>
+            }
+          </li>
+        } @empty {
+          <li class="none">No plugins in this project.</li>
+        }
+      </ul>
+      <label class="btn">
+        <cad-icon name="upload" /> Install plugin…
+        <input type="file" accept=".js,text/javascript" class="file" aria-label="Plugin file" (change)="install($event)" />
+      </label>
+      <button type="button" class="btn btn-ghost" (click)="installSample()">Install the sample plugin</button>
+    </nav>
+
+    <section class="main" aria-label="Script">
+      <div class="row">
+        <label class="field grow">
+          Name
+          <input id="script-name" autocomplete="off" [value]="name()" (input)="name.set($any($event.target).value)" />
+        </label>
+      </div>
+
+      <fieldset class="parameters">
+        <legend>Parameters, asked before each run</legend>
+        @for (parameter of parameters(); track $index; let i = $index) {
+          <div class="parameter">
+            <input [attr.aria-label]="'Name of parameter ' + (i + 1)" [id]="'script-parameter-name-' + i" autocomplete="off" [value]="parameter.name" (change)="setParameter(i, { name: $any($event.target).value })" />
+            <input [attr.aria-label]="'Default of parameter ' + (i + 1)" [id]="'script-parameter-default-' + i" autocomplete="off" [value]="parameter.default" (change)="setParameter(i, { default: $any($event.target).value })" />
+            <select [attr.aria-label]="'Kind of parameter ' + (i + 1)" [value]="parameter.kind" (change)="setParameter(i, { kind: $any($event.target).value })">
+              @for (kind of kinds; track kind) {
+                <option [value]="kind">{{ kind }}</option>
+              }
+            </select>
+            <button type="button" class="btn btn-ghost small" [attr.aria-label]="'Remove parameter ' + parameter.name" (click)="removeParameter(i)"><cad-icon name="cross" [size]="14" /></button>
+          </div>
+        }
+        <button type="button" class="btn btn-ghost small add" (click)="addParameter()"><cad-icon name="plus" [size]="14" /> Parameter</button>
+      </fieldset>
+
+      <div class="code">
+        <textarea
+          #editor
+          id="script-source"
+          aria-label="Script"
+          spellcheck="false"
+          autocomplete="off"
+          [attr.aria-expanded]="completions().length > 0"
+          aria-controls="script-completions"
+          (keydown)="keydown($event)"
+          (input)="typed()"
+          (blur)="completions.set([])"
+        ></textarea>
+        @if (completions().length) {
+          <ul id="script-completions" class="completions" role="listbox" aria-label="Completions">
+            @for (member of completions(); track member.name; let i = $index) {
+              <li role="option" [attr.aria-selected]="i === highlighted()" [class.highlighted]="i === highlighted()" (mousedown)="$event.preventDefault(); complete(member)">
+                <span class="member">{{ member.name }}</span><span class="signature">{{ member.signature }}</span>
+                <span class="doc">{{ member.doc }}</span>
+              </li>
+            }
+          </ul>
+        }
+      </div>
+      <details class="types">
+        <summary>The scripting API's types</summary>
+        <pre data-testid="script-types">{{ types }}</pre>
+      </details>
+
+      @if (error(); as message) {
+        <p class="error" role="alert">{{ message }}</p>
+      }
+
+      @if (asking(); as asked) {
+        <form class="ask" (submit)="$event.preventDefault(); confirmAsked()" aria-label="Values for the run">
+          <strong>{{ asked.title }}</strong>
+          @for (parameter of asked.parameters; track parameter.name) {
+            <label class="field">
+              {{ parameter.label ?? parameter.name }}
+              <input [id]="'script-value-' + parameter.name" autocomplete="off" [value]="asked.values[parameter.name]" (input)="setAsked(parameter.name, $any($event.target).value)" />
+            </label>
+          }
+          <div class="actions">
+            <button type="button" class="btn" (click)="asking.set(undefined)">Cancel</button>
+            <button type="submit" class="btn btn-primary"><cad-icon name="play" /> {{ asked.action }}</button>
+          </div>
+        </form>
+      }
+
+      <div class="actions">
+        @if (selected()) {
+          <button type="button" class="btn btn-ghost" [disabled]="running()" (click)="remove()"><cad-icon name="trash" /> Delete</button>
+        }
+        <span class="spacer"></span>
+        <button type="button" class="btn" [disabled]="running()" (click)="save()"><cad-icon name="check" /> Save</button>
+        @if (running()) {
+          <button type="button" class="btn btn-danger" (click)="stop()"><cad-icon name="stop" /> Stop</button>
+        } @else {
+          <button type="button" class="btn btn-primary" title="Run (Ctrl+Enter)" (click)="run()"><cad-icon name="play" /> Run…</button>
+        }
+      </div>
+
+      <section class="output" aria-label="Output" aria-live="polite" data-testid="script-output">
+        @if (running()) {
+          <p class="status">Running…</p>
+        }
+        @for (line of output(); track $index) {
+          <div class="line">{{ line }}</div>
+        }
+        @if (ran(); as result) {
+          <p class="status" [class.failed]="!result.ok" [attr.role]="result.ok ? 'status' : 'alert'">{{ result.text }}</p>
+          @if (result.made.length) {
+            <p class="status">Made: {{ result.made.join(', ') }}</p>
+          }
+          @if (result.changed.length) {
+            <p class="status">Changed: {{ result.changed.join(', ') }}</p>
+          }
+        }
+      </section>
+    </section>
+  </div>
+</dialog>

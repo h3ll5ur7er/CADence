@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { InMemoryAssetAccess } from '@core/access/asset';
 import { InMemoryDocumentAccess } from '@core/access/document';
 import { InMemoryProjectAccess } from '@core/access/project';
@@ -29,6 +30,7 @@ import { steppingClock } from '@core/utilities/clock';
 import { identity, transformPoint, translation } from '@core/utilities/math';
 import { EventBus } from '@core/utilities/messaging';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { readZip } from '@core/utilities/archive';
 import { type AssemblySession, createAssemblyManager } from './index';
 
 const shapes = createShapeAccess();
@@ -248,6 +250,19 @@ describe('AssemblyManager', () => {
     expect(files.delivered[1]).toMatchObject({ name: 'Arm - Swing.webm', mediaType: 'video/webm' });
   });
 
+  it('shares the assembly as glTF and USDZ at real size, its parts placed (CAD-180)', async () => {
+    await arm([0]);
+    unwrap(await session.exportViewer('glb'));
+    expect(files.delivered.at(-1)).toMatchObject({ name: 'Arm.glb', mediaType: 'model/gltf-binary' });
+    const bytes = files.delivered.at(-1)?.bytes as Uint8Array;
+    const json = JSON.parse(new TextDecoder().decode(bytes.subarray(20, 20 + new DataView(bytes.buffer, bytes.byteOffset).getUint32(12, true)))) as { nodes: { name: string }[]; accessors: { max?: number[] }[] };
+    expect(json.nodes.map((n) => n.name)).toEqual(['Base 1', 'Link 1']);
+    // Metres: the parts are tens of millimetres long.
+    expect(Math.max(...json.accessors.flatMap((a) => a.max ?? []))).toBeLessThan(0.2);
+    const file = unwrap(await session.viewerFile('usdz'));
+    expect(file).toMatchObject({ name: 'Arm.usdz', mediaType: 'model/vnd.usdz+zip' });
+  });
+
   it('removes joints and their motion keys with an instance, and marks deleted components missing', async () => {
     await arm([0]);
     unwrap(await session.execute({ type: 'add-study', study: { id: 's1', name: 'Swing', duration: 1, keys: [{ time: 0, joint: 'hinge', values: [0] }] } }));
@@ -270,6 +285,30 @@ describe('AssemblyManager', () => {
     // Without its instance, the file is no component of the assembly any more (CAD-135).
     unwrap(await session.execute({ type: 'remove-instance', instanceId: 'c1' }));
     expect(session.state().components.has(asDocumentId('cube'))).toBe(false);
+  });
+
+  it('places an enclosure on a circuit board by a mounting hole the board names (CAD-170)', async () => {
+    const bytes = new Uint8Array(readFileSync(new URL('../../../../e2e/fixtures/sensor-board.kicad_pcb', import.meta.url)));
+    await assets.keep({ id: asAssetId('board-asset'), projectId: project, name: 'sensor-board.kicad_pcb', byteLength: bytes.length, bytes });
+    const board = asDocumentId('board');
+    await documents.store({ id: board, projectId: project, kind: 'imported', name: 'Sensor board', createdAt: stamp, modifiedAt: stamp, schemaVersion: currentSchemaVersion, assetId: asAssetId('board-asset'), format: 'kicad_pcb', fileName: 'sensor-board.kicad_pcb', byteLength: bytes.length });
+    unwrap(await insert('pcb', board, identity(), true));
+    const loaded = session.state().components.get(board);
+    expect(loaded).toMatchObject({ status: 'ready' });
+    // The board and its parts; the board's hole walls by the holes' names.
+    expect(loaded?.bodies.map((b) => b.body)).toEqual(['import', 'import:2']);
+    expect(loaded?.bodies[0]?.faces.map((f) => f.name)).toEqual(expect.arrayContaining(['hole:H1', 'hole:H2', 'hole:H3', 'hole:H4', 'board:top', 'board:bottom']));
+    // The enclosure (a plate with a hole, here) sits with its hole on the board's mounting hole H3.
+    unwrap(await insert('case', base, translation([0, 80, 0])));
+    unwrap(
+      await session.execute({
+        type: 'add-joint',
+        joint: { id: 'screw', name: '', type: 'rigid', a: { instance: 'pcb', ref: { kind: 'face', body: 'import', name: 'hole:H3' } }, b: { instance: 'case', ref: holeOf('base') }, flip: false, values: [], limits: [] },
+      }),
+    );
+    expect(session.state().jointErrors.get('screw')).toBeUndefined();
+    // H3 is 4 mm in from the board's right and top edges: (56, 4) from its lower left corner, halfway up its 1.6 mm.
+    expect(where('case', [10, 10, 2.5])).toEqual([56, 4, 0.8]);
   });
 
   it('tilts joint frames about their x axis (CAD-113)', () => {
@@ -322,6 +361,26 @@ describe('AssemblyManager', () => {
     expect(weight.mass).toBeCloseTo((volume * 1.24) / 1000, 1);
     expect(weight.parts.map((p) => p.name)).toEqual(['Base 1', 'Link 1']);
     expect(weight.centerOfMass[2]).toBeGreaterThan(2.5);
+  });
+
+  it('weighs a part of two bodies by each one’s material, and lists both in the bill of materials (CAD-158)', async () => {
+    // A PLA housing (60 × 20 × 5 less a ⌀6 hole) with a steel pin (10 × 10 × 5) of its own.
+    const housing = await modeling.apply({ type: 'extrude', feature: 'housing', key: 'duo-housing', bodies: [], frame: originFrames.XY, profiles: [profile(rectangleLoop(0, 0, 60, 20, 'housing'), [circleLoop(10, 10, 3, 'housing-hole', false)])], distance: 5, direction: 'normal', operation: 'new-body' });
+    const pin = await modeling.apply({ type: 'extrude', feature: 'pin', key: 'duo-pin', bodies: housing.bodies, frame: originFrames.XY, profiles: [profile(rectangleLoop(100, 0, 10, 10, 'pin'))], distance: 5, direction: 'normal', operation: 'new-body' });
+    const duo = asDocumentId('duo');
+    await documents.store({ ...component('duo', 'Duo'), bodyMaterials: { pin: { name: 'Steel', density: 7.85 } } });
+    await assets.publishResult({ documentId: duo, projectId: project, stamp, bytes: await modeling.snapshot(pin.bodies) });
+    unwrap(await insert('d1', duo, identity(), true));
+    await until(() => session.state().components.get(duo)?.status === 'ready');
+    const [plastic, steel] = [(60 * 20 - Math.PI * 9) * 5 * 1.24, 10 * 10 * 5 * 7.85].map((g) => g / 1000);
+    const weight = await session.properties();
+    expect(weight.mass).toBeCloseTo((plastic as number) + (steel as number), 3);
+    expect(weight.parts).toMatchObject([{ instance: 'd1', material: 'PLA, Steel' }]);
+    const [line] = await session.billOfMaterials();
+    expect(line).toMatchObject({ component: 'Duo', material: 'PLA, Steel', mass: expect.closeTo((plastic as number) + (steel as number), 3) });
+    unwrap(await session.exportAssembly('3mf'));
+    const model = new TextDecoder().decode((await readZip(files.delivered.at(-1)?.bytes as Uint8Array)).get('3D/3dmodel.model'));
+    expect(model).toContain('<base name="PLA" displaycolor="#B4B4B4FF"/><base name="Steel" displaycolor="#B4B4B4FF"/>');
   });
 
   it('repeats instances in rows, around axes and mirrored, following their originals', async () => {

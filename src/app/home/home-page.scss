@@ -180,3 +180,130 @@
   outline-offset: -8px;
   background: var(--accent-soft);
 }
+
+.badge {
+  margin-left: var(--space-2);
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 11px;
+  font-weight: 500;
+  vertical-align: 1px;
+}
+
+.trash {
+  margin-top: var(--space-8);
+
+  .heading {
+    align-items: center;
+  }
+
+  .empty-trash {
+    margin-left: auto;
+  }
+
+  .hint {
+    margin: 0 0 var(--space-3);
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+}
+
+.trash-list {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  li {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-1);
+  }
+
+  .what {
+    display: grid;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .meta {
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+}
+
+/* Sample projects (CAD-181): line pictures of what each holds. */
+.samples {
+  margin-top: var(--space-8);
+
+  h2 {
+    font-size: 18px;
+  }
+
+  .heading {
+    margin-bottom: var(--space-1);
+  }
+
+  .lead {
+    margin: 0 0 var(--space-4);
+    color: var(--text-muted);
+  }
+}
+
+.sample .card-link {
+  width: 100%;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sample svg {
+  width: 60%;
+  height: 80%;
+  fill: none;
+  stroke: var(--accent-strong);
+  stroke-width: 1.2;
+  stroke-linejoin: round;
+}
+
+.sample .meta {
+  line-height: 1.35;
+}
+
+/* Phones (CAD-179): the bar keeps its buttons, their words give way to icons. */
+@media (max-width: 720px) {
+  .topbar {
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .topbar .btn {
+    padding-inline: var(--space-2);
+  }
+
+  .topbar .label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .content {
+    padding: var(--space-4) var(--space-3);
+  }
+
+  .empty {
+    margin-top: var(--space-6);
+  }
+}

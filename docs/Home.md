@@ -4,12 +4,13 @@ CADence is a parametric 3D CAD application for makers. It covers the things you 
 
 ## What it does
 
-- **Projects** hold any number of documents. The home page lists all projects, and opening one brings up the editor.
+- **Projects** hold any number of documents, with notes and attachments; deleted ones wait in a trash. The home page lists all projects, and opening one brings up the editor. Projects can be libraries whose parts others use, beside the built-in standard parts.
 - The **editor** has three modes, one per document kind:
   - **Component**: parametric part modeling. You draw 2D sketches on planes or faces, then extrude, revolve, fillet, shell, pattern and so on, all driven by variables, constraints and dimensions.
   - **Assembly**: components placed with joints, which can be animated and simulated.
   - **Imported**: files brought in from elsewhere (STEP, STL, OBJ, DXF, SVG and others).
-- **Export**: STEP, STL, OBJ (and 3MF) for 3D models; DXF and SVG for sketches and 2D drawings.
+- **Export**: STEP, STL, OBJ (and 3MF) for 3D models; DXF and SVG for sketches and 2D drawings; an HTML viewer, glTF and USDZ to share and to see in augmented reality.
+- **On phones** the editor is a viewer: turn, pinch and measure by touch, and see parts at real size in the room ([[User-guide/Viewing-and-controls#on-a-phone-or-tablet]]). New users get a tour of a first part and samples to open ([[User-guide/Getting-started]]).
 
 ## Where to read next
 
@@ -19,6 +20,7 @@ CADence is a parametric 3D CAD application for makers. It covers the things you 
   - [[Architecture/Use cases and call chains]]
   - [[Architecture/Document model]]
   - [[Architecture/Decisions]]
+  - [[Architecture/Server]]: sign-in, sharing and live editing
 - [[User guide]]: how to use CADence: [[User guide/Sketching]], [[User guide/Part modeling]], [[User guide/Measuring and checking]], [[User guide/Assemblies]], [[User guide/Importing]], [[User guide/Viewing and controls]]
 - [[Roadmap]]: the phases and their tasks
 - [[Open points]]: what the phases left out, to choose the next work from

@@ -14,6 +14,12 @@ classDiagram
     createdAt, modifiedAt
     parameters?: Parameter[]
     remote?: ProjectRemote
+    description?: string
+    attachments?: Attachment[]
+    library?: id
+    trashedAt?, trash?: TrashedDocument[]
+    scripts?: ProjectScript[]
+    plugins?: ProjectPlugin[]
   }
   class DocumentSummary {
     id: DocumentId
@@ -29,6 +35,7 @@ classDiagram
     timeline: TimelineItem[]
     rollbackIndex: number
     material?: Material
+    bodyMaterials?: Record~bodyId, Material~
     process?: ManufacturingProfile
     appearances?: Record~bodyId, Appearance~
     simulation?: SimulationSetup
@@ -42,7 +49,7 @@ classDiagram
   class ImportedDocument {
     schemaVersion: number
     assetId: AssetId
-    format: step | stl | obj | 3mf | dxf | svg
+    format: step | stl | obj | 3mf | kicad_pcb | dxf | svg | png | jpg | ttf | otf | woff
     metadata
   }
   Project "1" --> "*" DocumentSummary
@@ -54,6 +61,8 @@ classDiagram
 
 All lengths are stored **in millimetres**, and `units` controls display only. Angles are stored in degrees in expressions and in radians internally. Plain numbers in expressions are millimetres; a plain number typed in a document of another unit is saved with the unit written out (`lengthExpression`), so changing `units` never changes the model.
 
+**Scripts and plugins** travel with the project ([[CAD-173]], [[CAD-174]]): `scripts` are the script console's kept scripts (name, source, parameters with defaults and kinds), `plugins` the installed plugins (their description and source, [[src/core/contracts/project.ts]]). Both are part of the project's settings in its versions (`project.json`), its archives and its copies.
+
 ## Versions
 
 Each project has a version history: a git repository with one commit per version on `main` and version names as tags ([[Architecture/Decisions#ADR-30]]). A version holds the files
@@ -62,15 +71,22 @@ Each project has a version history: a git repository with one commit per version
 | --- | --- |
 | `documents/<documentId>.json` | the document as stored, without `projectId` (a project has its own id on each device) |
 | `originals/<assetId>` | an imported document's original file, unchanged |
-| `project.json` | `{ name, parameters, copiedFrom? }` |
+| `project.json` | `{ name, parameters, description?, attachments?, library? }` |
+| `originals/<assetId>` of attachments | a file attached to the project, unchanged |
 
 `Project.copiedFrom` maps a document's id to the ids it had before the project was copied (duplicated, or imported once more as a copy), newest first: a copy keeps the versions of its documents, and restores an older version with the copy's ids ([[CAD-147]]).
 
 `Project.remote` (`{ url, corsProxy? }`) is where the versions are synced; it is a setting of this device and not part of the versions. Sign-ins are never stored.
 
+## Trash, notes and libraries
+
+- **Trash** ([[CAD-148]]): `Project.trashedAt` marks a project in the trash; `Project.trash` lists the project's deleted documents (`{ id, name, kind, trashedAt, version }`), each restored from `documents/<id>.json` of that version. Both are settings of this device, like `remote`.
+- **Notes** ([[CAD-149]]): `Project.description` (Markdown) and `Project.attachments`: `{ id, kind: 'file', name, mediaType, byteLength, assetId, addedAt }` (the file is an asset) or `{ id, kind: 'link', name, url, addedAt }`.
+- **Libraries** ([[CAD-151]], [[Architecture/Decisions#ADR-53a]]): `Project.library` (`{ id }`) marks a library by an id of its own. A document taken from a library carries `library` (`LibraryLink`: `{ library, libraryName, document, version, follow: 'asked' | 'always' }`, also in its summary), the library's id `standard` for the built-in standard parts ([[CAD-152]]). No schema change: an older app opens such a document as an ordinary one.
+
 ## Archives and templates
 
-A project archive (`.cadence`) is a zip with `cadence.json` (`{ format: 'cadence-project', version: 1, name, parameters }`), `documents/<id>.json` (without `projectId`), `originals/<assetId>` and, optionally, `history/…`, the files of the project's git repository. Opening one keeps the documents' ids and history unless this device has those documents already; then they get new ids and the history starts anew.
+A project archive (`.cadence`) is a zip with `cadence.json` (`{ format: 'cadence-project', version: 1, name, parameters, description?, attachments?, library? }`), `documents/<id>.json` (without `projectId`), `originals/<assetId>` (imported originals and attached files) and, optionally, `history/…`, the files of the project's git repository, and `libraries/<library id>.cadence`, the archives of the libraries it uses. Opening one keeps the documents' ids and history unless this device has those documents already; then they get new ids and the history starts anew.
 
 A template (`ProjectTemplate`, `public/templates/<id>.json`) is `{ id, name, description, parameters, documents }`: a project without originals. Templates are made with the scripting API ([[src/automation/templates.ts]]); a test builds them, compares them with the files and checks their volumes.
 
@@ -91,6 +107,8 @@ type ManufacturingProfile =
 
 When absent, the first preset applies (an FDM printer with a 220 × 220 × 250 mm volume and a 0.4 mm nozzle). The fields are optional, so older documents need no migration.
 
+`bodyMaterials` gives bodies a material of their own, by body id (a steel shaft in a plastic housing); every other body is of the component's `material` (`bodyMaterial`, [[CAD-158]]). Mass properties, the strength check, bills of materials, parts lists and 3MF and OBJ exports use each body's.
+
 ## Parameters
 
 ```ts
@@ -100,7 +118,7 @@ interface Parameter { id: ParameterId; name: string; expression: string; comment
 Expressions may reference other parameters by name, use units (`10 mm + 0.5 in`) and functions (`sin`, `max`, ...). Feature and constraint values are expressions too, so `"height / 2"` works everywhere a number does.
 
 - **Project parameters** (`Project.parameters`) are in scope in every component of the project; a component parameter of the same name wins. Changing them publishes `projectParametersChanged`.
-- **Folders** (`ComponentDocument.folders`): `{ id, name, first, last, note? }`, the items from `first` to `last` in timeline order; folders do not overlap. After a reorder or a delete each folder keeps its remaining items, from the first to the last of them (so items dropped in between join it); an emptied folder goes. Every timeline item may carry a `note`.
+- **Folders** (`ComponentDocument.folders`): `{ id, name, first, last, note? }`, the items from `first` to `last` in timeline order. Folders nest: two folders are apart or one holds the other, and of two with the same items the earlier holds the later (`nestFolders`, [[CAD-157]]). After a reorder or a delete each folder keeps its remaining items, from the first to the last of them (so items dropped in between join it); a moved item leaves its folders, a moved folder (`move-folder`) takes its items and the folders in it along; an emptied folder goes. Every timeline item may carry a `note`.
 - **Configurations** (`ComponentDocument.configurations`): `{ id, name, values: Record<parameter name, expression> }`. `configuration` is the one shown and edited; regeneration replaces the named parameters' expressions with its values. An assembly `Instance.configuration` shows another one (`sourceKey`: `<component>@<configuration>`).
 
 ## Timeline items
@@ -127,6 +145,8 @@ interface Sketch {
 - **Plane coordinates** (u, v) map to the world as: XY → (x, y), XZ → (x, z), YZ → (y, z), each seen head-on from the top, front and right view respectively.
 - **Geometric constraints:** coincident, horizontal, vertical, parallel, perpendicular, equal (lengths or radii), tangent, point-on (line, circle or arc), midpoint, fix.
 - **Dimensions** store an **expression**, not a number: distance, horizontal and vertical distance, point-to-line distance, radius, diameter, angle. `"2 * 20 mm"` and `"1 in"` are valid values. Signs and orientation (which side, which of the supplementary angles) follow the current geometry, so a dimension never flips the sketch over.
+- **Reference dimensions** (`reference: true`) drive nothing: they show what the solved sketch measures, and their expression is ignored. With a `name`, the value is a parameter for everything after the sketch in the timeline ([[Architecture/Decisions#ADR-54]]).
+- **Blocks.** A sketch with `block: true` is a block: not drawn in the model, placed by other sketches with `{ kind: 'block', block: <sketch id>, document?, origin: <point>, angle, scale }` (expressions), in this component or another of the project (`document`). Its points, curves and texts are generated into the placing sketch as `<placement>:<id in the block>` (a `:` in the block's id written `.`), turned and scaled about the block's origin ([[Architecture/Decisions#ADR-54a]]).
 - **Points store their last solved positions.** The solver needs a starting guess, and the document opens exactly as last seen, even before solving.
 - **Generated geometry.** Projections, drawings kept as one piece and equation curves (`{ kind: 'equation', x, y, from, to, samples }`) generate their points and curves (`<id>:<n>`) on every regeneration; generated points are fixed for the solver. A drawing of a picture carries `trace: { threshold, smooth }`.
 - **Pictures** (`{ kind: 'picture', document, origin, handle, opacity, hidden }`) are shown behind the sketch, placed by two ordinary points; they are not geometry.
@@ -138,7 +158,7 @@ Each feature type is its own interface in [[src/core/contracts/feature.ts]]. All
 
 | Type | Inputs | Values |
 | --- | --- | --- |
-| `insert` | an imported STEP, STL, OBJ or 3MF document | (its solids become new bodies) |
+| `insert` | an imported STEP, STL, OBJ, 3MF or KiCad board document | (its solids become new bodies; a board's holes keep their names, `hole:<reference>`) |
 | `extrude` | sketch, profile ids | distance; direction (normal, reverse, symmetric); operation |
 | `revolve` | sketch, profile ids, axis (origin axis, sketch construction line or edge) | angle; operation |
 | `fillet`, `chamfer` | edges (`TopologyRef`) | radius / distance |
@@ -147,19 +167,24 @@ Each feature type is its own interface in [[src/core/contracts/feature.ts]]. All
 | `linear-pattern`, `circular-pattern` | extrudes/revolves to repeat, direction / axis | count, spacing / angle (360° spreads evenly) |
 | `mirror` | extrudes/revolves to mirror, plane | |
 | `loft` | sections: a profile of each of two or more sketches, in order | ruled (straight) or smooth; operation |
-| `sweep` | sketch, profile ids, path (a sketch whose curves form one chain) | operation |
+| `sweep` | sketch, profile ids, path (a sketch whose curves form one chain, or a `helix` feature) | operation |
+| `helix` | plane (origin plane, construction plane or flat face): its axis is the normal through the plane's origin, it starts on the u axis | diameter; pitch; `extent` turns or height; taper (angle); left-handed. Makes no body: a path for sweeps ([[CAD-161]]) |
 | `path-pattern` | features to repeat, path (a sketch) | count; align (turn with the path) |
-| `hole` | sketch and its points (centres) | kind (simple, counterbore, countersink); diameter; through or a depth; counterbore diameter and depth; countersink diameter and angle; teardrop; bridge; fit (`press`, `snug`, `loose`: widened by `fitAllowance` plus the print profile's hole compensation) |
-| `part` | sketch and its points | `part`: a `PartSpec` ([[src/core/contracts/parts.ts]]): screw, nut, washer, insert, bearing by catalogue size; magnet; gear (helical with a helix angle, its teeth bevelled at both ends by `chamfer`), ring gear, rack; snap-fit, peg, dovetail, living hinge, with expressions; angle; flip; operation |
+| `hole` | sketch and its points (centres) | kind (simple, counterbore, countersink); diameter; through or a depth; a drill point below a depth (`drillPoint`, `pointAngle`: 118° when empty); counterbore diameter and depth; countersink diameter and angle; teardrop; bridge; fit (`press`, `snug`, `loose`: widened by `fitAllowance` plus the print profile's hole compensation) |
+| `part` | sketch and its points | `part`: a `PartSpec` ([[src/core/contracts/parts.ts]]): screw, nut, washer, insert, bearing by catalogue size; magnet; gear (helical with a helix angle, its teeth bevelled at both ends by `chamfer`, profile-shifted by `shift`), ring gear (root fillets), bevel gear, worm, worm wheel, rack; compression, extension and torsion springs; snap-fit, peg, dovetail, living hinge, with expressions; angle; flip; operation |
 | `thread` | a round face | ISO metric size (`metricThreads`); length (empty: the whole face); modelled; flip |
 | `draft` | faces, neutral plane | angle |
-| `rib` | sketch (open curves) | thickness; depth; direction |
+| `rib` | sketch (open curves) | thickness; depth, or up to the next face (`extent: 'next'`); direction |
+| `wrap` | sketch, profile ids, a face (`TopologyRef`) | `method`: `wrap` (rolled onto a cylinder or cone, lengths kept) or `project` (along the sketch's normal, onto any face); depth; `operation`: `emboss` (joined) or `engrave` (cut) ([[Architecture/Decisions#ADR-54b]]) |
 | `combine` | target body, tool bodies | join, cut or intersect; keep tools |
 | `split` | body, plane | |
 | `move` | bodies, axis | translation (x, y, z); angle; copy |
 | `scale` | bodies | factor (about the origin) |
-| `base-flange` | sketch, profile ids | direction; the sheet's rules: thickness, bend radius, K-factor |
-| `edge-flange` | straight edges of the sheet | length; angle |
+| `base-flange` | sketch, profile ids | direction; the sheet's rules: thickness, bend radius, K-factor; `cornerRelief` (`round`, `square`, `tear`; absent: none) and `reliefSize` (the round's diameter, the square's side, the tear's length) |
+| `edge-flange` | straight edges of the sheet or of a flange | length; angle |
+| `hem` | straight edges of the sheet or of a flange | `style` (`closed`, `open`, `teardrop`); gap (the inside diameter of the fold); length |
+| `miter-flange` | a chain of connected straight edges of one face, sketch (the profile: open lines drawn square to one of the edges) | |
+| `plugin` | a plugin of the project (id, the version it was made with), its feature's name, a plane (`XY`, `XZ`, `YZ`) | the feature's parameters by name; operation. The plugin builds outlines with heights from the values; they are extruded in the plane ([[Architecture/Decisions#ADR-60a]]) |
 
 Construction `plane`s have a `mode`: `offset` (the default, from a base plane), `angle` (about an axis in the base plane), `midplane` (between the base and a parallel second plane) or `points` (three vertices).
 
@@ -184,6 +209,7 @@ interface TopologyRef {
   body: string;      // the body: the id of the feature that created it
   name: string;      // e.g. "f:extrude1:side:line7" or "e:f:extrude1:end|f:extrude1:side:line7"
   hint?: Vec3;       // where it was when picked; tells split pieces apart
+  shape?: RefShape;  // { type, size, radius? }: what it was like when a command named it (CAD-157)
 }
 ```
 
@@ -198,12 +224,14 @@ The Modeling Engine names every face after each feature (*generative naming*, [[
 | Pattern or mirror copy | the original's name plus `@<feature>.<n>` |
 | Loft or sweep side | `f:<feature>:side:<sketch curve id>`, from the kernel's history: the faces generated from that profile edge (along the whole path) |
 | Loft or sweep cap | `f:<feature>:start` / `f:<feature>:end` |
-| Hole face | `f:<feature>:wall:<point>`, `bore`, `sink`, `floor` or `tip` (teardrop flats), by the sketch point of the hole |
+| Hole face | `f:<feature>:wall:<point>`, `bore`, `sink`, `floor`, `tip` (teardrop flats) or `point` (a drill point's cone), by the sketch point of the hole |
 | Split face | `f:<feature>:split` |
 | Drafted face | its old name: it is the same face, tilted (from the kernel's history) |
 | Thread groove | `f:<feature>:flank` |
 | Rib | `f:<feature>:side`, `start`, `end` |
+| Wrap (emboss, engrave) | `f:<feature>:top` (the depth away from the face), `f:<feature>:side` |
 | Edge flange | `f:<feature>:bend:<edge>` (round), `f:<feature>:flange:<edge>` (flat) |
+| Edge flange, hem, miter flange | `f:<feature>:bend:<edge>` (round), `f:<feature>:flange:<edge>` (flat), `f:<feature>:relief:<n>` (a corner relief, by corner) |
 | Anything else new | `f:<feature>:new:<n>`, in order of position |
 
 - **Kept names.** A face or edge a feature leaves as it was (the same element of the kernel) keeps its name, `~n` included, so references to it hold whatever the feature does elsewhere ([[CAD-104]], [[Architecture/Decisions#ADR-44]]).
@@ -211,6 +239,7 @@ The Modeling Engine names every face after each feature (*generative naming*, [[
 - **Edges** are named after the faces they separate: `e:<face A>|<face B>`.
 - **Vertices** are named after the edges that meet there: `v:<edge>&<edge>&…`, sorted. A vertex reference that no longer matches resolves only where it was picked.
 - **Repeated names.** When a name occurs more than once (a face split in two), `~1`, `~2` … are appended in order of position, skipping the numbers that kept names hold.
+- **Repairs.** The Design Manager records each face's and edge's `shape` when a command names it (its kind of surface or curve, its area or length, its radius). The candidates for a lost reference are the faces or edges of its kind ranked by unlikeness in shape and then by distance from its `hint` ([[Architecture/Decisions#ADR-55]]).
 - **Resolution.** A reference resolves by exact name, then among the split pieces of that name (nearest to the hint). Without a hint, the base name of pieces that lie apart (a shank and a ring a hex split) is refused: "… is split into 2 pieces (…). Name one of them, or pick it again" ([[CAD-105]]); pieces that touch (a hole's two half walls) are one face to the user. A reference that cannot be resolved makes its feature fail with "… no longer exists. Pick it again". It is never silently re-bound to a different face.
 - **Bodies** are named after the feature that made them: `<feature>`, then `<feature>:2`, `:3`, … without gaps.
 
@@ -220,12 +249,12 @@ As implemented in [[src/core/contracts/assembly.ts]]:
 
 ```ts
 interface AssemblyDocument { instances: Instance[]; joints: Joint[]; motionStudies: MotionStudy[]; patterns?: InstancePattern[]; links?: MotionLink[]; explodedViews?: ExplodedView[] }
-interface MotionLink { id; name; kind: 'gear' | 'rack' | 'belt' | 'carrier' | 'planet' | 'cam'; driver: { joint, dof }; driven: { joint, dof }; ratio; offset; profile?: [angle, lift][] }
+interface MotionLink { id; name; kind: 'gear' | 'bevel' | 'worm' | 'rack' | 'belt' | 'carrier' | 'planet' | 'cam'; driver: { joint, dof }; driven: { joint, dof }; ratio; offset; profile?: [angle, lift][] }
 // driven = offset + ratio × driver; a cam: offset + ratio × lift(driver), its profile a monotone cubic over one turn
 interface ExplodedView { id; name; steps: { id; instances: string[]; direction: Vec3; distance; radial?: boolean; origin?: Vec3 }[] }    // steps add up in order; instances may be pattern copies; radial: away from the axis
 // MotionStudy: keys may `ease`; drives: { joint, dof, speed }[] (° or mm per second from the start value)
 interface InstancePattern { id; name; kind: 'linear' | 'circular' | 'mirror'; instances: string[]; direction: Vec3; origin: Vec3; count: number; spacing: number }  // copies `<pattern>/<instance>/<k>`
-interface Instance { id: string; component: DocumentId; name: string; transform: Matrix4; grounded: boolean; appearance?: Appearance }
+interface Instance { id: string; component: DocumentId; name: string; transform: Matrix4; grounded: boolean; appearance?: Appearance }  // component: also a library part of the project (CAD-151)
 interface Appearance { hidden?: boolean; color?: string /* #rrggbb */; opacity?: number /* 0.1 to 1 */ }  // display only, never geometry
 interface Joint {
   id: string; name: string;
@@ -260,17 +289,23 @@ interface DrawingView {
   direction: 'front' | 'back' | 'top' | 'bottom' | 'left' | 'right' | 'iso';
   at: Vec2;                                     // the view's middle on the sheet (mm from the bottom left)
   scale?: number; hidden: boolean; label?: string;
-  section?: { offset };                         // a full section across the viewing direction
+  section?: { offset; steps?: { at; offset }[]; along?: 'u' | 'v'; half? };  // a full, offset (stepped) or half section (CAD-164)
   detail?: { of: viewId; center: Vec2; radius };  // a circle of another view, in its model mm
 }
 type DrawingAnnotation =
-  | { kind: 'dimension'; type: 'linear' | 'horizontal' | 'vertical' | 'radius' | 'diameter' | 'angle'; anchors: ViewAnchor[]; offset; angle?; text? }  // anchors: `dimensionAnchors`
+  | { kind: 'dimension'; type: 'linear' | 'horizontal' | 'vertical' | 'radius' | 'diameter' | 'angle'; anchors: ViewAnchor[]; offset; angle?; text?;
+      tolerance?: Tolerance; axis?: 'x' | 'y' | 'z' }   // anchors: `dimensionAnchors`; tolerance and axis: CAD-165
   | { kind: 'note'; at; text; leader? } | { kind: 'center-mark'; circle } | { kind: 'center-line'; a; b }
+  | { kind: 'surface-finish'; at; edge?: ViewAnchor; leader?; process: 'any' | 'removal' | 'no-removal'; roughness?; method? }  // ISO 1302 (CAD-165)
   | { kind: 'callout'; circle; at } | { kind: 'balloon'; view; instance; at } | { kind: 'parts-list'; view; at };
 interface ViewAnchor { view; kind: 'point' | 'circle' | 'line'; name }   // a persistent name of the view's source
+type Tolerance =
+  | { kind: 'symmetric'; value } | { kind: 'deviations' | 'limits'; upper; lower }   // mm; limits are written as the largest and smallest size
+  | { kind: 'fit'; fit: string; deviations? };                                          // ISO 286: 'H7', 'g6', 'H7/g6'
 ```
 
-Besides the source's vertices and edges, a view offers the outlines of cylinders seen from the side (lines `s:<face>:1` and `:2`, points `:a` and `:b` at their ends) and its outermost points seen (`extreme:left`, `right`, `top`, `bottom`). Lengths go between points or circle centres, a diameter of a circle or between two outlines, an angle between two lines. A radius or diameter `angle` is the direction its leader leaves the circle in (degrees; absent: where its text fits on the sheet). The title block's `material` may be empty: the sheet then shows the drawn component's. Drawn views are a cache kept as the drawing's result.
+Besides the source's vertices and edges, a view offers the outlines of cylinders and cones seen from the side (lines `s:<face>:1` and `:2`, points `:a` and `:b` at their ends), of spheres (circles `s:<face>`), the rims of tori seen along their axis (`s:<face>:outer`, `:inner`), the outermost points of other round faces' outlines (`s:<face>:left`, `right`, `top`, `bottom`), threads (circles `thread:<feature>` along their axis, lines `thread:<feature>:1`, `:2` from the side) and its outermost points seen (`extreme:left`, `right`, `top`, `bottom`). In a view of an assembly each part's names are prefixed with its instance (`<instance>/<name>`; `<instance>#<k>/` for its k-th body). A section's `steps` move its cutting plane to another depth from `at` mm (from the model's middle, along the view's right, or up with `along: 'v'`) on; `half` cuts only right of (above) the middle. A length on an isometric view is its length in the model; `axis` measures along a model axis. Lengths go between points or circle centres, a diameter of a circle or between two outlines, an angle between two lines. A radius or diameter `angle` is the direction its leader leaves the circle in (degrees; absent: where its text fits on the sheet). The title block's `material` may be empty: the sheet then shows the drawn component's. Drawn views are a cache kept as the drawing's result. Component results carry the threads on each body (their markers), which drawings draw as ISO 6410 does ([[Architecture/Decisions#ADR-58]]). No schema version changed: every new field is optional.
+
 
 Directions are third-angle names: *front* looks along +Y with Z up, *top* down the Z axis, *right* along −X. Removing a view removes its details and every annotation attached to them.
 
@@ -283,5 +318,6 @@ Every document carries `schemaVersion`. Document Access runs pure migration func
 | 1 | First schema |
 | 2 | Assemblies get `motionStudies` (empty for older assemblies) |
 | 3 | Nothing to migrate: marks documents an older CADence must not open, since it would ignore their newer fields (`lean`, `anchor`, a gear's `chamfer`) and show them wrongly ([[CAD-145]]) |
+| 4 | Nothing to migrate: marks documents with fields an older CADence would ignore and show wrongly: reference dimensions, sketch blocks and their placements, wraps (phase 35); drill points, ribs up to the next face, nested folders, bodies' own materials (phase 36); a gear's `shift`, bevel gears, worms, worm wheels, springs, `helix` features, `bevel` and `worm` links (phase 37); hems, miter flanges and a base flange's corner relief (phase 38); plugin features (phase 41) |
 
 A document of a newer schema than the app reads is listed in its project (from its name and kind) but not opened: the app says to update CADence. The version goes up with every field an older app must not ignore.

@@ -26,9 +26,14 @@ import {
   type MeshQuality,
   materials,
   type PlaneRef,
+  type Dimension,
+  isDimension,
+  type SketchInsertion,
   type SketchText,
   type TextPath,
   folderItems,
+  nestFolders,
+  type PlacedFolder,
   type TimelineFolder,
   type TimelineItem,
 } from '@core/contracts';
@@ -44,6 +49,8 @@ import { Icon, type IconName } from '../../shared/icon';
 import { Shortcuts } from '../../shared/shortcuts';
 import { sketchDisplay } from '../../viewport/sketch-display';
 import { Viewport } from '../../viewport/viewport';
+import { Layout } from '../../shared/layout';
+import { type ArFile, PhoneBar } from '../phone-bar';
 import { EditorStatus } from '../editor-status';
 import { ThumbnailSaver } from '../thumbnail-saver';
 import { bodyNames } from '../modeling/body-names';
@@ -58,6 +65,7 @@ import { describeConstraint } from '../sketch/sketch-overlay';
 import { googleFont, SYSTEM_FONTS } from '../../shared/fonts';
 import { SketchEditor } from '../sketch/sketch-editor';
 import { SketchToolbar } from '../sketch/sketch-toolbar';
+import { ChangedElsewhereNotice } from '../changed-elsewhere';
 
 const statusLabels = {
   'fully-constrained': 'Fully constrained',
@@ -85,12 +93,16 @@ const featureMenus: readonly { id: string; label: string; icon: IconName; items:
     items: [
       { type: 'loft', icon: 'loft' },
       { type: 'sweep', icon: 'sweep' },
+      { type: 'helix', icon: 'helix' },
       { type: 'hole', icon: 'hole' },
       { type: 'part', icon: 'part' },
       { type: 'rib', icon: 'rib' },
+      { type: 'wrap', icon: 'wrap' },
       { type: 'thread', icon: 'thread' },
       { type: 'base-flange', icon: 'sheet' },
       { type: 'edge-flange', icon: 'flange' },
+      { type: 'hem', icon: 'hem' },
+      { type: 'miter-flange', icon: 'miter' },
       { type: 'insert', icon: 'imported' },
     ],
   },
@@ -119,6 +131,7 @@ const featureMenus: readonly { id: string; label: string; icon: IconName; items:
 ];
 
 const itemIcons: Readonly<Record<TimelineItem['type'], IconName>> = {
+  plugin: 'part',
   part: 'part',
   insert: 'imported',
   sketch: 'sketch',
@@ -137,13 +150,17 @@ const itemIcons: Readonly<Record<TimelineItem['type'], IconName>> = {
   scale: 'scale',
   loft: 'loft',
   sweep: 'sweep',
+  helix: 'helix',
   'path-pattern': 'pathPattern',
   hole: 'hole',
   thread: 'thread',
   draft: 'draft',
   rib: 'rib',
+  wrap: 'wrap',
   'base-flange': 'sheet',
   'edge-flange': 'flange',
+  hem: 'hem',
+  'miter-flange': 'miter',
 };
 
 const exportFormats: readonly { format: SolidFormat; label: string }[] = [
@@ -156,14 +173,26 @@ const exportFormats: readonly { format: SolidFormat; label: string }[] = [
 /** Part modeling mode: sketches, features, parameters and bodies. */
 @Component({
   selector: 'cad-component-mode',
-  imports: [Viewport, PictureDialog, Icon, SketchEditor, SketchToolbar, NameDialog, FolderDialog, NoteDialog, FeatureDialog, ParametersPanel, MeasurePanel, CheckPanel, SimulatePanel, RepairPanel],
+  imports: [ChangedElsewhereNotice, Viewport, PictureDialog, Icon, SketchEditor, SketchToolbar, NameDialog, FolderDialog, NoteDialog, FeatureDialog, ParametersPanel, MeasurePanel, CheckPanel, SimulatePanel, RepairPanel, PhoneBar],
   providers: [DesignStore],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './component-mode.html',
   styleUrls: ['./mode-layout.scss', './editor-tools.scss', './component-mode.scss'],
+  host: { '[attr.data-layout]': 'layout.phone() ? "phone" : null', '[attr.data-sheet]': 'layout.phone() && store.panel() === "measure" ? "open" : null' },
 })
 export class ComponentMode {
+  /** Opens the document again, with what another program changed (CAD-150). */
+  protected reopen(): void {
+    const { id, projectId } = this.document();
+    void this.store.open(id, projectId);
+  }
+
   readonly document = input.required<DocumentSummary>();
+  /** Changes when the document is to be read again: a script of this window changed it, or it was shared. */
+  readonly readAgain = input(0);
+  /** The phone layout: a viewer with touch tools (CAD-179). */
+  protected readonly layout = inject(Layout);
+  protected readonly arFile: ArFile = (format) => this.store.viewerFile(format);
   protected readonly status = inject(EditorStatus);
   protected readonly thumbnails = inject(ThumbnailSaver);
   private readonly unitsInStatus = effect(() => this.status.units.set(this.store.units()));
@@ -197,6 +226,8 @@ export class ComponentMode {
   protected readonly unitNames = lengthUnitNames;
   protected readonly unitList = Object.keys(lengthUnitNames) as LengthUnit[];
   protected readonly grams = grams;
+  /** A spring's rate (or turns) to three significant digits. */
+  protected readonly rate = (value: number) => Number(value.toPrecision(3)).toString();
   protected readonly finishes = finishes;
   protected readonly finishLabels: Readonly<Record<Finish, string>> = { matte: 'Matte', plastic: 'Plastic', metal: 'Metal', glass: 'Glass', wood: 'Wood' };
   protected readonly point = point;
@@ -207,12 +238,24 @@ export class ComponentMode {
   private readonly noteDialog = viewChild.required(NoteDialog);
 
   protected readonly timeline = computed(() => this.store.state()?.document.timeline ?? []);
+
+  /** How editing live goes, in words (CAD-178). */
+  protected liveLabel(status: 'connecting' | 'live' | 'offline', viewOnly: boolean): string {
+    if (status === 'connecting') return 'Connecting…';
+    if (status === 'offline') return viewOnly ? 'Offline' : 'Offline: changes wait to be sent';
+    return viewOnly ? 'Viewing live' : 'Live';
+  }
+
+  protected itemName(id: string): string {
+    return this.timeline().find((item) => item.id === id)?.name ?? id;
+  }
   protected readonly displays = computed(() => {
     const state = this.store.state();
     if (!state) return [];
     const editing = this.store.editing();
+    // Blocks are placed by other sketches; they are not drawn in the model themselves.
     return [...state.sketches.values()]
-      .filter((v) => v.sketch.id !== editing && !v.error && state.items.get(v.sketch.id)?.state === 'ok')
+      .filter((v) => v.sketch.id !== editing && !v.sketch.block && !v.error && state.items.get(v.sketch.id)?.state === 'ok')
       .map((v) => sketchDisplay(v.sketch, v.profiles, v.frame, v.texts));
   });
   protected readonly planeFrames = computed(() => [...(this.store.state()?.planes.values() ?? [])]);
@@ -226,7 +269,7 @@ export class ComponentMode {
   });
   protected readonly material = computed(() => this.store.state()?.document.material ?? (materials[0] as Material));
   protected readonly properties = resource({
-    params: () => ({ bodies: this.bodies().map((b) => b.key).join(','), density: this.material().density }),
+    params: () => ({ bodies: this.bodies().map((b) => b.key).join(','), density: this.material().density, own: this.store.state()?.document.bodyMaterials }),
     loader: () => this.store.properties(),
   });
   protected readonly bodyRows = computed(() => {
@@ -238,6 +281,7 @@ export class ComponentMode {
       name: names.get(b.body) ?? b.body,
       properties: properties.find((p) => p.body === b.body),
       appearance: appearances[b.body] ?? {},
+      material: this.store.state()?.document.bodyMaterials?.[b.body],
     }));
   });
   /** How bodies are shown, from the document. */
@@ -253,6 +297,7 @@ export class ComponentMode {
   constructor() {
     effect(() => {
       const { id, projectId } = this.document();
+      this.readAgain();
       untracked(() => void this.store.open(id, projectId));
     });
     const shortcuts = inject(Shortcuts);
@@ -295,6 +340,60 @@ export class ComponentMode {
   protected readonly pi = Math.PI;
   protected readonly round = (v: number) => Math.round(v * 100) / 100;
   /** The one text selected in the sketch being edited, for its properties. */
+  /** The one dimension selected in the edited sketch. */
+  protected readonly selectedDimension = computed(() => {
+    const selection = this.store.selection();
+    const view = this.editedSketch();
+    const found = selection.length === 1 ? view?.sketch.constraints.find((c) => c.id === selection[0]) : undefined;
+    return found && isDimension(found) ? { dimension: found, value: view?.values.get(found.id) } : undefined;
+  });
+
+  /** A dimension's value as shown: lengths in the component's unit, angles in degrees. */
+  protected dimensionValue(selected: { dimension: Dimension; value: number | undefined }): string {
+    if (selected.value === undefined) return '—';
+    return selected.dimension.kind === 'angle' ? `${this.round((selected.value * 180) / Math.PI)}°` : this.mm(selected.value);
+  }
+
+  protected setReference(dimension: Dimension, reference: boolean, name?: string): void {
+    const sketchId = this.store.editing();
+    if (!sketchId) return;
+    const named = name?.trim();
+    void this.store.run({ type: 'set-dimension-reference', sketchId, constraintId: dimension.id, reference, ...(named ? { name: named } : {}) });
+  }
+
+  /** The placed block selected (or a piece of it) in the edited sketch, with the name of its block. */
+  protected readonly selectedBlock = computed(() => {
+    const selection = this.store.selection();
+    const sketch = this.editedSketch()?.sketch;
+    if (!sketch || selection.length !== 1) return undefined;
+    const id = selection[0] as string;
+    const owner = generatorOf(sketch, id);
+    const found = owner?.kind === 'block' ? owner : sketch.entities.find((e) => e.id === id);
+    if (found?.kind !== 'block') return undefined;
+    const own = found.document ? undefined : this.timeline().find((i) => i.id === found.block);
+    return { insertion: found, name: own?.name ?? 'A block of another component', editable: !!own };
+  });
+
+  protected setBlock(insertion: SketchInsertion, change: { angle?: string; scale?: string }): void {
+    const sketchId = this.store.editing();
+    if (!sketchId) return;
+    void this.store.run({ type: 'set-block', sketchId, insertion: insertion.id, angle: change.angle ?? insertion.angle, scale: change.scale ?? insertion.scale });
+  }
+
+  protected explodeBlock(insertion: SketchInsertion): void {
+    const sketchId = this.store.editing();
+    if (sketchId) void this.store.run({ type: 'explode-block', sketchId, insertion: insertion.id });
+  }
+
+  /** Opens the block sketch to edit it: every placement follows. */
+  protected editBlock(insertion: SketchInsertion): void {
+    this.store.edit(insertion.block);
+  }
+
+  protected setSketchBlock(sketchId: string, block: boolean): void {
+    void this.store.run({ type: 'set-sketch-block', sketchId, block });
+  }
+
   protected readonly selectedText = computed(() => {
     const selection = this.store.selection();
     const sketch = this.editedSketch()?.sketch;
@@ -401,6 +500,12 @@ export class ComponentMode {
     if (material) void this.store.run({ type: 'set-material', material });
   }
 
+  /** A body's own material, or the component's again (an empty name) (CAD-158). */
+  protected setBodyMaterial(body: string, name: string): void {
+    const material = materials.find((m) => m.name === name);
+    void this.store.run({ type: 'set-body-material', body, ...(material ? { material } : {}) });
+  }
+
   protected togglePanel(panel: 'measure' | 'check' | 'simulate'): void {
     this.store.openPanel(this.store.panel() === panel ? undefined : panel);
   }
@@ -462,7 +567,7 @@ export class ComponentMode {
 
   /** The number of items before the rollback marker. */
   protected readonly marker = computed(() => this.timeline().length - (this.store.state()?.document.rollbackIndex ?? 0));
-  /** The timeline item (or `marker`) being dragged. */
+  /** The timeline item (or `marker`, or `folder:<id>`) being dragged. */
   protected readonly dragging = signal<string | undefined>(undefined);
 
   protected startDrag(event: DragEvent, what: string): void {
@@ -482,10 +587,25 @@ export class ComponentMode {
     void this.moveTo(what, slot);
   }
 
-  /** Moves the marker or an item to a slot between items (0 … length). */
+  /** A drop on a folder's row: before the folder. */
+  protected dropAt(event: DragEvent, slot: number): void {
+    event.preventDefault();
+    const what = this.dragging();
+    this.dragging.set(undefined);
+    if (what) void this.moveTo(what, slot);
+  }
+
+  /** Moves the marker, an item or a folder to a slot between items (0 … length). */
   private async moveTo(what: string, slot: number): Promise<void> {
     if (what === 'marker') {
       if (slot !== this.marker()) await this.store.run({ type: 'roll-to', position: slot });
+      return;
+    }
+    if (what.startsWith('folder:')) {
+      const placed = this.placedFolders().find((f) => f.folder.id === what.slice('folder:'.length));
+      if (!placed || slot < 0 || slot > this.timeline().length || (slot >= placed.from && slot <= placed.to + 1)) return;
+      const index = slot > placed.to ? slot - (placed.to - placed.from + 1) : slot;
+      await this.store.run({ type: 'move-folder', folderId: placed.folder.id, index });
       return;
     }
     const from = this.timeline().findIndex((i) => i.id === what);
@@ -529,18 +649,43 @@ export class ComponentMode {
   }
 
   protected readonly folders = computed(() => this.store.state()?.document.folders ?? []);
-  /** The folder each timeline item is in. */
-  protected readonly folderOf = computed(() => new Map(this.folders().flatMap((f) => folderItems(f, this.timeline()).map((id) => [id, f] as const))));
+  /** The folders where they are, outer ones first, each with the one it is in (CAD-157). */
+  protected readonly placedFolders = computed(() => nestFolders(this.folders(), this.timeline()));
+  /** The folders each timeline item is in, outermost first. */
+  protected readonly folderOf = computed(() => {
+    const holding = new Map<string, PlacedFolder[]>();
+    for (const placed of this.placedFolders()) for (const id of folderItems(placed.folder, this.timeline())) holding.set(id, [...(holding.get(id) ?? []), placed]);
+    return holding;
+  });
   /** Folders shown closed (not stored: how the timeline is looked at, not what it is). */
   protected readonly collapsed = signal<ReadonlySet<string>>(new Set());
 
-  protected folderStartingAt(item: TimelineItem): TimelineFolder | undefined {
-    return this.folders().find((f) => f.first === item.id);
+  /** The folders whose first item this is, outer ones first. */
+  protected foldersStartingAt(item: TimelineItem): PlacedFolder[] {
+    return this.placedFolders().filter((f) => f.folder.first === item.id);
+  }
+
+  /** How many folders an item is in, for its indent. */
+  protected depthOf(item: TimelineItem): number {
+    return this.folderOf().get(item.id)?.length ?? 0;
   }
 
   protected inClosedFolder(item: TimelineItem): boolean {
-    const folder = this.folderOf().get(item.id);
-    return !!folder && this.collapsed().has(folder.id);
+    return (this.folderOf().get(item.id) ?? []).some((f) => this.collapsed().has(f.folder.id));
+  }
+
+  /** Whether a folder's row is hidden: a folder holding it is closed. */
+  protected folderHidden(placed: PlacedFolder): boolean {
+    const byId = new Map(this.placedFolders().map((f) => [f.folder.id, f]));
+    for (let parent = placed.parent; parent; parent = byId.get(parent)?.parent) if (this.collapsed().has(parent)) return true;
+    return false;
+  }
+
+  /** Alt+arrow keys move a folder, with what it holds, past the item above or below it. */
+  protected folderKey(event: KeyboardEvent, placed: PlacedFolder): void {
+    if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
+    event.preventDefault();
+    void this.moveTo(`folder:${placed.folder.id}`, event.key === 'ArrowUp' ? placed.from - 1 : placed.to + 2);
   }
 
   protected toggleFolder(folder: TimelineFolder): void {

@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import type { InstancePattern, Vec3 } from '@core/contracts';
 import { AssemblyStore } from './assembly-store';
+import { HelpLink } from '../../shared/help';
 
 const kindLabels: Readonly<Record<InstancePattern['kind'], string>> = { linear: 'Linear pattern', circular: 'Circular pattern', mirror: 'Mirror' };
 const axes: readonly { readonly label: string; readonly direction: Vec3 }[] = [
@@ -12,12 +13,14 @@ const axes: readonly { readonly label: string; readonly direction: Vec3 }[] = [
 /** Makes or changes a pattern of instances: which ones, in a row, around an axis or mirrored. */
 @Component({
   selector: 'cad-pattern-panel',
+  imports: [HelpLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (store.patternDraft(); as p) {
       <p class="eyebrow">{{ existing() ? 'Edit pattern' : 'New pattern' }}</p>
       <div class="head">
         <h2>{{ p.name || kindLabels[p.kind] }}</h2>
+        <cad-help topic="patterns" />
       </div>
       <label class="field">
         Kind

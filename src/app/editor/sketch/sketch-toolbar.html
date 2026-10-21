@@ -7,6 +7,7 @@
         [class.active]="store.tool() === t.tool"
         [attr.aria-pressed]="store.tool() === t.tool"
         [attr.aria-label]="t.label"
+        [attr.data-tour]="t.tool === 'rectangle' ? 'rectangle' : null"
         [title]="t.key ? t.label + ' (' + t.key + ')' : t.label"
         (click)="choose(t.tool)"
       >
@@ -68,12 +69,44 @@
         </label>
       }
     }
+    @if (store.tool() === 'dimension') {
+      <label class="sides" title="New dimensions show a measured value, in brackets, and drive nothing">
+        <input type="checkbox" aria-label="Reference dimensions" [checked]="store.referenceDimensions()" (change)="store.referenceDimensions.set($any($event.target).checked)" /> Reference
+      </label>
+    }
     @if (store.tool() === 'polygon') {
       <label class="sides" title="Sides of the polygon">
         <input type="number" min="3" max="64" aria-label="Polygon sides" [value]="store.polygonSides()" (change)="setSides($any($event.target).value)" />
         sides
       </label>
     }
+  </div>
+
+  <div class="group" role="group" aria-label="Blocks">
+    <div class="menu">
+      <button
+        type="button"
+        class="tool wide"
+        [class.active]="store.tool() === 'block-base' || store.tool() === 'place-block'"
+        aria-haspopup="menu"
+        [attr.aria-expanded]="menu() === 'blocks'"
+        aria-label="Blocks"
+        title="Blocks: groups of curves to place again, in this and other sketches"
+        (click)="openBlocks()"
+      >
+        <cad-icon name="block" [size]="18" /><span class="caret">▾</span>
+      </button>
+      @if (menu() === 'blocks') {
+        <div class="menu-list start" role="menu" aria-label="Blocks">
+          <button type="button" role="menuitem" [disabled]="!selected().length" (click)="makeBlock()"><cad-icon name="block" [size]="16" /> Make a block of the selection…</button>
+          @for (b of blocks(); track (b.document ?? '') + b.sketch) {
+            <button type="button" role="menuitem" (click)="placeBlock(b)"><cad-icon name="instance" [size]="16" /> Place {{ b.name }}{{ b.documentName ? ' (' + b.documentName + ')' : '' }}</button>
+          } @empty {
+            <span class="hint">No blocks yet: make one of a selection, or mark a sketch as a block.</span>
+          }
+        </div>
+      }
+    </div>
   </div>
 
   <div class="group" role="group" aria-label="Modify">
@@ -232,9 +265,10 @@
         <cad-icon name="download" /> DXF −kerf
       </button>
     }
-    <button type="button" class="btn btn-primary" (click)="store.finishEditing()">
+    <button type="button" class="btn btn-primary" data-tour="finish-sketch" (click)="store.finishEditing()">
       <cad-icon name="check" /> Finish sketch
     </button>
+    <cad-help topic="sketching" />
   </div>
 </div>
 <p class="hint">{{ hint() }}</p>

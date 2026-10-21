@@ -2,7 +2,9 @@ import type { AssetAccess } from '@core/access/asset';
 import type { DocumentAccess } from '@core/access/document';
 import type { ProjectAccess } from '@core/access/project';
 import type { ExternalFileAccess } from '@core/access/external-file';
+import type { ServerAccess } from '@core/access/server';
 import {
+  bodyMaterial,
   type BodyMesh,
   type BodyProperties,
   type BodyState,
@@ -10,21 +12,26 @@ import {
   type DocumentId,
   type DomainEvents,
   fail,
+  isDimension,
   isSketch,
   type ManufacturingProfile,
   manufacturingProfiles,
   type Material,
   materials,
+  springProperties,
   type Measurement,
   ok,
   type Parameter,
   type Result,
   resultStamp,
   type SimulationResult,
+  type ThreadMarker,
   type TopologyRef,
   type ValidationReport,
   type SketchConstraint,
   type SketchFreedom,
+  type LivePayload,
+  type LiveWhere,
   isFontFormat,
   isModelFormat,
 } from '@core/contracts';
@@ -32,14 +39,19 @@ import type { AnalysisEngine } from '@core/engines/analysis';
 import type { InterchangeEngine } from '@core/engines/interchange';
 import type { ModelingEngine } from '@core/engines/modeling';
 import type { ParameterEngine } from '@core/engines/parameter';
+import { createPluginEngine, type PluginEngine } from '@core/engines/plugin';
 import { flatPattern } from '@core/engines/sheet-metal';
 import { inferRelations, type SketchEngine } from '@core/engines/sketch';
 import type { Clock } from '@core/utilities/clock';
 import type { EventBus } from '@core/utilities/messaging';
+import type { ViewerFormat } from '@core/utilities/scene';
 import { type ConfigurationImport, configurationsCsv, readConfigurationsCsv } from './configurations';
-import { type BrokenReference, brokenReferences } from './references';
+import { type BrokenReference, brokenReferences, elementsOf, lostReferences, shapeKey, topologyRefs, withShapes } from './references';
 import { applyCommand } from './commands';
+import { LiveSession, type LiveTarget } from './live';
 import type {
+  BlockSummary,
+  BodyComparison,
   DesignCommand,
   DesignManager,
   DesignSession,
@@ -65,6 +77,10 @@ export interface DesignManagerDependencies {
   readonly assets: AssetAccess;
   readonly events: EventBus<DomainEvents>;
   readonly clock: Clock;
+  /** Builds plugin features and runs plugin exporters (CAD-174); one of the script sandbox by default. */
+  readonly plugins?: PluginEngine;
+  /** CADence servers, for editing live with others (CAD-178); absent: no live editing on this host. */
+  readonly server?: ServerAccess;
 }
 
 interface Snapshot {
@@ -92,12 +108,18 @@ class Session implements DesignSession {
 
   /** Listening for project parameter changes, while the session has listeners. */
   private projectWatch: (() => void) | undefined;
+  /** Listening for changes of the components whose blocks this one places. */
+  private blockWatch: (() => void)[] | undefined;
+  /** Editing live with others, through the project's CADence server. */
+  private live: LiveSession<Snapshot> | undefined;
 
   constructor(
     private readonly deps: DesignManagerDependencies,
     initial: Snapshot,
     private readonly results: ResultPublisher,
     private context: RegenerationContext,
+    /** The project's plugins the session was built with (CAD-174). */
+    private plugins: string,
   ) {
     this.current = initial;
     for (const mesh of initial.meshes) this.meshCache.set(mesh.key, mesh);
@@ -105,7 +127,9 @@ class Session implements DesignSession {
 
   /** Regenerates with the project's new parameters; the document itself does not change. */
   private async projectChanged(): Promise<void> {
-    this.context = { ...this.context, projectParameters: await projectParametersOf(this.deps, this.current.document) };
+    const project = await projectContextOf(this.deps, this.current.document);
+    this.context = { ...this.context, projectParameters: project.parameters };
+    this.plugins = project.plugins;
     const derived = await new Regeneration(this.deps).run(this.current.document, this.context);
     await this.commit({ document: this.current.document, derived, meshes: await this.meshes(derived) });
   }
@@ -118,8 +142,8 @@ class Session implements DesignSession {
    */
   private async followProject(): Promise<void> {
     if (this.projectWatch) return;
-    const now = await projectParametersOf(this.deps, this.current.document);
-    if (JSON.stringify(now) !== JSON.stringify(this.context.projectParameters ?? [])) await this.projectChanged();
+    const now = await projectContextOf(this.deps, this.current.document);
+    if (JSON.stringify(now.parameters) !== JSON.stringify(this.context.projectParameters ?? []) || now.plugins !== this.plugins) await this.projectChanged();
   }
 
   /**
@@ -136,15 +160,63 @@ class Session implements DesignSession {
     return this.serialized(() => this.followProject());
   }
 
+  goLive(target: LiveTarget): Result<void> {
+    if (!this.deps.server) return fail({ code: 'no-server', message: 'This CADence cannot reach CADence servers.' });
+    this.live?.close();
+    this.live = new LiveSession<Snapshot>(this.deps.server, target, this.current.document.id, {
+      run: (from, payload) => this.runLive(from, payload),
+      show: (state) => this.commit(state),
+      current: () => this.current,
+      serialized: (work) => this.serialized(work),
+      changed: () => this.notify(),
+      forgetHistory: () => {
+        this.undoStack.length = 0;
+        this.redoStack.length = 0;
+      },
+    });
+    this.notify();
+    return ok(undefined);
+  }
+
+  leaveLive(): void {
+    this.live?.close();
+    this.live = undefined;
+    this.notify();
+  }
+
+  present(where: LiveWhere): void {
+    this.live?.present(where);
+  }
+
+  /** A change ordered by the relay, run on a state; undefined when it does not apply there (it fails for everyone). */
+  private async runLive(from: Snapshot, payload: LivePayload): Promise<Snapshot | undefined> {
+    if (payload.kind === 'command') {
+      const result = await this.compute(from, payload.command as DesignCommand);
+      return result.ok ? result.value : undefined;
+    }
+    const given = payload.document as ComponentDocument | undefined;
+    if (given?.kind !== 'component') return undefined;
+    const document: ComponentDocument = { ...given, id: from.document.id, projectId: from.document.projectId };
+    const derived = await new Regeneration(this.deps).run(document, this.context);
+    return { document, derived, meshes: await this.meshes(derived) };
+  }
+
+  private notify(): void {
+    const state = this.state();
+    for (const listener of this.listeners) listener(state);
+  }
+
   state(): DesignState {
     const { document, derived, meshes } = this.current;
     return {
+      ...(this.live ? { live: this.live.state() } : {}),
       document,
       sketches: derived.sketches,
       items: derived.items,
       planes: derived.planes,
       bodies: meshes,
       threads: derived.threads,
+      helices: [...derived.helices.values()],
       sheetMetal: derived.sheet !== undefined,
       parameters: derived.parameters,
       canUndo: this.undoStack.length > 0,
@@ -158,13 +230,32 @@ class Session implements DesignSession {
     this.projectWatch ??= this.deps.events.subscribe('projectParametersChanged', (event) =>
       event.projectId === projectId ? void this.serialized(() => this.projectChanged()) : undefined,
     );
+    // Blocks placed from other components follow when those change, here or in another window (ADR-54a).
+    const follow = (event: { readonly documentId: DocumentId }) =>
+      event.documentId !== this.current.document.id && blockSources(this.current.document).has(event.documentId) ? void this.serialized(() => this.projectChanged()) : undefined;
+    this.blockWatch ??= [this.deps.events.subscribe('documentSaved', follow), this.deps.events.subscribe('documentChanged', follow)];
     return () => {
       this.listeners.delete(listener);
       if (this.listeners.size === 0) {
         this.projectWatch?.();
         this.projectWatch = undefined;
+        for (const stop of this.blockWatch ?? []) stop();
+        this.blockWatch = undefined;
       }
     };
+  }
+
+  async blocks(): Promise<BlockSummary[]> {
+    const { document } = this.current;
+    const own = (d: ComponentDocument, other: boolean): BlockSummary[] =>
+      d.timeline.flatMap((item) => (isSketch(item) && item.block ? [{ sketch: item.id, name: item.name, ...(other ? { document: d.id, documentName: d.name } : {}) }] : []));
+    const others: BlockSummary[] = [];
+    for (const summary of await this.deps.documents.enumerate(document.projectId)) {
+      if (summary.kind !== 'component' || summary.id === document.id) continue;
+      const other = await this.deps.documents.load(summary.id);
+      if (other?.kind === 'component') others.push(...own(other, true));
+    }
+    return [...own(document, false), ...others];
   }
 
   /** Commands run one after another, so fast input (drags, typing) can never interleave. */
@@ -200,7 +291,7 @@ class Session implements DesignSession {
     if (!view || view.error) return undefined;
     const solution = await this.deps.sketches.solve(view.sketch, view.values, { point: pointId, x, y }, importedFonts(this.deps.documents, this.deps.assets));
     if (solution.status === 'over-constrained' || solution.status === 'failed') return undefined;
-    return { ...solution, frame: view.frame, values: view.values };
+    return { ...solution, frame: view.frame, values: new Map([...view.values, ...solution.measured]) };
   }
 
   async exportSketch(sketchId: string, format: DrawingFormat, options: { readonly compensateKerf?: boolean } = {}): Promise<Result<void>> {
@@ -278,7 +369,13 @@ class Session implements DesignSession {
     if (!item) return fail({ code: 'invalid-command', message: `Item ${itemId} does not exist.` });
     // The bodies as they are just before the item.
     const before = await new Regeneration(this.deps).run({ ...document, rollbackIndex: Math.max(document.rollbackIndex, document.timeline.length - index) }, this.context);
-    return ok(brokenReferences(item, await this.meshes(before)));
+    const meshes = await this.meshes(before);
+    // Lost references whose shape was recorded are matched with faces and edges of the same shape (CAD-157).
+    const kinds = new Set(lostReferences(item, meshes).flatMap((r) => (r.shape && r.kind !== 'vertex' ? [r.kind] : [])));
+    const elements = [...kinds].flatMap((kind) => elementsOf(kind, meshes));
+    const found = elements.length ? await this.deps.analysis.shapesOf(before.bodies, elements) : [];
+    const shapes = new Map(elements.flatMap((ref, i) => (found[i] ? [[shapeKey(ref), found[i]] as const] : [])));
+    return ok(brokenReferences(item, meshes, shapes));
   }
 
   async exportConfigurations(): Promise<Result<void>> {
@@ -292,7 +389,31 @@ class Session implements DesignSession {
     return readConfigurationsCsv(csv, this.parametersInEffect(), this.current.document.configurations ?? [], this.deps.parameters);
   }
 
-  async exportViewer(): Promise<Result<void>> {
+  async exportWith(pluginId: string, exporterName: string): Promise<Result<void>> {
+    const { document } = this.current;
+    const plugin = (await this.deps.projects.find(document.projectId))?.plugins?.find((p) => p.id === pluginId);
+    if (!plugin) return fail({ code: 'unknown-plugin', message: `The project has no plugin ${pluginId}.` });
+    const exporter = plugin.exporters.find((e) => e.name === exporterName);
+    if (!exporter) return fail({ code: 'unknown-exporter', message: `${plugin.name} has no exporter "${exporterName}".` });
+    const names = new Map(this.namedBodies(this.current.derived).map((b) => [b.id, b.name]));
+    const bodies = this.state()
+      .bodies.filter((body) => !document.appearances?.[body.body]?.hidden)
+      .map((body) => ({ id: names.get(body.body) ?? body.body, positions: Array.from(body.positions), indices: Array.from(body.indices) }));
+    if (bodies.length === 0) return fail({ code: 'nothing-to-export', message: 'There are no bodies to export yet.' });
+    const text = await (this.deps.plugins ?? createPluginEngine()).export(plugin, exporter.name, { name: document.name, bodies });
+    if (!text.ok) return text;
+    await this.deps.externalFiles.deliver({ name: `${document.name}.${exporter.extension}`, mediaType: exporter.mediaType, bytes: new TextEncoder().encode(text.value) });
+    return ok(undefined);
+  }
+
+  async exportViewer(format: ViewerFormat = 'html'): Promise<Result<void>> {
+    const file = await this.viewerFile(format);
+    if (!file.ok) return file;
+    await this.deps.externalFiles.deliver(file.value);
+    return ok(undefined);
+  }
+
+  async viewerFile(format: ViewerFormat): Promise<Result<{ readonly name: string; readonly mediaType: string; readonly bytes: Uint8Array }>> {
     const { document } = this.current;
     const names = new Map(this.namedBodies(this.current.derived).map((b) => [b.id, b.name]));
     const parts = this.state()
@@ -302,11 +423,9 @@ class Session implements DesignSession {
         return { name: names.get(body.body) ?? body.body, ...(look?.color ? { color: look.color } : {}), opacity: look?.opacity ?? 1, positions: body.positions, normals: body.normals, indices: body.indices, edges: body.edgePositions };
       });
     if (parts.length === 0) return fail({ code: 'nothing-to-export', message: 'There are no bodies to show yet.' });
-    // Loaded when needed: the viewer page is large and rarely made.
-    const { viewerHtml } = await import('@core/utilities/viewer');
-    const bytes = new TextEncoder().encode(viewerHtml({ title: document.name, parts }));
-    await this.deps.externalFiles.deliver({ name: `${document.name}.html`, mediaType: 'text/html', bytes });
-    return ok(undefined);
+    // Loaded when needed: the files are rarely made.
+    const { viewerFile } = await import('@core/utilities/scene');
+    return ok(await viewerFile({ title: document.name, parts }, format));
   }
 
   async exportBodies(format: SolidFormat, options: ExportOptions = {}): Promise<Result<void>> {
@@ -314,7 +433,9 @@ class Session implements DesignSession {
     // Another configuration is built for the export only; the session keeps showing its own.
     const other = options.configuration !== undefined && options.configuration !== (document.configuration ?? '');
     const derived = other ? await new Regeneration(this.deps).run(document, { ...this.context, configuration: options.configuration }) : this.current.derived;
-    const bodies = this.namedBodies(derived).filter((b) => !options.bodies || options.bodies.includes(b.id));
+    const bodies = this.namedBodies(derived)
+      .filter((b) => !options.bodies || options.bodies.includes(b.id))
+      .map((b) => ({ ...b, material: bodyMaterial(document, b.id).name }));
     if (derived.bodies.length === 0) return fail({ code: 'nothing-to-export', message: 'There are no bodies to export yet.' });
     if (bodies.length === 0) return fail({ code: 'nothing-to-export', message: 'Select at least one body to export.' });
     const variant = document.configurations?.find((c) => c.id === (other ? options.configuration : document.configuration))?.name;
@@ -331,14 +452,25 @@ class Session implements DesignSession {
     return this.deps.analysis.measure(this.current.derived.bodies, refs);
   }
 
-  properties(): Promise<BodyProperties[]> {
-    return this.deps.analysis.properties(this.current.derived.bodies, materialOf(this.current.document).density);
+  async properties(): Promise<BodyProperties[]> {
+    const { document, derived } = this.current;
+    const material = materialOf(document);
+    const own = Object.fromEntries(Object.entries(document.bodyMaterials ?? {}).map(([body, m]) => [body, m.density]));
+    const found = await this.deps.analysis.properties(derived.bodies, material.density, own);
+    // Springs have a rate (CAD-161); materials saved before strength checks take their catalogue namesake's stiffness.
+    const stiffness = { ...materials.find((m) => m.name === material.name), ...material };
+    return found.map((p) => {
+      const spring = derived.springs.get(p.body);
+      const withMaterial = { ...p, material: bodyMaterial(document, p.body).name };
+      return spring ? { ...withMaterial, spring: springProperties(spring, stiffness) } : withMaterial;
+    });
   }
 
   async validate(): Promise<ValidationReport> {
     const { document, derived } = this.current;
     const profile = processOf(document);
-    const sketches = [...derived.sketches.values()].filter((v) => !v.error).map((v) => ({ sketch: v.sketch, profiles: v.profiles }));
+    // Blocks are not cut themselves: the sketches that place them are.
+    const sketches = [...derived.sketches.values()].filter((v) => !v.error && !v.sketch.block).map((v) => ({ sketch: v.sketch, profiles: v.profiles }));
     const checks = await this.deps.analysis.validate({ bodies: this.namedBodies(), sketches }, profile);
     return { profile, checks };
   }
@@ -347,11 +479,11 @@ class Session implements DesignSession {
     const { document, derived } = this.current;
     if (!document.simulation) return fail({ code: 'not-fixed', message: 'Hold at least one face fixed.' });
     // Materials saved before strength checks have no stiffness: those of the catalogue's namesake stand in.
-    const material = materialOf(document);
-    const known = materials.find((m) => m.name === material.name);
+    const stiff = (material: Material): Material => ({ ...materials.find((m) => m.name === material.name), ...material });
     // Copies: buffers sent to the geometry worker move there, and the view keeps drawing these meshes.
     const meshes = (await this.meshes(derived)).map((m) => ({ ...m, positions: m.positions.slice(), normals: m.normals.slice(), indices: m.indices.slice(), edgePositions: m.edgePositions.slice() }));
-    return this.deps.analysis.simulate(meshes, document.simulation, { ...known, ...material });
+    const byBody = Object.fromEntries(Object.entries(document.bodyMaterials ?? {}).map(([body, m]) => [body, stiff(m)]));
+    return this.deps.analysis.simulate(meshes, document.simulation, stiff(materialOf(document)), byBody);
   }
 
   /** Bodies with the names of the features that made them. */
@@ -360,12 +492,38 @@ class Session implements DesignSession {
     return derived.bodies.map((b) => ({ ...b, name: document.timeline.find((item) => item.id === b.id)?.name ?? b.id }));
   }
 
+  /** The command with the shape of each face and edge it names recorded, as the bodies are now, so a repair can find its like (CAD-157). */
+  private async shaped(command: DesignCommand): Promise<DesignCommand> {
+    const refs = topologyRefs(command).filter((r) => r.kind !== 'vertex' && !r.shape);
+    if (!refs.length || !this.current.derived.bodies.length) return command;
+    // Recording what they are like never stops a command.
+    const found = await this.deps.analysis.shapesOf(this.current.derived.bodies, refs).catch(() => []);
+    const shapes = new Map(refs.flatMap((ref, i) => (found[i] ? [[shapeKey(ref), found[i]] as const] : [])));
+    return shapes.size ? withShapes(command, shapes) : command;
+  }
+
   private async apply(given: DesignCommand): Promise<Result<void>> {
-    const command = await this.anchored(given);
-    if (command.type === 'set-appearance' && !this.current.derived.bodies.some((b) => b.id === command.body)) {
+    // A library's part is kept as the library had it; it changes there, and comes here with an update (CAD-151).
+    const { library } = this.current.document;
+    if (library) return fail({ code: 'library-part', message: `${this.current.document.name} comes from the library ${library.libraryName}: change it there, then update it here.` });
+    const command = await this.shaped(await this.anchored(given));
+    const next = await this.compute(this.current, command);
+    if (!next.ok) return next;
+    this.undoStack.push(this.current);
+    if (this.undoStack.length > historyLimit) this.undoStack.shift();
+    this.redoStack.length = 0;
+    await this.commit(next.value);
+    // Anchored, so the others' sessions run exactly this.
+    this.live?.made({ kind: 'command', command }, next.value);
+    return ok(undefined);
+  }
+
+  /** A command run on a state: checked, regenerated and solved; the state it leads to. */
+  private async compute(from: Snapshot, command: DesignCommand): Promise<Result<Snapshot>> {
+    if ((command.type === 'set-appearance' || (command.type === 'set-body-material' && command.material)) && !from.derived.bodies.some((b) => b.id === command.body)) {
       return fail({ code: 'invalid-command', message: `There is no body ${command.body}.` });
     }
-    const applied = applyCommand(this.current.document, command);
+    const applied = applyCommand(from.document, command);
     if (!applied.ok) return applied;
     const { document, target, drag } = applied.value;
     const derived = await new Regeneration(this.deps, drag).run(document, this.context);
@@ -373,7 +531,7 @@ class Session implements DesignSession {
       if (derived.parameterError) return fail(derived.parameterError);
       // A parameter change must not break anything that worked before.
       for (const [id, status] of derived.items) {
-        if (status.state === 'error' && this.current.derived.items.get(id)?.state === 'ok') {
+        if (status.state === 'error' && from.derived.items.get(id)?.state === 'ok') {
           const item = document.timeline.find((i) => i.id === id);
           return fail({ code: 'breaks-model', message: `${item?.name ?? id} would fail: ${status.error}` });
         }
@@ -382,20 +540,20 @@ class Session implements DesignSession {
     const status = target ? derived.items.get(target) : undefined;
     if (status?.state === 'error') {
       // Contradicting relations point at the ones the sketch had before, so the client can offer to remove one.
-      const before = target ? this.current.derived.sketches.get(target)?.sketch.constraints.map((c) => c.id) : undefined;
+      const before = target ? from.derived.sketches.get(target)?.sketch.constraints.map((c) => c.id) : undefined;
       const view = target ? derived.sketches.get(target) : undefined;
       const involved = view?.conflicting?.filter((id) => view.sketch.constraints.some((c) => c.id === id));
       const related = involved?.filter((id) => before?.includes(id));
-      return fail({ code: errorCode(status.error), message: status.error ?? 'This change fails.', ...(related?.length ? { related } : {}), ...(involved?.length ? { involved } : {}) });
+      const code = errorCode(status.error);
+      // A dimension that over-constrains can still show its value, as a reference (ADR-54).
+      const asReference = code === 'over-constrained' && command.type === 'add-constraint' && isDimension(command.constraint) && !command.constraint.reference;
+      const message = `${status.error ?? 'This change fails.'}${asReference ? ' Or add it as a reference dimension: it shows the value without driving it.' : ''}`;
+      return fail({ code, message, ...(related?.length ? { related } : {}), ...(involved?.length ? { involved } : {}) });
     }
     // Solved positions become the stored ones, so a drag stays where it was dropped.
     const timeline = document.timeline.map((item) => (isSketch(item) ? (derived.sketches.get(item.id)?.error ? item : (derived.sketches.get(item.id)?.sketch ?? item)) : item));
     const next = { ...document, timeline, modifiedAt: this.deps.clock().toISOString() };
-    this.undoStack.push(this.current);
-    if (this.undoStack.length > historyLimit) this.undoStack.shift();
-    this.redoStack.length = 0;
-    await this.commit({ document: next, derived, meshes: await this.meshes(derived) });
-    return ok(undefined);
+    return ok({ document: next, derived, meshes: await this.meshes(derived) });
   }
 
   /** Tessellates only bodies whose shape changed. */
@@ -410,17 +568,33 @@ class Session implements DesignSession {
     if (!target) return;
     to.push(this.current);
     await this.commit(target);
+    // Live, an undo is the whole document again: others' changes since were forgotten from the history.
+    this.live?.made({ kind: 'document', document: target.document }, target);
   }
 
   private async commit(snapshot: Snapshot): Promise<void> {
+    const before = this.current.document;
     this.current = snapshot;
     await this.deps.documents.store(snapshot.document);
     this.deps.events.publish('documentSaved', { projectId: snapshot.document.projectId, documentId: snapshot.document.id });
     const state = this.state();
     for (const listener of this.listeners) listener(state);
-    await this.results.publish(snapshot.document, snapshot.derived.bodies, this.context.projectParameters, snapshot.document.configuration);
+    await this.results.publish(snapshot.document, snapshot.derived.bodies, this.context.projectParameters, snapshot.document.configuration, snapshot.derived.threads);
     const { configuration } = snapshot.document;
     this.deps.events.publish('resultPublished', { documentId: snapshot.document.id, ...(configuration ? { configuration } : {}) });
+    if (blocksOf(before) !== blocksOf(snapshot.document)) await this.blocksChanged(snapshot.document);
+  }
+
+  /**
+   * The results of the other components that place this one's blocks are out of date: discarded, so
+   * assemblies and drawings ask for them anew (ADR-54a). Open editors of them follow `documentSaved`.
+   */
+  private async blocksChanged(document: ComponentDocument): Promise<void> {
+    for (const summary of await this.deps.documents.enumerate(document.projectId)) {
+      if (summary.kind !== 'component' || summary.id === document.id) continue;
+      const other = await this.deps.documents.load(summary.id);
+      if (other?.kind === 'component' && blockSources(other).has(document.id)) await this.deps.assets.discardResult(summary.id);
+    }
   }
 
   private serialized<T>(work: () => Promise<T>): Promise<T> {
@@ -431,8 +605,24 @@ class Session implements DesignSession {
 }
 
 /** The parameters of the component's project. */
+/** The other components whose blocks a component places. */
+function blockSources(document: ComponentDocument): Set<string> {
+  return new Set(document.timeline.flatMap((item) => (isSketch(item) ? item.entities.flatMap((e) => (e.kind === 'block' && e.document ? [e.document] : [])) : [])));
+}
+
+/** A component's block sketches, to tell when they changed. */
+function blocksOf(document: ComponentDocument): string {
+  return JSON.stringify(document.timeline.filter((item) => isSketch(item) && item.block));
+}
+
 async function projectParametersOf(deps: DesignManagerDependencies, document: ComponentDocument): Promise<readonly Parameter[]> {
-  return (await deps.projects.find(document.projectId))?.parameters ?? [];
+  return (await projectContextOf(deps, document)).parameters;
+}
+
+/** What of its project a component is built with: the parameters, and the plugins (by id, version and source). */
+async function projectContextOf(deps: DesignManagerDependencies, document: ComponentDocument): Promise<{ readonly parameters: readonly Parameter[]; readonly plugins: string }> {
+  const project = await deps.projects.find(document.projectId);
+  return { parameters: project?.parameters ?? [], plugins: (project?.plugins ?? []).map((p) => `${p.id}@${p.version}#${p.source.length}`).join(',') };
 }
 
 const materialOf = (document: ComponentDocument): Material => document.material ?? (materials[0] as Material);
@@ -456,9 +646,9 @@ class ResultPublisher {
 
   constructor(private readonly deps: DesignManagerDependencies) {}
 
-  async publish(document: ComponentDocument, bodies: readonly BodyState[], projectParameters: readonly Parameter[] = [], configuration?: string): Promise<void> {
-    const keys = bodies.map((b) => b.key).join('|');
-    if (this.last?.keys !== keys) this.last = { keys, bytes: await this.deps.modeling.snapshot(bodies) };
+  async publish(document: ComponentDocument, bodies: readonly BodyState[], projectParameters: readonly Parameter[] = [], configuration?: string, threads: readonly ThreadMarker[] = []): Promise<void> {
+    const keys = `${bodies.map((b) => b.key).join('|')}|${JSON.stringify(threads)}`;
+    if (this.last?.keys !== keys) this.last = { keys, bytes: await this.deps.modeling.snapshot(bodies, threads) };
     const stamp = resultStamp(document.modifiedAt, projectParameters);
     await this.deps.assets.publishResult({ documentId: document.id, projectId: document.projectId, stamp, bytes: this.last.bytes, ...(configuration ? { configuration } : {}) });
   }
@@ -475,10 +665,27 @@ export class DefaultDesignManager implements DesignManager {
     if (document?.kind !== 'component') {
       return fail({ code: 'unknown-document', message: `Component ${documentId} does not exist.` });
     }
-    const context = { projectParameters: await projectParametersOf(this.deps, document) };
+    const project = await projectContextOf(this.deps, document);
+    const context = { projectParameters: project.parameters };
     const derived = await new Regeneration(this.deps).run(document, context);
     const meshes = derived.bodies.length ? await this.deps.modeling.tessellate(derived.bodies) : [];
-    return ok(new Session(this.deps, { document, derived, meshes }, new ResultPublisher(this.deps), context));
+    return ok(new Session(this.deps, { document, derived, meshes }, new ResultPublisher(this.deps), context, project.plugins));
+  }
+
+  async compareBodies(
+    before: ComponentDocument,
+    after: ComponentDocument,
+    projectParameters?: { readonly before: readonly Parameter[]; readonly after: readonly Parameter[] },
+  ): Promise<Result<BodyComparison>> {
+    const build = async (document: ComponentDocument, parameters: readonly Parameter[] | undefined) =>
+      (await new Regeneration(this.deps).run(document, { projectParameters: parameters ?? (await projectParametersOf(this.deps, document)) })).bodies;
+    // One after the other: both share the one kernel.
+    const old = await build(before, projectParameters?.before);
+    const now = await build(after, projectParameters?.after);
+    const difference = await this.deps.modeling.compare(old, now);
+    if (!difference.ok) return difference;
+    const meshes = async (bodies: readonly BodyState[]) => (bodies.length ? this.deps.modeling.tessellate(bodies) : []);
+    return ok({ before: await meshes(old), after: await meshes(now), ...difference.value });
   }
 
   /** Answers a queued `regenerateComponent` request (for one configuration) with `componentRegenerated`. */
@@ -488,7 +695,7 @@ export class DefaultDesignManager implements DesignManager {
     if (document?.kind !== 'component' || (configuration && !document.configurations?.some((c) => c.id === configuration))) return answer(false);
     const projectParameters = await projectParametersOf(this.deps, document);
     const derived = await new Regeneration(this.deps).run(document, { projectParameters, configuration: configuration ?? '' });
-    await new ResultPublisher(this.deps).publish(document, derived.bodies, projectParameters, configuration);
+    await new ResultPublisher(this.deps).publish(document, derived.bodies, projectParameters, configuration, derived.threads);
     answer(true);
   }
 }

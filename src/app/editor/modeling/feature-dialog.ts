@@ -2,11 +2,14 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import {
   type AxisRef,
   bearings,
+  bevelMesh,
   type BodyOperation,
   centreDistance,
+  type CornerRelief,
   defaultPart,
   metric,
   metricSizes,
+  minimumProfileShift,
   partLabels,
   planetaryRatios,
   ringGearMesh,
@@ -20,11 +23,18 @@ import {
   lengthExpression,
   metricThreads,
   type PlaneRef,
+  type SpringSize,
+  springProperties,
+  wormMesh,
 } from '@core/contracts';
 import { Icon } from '../../shared/icon';
 import { bodyNames } from './body-names';
 import { DesignStore } from '../sketch/design-store';
 import { featureLabels, holePoints, type PickTarget } from './feature-drafts';
+import { HelpLink } from '../../shared/help';
+
+/** An angle typed in degrees ("20 deg", "20"), in radians. */
+const degrees = (expression: string) => ((parseFloat(expression) || 20) * Math.PI) / 180;
 
 const operations: readonly { value: BodyOperation; label: string }[] = [
   { value: 'new-body', label: 'New body' },
@@ -34,6 +44,7 @@ const operations: readonly { value: BodyOperation; label: string }[] = [
 ];
 
 const hints: Readonly<Record<Feature['type'], string>> = {
+  plugin: "A plugin of the project builds it from these values; they may use the component's parameters.",
   insert: 'Brings an imported STEP, STL, OBJ or 3MF file in as bodies you can sketch on, cut and round.',
   extrude: 'Click profiles in the view to add or remove them.',
   revolve: 'Click profiles in the view; the axis can be a construction line of the sketch or an edge.',
@@ -49,21 +60,25 @@ const hints: Readonly<Record<Feature['type'], string>> = {
   move: 'Turns the bodies about an axis, then shifts them. Click bodies in the view to add or remove them.',
   scale: 'Scales the bodies about the origin, the same in every direction.',
   loft: 'Click one profile in each sketch, in order; the loft blends through their outlines.',
-  sweep: 'Click the profiles to sweep; the path is the curves of another sketch, starting at the profile.',
+  sweep: 'Click the profiles to sweep; the path is the curves of another sketch or a helix, starting at the profile.',
+  helix: 'A helix about the plane\'s normal through its origin, starting on its X axis: a path for sweeps such as springs and threads.',
   'path-pattern': 'Repeats the selected features along the curves of a sketch, evenly spaced.',
   part: 'Parts go at the points of a sketch (drawn with the Point tool), standing on its plane. Flip puts them on the other side.',
   hole: 'Holes go at the points of a sketch (drawn with the Point tool), into the material below it.',
   thread: 'Click the wall of a hole or a shaft. A thread is shown on the face; modelled threads are cut.',
   draft: 'Click the faces to taper. They lean away from the pull direction (the neutral plane\'s normal) by the angle.',
   rib: 'The open curves of a sketch, thickened and extruded along its normal: stiffeners for walls and floors.',
+  wrap: 'Click the profiles (letters, a scale, a logo), then the face. Wrapped onto a cylinder or cone, lengths stay as drawn; projected, they land straight along the sketch’s normal.',
   'base-flange': 'Click the profiles of the flat sheet. The sheet rules here hold for the whole part: its edge flanges and its flat pattern.',
-  'edge-flange': 'Click straight edges of the sheet; each gets a bend and a flange, bent towards the side of the face the edge is on.',
+  'edge-flange': 'Click straight edges of the sheet or of a flange; each gets a bend and a flange, bent towards the side of the face the edge is on.',
+  hem: 'Click straight edges of the sheet; each is folded back over the face it is on.',
+  'miter-flange': 'Click a chain of connected straight edges of one face. The profile is a sketch of lines drawn square to one of them: each line a straight piece, a bend before each.',
 };
 
 /** Creates or edits one feature. Values are expressions; references are picked in the 3D view. */
 @Component({
   selector: 'cad-feature-dialog',
-  imports: [Icon],
+  imports: [HelpLink, Icon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './feature-dialog.html',
   styleUrl: './feature-dialog.scss',
@@ -82,6 +97,7 @@ export class FeatureDialog {
     if (!draft) return '';
     if (draft.target === 'axis') return 'Click a straight edge in the view.';
     if (draft.target === 'plane' || draft.target === 'second') return 'Click a flat face in the view.';
+    if (draft.target === 'face') return 'Click the face to wrap onto in the view.';
     if (draft.feature.type === 'plane' && draft.feature.mode === 'points') return 'Click three vertices (corners) in the view.';
     return hints[draft.feature.type];
   });
@@ -94,6 +110,12 @@ export class FeatureDialog {
   protected readonly pathSketches = computed(() => {
     const document = this.store.state()?.document;
     return (document?.timeline ?? []).slice(0, (document?.timeline.length ?? 0) - (document?.rollbackIndex ?? 0)).filter(isSketch);
+  });
+
+  /** Helix features before the marker, as sweep paths (CAD-161). */
+  protected readonly helixFeatures = computed(() => {
+    const document = this.store.state()?.document;
+    return (document?.timeline ?? []).slice(0, (document?.timeline.length ?? 0) - (document?.rollbackIndex ?? 0)).filter((i) => !isSketch(i) && i.type === 'helix');
   });
 
   /** A loft section as a label: its sketch's name and which of its profiles. */
@@ -139,7 +161,54 @@ export class FeatureDialog {
       return { distance, turn: 0, fits: fits && sun > 0, difference: ringGearMinimumDifference, sun, carrier: round(planetaryRatios(sun, teeth).carrier) };
     }
     // With an even number of teeth, a tooth faces the first gear: turn it by half a tooth to mesh.
-    return { distance: centreDistance(module, teeth, mate), turn: mate % 2 === 0 ? 180 / mate : 0, fits: true, difference: 0, sun: 0, carrier: 0 };
+    const shift = parseFloat(f.part.shift ?? '0') || 0;
+    const distance = round(centreDistance(module, teeth, mate, shift, this.mateShift() || 0, degrees(f.part.pressureAngle)));
+    return { distance, turn: mate % 2 === 0 ? 180 / mate : 0, fits: true, difference: 0, sun: 0, carrier: 0 };
+  });
+  /** The mate's profile shift, for the centre distance (CAD-159). */
+  protected readonly mateShift = signal(0);
+  /** A gear with too few teeth for its profile shift: the shift that keeps its involute whole. */
+  protected readonly undercut = computed(() => {
+    const f = this.feature();
+    if (f?.type !== 'part' || f.part.kind !== 'gear') return undefined;
+    const teeth = Math.round(parseFloat(f.part.teeth));
+    const least = minimumProfileShift(teeth, degrees(f.part.pressureAngle));
+    return teeth > 0 && least > (parseFloat(f.part.shift ?? '0') || 0) + 1e-9 ? { teeth, shift: Math.ceil(least * 100) / 100 } : undefined;
+  });
+  /** Where a bevel gear's mate goes (CAD-160). */
+  protected readonly bevel = computed(() => {
+    const f = this.feature();
+    if (f?.type !== 'part' || f.part.kind !== 'bevel-gear') return undefined;
+    const [module, teeth, mateTeeth, shaft] = [parseFloat(f.part.module), Math.round(parseFloat(f.part.teeth)), Math.round(parseFloat(f.part.mateTeeth)), parseFloat(f.part.shaftAngle)];
+    if (!(module > 0 && teeth > 0 && mateTeeth > 0 && shaft > 0 && shaft < 180)) return undefined;
+    const mesh = bevelMesh(module, teeth, mateTeeth, (shaft * Math.PI) / 180);
+    const round = (v: number) => Math.round(v * 1000) / 1000;
+    return { apex: round(mesh.apex), mateTeeth, shaft, x: round(mesh.mate[0]), z: round(mesh.mate[1]), turn: round(mesh.turn), ratio: round(mesh.ratio) };
+  });
+  /** Where a worm's wheel goes, or a wheel's worm (CAD-160). */
+  protected readonly worm = computed(() => {
+    const f = this.feature();
+    if (f?.type !== 'part' || (f.part.kind !== 'worm' && f.part.kind !== 'worm-wheel')) return undefined;
+    const [module, starts, lead] = [parseFloat(f.part.module), Math.round(parseFloat(f.part.starts)), parseFloat(f.part.leadAngle)];
+    const teeth = f.part.kind === 'worm-wheel' ? Math.round(parseFloat(f.part.teeth)) : this.mateTeeth();
+    if (!(module > 0 && starts > 0 && lead > 0 && lead < 90 && teeth > 0)) return undefined;
+    const mesh = wormMesh(module, starts, (lead * Math.PI) / 180, teeth);
+    const round = (v: number) => Math.round(v * 1000) / 1000;
+    const half = f.part.kind === 'worm-wheel' ? parseFloat(f.part.width) / 2 : 0;
+    return { worm: round(mesh.worm), distance: round(mesh.distance), ratio: `${starts}/${teeth}`, half: round(half) };
+  });
+  /** A spring's lengths, from its sizes (CAD-161); its rate is in the component's properties. */
+  protected readonly spring = computed(() => {
+    const f = this.feature();
+    if (f?.type !== 'part') return undefined;
+    const part = f.part;
+    if (part.kind !== 'compression-spring' && part.kind !== 'extension-spring') return undefined;
+    const [wire, outside, turns] = [parseFloat(part.wire), parseFloat(part.outside), parseFloat(part.turns)];
+    if (!(wire > 0 && outside > wire && turns > 0)) return undefined;
+    const size: SpringSize = part.kind === 'compression-spring' ? { kind: 'compression', wire, mean: outside - wire, pitch: parseFloat(part.pitch), turns, ends: part.ends } : { kind: 'extension', wire, mean: outside - wire, turns };
+    const p = springProperties(size, {});
+    const round = (v: number) => Math.round(v * 1000) / 1000;
+    return { freeLength: round(p.freeLength), solidLength: round(p.solidLength ?? 0), activeTurns: round(p.activeTurns) };
   });
 
   protected setPart(changes: Partial<Record<string, string>>): void {
@@ -149,6 +218,17 @@ export class FeatureDialog {
 
   protected setPartKind(kind: PartKind): void {
     this.set({ part: defaultPart(kind), ...(kind === 'living-hinge' || kind === 'dovetail' ? { operation: 'cut' as const } : {}) });
+  }
+
+  /** A base flange's corner relief; a new one starts at twice the sheet's thickness. */
+  protected setRelief(value: string): void {
+    const f = this.feature();
+    if (f?.type !== 'base-flange') return;
+    if (!value) {
+      const { cornerRelief: _relief, reliefSize: _size, ...rest } = f;
+      return this.store.updateDraft(rest);
+    }
+    this.set({ cornerRelief: value as CornerRelief, reliefSize: f.reliefSize || `2 * (${f.thickness})` });
   }
 
   protected setHoleSketch(id: string): void {
@@ -181,6 +261,14 @@ export class FeatureDialog {
   protected readonly planeFeatures = computed(() =>
     (this.store.state()?.document.timeline ?? []).filter((i) => !isSketch(i) && i.type === 'plane' && i.id !== this.feature()?.id),
   );
+
+  protected readonly pluginParameters = (parameters: Readonly<Record<string, string>>) => Object.entries(parameters);
+
+  /** A plugin feature's parameter, as an expression. */
+  protected setPluginParameter(name: string, expression: string): void {
+    const f = this.feature();
+    if (f?.type === 'plugin') this.store.updateDraft({ ...f, parameters: { ...f.parameters, [name]: expression } });
+  }
 
   protected set(changes: Partial<Feature>, target?: PickTarget): void {
     const f = this.feature();

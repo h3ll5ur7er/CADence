@@ -1,5 +1,7 @@
-import type { CadDocument, Parameter } from './document';
-import type { ProjectId } from './ids';
+import type { CadDocument, DocumentKind, Parameter } from './document';
+import type { AssetId, DocumentId, ProjectId } from './ids';
+import type { ItemConflict } from './revision';
+import type { ProjectRole } from './sharing';
 
 /** ISO 8601 timestamp, e.g. `2026-10-14T18:00:00.000Z`. */
 export type Timestamp = string;
@@ -18,6 +20,129 @@ export interface Project {
    * documents and originals had there, by their ids here (oldest last), so restoring finds them (CAD-147).
    */
   readonly copiedFrom?: Readonly<Record<string, readonly string[]>>;
+  /** When the project was moved to the trash (CAD-148); absent for projects in use. */
+  readonly trashedAt?: Timestamp;
+  /** The project's documents in the trash, oldest first (CAD-148). */
+  readonly trash?: readonly TrashedDocument[];
+  /** What the project is about, in Markdown (CAD-149). */
+  readonly description?: string;
+  /** Photos, datasheets and links kept with the project (CAD-149). */
+  readonly attachments?: readonly Attachment[];
+  /**
+   * The project is a library: other projects use its components (CAD-151). Its `id` is the library's
+   * own, kept in its settings, so references find it on every device, in archives and in git.
+   */
+  readonly library?: { readonly id: string };
+  /** Scripts kept with the project, to run again with other values (CAD-173). */
+  readonly scripts?: readonly ProjectScript[];
+  /** Plugins installed into the project: its plugin features regenerate wherever it goes (CAD-174). */
+  readonly plugins?: readonly ProjectPlugin[];
+}
+
+/** How long the trash keeps what was deleted (CAD-148). */
+export const trashDays = 30;
+
+/** A document in its project's trash: its last state is the version `version` of the project's history. */
+export interface TrashedDocument {
+  readonly id: DocumentId;
+  readonly name: string;
+  readonly kind: DocumentKind;
+  readonly trashedAt: Timestamp;
+  readonly version: string;
+}
+
+/** What the trash lists: projects, and documents of projects that are not in the trash themselves. */
+export type TrashItem =
+  | { readonly kind: 'project'; readonly id: ProjectId; readonly name: string; readonly trashedAt: Timestamp; readonly expiresAt: Timestamp; readonly documentCount: number }
+  | {
+      readonly kind: 'document';
+      readonly id: DocumentId;
+      readonly name: string;
+      readonly documentKind: DocumentKind;
+      readonly projectId: ProjectId;
+      readonly projectName: string;
+      readonly trashedAt: Timestamp;
+      readonly expiresAt: Timestamp;
+    };
+
+/** A file kept with a project as it is (a photo, a datasheet), or a link (CAD-149). */
+export type Attachment =
+  | { readonly id: string; readonly kind: 'file'; readonly name: string; readonly mediaType: string; readonly byteLength: number; readonly assetId: AssetId; readonly addedAt: Timestamp }
+  | { readonly id: string; readonly kind: 'link'; readonly name: string; readonly url: string; readonly addedAt: Timestamp };
+
+/** The built-in library of standard parts (CAD-152): screws, nuts, washers, inserts and bearings in every size. */
+export const standardLibraryId = 'standard';
+
+/** A library other projects can use: a project marked as one, or the built-in standard parts. */
+export interface LibrarySummary {
+  /** The library's own id (`Project.library.id`, or `standard`). */
+  readonly id: string;
+  readonly name: string;
+  /** The project holding it here; absent for the built-in library. */
+  readonly projectId?: ProjectId;
+  readonly partCount: number;
+}
+
+/** A component a library offers. */
+export interface LibraryPart {
+  /** Its document id in the library, or a standard part's key (`screw-M3-12`). */
+  readonly id: string;
+  readonly name: string;
+  /** What it is listed under (`Screws (ISO 4762)`). */
+  readonly group?: string;
+}
+
+/** What a script or a plugin's feature or generator asks for before it runs. */
+export interface ScriptParameter {
+  readonly name: string;
+  /** What the form shows; the name when absent. */
+  readonly label?: string;
+  /** The value offered, as text: `20`, `20 mm`, `M8`. */
+  readonly default: string;
+  /** Lengths (mm) and angles (degrees) are numbers in the script; `text` stays text. */
+  readonly kind: 'number' | 'length' | 'angle' | 'text';
+}
+
+/** A script kept with a project: a generator that runs again with other parameters ([[Architecture/Decisions#ADR-60]]). */
+export interface ProjectScript {
+  readonly id: string;
+  readonly name: string;
+  /** The body of an async function with `cadence` and `params` (the sandboxed scripting API). */
+  readonly source: string;
+  readonly parameters: readonly ScriptParameter[];
+}
+
+/** A plugin's feature, generator or exporter, as its description lists it. */
+export interface PluginPart {
+  readonly name: string;
+  readonly label: string;
+  readonly parameters: readonly ScriptParameter[];
+}
+
+export interface PluginExporter {
+  readonly name: string;
+  readonly label: string;
+  /** The file's extension, without the dot. */
+  readonly extension: string;
+  readonly mediaType: string;
+}
+
+/** The plugin API version this app runs ([[Architecture/Decisions#ADR-60a]]). */
+export const pluginApiVersion = 1;
+
+/** A plugin installed into a project: its description and its source (one JavaScript file). */
+export interface ProjectPlugin {
+  /** Lower case, dotted: `acme.trays`. */
+  readonly id: string;
+  readonly name: string;
+  /** Semantic: `1.2.0`. */
+  readonly version: string;
+  /** The plugin API it was written for. */
+  readonly api: number;
+  readonly features: readonly PluginPart[];
+  readonly generators: readonly PluginPart[];
+  readonly exporters: readonly PluginExporter[];
+  readonly source: string;
 }
 
 /** A starting point for new projects: settings and documents, made with CADence (public/templates). */
@@ -34,6 +159,14 @@ export interface ProjectRemote {
   readonly url: string;
   /** A CORS proxy for hosts a browser cannot reach directly (e.g. https://cors.isomorphic-git.org). */
   readonly corsProxy?: string;
+  /** When the repository is a project on a CADence server (CAD-177): which, and what this device may do with it. */
+  readonly server?: {
+    readonly url: string;
+    readonly project: string;
+    readonly role: ProjectRole;
+    /** Opened through a link to view: the link, which is also its sign-in. */
+    readonly link?: string;
+  };
 }
 
 /** Sign-in for a remote, asked for when syncing and never stored; an access token goes in `password`. */
@@ -42,11 +175,20 @@ export interface RemoteCredentials {
   readonly password: string;
 }
 
-/** A document (or the project's settings) changed both here and on the remote. */
+/**
+ * A document (or the project's settings) changed both here and on the remote, in ways that do not
+ * merge on their own. Resolutions are given for the whole document by its `path` (`mine` or `theirs`
+ * throughout), or per item by `<path>#<item path>`.
+ */
 export interface SyncConflict {
-  /** Where it is kept in the version history; resolutions are given by it. */
+  /** Where it is kept in the version history. */
   readonly path: string;
   readonly name: string;
+  /**
+   * The items both sides changed differently (CAD-176); everything else of the document merges.
+   * Absent when the document cannot be merged item by item (deleted on one side).
+   */
+  readonly items?: readonly ItemConflict[];
 }
 
 /** Which side of a conflict to keep. */

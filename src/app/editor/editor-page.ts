@@ -8,6 +8,7 @@ import {
   input,
   resource,
   signal,
+  untracked,
   viewChild,
 } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
@@ -22,12 +23,17 @@ import {
 import { PROJECT_MANAGER, STORAGE_KIND } from '../core.providers';
 import { ConfirmDialog, NameDialog } from '../shared/dialogs';
 import { Icon } from '../shared/icon';
+import { Layout } from '../shared/layout';
 import { SettingsDialog } from '../shared/settings-dialog';
 import { DocumentsPanel } from './documents-panel';
 import { EditorStatus } from './editor-status';
+import { CompareView, type CompareRequest } from './compare-view';
 import { HistoryDialog } from './history-dialog';
 import { AboutDialog } from '../about/about-dialog';
+import { ScriptsDialog } from './scripts-dialog';
+import { ShareDialog } from './share-dialog';
 import { SyncDialog } from './sync-dialog';
+import { ProjectDialog } from './project-dialog';
 import { ThumbnailSaver } from './thumbnail-saver';
 import { AssemblyMode } from './modes/assembly-mode';
 import { ComponentMode } from './modes/component-mode';
@@ -39,11 +45,12 @@ const storageLabels = { browser: 'This browser', 'project-folders': 'Project fol
 
 @Component({
   selector: 'cad-editor-page',
-  imports: [RouterLink, Icon, DocumentsPanel, ComponentMode, AssemblyMode, DrawingMode, ImportedMode, NameDialog, ConfirmDialog, SettingsDialog, HistoryDialog, SyncDialog, AboutDialog],
+  imports: [RouterLink, Icon, DocumentsPanel, CompareView, ComponentMode, AssemblyMode, DrawingMode, ImportedMode, NameDialog, ConfirmDialog, SettingsDialog, HistoryDialog, SyncDialog, ScriptsDialog, ShareDialog, AboutDialog, ProjectDialog],
   providers: [EditorStatus, ThumbnailSaver],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './editor-page.html',
   styleUrl: './editor-page.scss',
+  host: { '[attr.data-layout]': 'layout.phone() ? "phone" : null', '[attr.data-drawer]': 'layout.phone() && layout.drawer() ? "open" : null' },
 })
 export class EditorPage {
   /** Route parameters (bound by the router). */
@@ -51,19 +58,29 @@ export class EditorPage {
   readonly documentId = input<string>();
 
   protected readonly status = inject(EditorStatus);
+  /** The phone layout: a viewer, the documents in a drawer (CAD-179). */
+  protected readonly layout = inject(Layout);
   protected readonly thumbnails = inject(ThumbnailSaver);
   /** A document's picture, for the documents panel. */
   protected readonly thumbnailOf = (id: DocumentId) => this.projectManager.thumbnail(id);
   protected readonly kindLabels = kindLabels;
   protected readonly storage = storageLabels[inject(STORAGE_KIND)];
   protected readonly message = signal<string | undefined>(undefined);
+  protected readonly emptySet: ReadonlySet<string> = new Set();
+  /** Two versions of a document shown in place of its editor (CAD-175). */
+  protected readonly comparing = signal<CompareRequest | undefined>(undefined);
+  /** Changes when the open component is to be read again (`readAgain`). */
+  protected readonly readsAgain = signal(0);
   private readonly projectManager = inject(PROJECT_MANAGER);
   private readonly router = inject(Router);
   private readonly nameDialog = viewChild.required(NameDialog);
   private readonly confirmDialog = viewChild.required(ConfirmDialog);
   private readonly syncDialog = viewChild.required(SyncDialog);
+  private readonly scriptsDialog = viewChild.required(ScriptsDialog);
+  private readonly shareDialog = viewChild.required(ShareDialog);
   private readonly aboutDialog = viewChild.required(AboutDialog);
   private readonly history = viewChild.required(HistoryDialog);
+  private readonly notes = viewChild.required(ProjectDialog);
 
   protected readonly project = resource({
     params: () => asProjectId(this.projectId()),
@@ -73,10 +90,27 @@ export class EditorPage {
     params: () => asProjectId(this.projectId()),
     loader: ({ params }) => this.projectManager.listDocuments(params),
   });
-  protected readonly active = computed(() => this.documents.value()?.find((d) => d.id === this.documentId()));
+  /**
+   * The open document. Lists read again (a change elsewhere, CAD-150) give it anew; it is the same one
+   * as long as it has the same name, so the editor showing it stays open (its store follows changes).
+   */
+  protected readonly active = computed(() => this.documents.value()?.find((d) => d.id === this.documentId()), {
+    // An imported file has no editor: a replaced one is shown anew.
+    equal: (a, b) => a?.id === b?.id && a?.name === b?.name && a?.library?.version === b?.library?.version && (a?.kind !== 'imported' || a.modifiedAt === b?.modifiedAt),
+  });
+  /** Library parts whose library has a newer version (CAD-151). */
+  protected readonly updates = resource({
+    params: () => ({ project: asProjectId(this.projectId()), documents: this.documents.value() }),
+    loader: async ({ params }) => new Set<string>(params.documents?.some((d) => d.library) ? (await this.projectManager.libraryUpdates(params.project)).map((u) => u.document.id) : []),
+  });
 
   constructor() {
     effect(() => this.thumbnails.document.set(this.documentId() ? asDocumentId(this.documentId() as string) : undefined));
+    // Opening another document ends a comparison.
+    effect(() => {
+      const id = this.documentId();
+      if (untracked(this.comparing) && untracked(this.comparing)?.document.id !== id) this.comparing.set(undefined);
+    });
     // A project opened without a document shows its most recently edited one.
     effect(() => {
       const documents = this.documents.value();
@@ -96,11 +130,31 @@ export class EditorPage {
         { label: 'New assembly', group: 'Project', run: () => void this.create('assembly') },
         { label: 'New drawing', group: 'Project', run: () => void this.create('drawing') },
         { label: 'Sync with git', group: 'Project', run: () => this.openSync() },
+        { label: 'Scripts and plugins', group: 'Project', run: () => this.openScripts() },
+        { label: 'Share…', group: 'Project', run: () => this.openShare() },
         ...documents.filter((d) => d.id === this.documentId()).map((d) => ({ label: `Versions of ${d.name}`, group: 'Project', run: () => void this.history().open(d) })),
         { label: 'About CADence', group: 'CADence', run: () => this.aboutDialog().open() },
       ]);
     });
     inject(DestroyRef).onDestroy(() => withdraw());
+    // Documents and the project changed in other tabs, windows and programs (an agent's MCP server: CAD-150).
+    const stop = this.projectManager.watch((change) => {
+      if (change.kind === 'projects' && change.projectId && change.projectId !== this.projectId()) return;
+      if (change.kind === 'document' && change.gone && change.documentId === this.documentId()) void this.router.navigate(['/projects', this.projectId()]);
+      this.refresh();
+    });
+    inject(DestroyRef).onDestroy(stop);
+  }
+
+  protected openNotes(): void {
+    const project = this.project.value();
+    if (project) void this.notes().open(project);
+  }
+
+  protected async updatePart(document: DocumentSummary): Promise<void> {
+    const result = await this.projectManager.updateLibraryParts(document.projectId, [document.id]);
+    this.message.set(result.ok ? undefined : result.error.message);
+    this.refresh();
   }
 
   protected async create(kind: CreatableDocumentKind): Promise<void> {
@@ -118,6 +172,13 @@ export class EditorPage {
     this.message.set(undefined);
     this.refresh();
     await this.open(result.value);
+  }
+
+  /** A document a mode made (a simplified mesh): listed and opened. */
+  protected async opened(document: DocumentSummary): Promise<void> {
+    this.message.set(undefined);
+    this.refresh();
+    await this.open(document);
   }
 
   protected async duplicate(document: DocumentSummary): Promise<void> {
@@ -148,7 +209,7 @@ export class EditorPage {
   protected async remove(document: DocumentSummary): Promise<void> {
     const confirmed = await this.confirmDialog().confirm({
       heading: `Delete “${document.name}”?`,
-      message: 'The document is removed from this project. It cannot be undone.',
+      message: 'The document goes to the trash, where it stays for 30 days with its history. Restore it from the trash on the home page.',
       confirmLabel: 'Delete',
     });
     if (!confirmed) return;
@@ -166,17 +227,44 @@ export class EditorPage {
     this.project.reload();
   }
 
+  /** Shows two versions of a document in place of its editor, opening it first when another is open. */
+  protected async compare(request: CompareRequest): Promise<void> {
+    if (request.document.id !== this.documentId()) await this.open(request.document);
+    this.comparing.set(request);
+  }
+
+  protected openShare(): void {
+    const project = this.project.value();
+    if (project) void this.shareDialog().open(project);
+  }
+
   protected openSync(): void {
     const project = this.project.value();
     if (project) this.syncDialog().open(project);
   }
 
+  protected openScripts(): void {
+    const project = this.project.value();
+    if (project) void this.scriptsDialog().open(project, this.active());
+  }
+
   private open(document: DocumentSummary, replaceUrl = false): Promise<boolean> {
+    this.layout.drawer.set(false);
     return this.router.navigate(['/projects', document.projectId, 'documents', document.id], { replaceUrl });
   }
 
   protected refresh(): void {
     this.documents.reload();
     this.project.reload();
+  }
+
+  /**
+   * The open component is read again: a script or plugin of the console changed it through a session
+   * of its own in this window, which the editor does not hear (CAD-150, CAD-173), or the project was
+   * shared, and the editor goes live (CAD-178).
+   */
+  protected readAgain(): void {
+    this.refresh();
+    this.readsAgain.update((reads) => reads + 1);
   }
 }

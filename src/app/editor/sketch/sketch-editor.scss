@@ -166,6 +166,16 @@ path {
   &.selected text {
     fill: var(--selection);
   }
+
+  // Reference dimensions show what is measured: lighter, and selected rather than typed into.
+  &.reference {
+    cursor: pointer;
+
+    text {
+      fill: var(--text-muted);
+      font-weight: 500;
+    }
+  }
 }
 
 .dimension-input {
@@ -207,4 +217,12 @@ path {
 /* A picture behind the sketch, to draw over. */
 .picture {
   pointer-events: none;
+}
+
+.live-pointer text {
+  font-size: 12px;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--surface-1);
+  stroke-width: 3px;
 }

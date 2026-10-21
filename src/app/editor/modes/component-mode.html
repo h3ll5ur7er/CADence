@@ -1,6 +1,14 @@
 <div class="stage">
+  <cad-changed-elsewhere [shown]="store.elsewhere.pending()" (reload)="reopen()" (keep)="store.elsewhere.pending.set(false)" />
+  @if (store.state()?.document?.library; as link) {
+    <p class="library-note" role="note" data-testid="library-note">
+      <cad-icon name="library" [size]="14" />
+      From the library {{ link.libraryName }}{{ link.version.startsWith('standard') ? '' : ', version ' + link.version.slice(0, 7) }}: read only here, it changes in the library.
+    </p>
+  }
   <cad-viewport
     #viewport
+    [compact]="layout.phone()"
     (thumbnail)="thumbnails.save($event)"
     [showOrigin]="originVisible()"
     [sketches]="displays()"
@@ -14,6 +22,7 @@
     [field]="store.stressField()"
     [measureLine]="measureLine()"
     [threads]="store.state()?.threads ?? []"
+    [helices]="store.state()?.helices ?? []"
     (picked)="store.pick($event)"
     (backendReady)="status.renderer.set($event)"
   >
@@ -21,6 +30,22 @@
       <cad-sketch-editor [view]="view" [matrix]="viewport.planeMatrix()" />
     }
   </cad-viewport>
+
+  @if (store.state()?.live; as live) {
+    <div class="live" role="status" aria-label="Editing live" data-testid="live" [attr.data-status]="live.status">
+      <span class="live-dot" aria-hidden="true"></span>
+      <span class="live-status">{{ liveLabel(live.status, live.viewOnly) }}</span>
+      @for (other of live.others; track other.clientId) {
+        <span class="person" data-testid="live-person" [style.border-color]="other.user.color">
+          <span class="initial" [style.background]="other.user.color" aria-hidden="true">{{ other.user.name.charAt(0) }}</span>
+          {{ other.user.name }}{{ other.where.sketch ? ' · ' + itemName(other.where.sketch) : '' }}
+        </span>
+      }
+      @if (live.notice) {
+        <span class="live-notice">{{ live.notice }}</span>
+      }
+    </div>
+  }
 
   <section class="browser" aria-label="Model browser">
     <h2 class="eyebrow browser-title">Browser</h2>
@@ -69,14 +94,29 @@
               <span class="marker-line"></span>
             </li>
             }
-            @if (folderStartingAt(item); as folder) {
-              <li class="node folder" [class.suppressed]="folderSuppressed(folder)" [attr.title]="folder.note ?? null">
+            @for (placed of foldersStartingAt(item); track placed.folder.id) {
+              @let folder = placed.folder;
+              <li
+                class="node folder"
+                draggable="true"
+                [hidden]="folderHidden(placed)"
+                [style.--depth]="placed.depth"
+                [class.suppressed]="folderSuppressed(folder)"
+                [class.dragging]="dragging() === 'folder:' + folder.id"
+                [attr.title]="folder.note ?? null"
+                (dragstart)="startDrag($event, 'folder:' + folder.id)"
+                (dragend)="dragging.set(undefined)"
+                (dragover)="$event.preventDefault()"
+                (drop)="dropAt($event, placed.from)"
+              >
                 <button
                   type="button"
                   class="item-main"
                   [attr.aria-expanded]="!collapsed().has(folder.id)"
                   [attr.aria-label]="(collapsed().has(folder.id) ? 'Open ' : 'Close ') + folder.name"
+                  [attr.aria-keyshortcuts]="'Alt+ArrowUp Alt+ArrowDown'"
                   (click)="toggleFolder(folder)"
+                  (keydown)="folderKey($event, placed)"
                 >
                   <cad-icon name="chevronRight" [size]="14" class="chevron" [class.open]="!collapsed().has(folder.id)" />
                   <cad-icon name="folder" />
@@ -112,6 +152,7 @@
               draggable="true"
               [hidden]="inClosedFolder(item)"
               [class.in-folder]="folderOf().has(item.id)"
+              [style.--depth]="depthOf(item)"
               [class.active]="store.editing() === item.id || store.draft()?.feature?.id === item.id"
               [class.suppressed]="item.suppressed"
               [class.failed]="itemStatus?.state === 'error'"
@@ -130,7 +171,7 @@
                 (click)="open(item, i)"
                 (keydown)="itemKey($event, item, i)"
               >
-                <cad-icon [name]="itemIcons[item.type]" />
+                <cad-icon [name]="isSketch(item) && item.block ? 'block' : itemIcons[item.type]" />
                 <span class="item-name">{{ item.name }}</span>
                 @if (item.note) {
                   <cad-icon name="note" [size]="12" class="has-note" />
@@ -219,7 +260,7 @@
     } @else {
       <div class="model-bar" role="toolbar" aria-label="Model tools">
         <div class="menu">
-          <button type="button" class="btn btn-primary" aria-haspopup="menu" [attr.aria-expanded]="menu() === 'sketch'" (click)="toggleMenu('sketch')">
+          <button type="button" class="btn btn-primary" aria-haspopup="menu" data-tour="new-sketch" [attr.aria-expanded]="menu() === 'sketch'" (click)="toggleMenu('sketch')">
             <cad-icon name="sketch" /> New sketch
           </button>
           @if (menu() === 'sketch') {
@@ -238,7 +279,7 @@
         </div>
         <span class="divider"></span>
         @for (tool of featureTools; track tool.type) {
-          <button type="button" class="icon-btn tool" [attr.aria-label]="featureLabels[tool.type]" [title]="featureLabels[tool.type]" (click)="startFeature(tool.type)">
+          <button type="button" class="icon-btn tool" [attr.aria-label]="featureLabels[tool.type]" [attr.data-tour]="tool.type === 'extrude' ? 'extrude' : null" [title]="featureLabels[tool.type]" (click)="startFeature(tool.type)">
             <cad-icon [name]="tool.icon" [size]="18" />
           </button>
         }
@@ -268,7 +309,7 @@
         </button>
         <span class="divider"></span>
         <div class="menu">
-          <button type="button" class="btn" aria-haspopup="menu" [attr.aria-expanded]="menu() === 'export'" [disabled]="bodies().length === 0" (click)="toggleMenu('export')">
+          <button type="button" class="btn" aria-haspopup="menu" data-tour="export" [attr.aria-expanded]="menu() === 'export'" [disabled]="bodies().length === 0" (click)="toggleMenu('export')">
             <cad-icon name="download" /> Export
           </button>
           @if (menu() === 'export') {
@@ -277,6 +318,8 @@
                 <button type="button" role="menuitem" (click)="exportAs(f.format)">{{ f.label }}</button>
               }
               <button type="button" role="menuitem" (click)="menu.set(undefined); store.exportViewer()">Viewer (HTML, to share)</button>
+              <button type="button" role="menuitem" (click)="menu.set(undefined); store.exportViewer('glb')">glTF (GLB, viewers and AR)</button>
+              <button type="button" role="menuitem" (click)="menu.set(undefined); store.exportViewer('usdz')">USDZ (AR on iPhone and iPad)</button>
               <button type="button" role="menuitem" (click)="menu.set(undefined); pictureDialog().ask(viewport, document().name)">Picture or turntable…</button>
               <button type="button" role="menuitem" (click)="openExport()">With options…</button>
               @if (store.state()?.sheetMetal) {
@@ -341,6 +384,9 @@
     @if (!store.draft() && store.panel() !== 'parameters') {
       <div class="toast" role="alert">
         <p>{{ error }}</p>
+        @if (store.referenceOffer()) {
+          <button type="button" class="btn" (click)="store.addAsReference()">Add as a reference dimension</button>
+        }
         @if (conflicts().length) {
           <ul class="conflicts" aria-label="Conflicting relations and dimensions">
             @for (c of conflicts(); track c.id) {
@@ -354,6 +400,10 @@
         <button type="button" class="icon-btn" aria-label="Dismiss" (click)="store.error.set(undefined); store.conflict.set(undefined)">×</button>
       </div>
     }
+  }
+
+  @if (layout.phone()) {
+    <cad-phone-bar [viewport]="viewport" [measurable]="true" [measuring]="store.panel() === 'measure'" [arFile]="arFile" (measure)="togglePanel('measure')" />
   }
 </div>
 
@@ -385,6 +435,45 @@
       <dt>Profiles</dt>
       <dd data-testid="profile-count">{{ view.profiles.length }}</dd>
     </dl>
+    <label class="check" title="Other sketches, here and in the project's other components, can place a block; it is not drawn in the model">
+      <input type="checkbox" aria-label="Sketch is a block" [checked]="!!view.sketch.block" (change)="setSketchBlock(view.sketch.id, $any($event.target).checked)" /> Block (place it in other sketches)
+    </label>
+    @if (selectedDimension(); as d) {
+      <p class="eyebrow">{{ d.dimension.reference ? 'Reference dimension' : 'Dimension' }}</p>
+      <div class="text-form">
+        <dl>
+          <dt>Value</dt>
+          <dd class="mono" data-testid="dimension-value">{{ d.dimension.reference ? '(' + dimensionValue(d) + ')' : dimensionValue(d) }}</dd>
+        </dl>
+        <label class="check">
+          <input type="checkbox" aria-label="Reference dimension" [checked]="!!d.dimension.reference" (change)="setReference(d.dimension, $any($event.target).checked)" />
+          Reference: shows the measured value, drives nothing
+        </label>
+        @if (d.dimension.reference) {
+          <label class="field">
+            Name (parameters and later features read it)
+            <input aria-label="Name of the reference dimension" autocomplete="off" placeholder="e.g. diagonal" [value]="d.dimension.name ?? ''" (change)="setReference(d.dimension, true, $any($event.target).value)" />
+          </label>
+        }
+      </div>
+    }
+    @if (selectedBlock(); as b) {
+      <p class="eyebrow">Placed block</p>
+      <div class="text-form">
+        <dl>
+          <dt>Block</dt>
+          <dd>{{ b.name }}</dd>
+        </dl>
+        <label class="field">Angle <input aria-label="Angle of the placed block" autocomplete="off" [value]="b.insertion.angle" (change)="setBlock(b.insertion, { angle: $any($event.target).value })" /></label>
+        <label class="field">Scale <input aria-label="Scale of the placed block" autocomplete="off" [value]="b.insertion.scale" (change)="setBlock(b.insertion, { scale: $any($event.target).value })" /></label>
+        <div class="row-actions">
+          @if (b.editable) {
+            <button type="button" class="btn" (click)="editBlock(b.insertion)">Edit the block</button>
+          }
+          <button type="button" class="btn" (click)="explodeBlock(b.insertion)">Explode</button>
+        </div>
+      </div>
+    }
     @if (selectedText(); as t) {
       <p class="eyebrow">Text</p>
       <div class="text-form">
@@ -481,6 +570,15 @@
               <dl>
                 <dt>Volume</dt>
                 <dd class="mono" data-testid="body-volume">{{ mm(p.volume, 3) }}</dd>
+                <dt>Material</dt>
+                <dd>
+                  <select class="body-material" [attr.aria-label]="'Material of ' + body.name" (change)="setBodyMaterial(body.id, $any($event.target).value)">
+                    <option value="" [selected]="!body.material">As the component ({{ material().name }})</option>
+                    @for (m of materials; track m.name) {
+                      <option [value]="m.name" [selected]="m.name === body.material?.name">{{ m.name }} · {{ m.density }} g/cm³</option>
+                    }
+                  </select>
+                </dd>
                 <dt>Mass</dt>
                 <dd class="mono" data-testid="body-mass">{{ grams(p.mass) }}</dd>
                 <dt>Surface</dt>
@@ -489,6 +587,18 @@
                 <dd class="mono" data-testid="body-size">{{ at([p.box.max[0] - p.box.min[0], p.box.max[1] - p.box.min[1], p.box.max[2] - p.box.min[2]]) }} {{ store.units() }}</dd>
                 <dt>Centre of mass</dt>
                 <dd class="mono">{{ at(p.centerOfMass) }}</dd>
+                @if (p.spring; as s) {
+                  <dt>Spring rate</dt>
+                  <dd class="mono" data-testid="spring-rate">{{ rate(s.rate) }} {{ s.kind === 'torsion' ? 'N·mm/°' : 'N/mm' }}</dd>
+                  <dt>{{ s.kind === 'extension' ? 'Inside the hooks' : s.kind === 'torsion' ? 'Coil length' : 'Free length' }}</dt>
+                  <dd class="mono" data-testid="spring-length">{{ mm(s.freeLength) }}</dd>
+                  @if (s.solidLength !== undefined) {
+                    <dt>Solid length</dt>
+                    <dd class="mono">{{ mm(s.solidLength) }}</dd>
+                  }
+                  <dt>Active turns</dt>
+                  <dd class="mono">{{ rate(s.activeTurns) }}</dd>
+                }
               </dl>
               <div class="look">
                 <input

@@ -41,7 +41,7 @@ function checkPattern(document: AssemblyDocument, pattern: InstancePattern): str
   return undefined;
 }
 
-const linkLabels: Readonly<Record<MotionLink['kind'], string>> = { gear: 'Gear', rack: 'Rack and pinion', belt: 'Belt', carrier: 'Planet carrier', planet: 'Planet', cam: 'Cam' };
+const linkLabels: Readonly<Record<MotionLink['kind'], string>> = { gear: 'Gear', bevel: 'Bevel gear', worm: 'Worm', rack: 'Rack and pinion', belt: 'Belt', carrier: 'Planet carrier', planet: 'Planet', cam: 'Cam' };
 
 function checkLink(document: AssemblyDocument, link: MotionLink): string | undefined {
   const freedom = (f: MotionLink['driver']) => {
@@ -83,7 +83,9 @@ export function applyCommand(document: AssemblyDocument, command: AssemblyComman
     case 'insert-instance': {
       if (instance(command.instance.id)) return invalid(`Id ${command.instance.id} is already in use.`);
       const name = command.instance.name.trim() || nextName(document.instances.map((i) => i.name), componentName ?? 'Instance');
-      return ok({ document: { ...document, instances: [...document.instances, { ...command.instance, name }] } });
+      const inserted = { ...document, instances: [...document.instances, { ...command.instance, name }] };
+      // Inserted and joined in one change, as a standard part into a hole (CAD-152).
+      return command.joint ? applyCommand(inserted, { type: 'add-joint', joint: command.joint }) : ok({ document: inserted });
     }
     case 'remove-instance': {
       if (!instance(command.instanceId)) return invalid(`Instance ${command.instanceId} does not exist.`);

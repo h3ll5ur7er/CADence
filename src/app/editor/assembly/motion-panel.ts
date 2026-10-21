@@ -3,19 +3,21 @@ import { jointDofs, type Matrix4, type MotionDrive, type MotionFrame, type Motio
 import type { Collision } from '@core/managers/assembly';
 import { Icon } from '../../shared/icon';
 import { AssemblyStore } from './assembly-store';
+import { HelpLink } from '../../shared/help';
 
 const fps = 30;
 
 /** A motion study: keyframes of joint values over time, played back in the view and recorded to video. */
 @Component({
   selector: 'cad-motion-panel',
-  imports: [Icon],
+  imports: [HelpLink, Icon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (study(); as study) {
       <p class="eyebrow">Motion study</p>
       <div class="head">
         <h2>{{ study.name }}</h2>
+        <cad-help topic="motion" />
         <button type="button" class="icon-btn" [attr.aria-label]="'Delete ' + study.name" title="Delete" (click)="remove(study)">
           <cad-icon name="trash" [size]="14" />
         </button>

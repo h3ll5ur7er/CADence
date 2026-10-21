@@ -1,7 +1,7 @@
 // Builds the command line and MCP server (src/automation) into one Node module: dist/automation/cadence.mjs.
 // Packages stay external and load from node_modules (the geometry kernel finds its WebAssembly there).
 // binary.mjs builds the self-contained executable from the same bundle with every package inside.
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 
@@ -14,7 +14,8 @@ const read = (path) => readFileSync(new URL(path, root), 'utf8');
 const referenceTopics = {
   commands: ['src/core/managers/design/design-manager.ts', 'src/automation/shapes.ts'],
   sketch: ['src/core/contracts/sketch.ts'],
-  features: ['src/core/contracts/feature.ts', 'src/core/contracts/parts.ts'],
+  features: ['src/core/contracts/feature.ts'],
+  parts: ['src/core/contracts/parts.ts'],
   document: ['src/core/contracts/document.ts', 'src/core/contracts/analysis.ts', 'src/core/contracts/appearance.ts'],
   assembly: ['src/core/managers/assembly/assembly-manager.ts', 'src/core/contracts/assembly.ts'],
   drawing: ['src/core/managers/drawing/drawing-manager.ts', 'src/core/contracts/drawing.ts'],
@@ -22,6 +23,14 @@ const referenceTopics = {
 const reference = Object.fromEntries(
   Object.entries(referenceTopics).map(([topic, files]) => [topic, files.map((path) => `// ${path}\n${read(path).replace(/^import[\s\S]*?;\n/gm, '').trim()}\n`).join('\n')]),
 );
+
+/** The user guide's pages by name, for the MCP server's resources (CAD-172). */
+const guide = Object.fromEntries([
+  ['User-guide', read('docs/User-guide.md')],
+  ...readdirSync(new URL('docs/User-guide/', root))
+    .filter((file) => file.endsWith('.md'))
+    .map((file) => [file.slice(0, -3), read(`docs/User-guide/${file}`)]),
+]);
 
 export const { version } = JSON.parse(read('package.json'));
 
@@ -38,8 +47,8 @@ export function bundleAutomation({ define, ...options }) {
       {
         name: 'reference',
         setup(b) {
-          b.onResolve({ filter: /^cadence:reference$/ }, () => ({ path: 'reference', namespace: 'cadence' }));
-          b.onLoad({ filter: /.*/, namespace: 'cadence' }, () => ({ contents: JSON.stringify(reference), loader: 'json' }));
+          b.onResolve({ filter: /^cadence:(reference|guide)$/ }, (args) => ({ path: args.path.slice('cadence:'.length), namespace: 'cadence' }));
+          b.onLoad({ filter: /.*/, namespace: 'cadence' }, (args) => ({ contents: JSON.stringify(args.path === 'guide' ? guide : reference), loader: 'json' }));
         },
       },
     ],

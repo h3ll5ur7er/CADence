@@ -12,16 +12,17 @@ import {
   type Matrix4,
   type Measurement,
   ok,
+  type RefShape,
   type Result,
   type SimulationResult,
   type SimulationSetup,
   type TopologyRef,
   type Vec3,
 } from '@core/contracts';
-import { type Edge, type Face, getOC, measureShapeSurfaceProperties, measureShapeVolumeProperties, measureVolume, type Shape3D, type Vertex } from 'replicad';
+import { type Edge, type Face, getOC, measureShapeSurfaceProperties, measureShapeVolumeProperties, measureVolume, type Shape3D, Vertex } from 'replicad';
 import type { AnalysisEngine, PlacedPart, ValidationSubject } from './index';
 import { laserChecks } from './laser';
-import { measureElements } from './measure';
+import { measureElements, shapeOf } from './measure';
 import { type LoadedBody, printChecks, triangles, type Triangles } from './printing';
 import { RayCaster } from './ray-caster';
 import { simulate } from './simulation';
@@ -51,6 +52,21 @@ export class OcctAnalysisEngine implements AnalysisEngine {
     return ok(measureElements(elements));
   }
 
+  async shapesOf(bodies: readonly BodyState[], refs: readonly TopologyRef[]): Promise<(RefShape | undefined)[]> {
+    await this.shapes.ready();
+    return refs.map((ref) => {
+      if (ref.kind === 'vertex') return undefined;
+      const body = bodies.find((b) => b.id === ref.body);
+      const named = body && this.shapes.get(body.key);
+      try {
+        const element = named && find(named, ref);
+        return element && !(element instanceof Vertex) ? shapeOf(element) : undefined;
+      } catch {
+        return undefined;
+      }
+    });
+  }
+
   async measurePlaced(parts: readonly PlacedPart[], refs: readonly (TopologyRef & { readonly instance: string })[]): Promise<Result<Measurement>> {
     await this.shapes.ready();
     if (refs.length === 0) return fail({ code: 'nothing-picked', message: 'Pick faces, edges or vertices to measure.' });
@@ -71,7 +87,7 @@ export class OcctAnalysisEngine implements AnalysisEngine {
     }
   }
 
-  async properties(bodies: readonly BodyState[], density: number): Promise<BodyProperties[]> {
+  async properties(bodies: readonly BodyState[], density: number, densities?: Readonly<Record<string, number>>): Promise<BodyProperties[]> {
     await this.shapes.ready();
     return bodies.flatMap((body) => {
       const named = this.shapes.get(body.key);
@@ -83,7 +99,7 @@ export class OcctAnalysisEngine implements AnalysisEngine {
         body: body.id,
         volume: solid.volume,
         area: surface.area,
-        mass: (solid.volume * density) / 1000, // mm³ × g/cm³ = 1/1000 g
+        mass: (solid.volume * (densities?.[body.id] ?? density)) / 1000, // mm³ × g/cm³ = 1/1000 g
         centerOfMass: solid.centerOfMass,
         box: { min, max },
       };
@@ -203,8 +219,8 @@ export class OcctAnalysisEngine implements AnalysisEngine {
     return box;
   }
 
-  async simulate(meshes: readonly BodyMesh[], setup: SimulationSetup, material: Material): Promise<Result<SimulationResult>> {
-    return simulate(meshes, setup, material);
+  async simulate(meshes: readonly BodyMesh[], setup: SimulationSetup, material: Material, byBody?: Readonly<Record<string, Material>>): Promise<Result<SimulationResult>> {
+    return simulate(meshes, setup, material, byBody);
   }
 
   /** A stored body's volume, measured once. */

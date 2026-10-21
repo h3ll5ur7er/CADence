@@ -2,12 +2,14 @@ import { type ApplicationConfig, isDevMode, provideBrowserGlobalErrorListeners }
 import { provideRouter, withComponentInputBinding } from '@angular/router';
 import { provideServiceWorker } from '@angular/service-worker';
 import { createBrowserCore, createDesktopCore } from '@core/composition';
+import type { SandboxWorker } from '@core/utilities/sandbox';
 import { fontFiles } from '@core/utilities/text';
 import { isTauri } from '@tauri-apps/api/core';
 import { routes } from './app.routes';
 import { provideCore } from './core.providers';
 import { TauriFileDelivery } from './platform/tauri-file-delivery';
 import { TauriFileSystem } from './platform/tauri-file-system';
+import { watchProjectFolders } from './platform/tauri-folder-watch';
 import { openWebLinksInBrowser } from './platform/tauri-links';
 import { tauriAgentCli } from './platform/tauri-agent-cli';
 import { tauriOpenedFiles } from './platform/tauri-opened-files';
@@ -17,6 +19,7 @@ import { AppUpdates, DesktopUpdates, ServiceWorkerUpdates } from './shared/app-u
 import { AGENT_CLI } from './shared/agent-cli';
 import { OPENED_FILES } from './shared/file-opener';
 import { SYSTEM_FONTS } from './shared/fonts';
+import { captureServerSignIn } from './shared/server-accounts';
 
 /**
  * The sketch solver's WebAssembly is copied to /wasm by the build (angular.json assets); the geometry
@@ -34,16 +37,26 @@ const options = {
 
 /** The host decides where projects live and how exports are saved. */
 const desktop = isTauri();
-const core = desktop
-  ? createDesktopCore(new TauriFileSystem(), new TauriFileDelivery(), options)
+const tauriFiles = desktop ? new TauriFileSystem() : undefined;
+// The desktop app follows what agents and scripts change in its project folders (CAD-150).
+const core = tauriFiles
+  ? createDesktopCore(tauriFiles, new TauriFileDelivery(), { ...options, watch: watchProjectFolders(tauriFiles) })
   : createBrowserCore(options);
 if (desktop) openWebLinksInBrowser();
+// Back from signing in to a CADence server (CAD-177).
+captureServerSignIn();
+
+/** A worker for one script of the script console, ended when it is done or stopped (CAD-173). */
+function scriptWorker(): SandboxWorker {
+  const worker = new Worker(new URL('../workers/script.worker', import.meta.url), { type: 'module' });
+  return { post: (message) => worker.postMessage(message), listen: (handler) => worker.addEventListener('message', (event) => handler(event.data)), terminate: () => worker.terminate() };
+}
 
 export const appConfig: ApplicationConfig = {
   providers: [
     provideBrowserGlobalErrorListeners(),
     provideRouter(routes, withComponentInputBinding()),
-    provideCore(core),
+    provideCore(core, scriptWorker),
     // The web app works offline from its cache (ngsw-config.json); the desktop app is installed and needs none.
     provideServiceWorker('ngsw-worker.js', { enabled: !isDevMode() && !desktop, registrationStrategy: 'registerWhenStable:5000' }),
     // Newer versions: the service worker's on the web, signed GitHub releases on the desktop.

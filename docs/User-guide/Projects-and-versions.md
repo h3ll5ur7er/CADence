@@ -1,8 +1,39 @@
 # Projects and versions
 
-A project holds your components, assemblies and imported files. CADence keeps every project's history as versions, and can share a project through a git repository so you can work on it from other devices or with other people.
+A project holds your components, assemblies and imported files, with notes and attachments about it. CADence keeps every project's history as versions, keeps what you delete in a trash for 30 days, can share a project through a git repository so you can work on it from other devices, and through a CADence server with other people, who then edit it with you, live. A project can also be a library whose parts other projects use.
 
 [TOC]
+
+## Notes and attachments
+
+**Project notes** (the note in the editor's top bar) holds what the project is about ([[CAD-149]]):
+
+- A **description** in Markdown: headings (`#`), lists, **bold**, *italics*, `code` and links (`[text](https://…)`), shown next to where you type it. **Save description** keeps it.
+- **Attach files…** keeps photos, datasheets (PDF) or any other file with the project, exactly as they are (up to 100 MB each); pictures show small. Click a file's name to save a copy of it. **Add link** keeps a web address with a name.
+
+Notes and attachments are part of the project: they are in its versions, in its `.cadence` archives and in git syncs, and copies of the project have them too. Agents read and write them with `project_notes` ([[User guide/Automation]]).
+
+## Trash
+
+Deleting a project or a document moves it to the **trash** ([[CAD-148]]). It stays there for 30 days, then it is deleted for good. The home page shows **Trash** below the projects when something is in it:
+
+- **Restore** brings a project back as it was, or a document as it was when you deleted it, into its project. A restored document has its history again: its earlier versions, the version it was deleted in, and the restore.
+- **Delete for good** (the bin on an item) and **Empty trash** delete at once. A document's earlier versions stay in its project's history.
+- A project in the trash keeps its own deleted documents: restore the project first.
+- A document that a git sync removes (deleted on another device) goes to the trash here too.
+
+## Libraries
+
+A project can be a **library** of parts that other projects use without copying them by hand: a company's brackets, your favourite clips ([[CAD-151]]). Tick **A library** in the project's notes; the home page marks it *Library*. CADence also has a built-in library, **Standard parts**: ISO 4762 screws, ISO 4032 nuts, ISO 7089 washers, heat-set inserts and ball bearings in every size ([[CAD-152]]).
+
+- In an assembly, **Insert → From a library…** inserts a library's part ([[User guide/Assemblies#Library parts and standard parts]]).
+- The project keeps the part **as the library's version it took**: it is listed under **Library parts** in the documents panel, with the library's name, and opens read only (it changes in the library). Updates never surprise you.
+- When the library has a newer version of the part, the part shows **Update**: click it, and the assemblies and drawings that use it follow.
+- Library parts are ordinary documents of the project, so archives and git syncs carry them. **Export as one file** can also include the libraries the project uses (agents: `export_project` with `libraries`), and opening such a file adds those libraries to this device when it does not have them. A library is a project of its own and syncs with its own repository (agents: `sync_project` with `libraries`).
+
+## Changes made elsewhere
+
+An open editor follows what changes its document elsewhere: another tab or window of the app and, on the desktop, other programs writing the project folders, such as an AI agent through the MCP server or a script ([[CAD-150]]). The documents panel and the home page follow new, renamed and deleted documents and projects. When you are in the middle of something (a feature dialog, a sketch, a joint being made), the editor asks first: **Load its changes** or **Keep editing**.
 
 ## Pictures
 
@@ -16,6 +47,15 @@ A few seconds after you change something, CADence records the project as a versi
 - **Name…** a version to find it again, such as `v1.0` or `sent-to-printer`. Names are short words without spaces (letters, digits, dots, dashes and underscores); giving a name again moves it to the other version.
 - **Restore** brings the document back as it was in that version. The restore is a change of its own, so the newer versions stay in the history and you can go forward again.
 
+## Compare versions
+
+In **History of …**, tick two versions and click **Compare the two**, or tick one and click **Compare with now**. The document's place shows both:
+
+- **Overlaid**: both see-through, what was added in green, what was removed in red.
+- **Side by side**: the older on the left (removed material in red), the newer on the right (added in green).
+
+Beside them, what changed: sketches and features added, removed, changed (with what, such as *distance 6 mm → 8 mm*) or moved in the timeline, elements of sketches, parameters (also the project's) and settings such as the material; and the volume before and after, with how much was added and removed. **Close comparison** goes back to editing. Assemblies and drawings show the list.
+
 On the web, versions are kept in your browser next to the project. On the desktop, they are a git repository in the project's folder (`projects/<id>/.git`), which any git tool can read.
 
 ## Sync with git
@@ -27,21 +67,41 @@ Click **Sync with git** (the arrows in the top bar of the editor) and enter the 
 - **Sync** first records your latest changes as a version, then:
   - sends your versions when the repository has nothing newer,
   - takes the repository's versions when you have nothing newer,
-  - otherwise combines both: documents changed on only one side are taken from that side.
-- **Conflicts.** A document changed both here and in the repository is listed with a choice: **Mine** or **Theirs**. Choose for each and click **Sync with these choices**. Nothing changes until you do.
+  - otherwise combines both: documents changed on only one side are taken from that side, and a document changed on both sides is combined by its parts: sketches and features by their timeline place, the curves of a sketch one by one, parameters by name. A hole cut here and a plate made thicker there end up in one part.
+- **Conflicts.** Only what both sides changed differently is asked: the same feature, parameter or setting (or one deleted on one side and changed on the other). Each is listed under its document with how *Mine* and *Theirs* have it, side by side; choose for each and click **Sync with these choices**. Nothing changes until you do. A document deleted on one side and changed on the other is chosen whole.
 - **Stop syncing** forgets the repository's address. The versions stay here and in the repository.
 
 To work on a synced project on another device, click **Open from git…** on the home page and enter the same address. The project opens with all its documents, imported files included, and stays synced.
 
 Version names travel with the versions. A name given to different versions here and in the repository stays as it is on each side, and the sync says which names those are. In the history, versions the repository does not have yet are marked *not synced yet*.
 
+## Share with people on a CADence server
+
+A CADence server keeps projects for the people who sign in to it: your club's, your workshop's, or one you run yourself ([[Architecture/Server]]).
+
+- **Share** (the people button in the top bar of the editor): enter the server's address, **Connect**, and sign in (with GitHub or Google, or with your name on a server on a private network). **Share on this server** puts the project there; it stays synced with it from then on, and the top bar says *Shared*.
+- **Members.** Invite people who signed in to the server once, by name or e-mail address, to view or to edit; owners also share. Change a role or remove someone in the same list.
+- **Links to view.** **Make a link to view** gives an address anyone can open in a browser, without an account: the project opens there to look at (*View only*) and keeps up with the server. **Stop** ends a link.
+- **Shared projects…** on the home page lists the projects on a server that you own or that were shared with you; **Open** brings one here.
+
+## Edit together, live
+
+Open a component of a shared project, and you edit it together with everyone who has it open: a bar at the bottom left says *Live* and who else is there, in which sketch. Changes, theirs and yours, show at once on every screen; in a sketch, you see the others' pointers with their names.
+
+- Changes made at the same moment are put in one order for everyone. One that no longer fits (a curve added to a sketch someone just deleted) is dropped everywhere, and the bar says so.
+- **Offline**, keep working: the bar says your changes wait, and they are sent when you are back. If you were away long, your changes are combined with the others' as a sync would combine them; where you both changed the same thing, theirs is kept and the bar says which (yours stays in the history).
+- **Undo** takes back your last change and also what others changed since, so use it with care while others edit.
+- Assemblies and drawings are not edited live yet: they reach the others through syncs.
+
 ## New projects, copies and files
 
-- **New project** starts from nothing or from a template: *Box with lid*, *Wall bracket* or *Enclosure*. Templates are ordinary projects whose sizes are project parameters (*width*, *wall*, *screw*, …): change them in the Parameters panel and every part follows.
+- **New project** starts from nothing or from a template: *Box with lid*, *Wall bracket* or *Enclosure*. The same templates are the **Samples** at the bottom of the home page: a click makes a project of your own from one, named after it, and opens it ([[User-guide/Getting-started]]). Templates are ordinary projects whose sizes are project parameters (*width*, *wall*, *screw*, …): change them in the Parameters panel and every part follows.
 - **Duplicate** (the two squares on a project card or a document) makes a copy with new ids: a project copy has its own history, which starts with the original's versions of its documents (restoring one of them gives it the copy's ids); a document copy sits next to the original as *Name (copy)*. Importing a project that is here already makes such a copy too.
 - A document saved by a newer CADence is listed but does not open: update CADence first. An older app would leave out what it does not know and show the document wrongly.
 - **Export as one file** (the arrow on a project card) saves the whole project as a `.cadence` file: documents, imported files, parameters and, if you like, the version history. **Open file…** on the home page (or dropping the file there, or double-clicking it on the desktop) opens it again as a project, here or on another device.
 
 ## Share a model
 
-**Export → Viewer (HTML, to share)** in a component or an assembly saves one HTML file that anyone can open in a browser, without CADence and offline: turn, pan and zoom the model, hide parts, measure distances between two points, and explode assemblies with a slider.
+**Export → Viewer (HTML, to share)** in a component or an assembly saves one HTML file that anyone can open in a browser, without CADence and offline: turn, pan and zoom the model, hide parts, measure distances between two points, and explode assemblies with a slider. On a phone or tablet it is touched: one finger turns the model, two fingers pan and pinch to zoom, and with **Measure** on, two taps measure the distance between two points. On small screens the panel sits at the bottom, with the parts folded away.
+
+**Export → glTF (GLB, viewers and AR)** and **Export → USDZ (AR on iPhone and iPad)** save the shown bodies or parts, with their colours, for other 3D viewers, web pages and augmented reality. Both are at real size, in metres with Y up as those formats expect, so a 60 mm part is 0.06 m in them. A phone or tablet shows the model in the room itself from the viewer ([[User-guide/Viewing-and-controls#augmented-reality]]).

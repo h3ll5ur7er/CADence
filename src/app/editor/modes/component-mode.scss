@@ -20,7 +20,8 @@
 }
 
 #component-units,
-.material select {
+.material select,
+.bodies .body-material {
   height: 30px;
   padding: 0 var(--space-1);
   border: 1px solid var(--border);
@@ -56,8 +57,19 @@
     text-align: right;
     font-variant-numeric: tabular-nums;
   }
+
+  .body-material {
+    max-width: 100%;
+    height: 24px;
+  }
 }
 
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
 
 .text-form {
   display: grid;
@@ -102,6 +114,7 @@
 /* CAD-75: timeline folders and notes. */
 .folder {
   padding: 0 0 0 2px;
+  margin-left: calc(var(--space-3) * var(--depth, 0));
 
   &:hover .item-actions,
   &:focus-within .item-actions {
@@ -127,7 +140,7 @@
 }
 
 .item.in-folder {
-  margin-left: var(--space-3);
+  margin-left: calc(var(--space-3) * var(--depth, 1));
 }
 
 .has-note {
@@ -140,7 +153,90 @@
   height: 24px;
 }
 
-.item[hidden] {
+.item[hidden],
+.folder[hidden] {
   display: none;
 }
 
+
+// A library's part is read only in the projects that use it (CAD-151).
+.library-note {
+  position: absolute;
+  bottom: var(--space-3);
+  left: 50%;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-1);
+  color: var(--text-muted);
+  font-size: 12px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+/* Editing live with others (CAD-178). */
+.live {
+  position: absolute;
+  bottom: var(--space-3);
+  left: var(--space-3);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: calc(100% - 2 * var(--space-3));
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-1) 94%, transparent);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+}
+
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.live[data-status='live'] .live-dot {
+  background: #2f9e44;
+}
+
+.live[data-status='offline'] .live-dot {
+  background: #f08c00;
+}
+
+.live-status {
+  font-weight: 600;
+}
+
+.person {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 1px 8px 1px 2px;
+  border: 1px solid;
+  border-radius: 999px;
+}
+
+.initial {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.live-notice {
+  flex-basis: 100%;
+  color: var(--text-muted);
+}

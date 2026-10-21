@@ -115,14 +115,14 @@ describe('the MCP server', () => {
     expect(refused.result.isError).toBe(true);
     expect(refused.result.content[0]?.text).toMatch(/^Command 2 \(delete-item\) was refused/);
     expect(JSON.parse(text(await call('get_component', { document }))).timeline[1].name).toBe('Plate');
-    expect(await server.handle({ jsonrpc: '2.0', id: 99, method: 'resources/list' })).toMatchObject({ error: { code: -32601 } });
+    expect(await server.handle({ jsonrpc: '2.0', id: 99, method: 'sampling/createMessage' })).toMatchObject({ error: { code: -32601 } });
 
     // Documents can be renamed and deleted (CAD-108).
     expect(text(await call('rename_document', { document, name: 'Plate' }))).toBe('Renamed to Plate.');
     const project = (JSON.parse(text(await call('list_projects'))) as { id: string }[])[0]?.id as string;
     expect((JSON.parse(text(await call('list_documents', { project }))) as { name: string }[]).map((d) => d.name)).toEqual(['Plate']);
     const scrap = JSON.parse(text(await call('create_document', { project, kind: 'component', name: 'Scrap' }))) as { id: string };
-    expect(text(await call('delete_document', { document: scrap.id }))).toBe('Deleted Scrap.');
+    expect(text(await call('delete_document', { document: scrap.id }))).toBe('Moved Scrap to the trash (restore it with trash).');
     expect((JSON.parse(text(await call('list_documents', { project }))) as unknown[]).length).toBe(1);
   });
 
@@ -249,6 +249,11 @@ describe('everything the app does, for agents (CAD-124)', () => {
     expect(text(await call('versions', { action: 'name', project, name: 'v1' }))).toBe('Named v1.');
     await call('rename_document', { document: part, name: 'Renamed part' });
     expect((await json('versions', { action: 'list', project })) as unknown).toEqual(expect.arrayContaining([expect.objectContaining({ names: ['v1'] })]));
+    // Compared in words (CAD-175): renamed, and the same body.
+    const compared = (await json('versions', { action: 'compare', document: part, version: recorded.id })) as { changes: string[]; volume: Record<string, number> };
+    expect(compared.changes).toContainEqual(expect.stringMatching(/^Changed Name: .* → Renamed part$/));
+    expect(compared.volume).toMatchObject({ added: 0, removed: 0 });
+    expect(compared.volume['before']).toBeGreaterThan(0);
     expect(text(await call('versions', { action: 'restore', document: part, version: recorded.id }))).toBe(`Restored as of ${recorded.id}.`);
     expect((await core.projectManager.findDocument(part as never))?.name).not.toBe('Renamed part');
 
@@ -262,7 +267,7 @@ describe('everything the app does, for agents (CAD-124)', () => {
     expect(text(await call('sync_project', { project, url }))).toContain('(remote-unreachable)');
     expect(text(await call('open_git', { url }))).toContain('(remote-unreachable)');
 
-    expect(text(await call('delete_project', { project }))).toBe('Deleted Pipe bracket.');
+    expect(text(await call('delete_project', { project }))).toBe('Moved Pipe bracket to the trash (restore it with trash).');
     // The archive brought back in is left (the copy has a name of its own).
     expect((await core.projectManager.listProjects()).filter((p) => p.name === 'Pipe bracket')).toHaveLength(1);
   });
@@ -306,6 +311,11 @@ describe('everything the app does, for agents (CAD-124)', () => {
     const stl = (await json('import_file', { project: created.project.id, path: join(repository, 'e2e', 'fixtures', 'wedge.stl') })) as { id: string };
     expect(result(await call('render_picture', { document: stl.id, width: 120, height: 90 })).content[0]?.type).toBe('image');
     expect(result(await call('render_picture', { document: svg.id })).content[0]?.text).toContain('not a 3D file');
+    // A mesh kept simplified as well; a circuit board with its holes named for joints (CAD-169, CAD-170).
+    const simplified = (await json('import_file', { project: created.project.id, path: join(repository, 'e2e', 'fixtures', 'wedge.stl'), triangles: 4 })) as { simplified: { name: string; triangles: number } };
+    expect(simplified.simplified).toMatchObject({ name: 'wedge (simplified)', triangles: expect.any(Number) });
+    const board = (await json('import_file', { project: created.project.id, path: join(repository, 'e2e', 'fixtures', 'sensor-board.kicad_pcb') })) as { board: { mountingHoles: string[] } };
+    expect(board.board.mountingHoles).toEqual(['hole:H1', 'hole:H2', 'hole:H3', 'hole:H4']);
 
     // A section through the cube's middle shows less of it than the whole cube.
     const ink = async (args: Record<string, unknown>) => {
@@ -397,6 +407,19 @@ describe('drawings for agents (CAD-123)', () => {
     // Undone and redone, one command at a time.
     expect(await json('undo_drawing', { document: sheet.id })).toMatchObject({ removed: ['call'] });
     expect(await json('undo_drawing', { document: sheet.id, redo: true })).toMatchObject({ created: { annotations: ['call'] } });
+    // A fit on the hole, and a surface finish symbol on an edge by its handle (CAD-165).
+    const edge = ((await json('get_drawing', { document: sheet.id, view: 'top', kind: 'line' })) as typeof anchors).anchors[0];
+    const finished = await json('edit_drawing', {
+      document: sheet.id,
+      commands: [
+        { type: 'add-annotation', annotation: { kind: 'dimension', id: 'fit', type: 'diameter', anchors: [ref(circle)], offset: 14, angle: 225, tolerance: { kind: 'fit', fit: 'H7' } } },
+        { type: 'add-annotation', annotation: { kind: 'surface-finish', id: 'ra', at: [150, 245], edge: ref(edge), process: 'removal', roughness: 'Ra 1.6' } },
+      ],
+    });
+    expect(finished).toMatchObject({ created: { annotations: ['fit', 'ra'] } });
+    expect(finished).not.toHaveProperty('lost');
+    const listed = (await json('get_drawing', { document: sheet.id, only: ['annotations'] })) as { annotations: { id: string; edge?: { ref?: string } }[] };
+    expect(listed.annotations.find((a) => a.id === 'ra')?.edge?.ref).toBe(edge?.ref);
     expect(text(await call('command_reference', {}))).toContain('drawing');
   });
 });
@@ -667,17 +690,18 @@ describe('the built command line', () => {
     send({ id: 3, method: 'tools/call', params: { name: 'command_reference', arguments: { topic: 'commands' } } });
     send({ id: 4, method: 'tools/call', params: { name: 'command_reference', arguments: { topic: 'features' } } });
     send({ id: 5, method: 'tools/call', params: { name: 'command_reference', arguments: { topic: 'assembly' } } });
+    send({ id: 6, method: 'tools/call', params: { name: 'command_reference', arguments: { topic: 'parts' } } });
     child.stdin.end();
     const code = await new Promise<number | null>((resolve) => child.on('close', resolve));
     expect(code).toBe(0);
     // Answered side by side (CAD-134): in the order they finish, so by id here.
     responses.sort((a, b) => Number(a['id']) - Number(b['id']));
-    expect(responses.map((r) => r['id'])).toEqual([1, 2, 3, 4, 5]);
+    expect(responses.map((r) => r['id'])).toEqual([1, 2, 3, 4, 5, 6]);
     expect(text(responses[1])).toContain('"name": "Over stdio"');
     // The embedded reference holds the command, feature, part and assembly types, by topic, each short enough to read whole (CAD-111).
     expect(text(responses[2])).toContain("readonly type: 'add-feature'");
     expect(text(responses[3])).toContain('export interface ExtrudeFeature');
-    expect(text(responses[3])).toContain("readonly kind: 'ring-gear'");
+    expect(text(responses[5])).toContain("readonly kind: 'ring-gear'");
     expect(text(responses[4])).toContain('export type AssemblyCommand');
     expect(text(responses[4])).toContain('export interface Joint');
     for (const response of responses.slice(2)) expect(text(response).length).toBeLessThan(30_000);

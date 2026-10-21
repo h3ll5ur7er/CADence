@@ -22,11 +22,13 @@ The components in [[Architecture]] come from asking two questions. What will cha
 | 14 | **Execution placement** | Main thread, Web Worker, WASM, native Rust in Tauri. | Async engine interfaces + Messaging utility |
 | 15 | **Host file exchange** | Browser download vs native save dialog, file picker vs drag and drop vs OS "open with". | External File Access |
 | 16 | **Rendering technology** | WebGPU / WebGL, picking strategy, visual styles. | Viewport (client side), insulated by the mesh DTO contract |
+| 17 | **Where people meet** | Accounts and sign-in providers, where shared projects live, how live changes travel (a relay today, perhaps peer to peer later). | Server Access (and the CADence server behind it, [[Architecture/Server]]) |
+| 18 | **How versions combine** | Which parts of a document are items of their own, how they are compared and merged. | Revision Engine |
 
 ## Deliberately not encapsulated (yet)
 
-- **Users, authentication, permissions**: out of scope for now. A Security utility and a check in each manager can be added without restructuring.
-- **Real-time collaboration**: not planned. Documents are changed only through **commands**, which keeps an operation-based sync possible later.
+- **Users, authentication, permissions**: they live on the CADence server ([[Architecture/Decisions#ADR-61a]]); the app only holds sign-ins and asks the server. Local projects need none.
+- **Real-time collaboration**: built on the commands, as planned: the Design Manager's live session sends them through the server's relay ([[Architecture/Decisions#ADR-61a]]). Assemblies and drawings are shared through versions, not yet live.
 - **A second geometry kernel**: unlikely. The kernel is still hidden behind the engines and Shape Access, so no client or manager knows about OCCT.
 
 ## Checks on the decomposition

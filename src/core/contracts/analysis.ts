@@ -1,4 +1,5 @@
 import type { TopologyRef, Vec3 } from './feature';
+import type { SpringProperties } from './mechanics';
 import type { Vec2 } from './sketch';
 
 /**
@@ -29,6 +30,20 @@ export const materials: readonly Material[] = [
   { name: 'Aluminium', density: 2.7, youngsModulus: 69000, poisson: 0.33, yieldStrength: 240 },
   { name: 'Steel', density: 7.85, youngsModulus: 200000, poisson: 0.3, yieldStrength: 250 },
 ];
+
+/** What a body of a component is made of: its own material, else the component's, else the first (CAD-158). */
+export function bodyMaterial(component: { readonly material?: Material; readonly bodyMaterials?: Readonly<Record<string, Material>> }, body: string): Material {
+  return component.bodyMaterials?.[body] ?? component.material ?? (materials[0] as Material);
+}
+
+/**
+ * The names of the materials of the given bodies, each once, in order (for bills of materials);
+ * without bodies, the component's and then its bodies' own.
+ */
+export function materialNames(component: { readonly material?: Material; readonly bodyMaterials?: Readonly<Record<string, Material>> }, bodies?: readonly string[]): string {
+  const ids = bodies?.length ? bodies : ['', ...Object.keys(component.bodyMaterials ?? {})];
+  return [...new Set(ids.map((b) => bodyMaterial(component, b).name))].join(', ');
+}
 
 /** A load on a face: a force (N, spread over the face) along a direction, or a pressure (MPa) pushing on it. */
 export type SimulationLoad =
@@ -118,11 +133,15 @@ export interface Measurement {
 /** Mass properties of a body; mass in g from the component's material. */
 export interface BodyProperties {
   readonly body: string;
+  /** The name of the body's material, when the manager knows it (CAD-158). */
+  readonly material?: string;
   readonly volume: number;
   readonly area: number;
   readonly mass: number;
   readonly centerOfMass: Vec3;
   readonly box: { readonly min: Vec3; readonly max: Vec3 };
+  /** A spring part made as this body: its rate and lengths from the material (CAD-161). */
+  readonly spring?: SpringProperties;
 }
 
 export type CheckStatus = 'pass' | 'warning' | 'fail';

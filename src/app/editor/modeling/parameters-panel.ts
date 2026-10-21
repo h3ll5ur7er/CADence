@@ -4,16 +4,18 @@ import type { ConfigurationImport } from '@core/managers/design';
 import { newId } from '@core/utilities/identity';
 import { Icon } from '../../shared/icon';
 import { DesignStore } from '../sketch/design-store';
+import { HelpLink } from '../../shared/help';
 
 /** The component's parameters: names usable in every dimension and feature value. */
 @Component({
   selector: 'cad-parameters-panel',
-  imports: [Icon],
+  imports: [HelpLink, Icon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <p class="eyebrow">Component</p>
     <div class="head">
       <h2>Parameters</h2>
+      <cad-help topic="parameters" />
       <button type="button" class="icon-btn" aria-label="Close parameters" (click)="store.openPanel(undefined)">×</button>
     </div>
     <p class="hint">Use the names in any dimension or feature value, e.g. <code>wall * 2</code>. Units: mm, cm, in, deg.</p>
@@ -41,6 +43,24 @@ import { DesignStore } from '../sketch/design-store';
         </tr>
       </tbody>
     </table>
+    @if (measured().length) {
+      <h3 class="eyebrow">Measured in sketches</h3>
+      <p class="hint">Named reference dimensions: parameters and features after their sketch can use them.</p>
+      <table aria-label="Measured in sketches">
+        <thead>
+          <tr><th>Name</th><th>Sketch</th><th>Value</th></tr>
+        </thead>
+        <tbody>
+          @for (row of measured(); track row.parameter.id) {
+            <tr>
+              <td class="mono">{{ row.parameter.name }}</td>
+              <td>{{ row.measured }}</td>
+              <td class="mono value">{{ row.display ?? '—' }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    }
     <h3 class="eyebrow">Project parameters</h3>
     <p class="hint">Shared by every component of the project. A component parameter of the same name wins.</p>
     <table aria-label="Project parameters">
@@ -162,7 +182,9 @@ import { DesignStore } from '../sketch/design-store';
 })
 export class ParametersPanel {
   protected readonly store = inject(DesignStore);
-  protected readonly rows = computed(() => (this.store.state()?.parameters ?? []).filter((p) => !p.project));
+  protected readonly rows = computed(() => (this.store.state()?.parameters ?? []).filter((p) => !p.project && !p.measured));
+  /** Named reference dimensions, read only (ADR-54). */
+  protected readonly measured = computed(() => (this.store.state()?.parameters ?? []).filter((p) => p.measured));
   /** The project's parameters with their values here (none where the component has its own of that name). */
   protected readonly projectRows = computed(() => {
     const shown = new Map((this.store.state()?.parameters ?? []).filter((p) => p.project).map((p) => [p.parameter.id, p.display]));

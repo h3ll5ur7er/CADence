@@ -1,6 +1,7 @@
-import { type DrawingAnnotation, type DrawingDocument, type DrawingView, sheetSizes, type Vec2, type Vec3, type ViewAnchor, type ViewDirection } from '@core/contracts';
+import { type DrawingAnnotation, type DrawingDocument, type DrawingView, sectionPieces, sheetSizes, type Tolerance, type Vec2, type Vec3, type ViewAnchor, type ViewDirection } from '@core/contracts';
 import type { ProjectedCurve, ViewGeometry } from '@core/engines/modeling';
 import type { LineStyle, SheetAnchor, SheetLayout } from './drawing-manager';
+import { fitOf } from './fits';
 
 /** A parts list: rows, and the item number of each instance. */
 export interface PartsList {
@@ -18,6 +19,8 @@ export interface LayoutInput {
   readonly parts: ReadonlyMap<string, PartsList>;
   /** The drawn component's material, which the title block shows when it names none (CAD-127). */
   readonly material?: string;
+  /** Views drawn from the triangles whose exact projection goes on in the background (CAD-168). */
+  readonly finishing?: ReadonlySet<string>;
 }
 
 /** A view's right and up: the viewer is on the side of right × up (third-angle names). */
@@ -146,6 +149,7 @@ export function layoutSheet(input: LayoutInput): SheetLayout {
     const toSheet = (p: Vec2): Vec2 => add(view.at, mul(sub(p, center), scale));
     placements.set(view.id, { toSheet, scale });
     for (const points of joined(geometry.visible)) line(points.map(toSheet), 'visible', view.id);
+    for (const points of joined(geometry.thin ?? [])) line(points.map(toSheet), 'thin', view.id);
     if (view.hidden) for (const points of joined(geometry.hidden)) line(points.map(toSheet), 'hidden', view.id);
     for (const [a, b] of hatch(geometry.cut.map(([a, b]) => [toSheet(a), toSheet(b)] as const), 3)) line([a, b], 'hatch', view.id);
     for (const p of geometry.points) anchors.push({ view: view.id, kind: 'point', name: p.name, at: toSheet(p.at), ...extra(p) });
@@ -153,7 +157,18 @@ export function layoutSheet(input: LayoutInput): SheetLayout {
     for (const l of geometry.lines) anchors.push({ view: view.id, kind: 'line', name: l.name, at: toSheet(mid(l.start, l.end)), start: toSheet(l.start), end: toSheet(l.end), ...extra(l) });
     for (const body of geometry.bodies) instances.push({ view: view.id, instance: body.id.split('#')[0] as string, at: toSheet(body.at) });
     const [min, max] = [toSheet(geometry.box.min), toSheet(geometry.box.max)];
-    views.push({ id: view.id, min, max, center, scale, ...(geometry.approximate ? { note: 'Drawn from the triangles: the exact projection took too long.' } : {}) });
+    // A half section's two halves meet at a centre line through the model's middle (CAD-164).
+    if (view.section?.half && geometry.cutAt) {
+      const { u, v } = viewAxes[view.direction];
+      const n = towardsViewer(view.direction);
+      const middle = geometry.cutAt.map((c, i) => c - (n[i] as number) * (view.section?.offset ?? 0)) as unknown as Vec3;
+      const at = toSheet([dot(middle, u), dot(middle, v)]);
+      if (view.section.along === 'v') line([[min[0] - 3, at[1]], [max[0] + 3, at[1]]], 'center', view.id);
+      else line([[at[0], min[1] - 3], [at[0], max[1] + 3]], 'center', view.id);
+    }
+    const note = input.finishing?.has(view.id) ? 'Drawn from the triangles for now: the exact projection takes long and is still being drawn.' : 'Drawn from the triangles: the exact projection took too long.';
+    views.push({ id: view.id, min, max, center, scale, ...(geometry.approximate ? { note } : {}) });
+
     if (view.label) text([view.at[0], min[1] - 7], view.label, 4, 'center', view.id);
   }
 
@@ -169,7 +184,7 @@ export function layoutSheet(input: LayoutInput): SheetLayout {
     }
     const scale = scaleOf(view);
     const toSheet = (p: Vec2): Vec2 => add(view.at, mul(sub(p, detail.center), scale));
-    const curves = [...geometry.visible.map((c) => ['visible', c] as const), ...(parent.hidden ? geometry.hidden.map((c) => ['hidden', c] as const) : [])];
+    const curves = [...geometry.visible.map((c) => ['visible', c] as const), ...(geometry.thin ?? []).map((c) => ['thin', c] as const), ...(parent.hidden ? geometry.hidden.map((c) => ['hidden', c] as const) : [])];
     for (const [style, curve] of curves) {
       const points = pointsOf(curve);
       for (let i = 1; i < points.length; i++) {
@@ -195,10 +210,11 @@ export function layoutSheet(input: LayoutInput): SheetLayout {
 
   const anchorOf = (ref: ViewAnchor) => anchors.find((a) => a.view === ref.view && a.kind === ref.kind && a.name === ref.name);
   const scaleOfView = (id: string) => placements.get(id)?.scale ?? 1;
+  const directionOf = (id: string) => document.views.find((v) => v.id === id)?.direction;
   // Where texts may go: inside the frame, off the title block.
   const free = (p: Vec2) => p[0] >= margin && p[0] <= width - margin && p[1] >= margin && p[1] <= height - margin && !(p[0] >= width - margin - 180 && p[1] <= margin + 30);
   for (const annotation of document.annotations) {
-    const drawn = annotate(annotation, { anchorOf, scaleOfView, free, line, text, arrows, instances, callouts: input.callouts, parts: input.parts });
+    const drawn = annotate(annotation, { anchorOf, scaleOfView, directionOf, free, line, text, arrows, instances, callouts: input.callouts, parts: input.parts });
     if (!drawn) lost.push(annotation.id);
   }
   return { width, height, paths, texts, arrows, anchors, views, instances, lost };
@@ -207,7 +223,9 @@ export function layoutSheet(input: LayoutInput): SheetLayout {
 /**
  * Marks each section's cutting plane on a view it is taken from (CAD-127): a view of the same
  * source that sees the plane edge on. A chain line across that view, thick at its ends, with arrows
- * the way the section looks and its letter ("Section A-A": A) beside them.
+ * the way the section looks and its letter ("Section A-A": A) beside them. An offset section's line
+ * steps where its cut does, thick at each turn; a half section's runs from the middle outwards
+ * (CAD-164), where that view sees the steps.
  */
 function sectionLines(
   document: DrawingDocument,
@@ -229,17 +247,31 @@ function sectionLines(
     const placed = from && views.find((v) => v.id === from.id);
     if (!from || !placed) continue;
     const { u, v } = viewAxes[from.direction];
-    const { toSheet } = placements.get(from.id) as { toSheet: (p: Vec2) => Vec2 };
+    const { toSheet, scale } = placements.get(from.id) as { toSheet: (p: Vec2) => Vec2; scale: number };
     // The plane's normal seen in that view, and the plane's trace across it.
     const across = unit([dot(normal, u), dot(normal, v)]);
-    const along: Vec2 = [-across[1], across[0]];
+    const cut = section.section;
+    const steps = viewAxes[section.direction][cut.along === 'v' ? 'v' : 'u'];
+    // Where that view sees the steps, the line runs along them; else straight across.
+    const stepping = Math.abs(dot(towardsViewer(from.direction), steps)) < 1e-9;
+    const along: Vec2 = stepping ? unit([dot(steps, u), dot(steps, v)]) : [-across[1], across[0]];
     const at = toSheet([dot(cutAt, u), dot(cutAt, v)]);
     const corners: Vec2[] = [placed.min, placed.max, [placed.min[0], placed.max[1]], [placed.max[0], placed.min[1]]];
     const reach = Math.max(...corners.map((c) => Math.abs((c[0] - at[0]) * along[0] + (c[1] - at[1]) * along[1]))) + 4;
-    const ends = [add(at, mul(along, -reach)), add(at, mul(along, reach))] as const;
-    line([ends[0], ends[1]], 'center', section.id);
+    // The line's corners: each piece of the cut at its depth, from the first offset's plane.
+    const pieces = stepping ? sectionPieces(cut) : [{ from: -Infinity, to: Infinity, offset: cut.offset }];
+    const point = (s: number, offset: number) => add(at, add(mul(along, Math.max(-reach, Math.min(reach, s * scale))), mul(across, (offset - cut.offset) * scale)));
+    const path = pieces.flatMap((piece) => [point(piece.from, piece.offset), point(piece.to, piece.offset)]);
+    line(path, 'center', section.id);
+    // Thick where it turns.
+    for (let i = 1; i < path.length - 1; i++) {
+      const corner = path[i] as Vec2;
+      for (const other of [path[i - 1], path[i + 1]] as Vec2[]) if (length(sub(other, corner)) > 1e-6) line([corner, add(corner, mul(unit(sub(other, corner)), 3))], 'visible', section.id);
+    }
+    const ends = (cut.half && stepping ? [path.at(-1)] : [path[0], path.at(-1)]) as Vec2[];
     const letter = /^section\s+([^\s-]+)/i.exec(section.label ?? '')?.[1];
-    ends.forEach((end, i) => {
+    ends.forEach((end, k) => {
+      const i = cut.half && stepping ? 1 : k;
       const outwards = mul(along, i ? 1 : -1);
       line([end, sub(end, mul(outwards, 6))], 'visible', section.id);
       // The arrow points the way the section looks: away from the viewer.
@@ -254,6 +286,8 @@ function sectionLines(
 interface Tools {
   readonly anchorOf: (ref: ViewAnchor) => SheetAnchor | undefined;
   readonly scaleOfView: (view: string) => number;
+  /** Where a view looks from: lengths on isometric views are measured in the model (CAD-165). */
+  readonly directionOf: (view: string) => ViewDirection | undefined;
   /** Whether a sheet point is free for text: inside the frame, off the title block. */
   readonly free: (p: Vec2) => boolean;
   readonly line: (points: readonly Vec2[], style: LineStyle, owner?: string, closed?: boolean) => void;
@@ -282,14 +316,15 @@ function annotate(a: DrawingAnnotation, t: Tools): boolean {
       if (a.type === 'radius' || a.type === 'diameter') {
         const circle = p as SheetAnchor;
         const r = circle.radius ?? 0;
-        const value = label(a.type === 'radius' ? `R${formatValue(r / scale)}` : `⌀${formatValue((2 * r) / scale)}`);
+        const nominal = a.type === 'radius' ? r / scale : (2 * r) / scale;
+        const value = valueOf(a, label(a.type === 'radius' ? `R${formatValue(nominal)}` : `⌀${formatValue(nominal)}`), nominal);
         const reach = Math.max(6, a.offset);
         // The leader leaves the circle at the angle asked for, else at the first of four that keeps its text on the sheet (CAD-127).
         const leader = (degrees: number) => {
           const dir: Vec2 = [Math.cos((degrees * Math.PI) / 180), Math.sin((degrees * Math.PI) / 180)];
           const elbow = add(circle.at, mul(dir, r + reach));
           const side = dir[0] < -1e-9 ? -1 : 1;
-          const shelf = Math.max(6, value.length * textSize * 0.62 + 2);
+          const shelf = Math.max(6, widthOf(value) + 2);
           return { dir, elbow, side, shelf };
         };
         const fits = ({ elbow, side, shelf }: ReturnType<typeof leader>) => [elbow, add(elbow, [side * shelf, 0]), add(elbow, [side * shelf, textSize + 1.5]), add(elbow, [0, textSize + 1.5])].every(t.free);
@@ -298,7 +333,7 @@ function annotate(a: DrawingAnnotation, t: Tools): boolean {
         line([a.type === 'radius' ? to : add(circle.at, mul(dir, -r)), elbow, add(elbow, [side * shelf, 0])], 'thin', a.id);
         if (a.type === 'diameter') arrow(add(circle.at, mul(dir, -r)), mul(dir, -1));
         arrow(to, a.type === 'radius' ? mul(dir, -1) : dir);
-        text(add(elbow, [side, 1.2]), value, textSize, side > 0 ? 'left' : 'right', a.id);
+        writeValue(t, value, add(elbow, [side, 1.2]), side > 0 ? 'left' : 'right', a.id);
         return true;
       }
       if (a.type === 'angle') {
@@ -324,9 +359,11 @@ function annotate(a: DrawingAnnotation, t: Tools): boolean {
         arrow(arc[0] as Vec2, [Math.sin(start) * Math.sign(turn), -Math.cos(start) * Math.sign(turn)]);
         arrow(arc[24] as Vec2, [-Math.sin(end) * Math.sign(turn), Math.cos(end) * Math.sign(turn)]);
         const middle = start + turn / 2;
-        text(add(corner, mul([Math.cos(middle), Math.sin(middle)], radius + 4)), label(`${formatValue((angle * 180) / Math.PI)}°`), textSize, 'center', a.id);
+        const degrees = (angle * 180) / Math.PI;
+        writeValue(t, valueOf(a, label(`${formatValue(degrees)}°`), degrees), add(corner, mul([Math.cos(middle), Math.sin(middle)], radius + 4)), 'center', a.id);
         return true;
       }
+      if (a.axis) return alongAxis(a, p as SheetAnchor, q as SheetAnchor, scale, t);
       const [from, to] = [pointOf(p as SheetAnchor), pointOf(q as SheetAnchor)];
       // Where the dimension line runs, and the direction it measures along.
       let [q1, q2]: [Vec2, Vec2] = [from, to];
@@ -344,6 +381,8 @@ function annotate(a: DrawingAnnotation, t: Tools): boolean {
         const normal: Vec2 = [-d[1], d[0]];
         [q1, q2] = [add(from, mul(normal, a.offset)), add(to, mul(normal, a.offset))];
         value = length(sub(to, from));
+        // On an isometric view the length on the sheet is not the length in the model: the model's (CAD-165).
+        if (t.directionOf(a.anchors[0]?.view ?? '') === 'iso' && p?.model && q?.model) value = Math.hypot(p.model[0] - q.model[0], p.model[1] - q.model[1], p.model[2] - q.model[2]) * scale;
       }
       // Extension lines from the geometry (a small gap) past the dimension line.
       for (const [base, end] of [[from, q1], [to, q2]] as const) {
@@ -355,9 +394,11 @@ function annotate(a: DrawingAnnotation, t: Tools): boolean {
       arrow(q2, sub(q2, q1));
       const along = unit(sub(q2, q1));
       const side: Vec2 = a.type === 'vertical' ? [-2, 0] : [-along[1] * 1.5, Math.abs(along[0]) * 1.5];
-      text(add(mid(q1, q2), side), label(formatValue(value / scale)), textSize, a.type === 'vertical' ? 'right' : 'center', a.id);
+      writeValue(t, valueOf(a, label(formatValue(value / scale)), value / scale), add(mid(q1, q2), side), a.type === 'vertical' ? 'right' : 'center', a.id);
       return true;
     }
+    case 'surface-finish':
+      return surfaceFinish(a, t);
     case 'note': {
       const lines = a.text.split('\n');
       lines.forEach((value, i) => text([a.at[0], a.at[1] - i * 5], value, textSize, 'left', a.id));
@@ -452,9 +493,144 @@ function diameterBetween(a: Extract<DrawingAnnotation, { kind: 'dimension' }>, p
   for (const [base, tip] of [[end, q1], [foot, q2]] as const) if (length(sub(tip, base)) > 1) t.line([add(base, mul(unit(sub(tip, base)), 1)), add(tip, mul(unit(sub(tip, base)), 2))], 'thin', a.id);
   t.line([q1, q2], 'thin', a.id);
   t.arrows.push({ tip: q1, direction: unit(sub(q1, q2)), owner: a.id }, { tip: q2, direction: unit(sub(q2, q1)), owner: a.id });
-  t.text(add(mid(q1, q2), mul(along, 2)), a.text ?? `⌀${formatValue(Math.abs(gap) / scale)}`, textSize, 'center', a.id);
+  const nominal = Math.abs(gap) / scale;
+  writeValue(t, valueOf(a, a.text ?? `⌀${formatValue(nominal)}`, nominal), add(mid(q1, q2), mul(along, 2)), 'center', a.id);
   return true;
 }
+
+type Dimension = Extract<DrawingAnnotation, { kind: 'dimension' }>;
+
+/** A dimension's text: its value with the tolerance inline (±, a fit), or stacked deviations after it, or the limits of size stacked in its place (CAD-165). */
+type ValueText = { readonly inline: string } | { readonly main: string; readonly upper: string; readonly lower: string; readonly size: number };
+
+/** A deviation with its sign (none on zero), to a thousandth of a millimetre. */
+const deviation = (v: number, signed = true) => (Math.abs(v) < 5e-7 ? '0' : `${signed ? (v > 0 ? '+' : '-') : ''}${String(Math.round(Math.abs(v) * 1000) / 1000)}`);
+
+function valueOf(a: Dimension, main: string, nominal: number): ValueText {
+  const tolerance: Tolerance | undefined = a.tolerance;
+  if (!tolerance) return { inline: main };
+  switch (tolerance.kind) {
+    case 'symmetric':
+      return { inline: `${main} ±${deviation(tolerance.value, false)}` };
+    case 'fit': {
+      const fit = fitOf(tolerance.fit, nominal);
+      if ('error' in fit) return { inline: `${main} ${tolerance.fit}` };
+      const values = tolerance.deviations ? ` (${fit.deviations.map((d) => `${deviation(d.upper)}/${deviation(d.lower)}`).join(', ')})` : '';
+      return { inline: `${main} ${fit.text}${values}` };
+    }
+    case 'deviations':
+      return { main, upper: deviation(tolerance.upper), lower: deviation(tolerance.lower), size: textSize * 0.7 };
+    case 'limits': {
+      // The largest and smallest size, with the value's sign (⌀, R) before each.
+      const sign = /^[⌀R]/.exec(main)?.[0] ?? '';
+      const size = (v: number) => `${sign}${String(Math.round(v * 1000) / 1000)}`;
+      return { main: '', upper: size(nominal + tolerance.upper), lower: size(nominal + tolerance.lower), size: textSize * 0.8 };
+    }
+  }
+}
+
+/** About how wide a text is on the sheet (Helvetica averages 0.6 of its size). */
+const textWidth = (value: string, size: number) => value.length * size * 0.62;
+
+function widthOf(value: ValueText): number {
+  if ('inline' in value) return textWidth(value.inline, textSize);
+  const stack = Math.max(textWidth(value.upper, value.size), textWidth(value.lower, value.size));
+  return value.main ? textWidth(value.main, textSize) + 1 + stack : stack;
+}
+
+/** Writes a dimension's text with its baseline at `at`, aligned as a single text would be. */
+function writeValue(t: Tools, value: ValueText, at: Vec2, align: Text['align'], owner: string): void {
+  if ('inline' in value) return t.text(at, value.inline, textSize, align, owner);
+  const total = widthOf(value);
+  const left = align === 'left' ? at[0] : align === 'right' ? at[0] - total : at[0] - total / 2;
+  if (value.main) t.text([left, at[1]], value.main, textSize, 'left', owner);
+  const x = value.main ? left + textWidth(value.main, textSize) + 1 : left;
+  t.text([x, at[1] + value.size * 0.85], value.upper, value.size, 'left', owner);
+  t.text([x, at[1] - value.size * 0.45], value.lower, value.size, 'left', owner);
+}
+
+const modelAxes: Readonly<Record<'x' | 'y' | 'z', Vec3>> = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] };
+
+/**
+ * A length along a model axis (CAD-165): its line runs along the axis as the view shows it (on an
+ * isometric view, one of the isometric axes), its extension lines along the other axis that the view
+ * shows most across it; the value is the distance along the axis in the model.
+ */
+function alongAxis(a: Dimension, p: SheetAnchor, q: SheetAnchor, scale: number, t: Tools): boolean {
+  const direction = t.directionOf(a.anchors[0]?.view ?? '');
+  if (!direction || !a.axis) return false;
+  const { u, v } = viewAxes[direction];
+  const seen = (axis: Vec3): Vec2 => [dot(axis, u), dot(axis, v)];
+  const along = seen(modelAxes[a.axis]);
+  // An axis seen end on has no length to show.
+  if (length(along) < 1e-6) return false;
+  const others = (['x', 'y', 'z'] as const).filter((k) => k !== a.axis).map((k) => seen(modelAxes[k]));
+  const cross = (m: Vec2, n: Vec2) => m[0] * n[1] - m[1] * n[0];
+  const out = unit(others.reduce((best, o) => (Math.abs(cross(unit(along), o)) > Math.abs(cross(unit(along), best)) ? o : best)));
+  const d = unit(along);
+  // From p to q as so much along the axis and so much along the extension lines.
+  const delta = sub(q.at, p.at);
+  const det = cross(d, out);
+  if (Math.abs(det) < 1e-9) return false;
+  const [alpha, beta] = [cross(delta, out) / det, cross(d, delta) / det];
+  const s1 = a.offset >= 0 ? a.offset + Math.max(0, beta) : a.offset + Math.min(0, beta);
+  const [q1, q2] = [add(p.at, mul(out, s1)), add(q.at, mul(out, s1 - beta))];
+  for (const [base, end] of [[p.at, q1], [q.at, q2]] as const) {
+    const ext = sub(end, base);
+    if (length(ext) > 1) t.line([add(base, mul(unit(ext), 1)), add(end, mul(unit(ext), 2))], 'thin', a.id);
+  }
+  t.line([q1, q2], 'thin', a.id);
+  t.arrows.push({ tip: q1, direction: unit(sub(q1, q2)), owner: a.id }, { tip: q2, direction: unit(sub(q2, q1)), owner: a.id });
+  const axis = modelAxes[a.axis];
+  const value = p.model && q.model ? Math.abs(dot(sub3(q.model, p.model), axis)) : Math.abs(alpha) / (scale * length(along));
+  const side = mul(out, s1 >= 0 ? 2.5 : -2.5);
+  writeValue(t, valueOf(a, a.text ?? formatValue(value), value), add(add(mid(q1, q2), side), [0, -1.2]), 'center', a.id);
+  return true;
+}
+
+const sub3 = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+
+/**
+ * A surface finish symbol (ISO 1302, CAD-165): a tick of two legs at 60° to the surface, the short
+ * one 1.4 text heights high, the long one three, standing on its edge (at the point nearest `at`, on
+ * `at`'s side) or at `at`, with a leader to `leader`. A bar closes it where material is removed, a
+ * circle sits in it where none may be; the roughness goes under a bar on the long leg, the method
+ * above it.
+ */
+function surfaceFinish(a: Extract<DrawingAnnotation, { kind: 'surface-finish' }>, t: Tools): boolean {
+  let [tip, up]: [Vec2, Vec2] = [a.at, [0, 1]];
+  if (a.edge) {
+    const edge = t.anchorOf(a.edge);
+    if (!edge?.start || !edge.end) return false;
+    const along = sub(edge.end, edge.start);
+    const share = Math.max(0, Math.min(1, ((a.at[0] - edge.start[0]) * along[0] + (a.at[1] - edge.start[1]) * along[1]) / (length(along) ** 2 || 1)));
+    tip = add(edge.start, mul(along, share));
+    const normal = unit([-along[1], along[0]]);
+    up = (a.at[0] - tip[0]) * normal[0] + (a.at[1] - tip[1]) * normal[1] < 0 ? mul(normal, -1) : normal;
+  }
+  const right: Vec2 = [up[1], -up[0]];
+  const at = (x: number, y: number) => add(tip, add(mul(right, x), mul(up, y)));
+  const [short, tall] = [1.4 * textSize, 3 * textSize];
+  const slope = Math.tan(Math.PI / 3);
+  const words = [a.roughness, a.method].filter((w): w is string => !!w);
+  const bar = words.length ? Math.max(8, ...words.map((w) => textWidth(w, textSize) + 2)) : 0;
+  t.line([at(-short / slope, short), at(0, 0), at(tall / slope, tall), ...(bar ? [at(tall / slope + bar, tall)] : [])], 'thin', a.id);
+  if (a.process === 'removal') t.line([at(-short / slope, short), at(short / slope, short)], 'thin', a.id);
+  if (a.process === 'no-removal') {
+    // A circle touching both legs: its centre 2r up, so r = height / 3 keeps it under the short leg's top.
+    const r = short / 3;
+    t.line(Array.from({ length: 33 }, (_, k) => at(r * Math.cos((k * Math.PI) / 16), 2 * r + r * Math.sin((k * Math.PI) / 16))), 'thin', a.id);
+  }
+  const x = tall / slope + 1;
+  if (a.roughness) t.text(at(x, tall - textSize - 0.6), a.roughness, textSize, 'left', a.id);
+  if (a.method) t.text(at(x, tall + 1), a.method, textSize, 'left', a.id);
+  if (a.leader && !a.edge) {
+    t.line([tip, a.leader], 'thin', a.id);
+    t.arrows.push({ tip: a.leader, direction: unit(sub(a.leader, tip)), owner: a.id });
+  }
+  return true;
+}
+
 
 /** The title block: 180 × 30 mm in the frame's bottom right corner. */
 function frameTitle(document: DrawingDocument, width: number, line: Tools['line'], text: Tools['text'], material = ''): void {

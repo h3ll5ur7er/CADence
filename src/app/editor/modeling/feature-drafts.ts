@@ -16,7 +16,7 @@ import type { DesignState } from '@core/managers/design';
 import type { Pick, PickKind } from '../../viewport/picking';
 
 /** Which kind of pick the dialog is waiting for, beyond its main selection. */
-export type PickTarget = 'axis' | 'plane' | 'second';
+export type PickTarget = 'axis' | 'plane' | 'second' | 'face';
 
 /** A feature being created or edited in the dialog. */
 export interface FeatureDraft {
@@ -26,6 +26,7 @@ export interface FeatureDraft {
 }
 
 export const featureLabels: Readonly<Record<FeatureType, string>> = {
+  plugin: 'Plugin feature',
   insert: 'Insert body',
   extrude: 'Extrude',
   revolve: 'Revolve',
@@ -42,14 +43,18 @@ export const featureLabels: Readonly<Record<FeatureType, string>> = {
   scale: 'Scale bodies',
   loft: 'Loft',
   sweep: 'Sweep',
+  helix: 'Helix',
   'path-pattern': 'Pattern along a path',
   hole: 'Hole',
   part: 'Part',
   thread: 'Thread',
   draft: 'Draft',
   rib: 'Rib',
+  wrap: 'Wrap',
   'base-flange': 'Base flange',
   'edge-flange': 'Edge flange',
+  hem: 'Hem',
+  'miter-flange': 'Miter flange',
 };
 
 /** Points of a sketch that no curve uses: where holes go. */
@@ -103,6 +108,9 @@ export function defaultFeature(type: FeatureType, id: string, state: DesignState
   const bodyIds = state.bodies.map((b) => b.body);
   const tools = lastTool ? [lastTool.id] : [];
   switch (type) {
+    // Plugin features are added from the Scripts panel, which knows the plugin (CAD-174).
+    case 'plugin':
+      return { ...base, type, plugin: '', version: '', feature: '', plane: 'XY', parameters: {}, operation };
     case 'insert':
       return { ...base, type, document: importedModels[0] ?? '' };
     case 'extrude':
@@ -139,10 +147,13 @@ export function defaultFeature(type: FeatureType, id: string, state: DesignState
       return { ...base, type, sections, ruled: false, operation };
     }
     case 'sweep': {
-      // The profiles of the latest sketch with profiles, along the curves of the latest other sketch.
-      const path = active.filter(isSketch).filter((s) => s.id !== sketch?.id).at(-1);
+      // The profiles of the latest sketch with profiles, along the latest helix or else the curves of the latest other sketch.
+      const helix = active.filter((i) => !isSketch(i) && i.type === 'helix').at(-1);
+      const path = helix ?? active.filter(isSketch).filter((s) => s.id !== sketch?.id).at(-1);
       return { ...base, type, sketch: sketch?.id ?? '', profiles, path: path?.id ?? '', operation };
     }
+    case 'helix':
+      return { ...base, type, plane: 'XY', diameter: '20', pitch: '5', extent: 'turns', turns: '5', height: '25', taper: '0 deg', leftHanded: false };
     case 'path-pattern': {
       const path = active.filter(isSketch).at(-1);
       return { ...base, type, features: tools, path: path?.id ?? '', count: '4', align: false };
@@ -182,10 +193,20 @@ export function defaultFeature(type: FeatureType, id: string, state: DesignState
       return { ...base, type, sketch: sketch?.id ?? '', profiles, direction: 'normal', thickness: '2 mm', bendRadius: '2 mm', kFactor: '0.44' };
     case 'edge-flange':
       return { ...base, type, edges: [], length: '20', angle: '90 deg' };
+    case 'hem':
+      return { ...base, type, edges: [], style: 'open', gap: '1 mm', length: '8' };
+    case 'miter-flange': {
+      // The profile: the latest sketch without profiles of its own (open lines).
+      const open = active.filter(isSketch).filter((s) => (state.sketches.get(s.id)?.profiles.length ?? 0) === 0).at(-1);
+      return { ...base, type, edges: [], sketch: open?.id ?? '' };
+    }
     case 'rib': {
       const ribSketch = active.filter(isSketch).at(-1);
       return { ...base, type, sketch: ribSketch?.id ?? '', thickness: '2', depth: '10', direction: 'normal' };
     }
+    case 'wrap':
+      // The latest sketch's profiles, onto a face picked next.
+      return { ...base, type, sketch: sketch?.id ?? '', profiles, face: { kind: 'face', body: '', name: '' }, method: 'wrap', depth: '0.5', operation: 'emboss' };
   }
 }
 
@@ -203,7 +224,7 @@ export function pickableFor(draft: FeatureDraft | undefined): ReadonlySet<PickKi
   if (!draft) return new Set<PickKind>(['face']);
   const f = draft.feature;
   if (draft.target === 'axis') return new Set<PickKind>(['edge']);
-  if (draft.target === 'plane' || draft.target === 'second') return new Set<PickKind>(['face']);
+  if (draft.target === 'plane' || draft.target === 'second' || draft.target === 'face') return new Set<PickKind>(['face']);
   if (f.type === 'plane' && f.mode === 'points') return new Set<PickKind>(['vertex']);
   switch (f.type) {
     case 'extrude':
@@ -211,8 +232,11 @@ export function pickableFor(draft: FeatureDraft | undefined): ReadonlySet<PickKi
     case 'loft':
     case 'sweep':
     case 'base-flange':
+    case 'wrap':
       return new Set<PickKind>(['profile']);
     case 'edge-flange':
+    case 'hem':
+    case 'miter-flange':
       return new Set<PickKind>(['edge']);
     case 'fillet':
     case 'chamfer':
@@ -255,12 +279,15 @@ export function selectionOf(draft: FeatureDraft): Pick[] {
     case 'circular-pattern':
       return f.axis.kind === 'edge' ? [pickOf(f.axis.edge)] : [];
     case 'split':
+    case 'helix':
       return planeFace(f.plane);
     case 'move':
       return f.axis.kind === 'edge' ? [pickOf(f.axis.edge)] : [];
     case 'base-flange':
       return f.profiles.map((profile): Pick => ({ kind: 'profile', sketch: f.sketch, profile }));
     case 'edge-flange':
+    case 'hem':
+    case 'miter-flange':
       return f.edges.map(pickOf);
     case 'loft':
       return f.sections.map((s): Pick => ({ kind: 'profile', sketch: s.sketch, profile: s.profile }));
@@ -272,12 +299,15 @@ export function selectionOf(draft: FeatureDraft): Pick[] {
       return [...f.faces.map(pickOf), ...planeFace(f.plane)];
     case 'rib':
       return [];
+    case 'wrap':
+      return [...f.profiles.map((profile): Pick => ({ kind: 'profile', sketch: f.sketch, profile })), ...(f.face.name ? [pickOf(f.face)] : [])];
     case 'insert':
     case 'combine':
     case 'scale':
     case 'path-pattern':
     case 'hole':
     case 'part':
+    case 'plugin':
       return [];
   }
 }
@@ -296,11 +326,13 @@ export function applyPick(draft: FeatureDraft, pick: Pick): FeatureDraft {
   if (draft.target === 'second' && pick.kind === 'face' && pick.planar && f.type === 'plane' && f.mode === 'midplane') {
     return { mode: draft.mode, feature: { ...f, second: { face: refOf(pick) } } };
   }
+  if (draft.target === 'face' && pick.kind === 'face' && f.type === 'wrap') return { mode: draft.mode, feature: { ...f, face: refOf(pick) } };
   if (draft.target === 'plane' && pick.kind === 'face' && pick.planar) {
     const face = { face: refOf(pick) };
     if (f.type === 'plane' && f.mode !== 'points') return { mode: draft.mode, feature: { ...f, base: face } };
     if (f.type === 'mirror') return { mode: draft.mode, feature: { ...f, plane: face } };
     if (f.type === 'split') return { mode: draft.mode, feature: { ...f, plane: face } };
+    if (f.type === 'helix') return { mode: draft.mode, feature: { ...f, plane: face } };
     if (f.type === 'draft') return { mode: draft.mode, feature: { ...f, plane: face } };
   }
   switch (f.type) {
@@ -311,8 +343,11 @@ export function applyPick(draft: FeatureDraft, pick: Pick): FeatureDraft {
       return { ...draft, feature: { ...f, sketch: pick.sketch, profiles } };
     }
     case 'edge-flange':
+    case 'hem':
+    case 'miter-flange':
       return pick.kind === 'edge' ? { ...draft, feature: { ...f, edges: toggle(f.edges, refOf(pick), sameRef) } } : draft;
     case 'base-flange':
+    case 'wrap':
     case 'sweep': {
       if (pick.kind !== 'profile') return draft;
       const profiles = pick.sketch === f.sketch ? toggle(f.profiles, pick.profile, (a, b) => a === b) : [pick.profile];

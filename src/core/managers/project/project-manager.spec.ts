@@ -2,8 +2,9 @@ import { InMemoryAssetAccess } from '@core/access/asset';
 import { InMemoryDocumentAccess } from '@core/access/document';
 import { InMemoryExternalFileAccess } from '@core/access/external-file';
 import { InMemoryProjectAccess } from '@core/access/project';
-import { asDocumentId, asProjectId, type DomainEvents, type ImportedDocument, type Result } from '@core/contracts';
+import { asDocumentId, asProjectId, type ComponentDocument, describeChange, type DomainEvents, type ImportedDocument, type Result } from '@core/contracts';
 import { createInterchangeEngine } from '@core/engines/interchange';
+import { scan, writeStl } from '@core/engines/interchange/testing';
 import { steppingClock } from '@core/utilities/clock';
 import { EventBus } from '@core/utilities/messaging';
 import { GitVersionAccess } from '@core/access/version';
@@ -136,7 +137,30 @@ describe('ProjectManager', () => {
       expect(restored).toEqual([document.value.id]);
       expect((await manager.projectHistory(projectId))[0]?.message).toMatch(/^Restored Bracket from /);
       await manager.deleteProject(projectId);
+      // In the trash, the history is kept; deleted for good, it goes too.
+      expect(await manager.projectHistory(projectId)).not.toEqual([]);
+      unwrap(await manager.deleteFromTrash(projectId));
       expect(await manager.projectHistory(projectId)).toEqual([]);
+    });
+
+    it('compares two versions of a document, and a version with the document now (CAD-175)', async () => {
+      const { project, firstDocument } = unwrap(await manager.createProject('Plate'));
+      await manager.recordVersion(project.id);
+      const [first] = await manager.projectHistory(project.id);
+      const document = (await documents.load(firstDocument.id)) as ComponentDocument;
+      const hole = { id: 's1', type: 'sketch', name: 'Hole sketch', suppressed: false, plane: 'XY', entities: [], constraints: [] } as const;
+      await documents.store({ ...document, timeline: [hole], parameters: [{ id: 'p', name: 'width', expression: '60' }] });
+      unwrap(await manager.setProjectParameters(project.id, [{ id: 'w', name: 'wall', expression: '2' }]));
+      await manager.recordVersion(project.id);
+      const [second] = await manager.projectHistory(project.id);
+      const compared = unwrap(await manager.compareVersions(firstDocument.id, first?.id as string, second?.id));
+      expect(compared.changes.map(describeChange)).toEqual(['Added Parameter width', 'Added Hole sketch', 'Added Project parameter wall']);
+      expect(compared.before).toMatchObject({ id: firstDocument.id, projectId: project.id, timeline: [] });
+      expect(compared.projectParameters).toEqual({ before: [], after: [{ id: 'w', name: 'wall', expression: '2' }] });
+      // Without a second version: against the document as it is now.
+      await documents.store({ ...((await documents.load(firstDocument.id)) as ComponentDocument), name: 'Base plate' });
+      expect(unwrap(await manager.compareVersions(firstDocument.id, second?.id as string)).changes.map(describeChange)).toEqual(['Changed Name: Component 1 → Base plate']);
+      expect(await manager.compareVersions(firstDocument.id, 'f'.repeat(40))).toMatchObject({ ok: false });
     });
 
     it('renames a project', async () => {
@@ -149,7 +173,7 @@ describe('ProjectManager', () => {
       });
     });
 
-    it('deletes a project with its documents and assets and announces it', async () => {
+    it('moves a deleted project to the trash, announced, and deletes it for good with its documents and assets', async () => {
       const { project, firstDocument } = unwrap(await manager.createProject('Doomed'));
       const imported = unwrap(await manager.importFile(project.id, { name: 'part.stl', bytes: new Uint8Array(3) }));
       const assetId = ((await documents.load(imported.id)) as ImportedDocument).assetId;
@@ -162,9 +186,12 @@ describe('ProjectManager', () => {
       await events.drained();
 
       expect(await manager.listProjects()).toEqual([]);
+      expect(await manager.findProject(project.id)).toBeUndefined();
+      expect(await documents.load(firstDocument.id)).toBeDefined();
+      expect(announced).toEqual([project.id]);
+      unwrap(await manager.deleteFromTrash(project.id));
       expect(await documents.load(firstDocument.id)).toBeUndefined();
       expect(await assets.fetch(assetId)).toBeUndefined();
-      expect(announced).toEqual([project.id]);
     });
   });
 
@@ -264,6 +291,22 @@ describe('ProjectManager', () => {
       unwrap(await manager.exportImported(doc.id, 'dxf'));
       expect(new TextDecoder().decode(files.delivered[0]?.bytes)).toContain('CIRCLE');
       expect(await manager.exportImported(doc.id, 'stl')).toMatchObject({ ok: false, error: { code: 'unreadable' } });
+    });
+
+    it('simplifies a large mesh with a preview, and keeps it as a new file next to the original (CAD-169)', async () => {
+      const { project } = unwrap(await manager.createProject('P'));
+      const doc = unwrap(await manager.importFile(project.id, { name: 'Bust.stl', bytes: writeStl([scan(101, 100)]) }));
+      const preview = unwrap(await manager.previewSimplified(doc.id, 2000));
+      expect(preview.before).toBe(20_000);
+      expect(preview.content.triangles).toBeLessThanOrEqual(2000);
+      expect(preview.content).toMatchObject({ kind: 'model', usableAsSolid: true });
+      expect(preview.repair).toEqual({ mergedVertices: 0, removedTriangles: 0, flippedTriangles: 0, closedHoles: 0 });
+      const kept = unwrap(await manager.simplifyImported(doc.id, 2000));
+      expect(kept).toMatchObject({ kind: 'imported', name: 'Bust (simplified)', format: 'stl' });
+      expect(unwrap(await manager.previewImported(kept.id))).toMatchObject({ triangles: preview.content.triangles });
+      expect(unwrap(await manager.previewImported(doc.id))).toMatchObject({ triangles: 20_000 });
+      const svg = unwrap(await manager.importFile(project.id, { name: 'a.svg', bytes: new TextEncoder().encode('<svg/>') }));
+      expect(await manager.previewSimplified(svg.id, 100)).toMatchObject({ ok: false, error: { code: 'unsupported-format' } });
     });
 
     it('reports files that cannot be read', async () => {

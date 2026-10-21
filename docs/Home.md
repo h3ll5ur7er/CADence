@@ -4,7 +4,7 @@ CADence is a parametric 3D CAD application for makers. It covers the things you 
 
 ## What it does
 
-- **Projects** hold any number of documents. The home page lists all projects, and opening one brings up the editor.
+- **Projects** hold any number of documents, with notes and attachments; deleted ones wait in a trash. The home page lists all projects, and opening one brings up the editor. Projects can be libraries whose parts others use, beside the built-in standard parts.
 - The **editor** has three modes, one per document kind:
   - **Component**: parametric part modeling. You draw 2D sketches on planes or faces, then extrude, revolve, fillet, shell, pattern and so on, all driven by variables, constraints and dimensions.
   - **Assembly**: components placed with joints, which can be animated and simulated.

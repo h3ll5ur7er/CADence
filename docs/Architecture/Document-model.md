@@ -14,6 +14,10 @@ classDiagram
     createdAt, modifiedAt
     parameters?: Parameter[]
     remote?: ProjectRemote
+    description?: string
+    attachments?: Attachment[]
+    library?: id
+    trashedAt?, trash?: TrashedDocument[]
   }
   class DocumentSummary {
     id: DocumentId
@@ -62,15 +66,22 @@ Each project has a version history: a git repository with one commit per version
 | --- | --- |
 | `documents/<documentId>.json` | the document as stored, without `projectId` (a project has its own id on each device) |
 | `originals/<assetId>` | an imported document's original file, unchanged |
-| `project.json` | `{ name, parameters, copiedFrom? }` |
+| `project.json` | `{ name, parameters, description?, attachments?, library? }` |
+| `originals/<assetId>` of attachments | a file attached to the project, unchanged |
 
 `Project.copiedFrom` maps a document's id to the ids it had before the project was copied (duplicated, or imported once more as a copy), newest first: a copy keeps the versions of its documents, and restores an older version with the copy's ids ([[CAD-147]]).
 
 `Project.remote` (`{ url, corsProxy? }`) is where the versions are synced; it is a setting of this device and not part of the versions. Sign-ins are never stored.
 
+## Trash, notes and libraries
+
+- **Trash** ([[CAD-148]]): `Project.trashedAt` marks a project in the trash; `Project.trash` lists the project's deleted documents (`{ id, name, kind, trashedAt, version }`), each restored from `documents/<id>.json` of that version. Both are settings of this device, like `remote`.
+- **Notes** ([[CAD-149]]): `Project.description` (Markdown) and `Project.attachments`: `{ id, kind: 'file', name, mediaType, byteLength, assetId, addedAt }` (the file is an asset) or `{ id, kind: 'link', name, url, addedAt }`.
+- **Libraries** ([[CAD-151]], [[Architecture/Decisions#ADR-53a]]): `Project.library` (`{ id }`) marks a library by an id of its own. A document taken from a library carries `library` (`LibraryLink`: `{ library, libraryName, document, version, follow: 'asked' | 'always' }`, also in its summary), the library's id `standard` for the built-in standard parts ([[CAD-152]]). No schema change: an older app opens such a document as an ordinary one.
+
 ## Archives and templates
 
-A project archive (`.cadence`) is a zip with `cadence.json` (`{ format: 'cadence-project', version: 1, name, parameters }`), `documents/<id>.json` (without `projectId`), `originals/<assetId>` and, optionally, `history/…`, the files of the project's git repository. Opening one keeps the documents' ids and history unless this device has those documents already; then they get new ids and the history starts anew.
+A project archive (`.cadence`) is a zip with `cadence.json` (`{ format: 'cadence-project', version: 1, name, parameters, description?, attachments?, library? }`), `documents/<id>.json` (without `projectId`), `originals/<assetId>` (imported originals and attached files) and, optionally, `history/…`, the files of the project's git repository, and `libraries/<library id>.cadence`, the archives of the libraries it uses. Opening one keeps the documents' ids and history unless this device has those documents already; then they get new ids and the history starts anew.
 
 A template (`ProjectTemplate`, `public/templates/<id>.json`) is `{ id, name, description, parameters, documents }`: a project without originals. Templates are made with the scripting API ([[src/automation/templates.ts]]); a test builds them, compares them with the files and checks their volumes.
 
@@ -225,7 +236,7 @@ interface MotionLink { id; name; kind: 'gear' | 'rack' | 'belt' | 'carrier' | 'p
 interface ExplodedView { id; name; steps: { id; instances: string[]; direction: Vec3; distance; radial?: boolean; origin?: Vec3 }[] }    // steps add up in order; instances may be pattern copies; radial: away from the axis
 // MotionStudy: keys may `ease`; drives: { joint, dof, speed }[] (° or mm per second from the start value)
 interface InstancePattern { id; name; kind: 'linear' | 'circular' | 'mirror'; instances: string[]; direction: Vec3; origin: Vec3; count: number; spacing: number }  // copies `<pattern>/<instance>/<k>`
-interface Instance { id: string; component: DocumentId; name: string; transform: Matrix4; grounded: boolean; appearance?: Appearance }
+interface Instance { id: string; component: DocumentId; name: string; transform: Matrix4; grounded: boolean; appearance?: Appearance }  // component: also a library part of the project (CAD-151)
 interface Appearance { hidden?: boolean; color?: string /* #rrggbb */; opacity?: number /* 0.1 to 1 */ }  // display only, never geometry
 interface Joint {
   id: string; name: string;

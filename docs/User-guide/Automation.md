@@ -114,11 +114,14 @@ The server tells the agent how to model when it connects, and offers these tools
 
 | Tool | What it does |
 | --- | --- |
-| `list_projects`, `create_project`, `create_project_from_template`, `rename_project`, `delete_project`, `duplicate` | Projects (and copies of documents) |
-| `list_documents`, `create_document` (component, assembly or drawing), `rename_document`, `delete_document`, `import_file` (also in place of an imported document) | Documents |
-| `export_project`, `import_project` | `.cadence` archives, with the version history if asked |
+| `list_projects`, `create_project`, `create_project_from_template`, `rename_project`, `delete_project` (to the trash), `duplicate` | Projects (and copies of documents) |
+| `list_documents`, `create_document` (component, assembly or drawing), `rename_document`, `delete_document` (to the trash), `import_file` (also in place of an imported document) | Documents |
+| `trash` | The trash: list it, restore a project or a document (with its history), delete one for good, empty it |
+| `project_notes` | A project's description (Markdown) and attachments: get, set, attach a file by path or a link, read a file (text files answer their text, others are written to the exports folder), remove |
+| `list_libraries`, `library`, `insert_library_part` | Libraries: the standard parts and the projects marked as libraries, with their parts (`match` filters them); mark a project as a library, list and take updates of the parts a project uses, whether a part follows its library on its own; insert a part into an assembly by designation (`ISO 4762 M3 x 12`) or name, with `at` onto a hole's round face or circular edge |
+| `export_project`, `import_project` | `.cadence` archives, with the version history and the libraries the project uses if asked |
 | `versions` | The version history: list (a project's or a document's), record, restore a document, name and unname versions |
-| `sync_project`, `open_git` | Git: a project synced with its repository (conflicts answered with `resolutions`), or opened from one; sign-in from `$CADENCE_GIT_USERNAME` and `$CADENCE_GIT_PASSWORD` |
+| `sync_project`, `open_git` | Git: a project synced with its repository (conflicts answered with `resolutions`; `libraries` syncs the libraries it uses too), or opened from one; sign-in from `$CADENCE_GIT_USERNAME` and `$CADENCE_GIT_PASSWORD` |
 | `set_project_parameters` | Parameters for every component of a project |
 | `get_component` | The component as data (as `summary()` above), with the same filters; `near` measures to the face or edge itself |
 | `edit_component` | Runs commands in order and answers with what changed: timeline items, sketches and their profiles, the bodies' face counts and new face names; a refused command is reported with its number, reason and the ids involved |
@@ -139,6 +142,8 @@ The server tells the agent how to model when it connects, and offers these tools
 **Long calls, cancelling and failures.** The server answers requests side by side, so `list_projects` answers while a long `check_assembly` runs; the check reports progress part by part. A client that cancels a call (`notifications/cancelled`) stops the geometry kernel's work: the call gets no answer and the next one starts a new kernel. When the kernel runs out of memory or fails, the feature that made it fail is refused with the reason, the kernel starts again, and the call's answer says that the open documents were read again ([[Architecture/Decisions#ADR-52]]).
 
 **What answers tell.** `edit_component` lists faces that were only renumbered (`renumbered`: a face `~2` that is now `~3`) apart from faces made and removed; a sketch's `frame` is where it lies (its origin and its u and v axes in the model); a face whose body is missing names the feature that failed or is suppressed. A circle or rectangle placed by numbers is held by a fix (`c:fix`) that `move-point` moves along with its point.
+
+**The desktop app follows the agent.** With the MCP server on the desktop app's project folders, a document the agent changes updates in the app's open editor, and new, renamed and deleted documents show in its lists ([[CAD-150]]).
 
 The server writes files without a `path` to `CADence exports` in the documents folder (or `--exports <dir>`), and says so when it connects.
 

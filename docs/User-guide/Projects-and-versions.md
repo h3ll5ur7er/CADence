@@ -1,8 +1,39 @@
 # Projects and versions
 
-A project holds your components, assemblies and imported files. CADence keeps every project's history as versions, and can share a project through a git repository so you can work on it from other devices or with other people.
+A project holds your components, assemblies and imported files, with notes and attachments about it. CADence keeps every project's history as versions, keeps what you delete in a trash for 30 days, and can share a project through a git repository so you can work on it from other devices or with other people. A project can also be a library whose parts other projects use.
 
 [TOC]
+
+## Notes and attachments
+
+**Project notes** (the note in the editor's top bar) holds what the project is about ([[CAD-149]]):
+
+- A **description** in Markdown: headings (`#`), lists, **bold**, *italics*, `code` and links (`[text](https://…)`), shown next to where you type it. **Save description** keeps it.
+- **Attach files…** keeps photos, datasheets (PDF) or any other file with the project, exactly as they are (up to 100 MB each); pictures show small. Click a file's name to save a copy of it. **Add link** keeps a web address with a name.
+
+Notes and attachments are part of the project: they are in its versions, in its `.cadence` archives and in git syncs, and copies of the project have them too. Agents read and write them with `project_notes` ([[User guide/Automation]]).
+
+## Trash
+
+Deleting a project or a document moves it to the **trash** ([[CAD-148]]). It stays there for 30 days, then it is deleted for good. The home page shows **Trash** below the projects when something is in it:
+
+- **Restore** brings a project back as it was, or a document as it was when you deleted it, into its project. A restored document has its history again: its earlier versions, the version it was deleted in, and the restore.
+- **Delete for good** (the bin on an item) and **Empty trash** delete at once. A document's earlier versions stay in its project's history.
+- A project in the trash keeps its own deleted documents: restore the project first.
+- A document that a git sync removes (deleted on another device) goes to the trash here too.
+
+## Libraries
+
+A project can be a **library** of parts that other projects use without copying them by hand: a company's brackets, your favourite clips ([[CAD-151]]). Tick **A library** in the project's notes; the home page marks it *Library*. CADence also has a built-in library, **Standard parts**: ISO 4762 screws, ISO 4032 nuts, ISO 7089 washers, heat-set inserts and ball bearings in every size ([[CAD-152]]).
+
+- In an assembly, **Insert → From a library…** inserts a library's part ([[User guide/Assemblies#Library parts and standard parts]]).
+- The project keeps the part **as the library's version it took**: it is listed under **Library parts** in the documents panel, with the library's name, and opens read only (it changes in the library). Updates never surprise you.
+- When the library has a newer version of the part, the part shows **Update**: click it, and the assemblies and drawings that use it follow.
+- Library parts are ordinary documents of the project, so archives and git syncs carry them. **Export as one file** can also include the libraries the project uses (agents: `export_project` with `libraries`), and opening such a file adds those libraries to this device when it does not have them. A library is a project of its own and syncs with its own repository (agents: `sync_project` with `libraries`).
+
+## Changes made elsewhere
+
+An open editor follows what changes its document elsewhere: another tab or window of the app and, on the desktop, other programs writing the project folders, such as an AI agent through the MCP server or a script ([[CAD-150]]). The documents panel and the home page follow new, renamed and deleted documents and projects. When you are in the middle of something (a feature dialog, a sketch, a joint being made), the editor asks first: **Load its changes** or **Keep editing**.
 
 ## Pictures
 

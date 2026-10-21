@@ -175,7 +175,7 @@ export interface SketchEquation {
 }
 
 /**
- * A block placed in the sketch (ADR-54b): the curves and texts of a block sketch (a sketch marked as a
+ * A block placed in the sketch (ADR-54a): the curves and texts of a block sketch (a sketch marked as a
  * block, in this component or, with `document`, in another of the project), its origin at the point
  * `origin`, turned by `angle` and scaled by `scale` (expressions). Its geometry lives in the sketch with
  * ids `<insertion id>:<id in the block>` (`:` there written `.`), refreshed on every regeneration and
@@ -272,7 +272,7 @@ export interface Sketch {
   readonly constraints: readonly SketchConstraint[];
   /**
    * A block: other sketches place its curves and texts (by its origin, the insertion point), and
-   * follow when it changes (ADR-54b). It is not drawn in the model.
+   * follow when it changes (ADR-54a). It is not drawn in the model.
    */
   readonly block?: boolean;
 }

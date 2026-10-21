@@ -52,7 +52,7 @@ export type DesignCommand =
   | { readonly type: 'toggle-construction'; readonly sketchId: string; readonly ids: readonly string[] }
   | { readonly type: 'delete-sketch-elements'; readonly sketchId: string; readonly ids: readonly string[] }
   /**
-   * Makes a block of chosen points, curves and texts (ADR-54b): a new block sketch `block` (before this
+   * Makes a block of chosen points, curves and texts (ADR-54a): a new block sketch `block` (before this
    * one; an empty name gets "Block 2" and so on) whose origin is `base`, placed back where they were as
    * `insertion` (on the point `<insertion>-origin`).
    */
@@ -218,7 +218,7 @@ export interface BlockSummary {
 
 export interface DesignSession {
   state(): DesignState;
-  /** The blocks of the project: this component's first, then those of its other components (ADR-54b). */
+  /** The blocks of the project: this component's first, then those of its other components (ADR-54a). */
   blocks(): Promise<BlockSummary[]>;
   /** Called after every change; returns the unsubscribe function. */
   subscribe(listener: (state: DesignState) => void): () => void;

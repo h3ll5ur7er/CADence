@@ -127,6 +127,8 @@ interface Sketch {
 - **Plane coordinates** (u, v) map to the world as: XY → (x, y), XZ → (x, z), YZ → (y, z), each seen head-on from the top, front and right view respectively.
 - **Geometric constraints:** coincident, horizontal, vertical, parallel, perpendicular, equal (lengths or radii), tangent, point-on (line, circle or arc), midpoint, fix.
 - **Dimensions** store an **expression**, not a number: distance, horizontal and vertical distance, point-to-line distance, radius, diameter, angle. `"2 * 20 mm"` and `"1 in"` are valid values. Signs and orientation (which side, which of the supplementary angles) follow the current geometry, so a dimension never flips the sketch over.
+- **Reference dimensions** (`reference: true`) drive nothing: they show what the solved sketch measures, and their expression is ignored. With a `name`, the value is a parameter for everything after the sketch in the timeline ([[Architecture/Decisions#ADR-54]]).
+- **Blocks.** A sketch with `block: true` is a block: not drawn in the model, placed by other sketches with `{ kind: 'block', block: <sketch id>, document?, origin: <point>, angle, scale }` (expressions), in this component or another of the project (`document`). Its points, curves and texts are generated into the placing sketch as `<placement>:<id in the block>` (a `:` in the block's id written `.`), turned and scaled about the block's origin ([[Architecture/Decisions#ADR-54a]]).
 - **Points store their last solved positions.** The solver needs a starting guess, and the document opens exactly as last seen, even before solving.
 - **Generated geometry.** Projections, drawings kept as one piece and equation curves (`{ kind: 'equation', x, y, from, to, samples }`) generate their points and curves (`<id>:<n>`) on every regeneration; generated points are fixed for the solver. A drawing of a picture carries `trace: { threshold, smooth }`.
 - **Pictures** (`{ kind: 'picture', document, origin, handle, opacity, hidden }`) are shown behind the sketch, placed by two ordinary points; they are not geometry.
@@ -154,6 +156,7 @@ Each feature type is its own interface in [[src/core/contracts/feature.ts]]. All
 | `thread` | a round face | ISO metric size (`metricThreads`); length (empty: the whole face); modelled; flip |
 | `draft` | faces, neutral plane | angle |
 | `rib` | sketch (open curves) | thickness; depth; direction |
+| `wrap` | sketch, profile ids, a face (`TopologyRef`) | `method`: `wrap` (rolled onto a cylinder or cone, lengths kept) or `project` (along the sketch's normal, onto any face); depth; `operation`: `emboss` (joined) or `engrave` (cut) ([[Architecture/Decisions#ADR-54b]]) |
 | `combine` | target body, tool bodies | join, cut or intersect; keep tools |
 | `split` | body, plane | |
 | `move` | bodies, axis | translation (x, y, z); angle; copy |
@@ -203,6 +206,7 @@ The Modeling Engine names every face after each feature (*generative naming*, [[
 | Drafted face | its old name: it is the same face, tilted (from the kernel's history) |
 | Thread groove | `f:<feature>:flank` |
 | Rib | `f:<feature>:side`, `start`, `end` |
+| Wrap (emboss, engrave) | `f:<feature>:top` (the depth away from the face), `f:<feature>:side` |
 | Edge flange | `f:<feature>:bend:<edge>` (round), `f:<feature>:flange:<edge>` (flat) |
 | Anything else new | `f:<feature>:new:<n>`, in order of position |
 
@@ -283,5 +287,6 @@ Every document carries `schemaVersion`. Document Access runs pure migration func
 | 1 | First schema |
 | 2 | Assemblies get `motionStudies` (empty for older assemblies) |
 | 3 | Nothing to migrate: marks documents an older CADence must not open, since it would ignore their newer fields (`lean`, `anchor`, a gear's `chamfer`) and show them wrongly ([[CAD-145]]) |
+| 4 | Nothing to migrate: reference dimensions, block sketches and their placements, and wraps (phase 35), which an older CADence would show wrongly |
 
 A document of a newer schema than the app reads is listed in its project (from its name and kind) but not opened: the app says to update CADence. The version goes up with every field an older app must not ignore.

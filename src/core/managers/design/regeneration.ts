@@ -550,7 +550,7 @@ export class Regeneration {
   }
 
   /**
-   * The curves, points and texts of a block placed in a sketch (ADR-54b): turned and scaled about the
+   * The curves, points and texts of a block placed in a sketch (ADR-54a): turned and scaled about the
    * block's origin and moved to the insertion's point, fixed for the solver. What the block itself
    * places of this sketch is left out, so a sketch never holds itself.
    */

@@ -53,7 +53,7 @@ function circumcenter(a: Vec3, b: Vec3, c: Vec3): Vec3 {
 
 /**
  * A conical face's apex, axis (the way it widens) and half angle, from points on it: the kernel
- * build reads no cones (ADR-54c). Two circles across it give the axis and how fast it widens.
+ * build reads no cones (ADR-54b). Two circles across it give the axis and how fast it widens.
  */
 function coneOf(face: Face): { apex: Vec3; axis: Vec3; angle: number } {
   const ring = (v: number) => {
@@ -361,7 +361,7 @@ function solids(shape: Shape3D): Shape3D[] {
 /**
  * The tool an emboss or engrave adds or cuts: the profiles laid onto the face (rolled onto a cylinder
  * or cone, or cast along the sketch's normal), thickened by the depth out of the face or into it. Its
- * faces are `top` (away from the face), `base` (on it) and `side` (ADR-54c).
+ * faces are `top` (away from the face), `base` (on it) and `side` (ADR-54b).
  */
 export function wrapTool(feature: string, frame: PlaneFrame, profiles: readonly Profile[], pieces: readonly Face[], method: 'wrap' | 'project', depth: number, operation: 'emboss' | 'engrave'): NamedShape {
   const face = pieces[0] as Face;

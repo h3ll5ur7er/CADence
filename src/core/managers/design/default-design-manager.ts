@@ -162,7 +162,7 @@ class Session implements DesignSession {
     this.projectWatch ??= this.deps.events.subscribe('projectParametersChanged', (event) =>
       event.projectId === projectId ? void this.serialized(() => this.projectChanged()) : undefined,
     );
-    // Blocks placed from other components follow when those change, here or in another window (ADR-54b).
+    // Blocks placed from other components follow when those change, here or in another window (ADR-54a).
     const follow = (event: { readonly documentId: DocumentId }) =>
       event.documentId !== this.current.document.id && blockSources(this.current.document).has(event.documentId) ? void this.serialized(() => this.projectChanged()) : undefined;
     this.blockWatch ??= [this.deps.events.subscribe('documentSaved', follow), this.deps.events.subscribe('documentChanged', follow)];
@@ -454,7 +454,7 @@ class Session implements DesignSession {
 
   /**
    * The results of the other components that place this one's blocks are out of date: discarded, so
-   * assemblies and drawings ask for them anew (ADR-54b). Open editors of them follow `documentSaved`.
+   * assemblies and drawings ask for them anew (ADR-54a). Open editors of them follow `documentSaved`.
    */
   private async blocksChanged(document: ComponentDocument): Promise<void> {
     for (const summary of await this.deps.documents.enumerate(document.projectId)) {

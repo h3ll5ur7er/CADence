@@ -281,7 +281,7 @@ function remove(sketch: Sketch, ids: readonly string[]): Sketch {
 }
 
 /**
- * A block made of chosen points, curves and texts of a sketch (ADR-54b): they move into a new block
+ * A block made of chosen points, curves and texts of a sketch (ADR-54a): they move into a new block
  * sketch, with the relations among them, placed so that `base` is its origin, and the sketch places
  * the block at `base` instead. Points that other curves use stay as well; relations between the chosen
  * geometry and the rest go, so the block is placed by its point alone.

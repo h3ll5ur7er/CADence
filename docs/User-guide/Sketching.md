@@ -86,6 +86,25 @@ Type the value and press Enter. Values are expressions with units: `40`, `2 * 20
 
 Small badges show the relations on the geometry; click one and press Delete to remove it.
 
+### Reference dimensions
+
+A **reference dimension** shows a length or angle the sketch has without setting it: its value is in brackets, `(44.72)`, and follows every change. It never over-constrains, so it is the way to see a diagonal, a gap or a length that other dimensions already define.
+
+- Tick **Reference** in the toolbar while the Dimension tool is on: new dimensions are references.
+- When a dimension would over-constrain the sketch, the message offers **Add as a reference dimension**.
+- Click a reference's label to select it: the panel shows its value, turns it into a driving dimension (at the value it shows) and back, and gives it a **name**.
+- A named reference is a value for the rest of the component: parameters (they list it under *Measured in sketches*) and the dimensions and features of later sketches and features can use the name, `width / 2`. Its own sketch (and earlier ones) cannot: a reference never drives what it measures.
+
+## Blocks
+
+A **block** is a group of curves, points and texts kept as one sketch and placed again in other sketches, here and in the project's other components: a slot pattern, a logo, a mounting hole set. Editing the block updates every place it is used.
+
+1. Select the geometry, open the **Blocks** menu (in the sketch toolbar) and choose **Make a block of the selection…**, then click its insertion point (snapping to a point or corner works). The selection becomes a block sketch (*Block 1* in the timeline, with a block icon) and is placed back where it was.
+2. **Blocks → Place Block 1** puts it down again: click where its insertion point goes. Blocks of other components of the project are listed with their component's name.
+3. Select a placed block to change its **angle** and **scale** in the panel (expressions such as `30 deg` or `scale_factor`), to **edit the block** (it opens the block sketch), or to **explode** it into plain curves that no longer follow the block.
+
+A placement is constrained as one, by its insertion point: drag or dimension that point, or relate other geometry to the block's curves. Any sketch can be made a block with the **Block** checkbox in its panel; blocks are not drawn in the model themselves. Sharing blocks between projects comes with libraries.
+
 ## Modify
 
 The **Modify** menu changes the curves you have:

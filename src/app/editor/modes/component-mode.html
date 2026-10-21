@@ -22,6 +22,22 @@
     }
   </cad-viewport>
 
+  @if (store.state()?.live; as live) {
+    <div class="live" role="status" aria-label="Editing live" data-testid="live" [attr.data-status]="live.status">
+      <span class="live-dot" aria-hidden="true"></span>
+      <span class="live-status">{{ liveLabel(live.status, live.viewOnly) }}</span>
+      @for (other of live.others; track other.clientId) {
+        <span class="person" data-testid="live-person" [style.border-color]="other.user.color">
+          <span class="initial" [style.background]="other.user.color" aria-hidden="true">{{ other.user.name.charAt(0) }}</span>
+          {{ other.user.name }}{{ other.where.sketch ? ' · ' + itemName(other.where.sketch) : '' }}
+        </span>
+      }
+      @if (live.notice) {
+        <span class="live-notice">{{ live.notice }}</span>
+      }
+    </div>
+  }
+
   <section class="browser" aria-label="Model browser">
     <h2 class="eyebrow browser-title">Browser</h2>
     <ul class="tree">

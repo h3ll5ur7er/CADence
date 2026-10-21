@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, type ElementRef, computed, inject, 
 import type { ConflictChoice, ItemConflict, ProjectSummary, SyncConflict, SyncOutcome } from '@core/contracts';
 import { PROJECT_MANAGER } from '../core.providers';
 import { credentialsOf, RemoteFields, RemoteSignIns } from '../shared/remote-fields';
+import { ServerAccounts } from '../shared/server-accounts';
 
 const outcomes: Readonly<Record<Exclude<SyncOutcome['kind'], 'conflicts'>, string>> = {
   'up-to-date': 'Up to date: this project and the repository hold the same versions.',
@@ -113,6 +114,7 @@ export class SyncDialog {
   private project: ProjectSummary | undefined;
   private readonly projects = inject(PROJECT_MANAGER);
   private readonly signIns = inject(RemoteSignIns);
+  private readonly accounts = inject(ServerAccounts);
   private readonly dialog = viewChild.required<ElementRef<HTMLDialogElement>>('dialog');
 
   open(project: ProjectSummary): void {
@@ -155,7 +157,10 @@ export class SyncDialog {
         this.project = { ...project, remote };
         this.shared.set(true);
       }
-      const credentials = credentialsOf(this.username(), this.password());
+      // A project on a CADence server syncs with the sign-in there (or its view link, which the Project Manager knows).
+      const server = this.project?.remote?.server;
+      const account = server && !server.link ? this.accounts.signInFor(server.url) : undefined;
+      const credentials = credentialsOf(this.username(), this.password()) ?? (account ? { username: 'token', password: account.token } : undefined);
       const result = await this.projects.syncProject(project.id, credentials, this.choices());
       if (!result.ok) return this.failed(result.error.message);
       this.signIns.remember(url, credentials);

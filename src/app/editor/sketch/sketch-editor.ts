@@ -172,6 +172,17 @@ export class SketchEditor {
       return { id, x: sx, y: sy, origin: id === sketchOriginId, handle: handles.has(id) };
     });
   });
+  /** The pointers of others editing this sketch live (CAD-178), in screen pixels. */
+  protected readonly others = computed(() => {
+    const m = this.matrix();
+    const id = this.view().sketch.id;
+    return (this.store.state()?.live?.others ?? []).flatMap((other) => {
+      const point = other.where.sketch === id ? other.where.point : undefined;
+      if (!m || !point) return [];
+      const [x, y] = applyAffine(m, point[0], point[1]);
+      return [{ id: other.clientId, name: other.user.name, color: other.user.color, x, y }];
+    });
+  });
   protected readonly glyphs = computed(() => {
     const m = this.matrix();
     return m ? glyphs(this.sketch(), m) : [];
@@ -246,6 +257,7 @@ export class SketchEditor {
     const at = this.toPlane(event);
     if (!at) return;
     this.cursor.set(at);
+    this.store.present({ point: at });
     this.snapped.set(this.snapRef(at));
     this.hovered.set(this.targetOf(event)?.id);
     const box = this.box();

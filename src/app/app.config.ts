@@ -17,6 +17,7 @@ import { AppUpdates, DesktopUpdates, ServiceWorkerUpdates } from './shared/app-u
 import { AGENT_CLI } from './shared/agent-cli';
 import { OPENED_FILES } from './shared/file-opener';
 import { SYSTEM_FONTS } from './shared/fonts';
+import { captureServerSignIn } from './shared/server-accounts';
 
 /**
  * The sketch solver's WebAssembly is copied to /wasm by the build (angular.json assets); the geometry
@@ -38,6 +39,8 @@ const core = desktop
   ? createDesktopCore(new TauriFileSystem(), new TauriFileDelivery(), options)
   : createBrowserCore(options);
 if (desktop) openWebLinksInBrowser();
+// Back from signing in to a CADence server (CAD-177).
+captureServerSignIn();
 
 export const appConfig: ApplicationConfig = {
   providers: [

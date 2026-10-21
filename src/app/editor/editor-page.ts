@@ -29,6 +29,7 @@ import { EditorStatus } from './editor-status';
 import { CompareView, type CompareRequest } from './compare-view';
 import { HistoryDialog } from './history-dialog';
 import { AboutDialog } from '../about/about-dialog';
+import { ShareDialog } from './share-dialog';
 import { SyncDialog } from './sync-dialog';
 import { ThumbnailSaver } from './thumbnail-saver';
 import { AssemblyMode } from './modes/assembly-mode';
@@ -41,7 +42,7 @@ const storageLabels = { browser: 'This browser', 'project-folders': 'Project fol
 
 @Component({
   selector: 'cad-editor-page',
-  imports: [RouterLink, Icon, DocumentsPanel, CompareView, ComponentMode, AssemblyMode, DrawingMode, ImportedMode, NameDialog, ConfirmDialog, SettingsDialog, HistoryDialog, SyncDialog, AboutDialog],
+  imports: [RouterLink, Icon, DocumentsPanel, CompareView, ComponentMode, AssemblyMode, DrawingMode, ImportedMode, NameDialog, ConfirmDialog, SettingsDialog, HistoryDialog, SyncDialog, ShareDialog, AboutDialog],
   providers: [EditorStatus, ThumbnailSaver],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './editor-page.html',
@@ -66,6 +67,7 @@ export class EditorPage {
   private readonly nameDialog = viewChild.required(NameDialog);
   private readonly confirmDialog = viewChild.required(ConfirmDialog);
   private readonly syncDialog = viewChild.required(SyncDialog);
+  private readonly shareDialog = viewChild.required(ShareDialog);
   private readonly aboutDialog = viewChild.required(AboutDialog);
   private readonly history = viewChild.required(HistoryDialog);
 
@@ -105,6 +107,7 @@ export class EditorPage {
         { label: 'New assembly', group: 'Project', run: () => void this.create('assembly') },
         { label: 'New drawing', group: 'Project', run: () => void this.create('drawing') },
         { label: 'Sync with git', group: 'Project', run: () => this.openSync() },
+        { label: 'Share…', group: 'Project', run: () => this.openShare() },
         ...documents.filter((d) => d.id === this.documentId()).map((d) => ({ label: `Versions of ${d.name}`, group: 'Project', run: () => void this.history().open(d) })),
         { label: 'About CADence', group: 'CADence', run: () => this.aboutDialog().open() },
       ]);
@@ -179,6 +182,11 @@ export class EditorPage {
   protected async compare(request: CompareRequest): Promise<void> {
     if (request.document.id !== this.documentId()) await this.open(request.document);
     this.comparing.set(request);
+  }
+
+  protected openShare(): void {
+    const project = this.project.value();
+    if (project) void this.shareDialog().open(project);
   }
 
   protected openSync(): void {

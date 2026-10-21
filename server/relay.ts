@@ -29,6 +29,10 @@ class Room {
   private asked = false;
 
   join(listener: Listener, after: number): void {
+    // Whoever listens is there, before saying where.
+    const presence: LivePresence = { clientId: listener.clientId, user: listener.user, where: this.present.get(listener.clientId)?.where ?? {} };
+    this.present.set(listener.clientId, presence);
+    this.broadcast({ kind: 'presence', presence });
     this.listeners.add(listener);
     // Behind the snapshot (or ahead of a room that started again): the client reconciles.
     const reset = after > this.seq || (this.snapshot !== undefined && after < this.snapshot.seq);

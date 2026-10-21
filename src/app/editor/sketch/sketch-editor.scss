@@ -208,3 +208,11 @@ path {
 .picture {
   pointer-events: none;
 }
+
+.live-pointer text {
+  font-size: 12px;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--surface-1);
+  stroke-width: 3px;
+}

@@ -163,12 +163,14 @@ describe('CADence server (CAD-177, CAD-178)', { timeout: 60_000 }, () => {
     expect((await send(bob.token, 'two', { type: 'b' })).body).toEqual({ seq: 2 });
     await api(`/live/${id}/d1/presence`, bob.token, { body: { clientId: 'two', where: { sketch: 's1' } } });
     const seen = (events: LiveEvent[]) => events.slice(1).map((e) => (e.kind === 'entry' ? `${e.entry.seq}:${e.entry.user.name}` : e.kind === 'presence' ? `${e.presence.user.name}@${e.presence.where.sketch}` : e.kind));
-    expect(seen(await one.next(4))).toEqual(['1:Ada', '2:Bob', 'Bob@s1']);
+    // Bob is there as soon as he listens; then where he works.
+    expect(seen(await one.next(5))).toEqual(['Bob@undefined', '1:Ada', '2:Bob', 'Bob@s1']);
+    expect((await two.next(1))[0]).toMatchObject({ kind: 'welcome', present: [{ clientId: 'one' }, { clientId: 'two' }] });
     expect(seen(await two.next(4))).toEqual(['1:Ada', '2:Bob', 'Bob@s1']);
 
     // Bob leaves; Ada hears it. Back after seq 1, he gets what he missed, and who is there.
     two.close();
-    expect((await one.next(5))[4]).toEqual({ kind: 'left', clientId: 'two' });
+    expect((await one.next(6))[5]).toEqual({ kind: 'left', clientId: 'two' });
     await send(ada.token, 'one', { type: 'c' });
     const again = await listen(`${room}?client=two&after=1`, bob.token);
     const [welcome] = await again.next(1);

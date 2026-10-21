@@ -14,6 +14,12 @@
       <span class="mode-chip" [attr.data-kind]="doc.kind">{{ kindLabels[doc.kind] }}</span>
     }
   </nav>
+  @if (project.value()?.remote?.server; as server) {
+    <span class="shared-chip" data-testid="shared-chip" [title]="'Shared on ' + server.url">{{ server.link || server.role === 'viewer' ? 'View only' : 'Shared' }}</span>
+  }
+  <button type="button" class="icon-btn" aria-label="Share" title="Share with others" [disabled]="!project.value()" (click)="openShare()">
+    <cad-icon name="share" />
+  </button>
   <button type="button" class="icon-btn sync" aria-label="Sync with git" title="Sync with git" [disabled]="!project.value()" (click)="openSync()">
     <cad-icon name="sync" />
     @if (project.value()?.remote) {
@@ -108,3 +114,4 @@
 <cad-confirm-dialog />
 <cad-history-dialog #historyDialog (restored)="documents.reload(); project.reload()" (compare)="compare($event)" />
 <cad-sync-dialog (synced)="refresh()" />
+<cad-share-dialog (changed)="refresh()" />

@@ -24,12 +24,14 @@ import {
   type Vec3,
   type ValidationReport,
   type LengthUnit,
+  type LiveWhere,
   type SketchFreedom,
 } from '@core/contracts';
 import type { BrokenReference, ConfigurationImport, DesignCommand, DesignSession, DesignState, DrawingFormat, ExportOptions, InsertDrawingOptions, SketchView, SolidFormat } from '@core/managers/design';
 import { newId } from '@core/utilities/identity';
 import { DESIGN_MANAGER, PROJECT_MANAGER } from '../../core.providers';
 import { pictureUrl } from '../../shared/picture-url';
+import { ServerAccounts } from '../../shared/server-accounts';
 import type { Pick, PickKind, TopologyPick } from '../../viewport/picking';
 import type { StressField } from '../../viewport/surface-analysis';
 import { applyPick, defaultFeature, type FeatureDraft, type PickTarget, pickableFor, selectionOf } from '../modeling/feature-drafts';
@@ -51,6 +53,7 @@ const pickOfRef = (ref: TopologyRef): Pick =>
 export class DesignStore {
   private readonly manager = inject(DESIGN_MANAGER);
   private readonly projects = inject(PROJECT_MANAGER);
+  private readonly accounts = inject(ServerAccounts);
   private session: DesignSession | undefined;
   private unsubscribe: (() => void) | undefined;
   private dragFrame: Promise<unknown> = Promise.resolve();
@@ -194,7 +197,25 @@ export class DesignStore {
   });
 
   constructor() {
-    inject(DestroyRef).onDestroy(() => this.unsubscribe?.());
+    inject(DestroyRef).onDestroy(() => {
+      this.unsubscribe?.();
+      this.session?.leaveLive();
+    });
+  }
+
+  /** Edits the component live when its project is shared on a CADence server this browser is signed in to (CAD-178). */
+  private async goLive(session: DesignSession, projectId: ProjectId): Promise<void> {
+    const server = (await this.projects.findProject(projectId))?.remote?.server;
+    const token = server?.link ?? (server ? this.accounts.signInFor(server.url)?.token : undefined);
+    if (!server || !token || this.session !== session) return;
+    session.goLive({ server: server.url, project: server.project, token, viewOnly: server.role === 'viewer' || !!server.link });
+    this.present({});
+  }
+
+  /** Tells the others editing live where one works: the edited sketch, and the pointer in it. */
+  present(where: LiveWhere): void {
+    const sketch = this.editing();
+    this.session?.present({ ...(sketch ? { sketch } : {}), ...where });
   }
 
   /** The parameters of the open component's project (all of them, also those the component overrides). */
@@ -203,6 +224,7 @@ export class DesignStore {
 
   async open(documentId: DocumentId, projectId: ProjectId): Promise<void> {
     this.unsubscribe?.();
+    this.session?.leaveLive();
     this.reset();
     this.projectId = projectId;
     void this.projects.listDocuments(projectId).then((documents) => this.projectDocuments.set(documents));
@@ -218,6 +240,7 @@ export class DesignStore {
       this.state.set(state);
       if (this.editing() && !state.sketches.has(this.editing() as string)) this.finishEditing();
     });
+    void this.goLive(this.session, projectId);
   }
 
   /** Runs a command; shows its error and returns false when it was rejected. */
@@ -469,10 +492,12 @@ export class DesignStore {
     this.tool.set(tool);
     this.selection.set([]);
     this.error.set(undefined);
+    this.present({});
   }
 
   finishEditing(): void {
     this.editing.set(undefined);
+    this.session?.present({});
     this.tool.set('select');
     this.selection.set([]);
     this.preview.set(undefined);

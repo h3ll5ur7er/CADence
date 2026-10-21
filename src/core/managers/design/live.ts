@@ -75,7 +75,9 @@ export class LiveSession<S extends { readonly document: unknown }> {
         status: (status) => {
           this.status = status;
           host.changed();
-          if (status === 'live') void this.flush();
+          if (status !== 'live') return;
+          void this.flush();
+          if (this.where) this.present(this.where);
         },
         after: () => this.seq,
       },

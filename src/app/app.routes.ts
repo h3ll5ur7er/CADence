@@ -14,5 +14,11 @@ export const routes: Routes = [
     path: 'projects/:projectId/documents/:documentId',
     loadComponent: () => import('./editor/editor-page').then((m) => m.EditorPage),
   },
+  {
+    // A link to view a project shared on a CADence server (CAD-177).
+    path: 'shared',
+    title: 'CADence',
+    loadComponent: () => import('./home/shared-link-page').then((m) => m.SharedLinkPage),
+  },
   { path: '**', redirectTo: '' },
 ];

@@ -4,6 +4,8 @@ import type {
   BodyProperties,
   DocumentId,
   DocumentSummary,
+  Joint,
+  LimitHold,
   Matrix4,
   Measurement,
   ProjectSummary,
@@ -16,7 +18,7 @@ import type {
   Vec2,
   Vec3,
 } from '@core/contracts';
-import { describeChange, isDimension, type MotionFrame, sourceKey } from '@core/contracts';
+import { describeChange, isDimension, jointDofs, type MotionFrame, sourceKey } from '@core/contracts';
 import type { AssemblyCommand, AssemblyFormat, AssemblySession, AssemblyState, BomLine, CollisionOptions, CollisionReport, InstructionPicture, PlacedRef } from '@core/managers/assembly';
 import type { BrokenReference, DesignSession, DesignState, DrawingFormat, ExportOptions, SketchView, SolidFormat } from '@core/managers/design';
 import type { ProjectManager } from '@core/managers/project';
@@ -611,7 +613,10 @@ export interface AssemblySummary {
   /** Where each instance is: its transform (column-major, mm) and its origin; `placed` when a joint places it. */
   readonly instances: readonly (AssemblyDocument['instances'][number] & { readonly placed: boolean; readonly origin: Vec3 })[];
   readonly copies: readonly { readonly id: string; readonly of: string; readonly pattern: string; readonly origin: Vec3 }[];
-  readonly joints: readonly (AssemblyDocument['joints'][number] & { readonly error?: string })[];
+  /** Each joint with why it fails, and where it is (its frame on A, in assembly coordinates: origin and axis). */
+  readonly joints: readonly (AssemblyDocument['joints'][number] & { readonly error?: string; readonly frame?: { readonly origin: Vec3; readonly axis: Vec3 } })[];
+  /** Where limits hold joints in this pose (CAD-186), in words. */
+  readonly limits?: readonly string[];
   readonly links: NonNullable<AssemblyDocument['links']>;
   readonly patterns: NonNullable<AssemblyDocument['patterns']>;
   readonly studies: AssemblyDocument['motionStudies'];
@@ -636,8 +641,24 @@ export interface AssemblyChanges {
   readonly moved?: Readonly<Record<string, Vec3>>;
   /** Components that are not there to use, by name: still being rebuilt (`loading`) or `missing`. */
   readonly notReady?: Readonly<Record<string, 'loading' | 'missing'>>;
+  /** Where a limit held a joint the change asked more of, or moved a joint onto (CAD-186). */
+  readonly limits?: readonly string[];
+  /** What the change does that was not asked for: study keys and drives past a joint's limits (CAD-186). */
+  readonly notes?: readonly string[];
   readonly counts: { readonly instances: number; readonly copies: number; readonly joints: number };
 }
+
+/** A limit's hold in words: "J2 shoulder (Angle) is held at its maximum, 90° (asked 120°)". */
+export function limitText(hold: LimitHold & { readonly time?: number }, joints: readonly Joint[]): string {
+  const joint = joints.find((j) => j.id === hold.joint);
+  const name = joint?.name || hold.joint;
+  const when = hold.time === undefined ? '' : `From ${Math.round(hold.time * 1000) / 1000} s, `;
+  if (hold.dof === 'cone') return `${when}${name} is held at its cone of ${round(hold.value)}°${hold.asked === undefined ? '' : ` (asked ${round(hold.asked)}°)`}.`;
+  const dof = joint ? jointDofs[joint.type][hold.dof] : undefined;
+  const unit = dof?.kind === 'translate' ? ' mm' : '°';
+  return `${when}${name}${dof ? ` (${dof.label})` : ''} is held at its ${hold.at === 'min' ? 'minimum' : 'maximum'}, ${round(hold.value)}${unit}${hold.asked === undefined ? '' : ` (asked ${round(hold.asked)}${unit})`}.`;
+}
+
 
 /** The work's end or the deadline (a time in ms), whichever comes first. */
 function before(deadline: number, work: Promise<unknown>): Promise<void> {
@@ -713,14 +734,21 @@ export class AssemblyScript {
   /** The assembly as data: instances and copies where they are, joints with their errors, links, patterns, studies and exploded views. */
   async summary(): Promise<AssemblySummary> {
     await this.ready();
-    const { document, components, poses, placed, jointErrors, copies } = this.session.state();
+    const { document, components, poses, placed, jointErrors, copies, jointFrames, holds } = this.session.state();
+    const frameOf = (id: string) => {
+      const frame = jointFrames.get(id);
+      if (!frame) return {};
+      const [u, v] = [frame.u, frame.v];
+      return { frame: { origin: roundAll(frame.origin) as unknown as Vec3, axis: roundAll([u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]) as unknown as Vec3 } };
+    };
     return {
       id: document.id,
       name: document.name,
       components: [...components].map(([key, c]) => ({ key, name: c.name, status: c.status, ...(c.configurations?.length ? { configurations: c.configurations } : {}) })),
       instances: document.instances.map((instance) => ({ ...instance, transform: roundAll(poses.get(instance.id) ?? instance.transform), placed: placed.has(instance.id), origin: originOf(poses.get(instance.id) ?? instance.transform) })),
       copies: [...copies].map(([id, copy]) => ({ id, of: copy.instance, pattern: copy.pattern, origin: originOf(poses.get(id)) })),
-      joints: document.joints.map((joint) => ({ ...joint, ...(jointErrors.get(joint.id) ? { error: jointErrors.get(joint.id) as string } : {}) })),
+      joints: document.joints.map((joint) => ({ ...joint, ...(jointErrors.get(joint.id) ? { error: jointErrors.get(joint.id) as string } : {}), ...frameOf(joint.id) })),
+      ...(holds.length ? { limits: holds.map((hold) => limitText(hold, document.joints)) } : {}),
       links: document.links ?? [],
       patterns: document.patterns ?? [],
       studies: document.motionStudies,
@@ -742,7 +770,7 @@ export class AssemblyScript {
       const added = is.filter((item) => !was.some((w) => w.id === item.id));
       if (added.length) created[kind] = added.map((item) => brief(item as unknown as Record<string, unknown>));
       // Instances move and joints change values all the time: those are reported apart, below.
-      const ignored = kind === 'instances' ? ['transform', 'origin', 'placed'] : kind === 'joints' ? ['values', 'error'] : [];
+      const ignored = kind === 'instances' ? ['transform', 'origin', 'placed'] : kind === 'joints' ? ['values', 'error', 'frame'] : [];
       const different = is.filter((item) => {
         const old = was.find((w) => w.id === item.id);
         return old && JSON.stringify(without(old, ...ignored)) !== JSON.stringify(without(item, ...ignored));
@@ -768,6 +796,8 @@ export class AssemblyScript {
       ...(Object.keys(jointErrors).length ? { jointErrors } : {}),
       ...(Object.keys(moved).length ? { moved } : {}),
       ...(Object.keys(this.notReady()).length ? { notReady: this.notReady() } : {}),
+      ...(after.limits && JSON.stringify(after.limits) !== JSON.stringify(before.limits) ? { limits: after.limits } : {}),
+      ...(this.session.state().notes.length ? { notes: this.session.state().notes } : {}),
       counts: { instances: after.instances.length, copies: after.copies.length, joints: after.joints.length },
     };
   }
@@ -779,9 +809,11 @@ export class AssemblyScript {
   }
 
   /** Where instances hit while a motion study plays: the first moment for each pair, and how many moments were checked. */
-  async collisions(studyId: string, fps = 10, options: CollisionOptions = {}): Promise<CollisionReport> {
+  async collisions(studyId: string, fps = 10, options: CollisionOptions = {}): Promise<Omit<CollisionReport, 'holds'> & { readonly limits?: readonly string[] }> {
     await this.loaded();
-    return unwrap(await this.session.collisions(studyId, fps, options));
+    const { holds, ...report } = unwrap(await this.session.collisions(studyId, fps, options));
+    // Where the study runs into joint limits, in words (CAD-186).
+    return holds?.length ? { ...report, limits: holds.map((hold) => limitText(hold, this.session.state().document.joints)) } : report;
   }
 
   async properties() {

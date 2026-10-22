@@ -1,4 +1,4 @@
-import { jointDofs, type JointLimit, type JointType, linkedValue, type Matrix4, type MotionFrame, type MotionLink, type MotionStudy, type PlaneFrame } from '@core/contracts';
+import { jointDofs, type JointLimit, type JointType, type LimitHold, linkedValue, type Matrix4, type MotionFrame, type MotionLink, type MotionStudy, type PlaneFrame } from '@core/contracts';
 import { KinematicSolver } from './kinematic-solver';
 import { simulate } from './simulation';
 
@@ -19,6 +19,10 @@ export interface KinematicJoint {
   /** mm and degrees, in the order of `jointDofs[type]`. */
   readonly values: readonly number[];
   readonly limits: readonly (JointLimit | null)[];
+  /** Ball and universal joints: the largest angle between B's z and A's (degrees). */
+  readonly cone?: number;
+  /** Held at its values while other joints move (an actuator, CAD-195). */
+  readonly driven?: boolean;
 }
 
 export interface KinematicModel {
@@ -36,6 +40,8 @@ export interface KinematicSolution {
   readonly placed: ReadonlySet<string>;
   /** A joint that cannot be satisfied (a loop that does not close, a joint on one instance). */
   readonly error?: { readonly joint: string; readonly message: string };
+  /** Where limits held joints (CAD-186). */
+  readonly holds?: readonly LimitHold[];
 }
 
 /**
@@ -64,6 +70,8 @@ export interface KinematicSimulation {
   readonly frames: readonly MotionFrame[];
   /** The first moment the joints cannot hold; frames stop there. */
   readonly error?: { readonly time: number; readonly joint: string; readonly message: string };
+  /** The first moment each limit held a joint (CAD-186). */
+  readonly holds?: readonly (LimitHold & { readonly time: number })[];
 }
 
 /**
@@ -95,7 +103,8 @@ const stepSize = { rotate: 5, translate: 2 };
 const maxSteps = 720;
 
 export function createKinematicsEngine(): KinematicsEngine {
-  const once = (model: KinematicModel, driven: ReadonlySet<string>) => {
+  const once = (model: KinematicModel, asked: ReadonlySet<string>) => {
+    const driven = new Set([...asked, ...model.joints.filter((j) => j.driven).map((j) => j.id)]);
     const linked = applyLinks(model, driven);
     return new KinematicSolver(linked.model, linked.driven).solve();
   };

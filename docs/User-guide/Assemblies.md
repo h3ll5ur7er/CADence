@@ -36,6 +36,7 @@ Click **Joint**, choose the type, then click a face or edge on the part that **s
 | Pin-slot | slides sideways and turns | slide, angle |
 | Planar | moves on the plane and turns | X, Y, angle |
 | Ball | turns about the point | yaw, pitch, roll |
+| Universal | tilts about two crossing axes, never spins (a cardan joint, a leg's end) | tilt X, tilt Y |
 | Rigid | nothing | |
 
 Where a joint sits depends on what you click:
@@ -45,6 +46,11 @@ Where a joint sits depends on what you click:
 - **Straight edge:** its middle, with the axis along the edge.
 
 Select a joint to drag its values with the sliders (or type them), to set **limits**, or to **turn the moving side over**. Its **offsets** move each side's joint origin away from what you clicked: X and Y along the face or edge, Z along the joint's axis (mm), **Lean** about the axis (°), which picks the way the tilt tips it, **Tilt** about the frame's X (°), which tips the joint's axis over, and **Turn** about the new axis (°). A hinge 10 mm above a plate, a part turned 45° on its pin, or a pushrod sliding at 21° to a cylinder needs no extra geometry. On a round face or edge the axis has no inside; it points along the largest positive world axis, and on a pattern copy of a hole the same way round as on the original. On a round face the origin sits halfway along the face, measured along its axis: the same on every copy of a patterned hole. Joints that close a loop, like a four-bar linkage, are kept closed: dragging one joint moves the others. A change that no joint arrangement can satisfy is refused with the reason.
+
+- **Parameters in offsets:** an offset field takes a number or an expression of the project's parameters (`thickness * 2`). The joint moves when the parameter changes.
+- **Limits:** a value past a limit is held at it, and the joint says so (*Angle is held at its maximum, 30° (asked 75°)*). The same goes for loops that push a joint onto its limit. In a motion study, keys past a limit are marked; checking collisions also lists when each limit first holds.
+- **Cone:** a ball or universal joint can be limited to a cone, the most its moving side's axis may tip, in any direction (a rod end's 30°).
+- **Driven (an actuator):** a driven joint keeps its values when other joints move; only setting its own values changes it. Mark the legs of a parallel mechanism, such as a Stewart platform, as driven: their lengths then set the platform's pose. Agents set several joints at once with the command `set-joints`, which holds all of them.
 
 ## Motion links
 

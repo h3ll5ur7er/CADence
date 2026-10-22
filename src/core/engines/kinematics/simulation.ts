@@ -1,4 +1,4 @@
-import type { Matrix4, MotionFrame, MotionKey, MotionStudy } from '@core/contracts';
+import type { LimitHold, Matrix4, MotionFrame, MotionKey, MotionStudy } from '@core/contracts';
 import type { KinematicModel, KinematicSimulation, KinematicSolution } from './index';
 
 /** Starts and ends slowly (smoothstep). */
@@ -33,6 +33,8 @@ export function simulate(
   const start = new Map(model.joints.map((j) => [j.id, j.values]));
   const count = Math.max(1, Math.round(study.duration * fps));
   const frames: MotionFrame[] = [];
+  const holds = new Map<string, LimitHold & { time: number }>();
+  const result = () => (holds.size ? { holds: [...holds.values()] } : {});
   // Each frame starts from the previous one, so loops follow the motion instead of jumping between solutions.
   let joints = model.joints;
   for (let frame = 0; frame <= count; frame++) {
@@ -45,9 +47,13 @@ export function simulate(
       return { ...joint, values };
     });
     const solution = solve({ ...model, joints }, driven);
-    if (solution.error) return { frames, error: { time, ...solution.error } };
+    for (const hold of solution.holds ?? []) {
+      const key = `${hold.joint}/${hold.dof}/${hold.at}`;
+      if (!holds.has(key)) holds.set(key, { ...hold, time });
+    }
+    if (solution.error) return { frames, error: { time, ...solution.error }, ...result() };
     joints = joints.map((joint) => ({ ...joint, values: solution.values.get(joint.id) ?? joint.values }));
     frames.push({ time, poses: Object.fromEntries(solution.poses) as Record<string, Matrix4> });
   }
-  return { frames };
+  return { frames, ...result() };
 }

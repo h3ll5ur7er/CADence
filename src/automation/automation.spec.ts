@@ -224,6 +224,21 @@ describe('the MCP server', () => {
     expect(text(await call('export_assembly', { document: linkage, format: 'step' }))).toMatch(/\.step$/);
     const undone = JSON.parse(text(await call('undo_assembly', { document: linkage }))) as { removed?: string[] };
     expect(undone.removed).toEqual(['apart']); // one command at a time
+    // Both undone changes come back, then there is nothing left to redo (CAD-198).
+    expect(result(await call('undo_assembly', { document: linkage, redo: true })).isError).toBeUndefined();
+    expect(result(await call('undo_assembly', { document: linkage, redo: true })).isError).toBeUndefined();
+    const nothing = result(await call('undo_assembly', { document: linkage, redo: true }));
+    expect(nothing).toMatchObject({ isError: true, content: [{ text: 'Nothing to redo: no change was undone in this session.' }] });
+
+    // Joints say where they are, and where a limit holds them (CAD-186); several are set at once (CAD-195).
+    const { joints } = JSON.parse(text(await call('get_assembly', { document: linkage }))) as { joints: (Record<string, unknown> & { id: string; frame?: { origin: number[]; axis: number[] } })[] };
+    const hinge = joints.find((j) => j.id === 'hinge') as Record<string, unknown> & { frame?: { axis: number[] } };
+    expect(hinge.frame?.axis).toHaveLength(3);
+    const { frame: _frame, error: _error, ...plain } = hinge as Record<string, unknown>;
+    const limited = { ...plain, limits: [{ min: -30, max: 30 }] };
+    await call('edit_assembly', { document: linkage, commands: [{ type: 'edit-joint', joint: limited }] });
+    const held = JSON.parse(text(await call('edit_assembly', { document: linkage, commands: [{ type: 'set-joints', joints: [{ jointId: 'hinge', values: [75] }] }] }))) as { limits?: string[] };
+    expect(held.limits).toEqual([expect.stringMatching(/is held at its maximum, 30° \(asked 75°\)\.$/)]);
   });
 });
 
@@ -342,7 +357,8 @@ describe('everything the app does, for agents (CAD-124)', () => {
     const instructions = text(await call('export_assembly', { document: assembly, format: 'pdf', explode: 'apart' }));
     expect(readFileSync(instructions, 'latin1')).toContain('/FlateDecode');
     expect(result(await call('export_assembly', { document: assembly, format: 'pdf' })).content[0]?.text).toContain('exploded view');
-    expect(result(await call('undo_assembly', { document: assembly, redo: true })).isError).toBeUndefined();
+    // Nothing was undone: nothing to redo, and the agent is told so (CAD-198).
+    expect(result(await call('undo_assembly', { document: assembly, redo: true }))).toMatchObject({ isError: true, content: [{ text: expect.stringContaining('Nothing to redo') }] });
   });
 });
 

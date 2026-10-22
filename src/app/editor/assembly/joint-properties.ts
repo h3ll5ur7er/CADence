@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
-import { type Joint, jointDofs, type JointLimit, type JointOffset, type JointOrigin } from '@core/contracts';
+import { coneJoints, type Joint, jointDofs, type JointLimit, type JointOffset, type JointOrigin, type OffsetField } from '@core/contracts';
 import { Icon } from '../../shared/icon';
 import { AssemblyStore } from './assembly-store';
 import { jointLabel } from './joint-types';
@@ -7,6 +7,9 @@ import { HelpLink } from '../../shared/help';
 
 /** An offset field: along X, Y or the normal (0–2), the turn (3), the tilt (4) or the lean (5). */
 type OffsetIndex = 0 | 1 | 2 | 3 | 4 | 5;
+
+/** The offset field each input edits. */
+const fieldOf: Readonly<Record<OffsetIndex, OffsetField>> = { 0: 'x', 1: 'y', 2: 'z', 3: 'angle', 4: 'tilt', 5: 'lean' };
 
 /** A selected joint: drag its values, set limits, turn it over, delete it. */
 @Component({
@@ -31,6 +34,9 @@ type OffsetIndex = 0 | 1 | 2 | 3 | 4 | 5;
       </dl>
       @if (store.state()?.jointErrors?.get(joint.id); as error) {
         <p class="error" role="alert">{{ error }}</p>
+      }
+      @for (hold of holds(); track $index) {
+        <p class="hint held" role="status">{{ hold }}</p>
       }
       @for (dof of dofs(); track dof.label; let i = $index) {
         <div class="dof" [attr.data-dof]="dof.label">
@@ -60,9 +66,19 @@ type OffsetIndex = 0 | 1 | 2 | 3 | 4 | 5;
           </div>
         </div>
       }
+      @if (cones.has(joint.type)) {
+        <label class="field">
+          Cone (°)
+          <input type="number" min="0" max="180" step="any" placeholder="none" aria-label="Cone limit" title="How far the moving side's axis may tip, any way" [value]="joint.cone ?? ''" (change)="cone(joint, $event)" />
+        </label>
+      }
       <label class="check">
         <input type="checkbox" [checked]="joint.flip" (change)="store.run({ type: 'edit-joint', joint: { ...joint, flip: !joint.flip } })" />
         Turn the moving side over
+      </label>
+      <label class="check" title="An actuator: moving other joints never changes its values, as a parallel mechanism's legs">
+        <input type="checkbox" [checked]="!!joint.driven" (change)="driven(joint, $any($event.target).checked)" />
+        Driven (an actuator)
       </label>
       @for (side of sides; track side.key) {
         <fieldset class="offset">
@@ -72,9 +88,10 @@ type OffsetIndex = 0 | 1 | 2 | 3 | 4 | 5;
               <label class="field">
                 {{ axis.label }}
                 <input
-                  type="number"
-                  step="any"
+                  type="text"
+                  inputmode="decimal"
                   [attr.aria-label]="axis.label + ' offset of ' + side.label"
+                  [attr.title]="'A number, or an expression of the project parameters'"
                   [value]="offsetValue(joint[side.key], axis.index)"
                   (change)="setOffset(joint, side.key, axis.index, $event)"
                 />
@@ -93,6 +110,21 @@ export class JointProperties {
   protected readonly label = (joint: Joint) => jointLabel(joint.type);
 
   protected readonly joint = computed(() => this.store.state()?.document.joints.find((j) => j.id === this.jointId()));
+  protected readonly cones = coneJoints;
+
+  /** Where a limit holds this joint (CAD-186). */
+  protected readonly holds = computed(() => {
+    const joint = this.joint();
+    if (!joint) return [];
+    return (this.store.state()?.holds ?? [])
+      .filter((h) => h.joint === joint.id)
+      .map((h) => {
+        if (h.dof === 'cone') return `Held at its cone of ${this.round(h.value)}°${h.asked === undefined ? '' : ` (asked ${this.round(h.asked)}°)`}.`;
+        const dof = jointDofs[joint.type][h.dof];
+        const unit = dof?.kind === 'translate' ? ' mm' : '°';
+        return `${dof?.label ?? 'A value'} is held at its ${h.at === 'min' ? 'minimum' : 'maximum'}, ${this.round(h.value)}${unit}${h.asked === undefined ? '' : ` (asked ${this.round(h.asked)}${unit})`}.`;
+      });
+  });
 
   /** Slider ranges: the limits, or a turn either way and ±200 mm. */
   protected readonly dofs = computed(() => {
@@ -133,6 +165,18 @@ export class JointProperties {
     void this.store.run({ type: 'edit-joint', joint: { ...joint, limits } });
   }
 
+  /** An empty field removes the cone. */
+  protected cone(joint: Joint, event: Event): void {
+    const text = (event.target as HTMLInputElement).value.trim();
+    const { cone: _old, ...rest } = joint;
+    void this.store.run({ type: 'edit-joint', joint: text === '' ? rest : { ...rest, cone: Number(text) } });
+  }
+
+  protected driven(joint: Joint, on: boolean): void {
+    const { driven: _old, ...rest } = joint;
+    void this.store.run({ type: 'edit-joint', joint: on ? { ...rest, driven: true } : rest });
+  }
+
   protected readonly sides = [
     { key: 'a', label: 'stays' },
     { key: 'b', label: 'moves' },
@@ -147,16 +191,25 @@ export class JointProperties {
     { label: 'Turn', index: 3 },
   ] as const;
 
-  protected offsetValue(origin: JointOrigin, index: OffsetIndex): number {
+  /** The offset field's expression where it follows one (CAD-185), else its number. */
+  protected offsetValue(origin: JointOrigin, index: OffsetIndex): string {
     const offset = origin.offset;
-    return this.round(index === 3 ? offset?.angle : index === 4 ? offset?.tilt : index === 5 ? offset?.lean : offset?.translate[index]);
+    const expression = offset?.expressions?.[fieldOf[index]];
+    if (expression) return expression;
+    return String(this.round(index === 3 ? offset?.angle : index === 4 ? offset?.tilt : index === 5 ? offset?.lean : offset?.translate[index]));
   }
 
-  /** Moves one side's joint origin; all zero removes the offset. */
+  /** Moves one side's joint origin by a number or an expression of the project parameters; all zero removes the offset. */
   protected setOffset(joint: Joint, side: 'a' | 'b', index: OffsetIndex, event: Event): void {
-    const value = Number((event.target as HTMLInputElement).value) || 0;
+    const text = (event.target as HTMLInputElement).value.trim();
+    const number = text === '' ? 0 : Number(text);
+    const field = fieldOf[index];
     const current = joint[side].offset ?? { translate: [0, 0, 0], angle: 0 };
-    const offset: JointOffset =
+    // A number replaces the field's expression; anything else becomes one, evaluated by the assembly.
+    const { [field]: _old, ...others } = current.expressions ?? {};
+    const expressions = Number.isFinite(number) ? others : { ...others, [field]: text };
+    const value = Number.isFinite(number) ? number : 0;
+    const moved: JointOffset =
       index === 3
         ? { ...current, angle: value }
         : index === 4
@@ -164,8 +217,10 @@ export class JointProperties {
           : index === 5
             ? { ...current, lean: value }
             : { ...current, translate: current.translate.map((v, i) => (i === index ? value : v)) as [number, number, number] };
-    const { offset: _old, ...rest } = joint[side];
-    const zero = offset.angle === 0 && !offset.tilt && !offset.lean && offset.translate.every((v) => v === 0);
+    const { expressions: _was, ...plain } = moved;
+    const offset: JointOffset = Object.keys(expressions).length ? { ...plain, expressions } : plain;
+    const { offset: _gone, ...rest } = joint[side];
+    const zero = offset.angle === 0 && !offset.tilt && !offset.lean && !offset.axis && !offset.expressions && offset.translate.every((v) => v === 0);
     void this.store.run({ type: 'edit-joint', joint: { ...joint, [side]: zero ? rest : { ...rest, offset } } });
   }
 

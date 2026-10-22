@@ -1,4 +1,4 @@
-import { jointDofs, type Matrix4, type PlaneFrame } from '@core/contracts';
+import { jointDofs, type LimitHold, type Matrix4, type PlaneFrame } from '@core/contracts';
 import {
   compose,
   fromFrame,
@@ -46,12 +46,58 @@ function motion(joint: KinematicJoint, values: readonly number[]): Matrix4 {
   );
 }
 
-const clamp = (joint: KinematicJoint, values: readonly number[]): number[] =>
-  jointDofs[joint.type].map((_, i) => {
+/** The two turns whose cosines make the angle between B's z and A's: a ball's pitch and roll, a universal joint's two tilts. */
+const coneDofs = (joint: KinematicJoint): readonly [number, number] | undefined =>
+  joint.type === 'ball' ? [1, 2] : joint.type === 'universal' ? [0, 1] : undefined;
+
+/** The angle (degrees) between B's z axis and A's for these values. */
+export function tipAngle(joint: KinematicJoint, values: readonly number[]): number {
+  const dofs = coneDofs(joint);
+  if (!dofs) return 0;
+  const cos = Math.cos((values[dofs[0]] ?? 0) * degree) * Math.cos((values[dofs[1]] ?? 0) * degree);
+  return Math.acos(Math.max(-1, Math.min(1, cos))) / degree;
+}
+
+/** The values within the limits and the cone: a cone scales both turns down together until B's z is on it. */
+const clamp = (joint: KinematicJoint, values: readonly number[]): number[] => {
+  const limited = jointDofs[joint.type].map((_, i) => {
     const value = values[i] ?? 0;
     const limit = joint.limits[i];
     return limit ? Math.min(limit.max, Math.max(limit.min, value)) : value;
   });
+  const dofs = coneDofs(joint);
+  if (!dofs || joint.cone === undefined || tipAngle(joint, limited) <= joint.cone) return limited;
+  const scaled = (k: number) => limited.map((v, i) => (dofs.includes(i) ? v * k : v));
+  let [low, high] = [0, 1];
+  for (let step = 0; step < 50; step++) {
+    const middle = (low + high) / 2;
+    if (tipAngle(joint, scaled(middle)) > joint.cone) high = middle;
+    else low = middle;
+  }
+  return scaled(low);
+};
+
+/** Where the limits hold the joints (CAD-186): past what was asked of the driven ones, or moved onto them by the loops. */
+function holds(joints: readonly KinematicJoint[], values: ReadonlyMap<string, readonly number[]>, driven: ReadonlySet<string>): LimitHold[] {
+  const found: LimitHold[] = [];
+  const near = (a: number, b: number) => Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(b));
+  for (const joint of joints) {
+    const final = values.get(joint.id) ?? joint.values;
+    jointDofs[joint.type].forEach((_, i) => {
+      const limit = joint.limits[i];
+      const [value, asked] = [final[i] ?? 0, joint.values[i] ?? 0];
+      if (!limit || (near(value, asked) && asked >= limit.min && asked <= limit.max)) return;
+      const at = near(value, limit.min) ? 'min' : near(value, limit.max) ? 'max' : undefined;
+      if (at) found.push({ joint: joint.id, dof: i, at, value: limit[at], ...(driven.has(joint.id) && !near(value, asked) ? { asked } : {}) });
+    });
+    if (joint.cone === undefined || !coneDofs(joint)) continue;
+    const [tip, askedTip] = [tipAngle(joint, final), tipAngle(joint, joint.values)];
+    if (tip >= joint.cone - 1e-6 && (askedTip > joint.cone + 1e-6 || !near(tip, askedTip))) {
+      found.push({ joint: joint.id, dof: 'cone', at: 'cone', value: joint.cone, ...(driven.has(joint.id) && askedTip > joint.cone + 1e-6 ? { asked: askedTip } : {}) });
+    }
+  }
+  return found;
+}
 
 export class KinematicSolver {
   private readonly tree: TreeStep[] = [];
@@ -72,7 +118,8 @@ export class KinematicSolver {
     const poses = this.poses(values);
     for (const joint of this.loops) values.set(joint.id, this.loopValues(joint, poses));
     const placed = new Set(this.tree.map((s) => (s.forward ? s.joint.b.instance : s.joint.a.instance)));
-    return { poses, values, placed, ...(this.error ? { error: this.error } : {}) };
+    const held = holds(this.model.joints, values, this.driven);
+    return { poses, values, placed, ...(held.length ? { holds: held } : {}), ...(this.error ? { error: this.error } : {}) };
   }
 
   /** Breadth first from the grounded instances, then from the first instance of each unconnected group. */
@@ -134,17 +181,27 @@ export class KinematicSolver {
     return compose(invertRigid(a), b);
   }
 
-  /** How far a loop joint is from holding: translations and rotations its type does not allow. */
+  /**
+   * How far a loop joint is from holding: translations and rotations its type does not allow, a
+   * universal joint's spin, and, for a driven joint, how far its values are from what it was set to.
+   */
   private residual(joint: KinematicJoint, poses: ReadonlyMap<string, Matrix4>): number[] {
     const relative = this.relative(joint, poses);
     const dofs = jointDofs[joint.type];
     const t = translationOf(relative);
     const r = rotationVector(relative);
     const free = (kind: 'translate' | 'rotate', axis: number) => dofs.some((d) => d.kind === kind && d.axis === axis);
-    return [0, 1, 2].flatMap((axis) => [
-      ...(free('translate', axis) ? [] : [t[axis] as number]),
-      ...(free('rotate', axis) || dofs.filter((d) => d.kind === 'rotate').length > 1 ? [] : [(r[axis] as number) * rotationWeight]),
-    ]);
+    const spin = joint.type === 'universal' ? [Math.atan2(-(relative[4] as number), relative[0] as number) * rotationWeight] : [];
+    const got = this.driven.has(joint.id) ? this.loopValues(joint, poses) : undefined;
+    const held = got ? dofs.map((dof, i) => ((got[i] as number) - (joint.values[i] ?? 0)) * (dof.kind === 'rotate' ? degree * rotationWeight : 1)) : [];
+    return [
+      ...[0, 1, 2].flatMap((axis) => [
+        ...(free('translate', axis) ? [] : [t[axis] as number]),
+        ...(free('rotate', axis) || dofs.filter((d) => d.kind === 'rotate').length > 1 ? [] : [(r[axis] as number) * rotationWeight]),
+      ]),
+      ...spin,
+      ...held,
+    ];
   }
 
   /** The values a loop joint ends up with, read back from where the loop put its two sides. */
@@ -152,7 +209,9 @@ export class KinematicSolver {
     const m = this.relative(joint, poses);
     const at = (i: number) => m[i] as number;
     const t = translationOf(m);
-    const euler = [Math.atan2(at(6), at(10)), Math.asin(Math.max(-1, Math.min(1, -at(2)))), Math.atan2(at(1), at(0))];
+    const asin = (x: number) => Math.asin(Math.max(-1, Math.min(1, x)));
+    // A ball turns about z, y and x in turn; a universal joint about x, then y.
+    const euler = joint.type === 'universal' ? [Math.atan2(-at(9), at(10)), asin(at(8)), 0] : [Math.atan2(at(6), at(10)), asin(-at(2)), Math.atan2(at(1), at(0))];
     return jointDofs[joint.type].map((dof) => (dof.kind === 'translate' ? (t[dof.axis] as number) : (euler[dof.axis] as number) / degree));
   }
 
@@ -211,7 +270,9 @@ export class KinematicSolver {
     }
     if (norm(r) > 1e-4) {
       const worst = this.loops.find((joint) => norm(this.residual(joint, this.poses(values))) > 1e-4) ?? this.loops[0];
-      if (worst) this.error = { joint: worst.id, message: 'The joints cannot all hold: this loop does not close with these values and limits.' };
+      // How far it stays open: mm, with rotations weighed as mm.
+      const gap = worst ? norm(this.residual(worst, this.poses(values))) : 0;
+      if (worst) this.error = { joint: worst.id, message: `The joints cannot all hold: this loop does not close with these values and limits (it stays ${gap < 0.01 ? gap.toExponential(1) : gap.toFixed(2)} mm open).` };
     }
   }
 }

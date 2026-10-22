@@ -26,7 +26,7 @@ export interface Instance {
  */
 export const sourceKey = (component: string, configuration?: string): string => (configuration ? `${component}@${configuration}` : component);
 
-export type JointType = 'rigid' | 'revolute' | 'slider' | 'cylindrical' | 'pin-slot' | 'planar' | 'ball';
+export type JointType = 'rigid' | 'revolute' | 'slider' | 'cylindrical' | 'pin-slot' | 'planar' | 'ball' | 'universal';
 
 /** One freedom of a joint, along or about an axis of the joint frame. */
 export interface JointDof {
@@ -61,7 +61,15 @@ export const jointDofs: Readonly<Record<JointType, readonly JointDof[]>> = {
     { kind: 'rotate', axis: 1, label: 'Pitch' },
     { kind: 'rotate', axis: 0, label: 'Roll' },
   ],
+  // Two crossing axes and no spin, as at a cardan joint or a leg's end (CAD-197).
+  universal: [
+    { kind: 'rotate', axis: 0, label: 'Tilt X' },
+    { kind: 'rotate', axis: 1, label: 'Tilt Y' },
+  ],
 };
+
+/** The joints whose turning a cone limit can hold: B's z axis within `cone` degrees of A's. */
+export const coneJoints: ReadonlySet<JointType> = new Set<JointType>(['ball', 'universal']);
 
 /**
  * Moves a joint origin away from what was picked: along the frame's axes (mm), then tilted about its
@@ -74,7 +82,23 @@ export interface JointOffset {
   readonly lean?: number;
   /** Tips the joint's axis over, about the frame's x axis: a joint along a direction no face has. */
   readonly tilt?: number;
+  /**
+   * The joint's axis as a direction in the instance's coordinates instead of lean and tilt (CAD-185),
+   * and which way the frame's x points (projected across the axis; absent: the picked frame's x, or
+   * the nearest other axis). The angle still turns the frame about the axis.
+   */
+  readonly axis?: Vec3;
+  readonly xAxis?: Vec3;
+  /**
+   * Expressions of the project's parameters the values follow (CAD-185): `x`, `y`, `z` (lengths),
+   * `lean`, `tilt`, `angle` (angles). The numbers above are what they were last evaluated to.
+   */
+  readonly expressions?: Readonly<Partial<Record<OffsetField, string>>>;
 }
+
+/** The offset's values that can follow an expression. */
+export type OffsetField = 'x' | 'y' | 'z' | 'lean' | 'tilt' | 'angle';
+export const offsetFields: readonly OffsetField[] = ['x', 'y', 'z', 'lean', 'tilt', 'angle'];
 
 /** Where a joint attaches: a face or edge of the instance's component, or the component's origin, maybe moved by an offset. */
 export interface JointOrigin {
@@ -94,6 +118,7 @@ export function offsetFrame(frame: PlaneFrame, offset: JointOffset | undefined):
   const n0: Vec3 = [frame.u[1] * frame.v[2] - frame.u[2] * frame.v[1], frame.u[2] * frame.v[0] - frame.u[0] * frame.v[2], frame.u[0] * frame.v[1] - frame.u[1] * frame.v[0]];
   const [x, y, z] = offset.translate;
   const at = (i: 0 | 1 | 2) => origin[i] + frame.u[i] * x + frame.v[i] * y + n0[i] * z;
+  if (offset.axis) return axisFrame([at(0), at(1), at(2)], offset.axis, offset.xAxis ?? frame.u, offset.angle);
   const l = ((offset.lean ?? 0) * Math.PI) / 180;
   const u: Vec3 = [0, 1, 2].map((i) => (frame.u[i] as number) * Math.cos(l) + (frame.v[i] as number) * Math.sin(l)) as unknown as Vec3;
   const v0: Vec3 = [0, 1, 2].map((i) => (frame.v[i] as number) * Math.cos(l) - (frame.u[i] as number) * Math.sin(l)) as unknown as Vec3;
@@ -107,6 +132,27 @@ export function offsetFrame(frame: PlaneFrame, offset: JointOffset | undefined):
     u: [u[0] * c + v[0] * s, u[1] * c + v[1] * s, u[2] * c + v[2] * s],
     v: [v[0] * c - u[0] * s, v[1] * c - u[1] * s, v[2] * c - u[2] * s],
   };
+}
+
+/** A frame at `origin` whose normal is `axis`, its x towards `x` (or the nearest other axis), turned by `angle` degrees about the normal. */
+function axisFrame(origin: Vec3, axis: Vec3, x: Vec3, angle: number): PlaneFrame {
+  const unitOf = (v: readonly number[]): Vec3 => {
+    const length = Math.hypot(v[0] as number, v[1] as number, v[2] as number);
+    return [(v[0] as number) / length, (v[1] as number) / length, (v[2] as number) / length];
+  };
+  const n = unitOf(axis);
+  const across = (v: Vec3): readonly number[] => {
+    const d = v[0] * n[0] + v[1] * n[1] + v[2] * n[2];
+    return [v[0] - d * n[0], v[1] - d * n[1], v[2] - d * n[2]];
+  };
+  // The x given, or the world axis most across the normal when it lies along it.
+  let u0 = across(x);
+  if (Math.hypot(...u0) < 1e-9) u0 = across(([[1, 0, 0], [0, 1, 0], [0, 0, 1]] as Vec3[]).reduce((best, e) => (Math.abs(e[0] * n[0] + e[1] * n[1] + e[2] * n[2]) < Math.abs(best[0] * n[0] + best[1] * n[1] + best[2] * n[2]) ? e : best)));
+  const u = unitOf(u0);
+  const v: Vec3 = [n[1] * u[2] - n[2] * u[1], n[2] * u[0] - n[0] * u[2], n[0] * u[1] - n[1] * u[0]];
+  const a = (angle * Math.PI) / 180;
+  const [c, s] = [Math.cos(a), Math.sin(a)];
+  return { origin, u: [u[0] * c + v[0] * s, u[1] * c + v[1] * s, u[2] * c + v[2] * s], v: [v[0] * c - u[0] * s, v[1] * c - u[1] * s, v[2] * c - u[2] * s] };
 }
 
 /**
@@ -147,6 +193,25 @@ export interface Joint {
   readonly values: readonly number[];
   /** Per degree of freedom; `null` for unlimited. */
   readonly limits: readonly (JointLimit | null)[];
+  /**
+   * An actuator (CAD-195): moving or solving other joints never changes its values; only setting
+   * them does. A parallel mechanism's legs are driven, so their lengths set its pose.
+   */
+  readonly driven?: boolean;
+  /** Ball and universal joints: the largest angle (degrees) between B's z axis and A's, any way (CAD-197). */
+  readonly cone?: number;
+}
+
+/** Where a limit held a joint (CAD-186): a freedom at its minimum or maximum, or a cone at its angle. */
+export interface LimitHold {
+  readonly joint: string;
+  /** The freedom's index in `jointDofs`, or `cone`. */
+  readonly dof: number | 'cone';
+  readonly at: 'min' | 'max' | 'cone';
+  /** What it was held at (mm or degrees). */
+  readonly value: number;
+  /** What was asked, when the joint was asked to go past it. */
+  readonly asked?: number;
 }
 
 /**

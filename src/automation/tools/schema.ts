@@ -27,6 +27,15 @@ export const object = (properties: Record<string, unknown>, required: readonly s
 export const projectArg = string('Project id or name (list_projects).');
 export const documentArg = string('Document id (list_documents).');
 
+/**
+ * Why undo or redo did nothing (CAD-198): the history is this server's session of the document, so
+ * a change made before the server started (or in another process) cannot be undone here.
+ */
+export const nothingToUndo = (redo: boolean) =>
+  redo
+    ? 'Nothing to redo: no change was undone in this session.'
+    : 'Nothing to undo: this server made no change to the document since it opened it. Changes from before (or from other processes) are in its version history: versions.';
+
 export const point2 = (description: string) => ({ type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description });
 
 /** Runs commands one by one; a refusal says which command and why (the ones before stay). */

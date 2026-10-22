@@ -9,7 +9,7 @@ const examples = JSON.parse(readFileSync(join(folder, 'index.json'), 'utf8')) as
 
 /**
  * The example projects the app ships (public/examples, CAD-199): archives of the stress tests'
- * machines. Each opens with every component regenerated, every assembly placed and every drawing
+ * machines, the radial engine, the robot arm and the Stewart platform. Each opens with every component regenerated, every assembly placed and every drawing
  * drawn, without errors, so a change that breaks old documents shows here.
  */
 describe('example projects', { timeout: 600_000 }, () => {

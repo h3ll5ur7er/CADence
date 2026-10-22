@@ -54,7 +54,7 @@ describe('HomePage', () => {
     serve();
     const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
     const page = await render();
-    await vi.waitFor(() => expect(page.querySelectorAll('[aria-label="Samples"] .sample')).toHaveLength(5));
+    await vi.waitFor(() => expect(page.querySelectorAll('[aria-label="Samples"] .sample')).toHaveLength(6));
     expect(page.querySelector('[aria-label="Samples"]')?.textContent).toContain('Box with lid');
     page.querySelector<HTMLButtonElement>('button[aria-label="Open sample Wall bracket"]')?.click();
     await vi.waitFor(() => expect(navigate).toHaveBeenCalled());

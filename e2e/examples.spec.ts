@@ -1,15 +1,15 @@
 import { expect, test } from '@playwright/test';
 import { evidence } from './support';
 
-/** CAD-199: the stress tests' machines as example projects, opened from the home page. */
+/** CAD-199: the stress tests' machines (the radial engine, the robot arm, the Stewart platform) as example projects, opened from the home page. */
 test('opens an example machine from the home page as a project of its own', async ({ page }) => {
   await page.goto('/');
   const robot = page.getByRole('button', { name: 'Open sample Robot arm R6' });
   const stewart = page.getByRole('button', { name: 'Open sample Stewart platform S6' });
-  await expect(robot).toBeVisible();
-  await expect(stewart).toBeVisible();
+  const engine = page.getByRole('button', { name: 'Open sample Magnum Opus R-9 radial engine' });
+  for (const card of [engine, robot, stewart]) await expect(card).toBeVisible();
   // Their pictures are there, next to the templates' line drawings.
-  for (const card of [robot, stewart]) await expect.poll(() => card.locator('img').evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
+  for (const card of [engine, robot, stewart]) await expect.poll(() => card.locator('img').evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
   await expect(page.getByRole('button', { name: 'Open sample Box with lid' })).toBeVisible();
   await robot.scrollIntoViewIfNeeded();
   await evidence(page, 'cad-199-examples');

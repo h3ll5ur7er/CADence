@@ -23,6 +23,7 @@ The tour points at one button at a time with a ring and moves on when you have p
 
 The **Samples** at the bottom of the home page are finished projects. A click makes a project of your own from one and opens it; the sample itself stays as it is for the next time.
 
+- **Magnum Opus R-9 radial engine**: nine cylinders round a crankshaft, with master and link rods, cams, a planetary reduction gear to the propeller and a drawing of every part. It opens at its assembly.
 - **Robot arm R6**: a six-axis arm with a gripper, driven by stepper motors. Its motion studies reach set poses and pick up a workpiece and put it down again, and every part has its drawing. It opens at its assembly.
 - **Stewart platform S6**: a platform on six legs with ball joints, moved by setting the legs' lengths: six closed loops solved together.
 - *Box with lid* (two parts and an assembly), *Wall bracket* and *Enclosure*: their sizes are project parameters. Change them in the **Parameters** panel and watch every part follow ([[User-guide/Part-modeling#parameters]]).

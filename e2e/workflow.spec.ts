@@ -113,7 +113,7 @@ test('finds and runs any command by name with Ctrl+K', async ({ page }) => {
   const palette = page.getByRole('dialog', { name: 'Command palette' });
   await expect(palette).toBeVisible();
   await page.keyboard.type('pat');
-  await expect(palette.getByRole('option').first()).toContainText('Pattern along a path');
+  await expect(palette.getByRole('option', { name: /Pattern along a path/ })).toBeVisible();
   await evidence(page, '79-command-palette');
 
   await page.getByRole('combobox', { name: 'Command' }).fill('fillet');

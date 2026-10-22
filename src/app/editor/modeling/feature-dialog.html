@@ -488,6 +488,13 @@
         </div>
         <label class="check"><input type="checkbox" id="feature-helix-left" [checked]="f.leftHanded" (change)="set({ leftHanded: $any($event.target).checked })" /> Left-handed</label>
       }
+      @case ('path') {
+        <label class="field">
+          Points (x, y, z a line)
+          <textarea id="feature-path-points" rows="5" autocomplete="off" [value]="pathText(f.points)" (change)="setPathPoints(value($event))"></textarea>
+        </label>
+        <label class="check"><input type="checkbox" id="feature-path-smooth" [checked]="f.smooth" (change)="set({ smooth: $any($event.target).checked })" /> Smooth through the points</label>
+      }
       @case ('path-pattern') {
         <fieldset class="tools">
           <legend>Repeat</legend>

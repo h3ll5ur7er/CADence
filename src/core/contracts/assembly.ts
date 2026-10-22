@@ -278,6 +278,28 @@ export interface MotionStudy {
   readonly carries?: readonly MotionCarry[];
 }
 
+/** Where a cable runs through an instance (CAD-192): a point of it, and the way the cable leaves (both in its coordinates). */
+export interface CablePoint {
+  readonly instance: string;
+  readonly point: Vec3;
+  readonly direction?: Vec3;
+}
+
+/**
+ * A cable or hose (CAD-192): through points of instances, in a smooth curve between them that follows
+ * them in every pose and while a study plays. Its length and tightest bend are told in each pose, and
+ * the collision check finds where it runs through other parts.
+ */
+export interface Cable {
+  readonly id: string;
+  readonly name: string;
+  /** mm. */
+  readonly diameter: number;
+  readonly points: readonly CablePoint[];
+  /** The tightest bend it takes (mm), to be told where it bends tighter. */
+  readonly minBendRadius?: number;
+}
+
 /** One freedom of a joint (its index in `jointDofs`). */
 export interface JointFreedom {
   readonly joint: string;

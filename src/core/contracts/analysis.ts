@@ -45,17 +45,26 @@ export function materialNames(component: { readonly material?: Material; readonl
   return [...new Set(ids.map((b) => bodyMaterial(component, b).name))].join(', ');
 }
 
-/** A load on a face: a force (N, spread over the face) along a direction, or a pressure (MPa) pushing on it. */
+/**
+ * A load on a face: a force (N, spread over the face) along a direction, a pressure (MPa) pushing on
+ * it, a force and a moment acting at a point away from the face and carried to it as a rigid connection
+ * would (a remote load: the weight of an arm hanging from an axle), or a moment about an axis (a motor's
+ * torque on a shaft), CAD-191. Moments are N·m.
+ */
 export type SimulationLoad =
   | { readonly kind: 'force'; readonly face: TopologyRef; readonly force: number; readonly direction: Vec3 }
-  | { readonly kind: 'pressure'; readonly face: TopologyRef; readonly pressure: number };
+  | { readonly kind: 'pressure'; readonly face: TopologyRef; readonly pressure: number }
+  | { readonly kind: 'remote'; readonly face: TopologyRef; readonly point: Vec3; readonly force: Vec3; readonly moment?: Vec3 }
+  | { readonly kind: 'moment'; readonly face: TopologyRef; readonly moment: number; readonly axis: Vec3 };
 
 /** A linear static strength check of a component (CAD-93): the faces held fixed and the loads. */
 export interface SimulationSetup {
   readonly fixed: readonly TopologyRef[];
   readonly loads: readonly SimulationLoad[];
-  /** Element size (mm); absent: chosen from the part's size. */
+  /** Element size (mm); absent: chosen from the part's size and its held and loaded faces (CAD-190). */
   readonly size?: number;
+  /** The bodies' own weight, from their materials, along this acceleration (m/s², e.g. [0, 0, -9.81]); CAD-191. */
+  readonly gravity?: Vec3;
 }
 
 /** A body's surface with the results of a strength check on it. */
@@ -76,6 +85,16 @@ export interface SimulationResult {
   readonly maxDisplacement: number;
   /** Yield strength over the largest stress (absent without a yield strength). */
   readonly safetyFactor?: number;
+  /** The element size the check used (mm). */
+  readonly size: number;
+  /**
+   * The same check with elements half as large again (CAD-190): how settled the answer is. `settled`
+   * when the largest stress differs by less than 10 %.
+   */
+  readonly coarser?: { readonly size: number; readonly maxStress: number; readonly maxDisplacement: number };
+  readonly settled?: boolean;
+  /** What to know about the answer: a peak in a small spot (a sharp corner), an answer not settled. */
+  readonly notes?: readonly string[];
   readonly elements: number;
   readonly nodes: number;
   /** Per body: its surface as the solution sees it (triangles), with von Mises stress and displacement (x, y, z) at each vertex. */

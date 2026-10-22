@@ -1,6 +1,6 @@
 /** The command and feature types as TypeScript source, embedded when the command line is built (tools/automation/build.mjs). */
 declare module 'cadence:reference' {
-  /** By topic: commands, sketch, features, parts, document, assembly, drawing. */
+  /** By topic: commands, sketch, features, parts, document, assembly, joints, drawing. */
   const reference: Readonly<Record<string, string>>;
   export default reference;
 }

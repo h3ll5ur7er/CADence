@@ -52,6 +52,9 @@ import type {
   AssemblySession,
   AssemblyState,
   BomLine,
+  CableHit,
+  CableReport,
+  CableState,
   Collision,
   CollisionOptions,
   CollisionReport,
@@ -64,6 +67,7 @@ import type {
   Reached,
   StudyMoment,
 } from './assembly-manager';
+import { cableMesh, cableRoute, fastened, insideMesh } from './cables';
 import { applyCommand, reachProblem } from './commands';
 import { copyId, patternTransforms } from './patterns';
 
@@ -133,6 +137,7 @@ interface Derived {
   readonly copies: ReadonlyMap<string, { readonly instance: string; readonly pattern: string }>;
   readonly jointFrames: ReadonlyMap<string, PlaneFrame>;
   readonly holds: readonly LimitHold[];
+  readonly cables: readonly CableState[];
 }
 
 const defaultMaterial = materials[0] as Material;
@@ -147,7 +152,7 @@ const componentOrigin: PlaneFrame = { origin: [0, 0, 0], u: [1, 0, 0], v: [0, 1,
 const solidTypes: Readonly<Record<AssemblyFormat, string>> = { step: 'model/step', stl: 'model/stl', obj: 'model/obj', '3mf': 'model/3mf' };
 
 class Session implements AssemblySession {
-  private derived: Derived = { poses: new Map(), placed: new Set(), values: new Map(), errors: new Map(), copies: new Map(), jointFrames: new Map(), holds: [] };
+  private derived: Derived = { poses: new Map(), placed: new Set(), values: new Map(), errors: new Map(), copies: new Map(), jointFrames: new Map(), holds: [], cables: [] };
   /** What the last change did that was not asked for (CAD-186). */
   private notes: readonly string[] = [];
   /** By source: a component, or a configuration of it (`sourceKey`). */
@@ -212,6 +217,7 @@ class Session implements AssemblySession {
       jointFrames: this.derived.jointFrames,
       holds: this.derived.holds,
       notes: this.notes,
+      cables: this.derived.cables,
       canUndo: this.undoStack.length > 0,
       canRedo: this.redoStack.length > 0,
     };
@@ -418,7 +424,8 @@ class Session implements AssemblySession {
       options.onProgress?.(++checked, frames.value.length);
     }
     const holds = played.value.holds;
-    return ok({ collisions: [...found.values()].sort((x, y) => x.time - y.time), checked, moments: frames.value.length, ...(holds.length ? { holds } : {}) });
+    const cabling = this.cableCheck(frames.value);
+    return ok({ collisions: [...found.values()].sort((x, y) => x.time - y.time), checked, moments: frames.value.length, ...(holds.length ? { holds } : {}), ...cabling });
   }
 
   explode(viewId: string, steps?: number, amount = 1): ReadonlyMap<string, Matrix4> {
@@ -468,6 +475,11 @@ class Session implements AssemblySession {
     }
     const result: BomLine[] = [];
     for (const { line, instances, mass } of lines.values()) result.push({ ...line, count: instances.length, mass: await mass, instances });
+    // Cables, by their length as the assembly stands (CAD-192).
+    for (const cable of this.document.cables ?? []) {
+      const state = this.derived.cables.find((c) => c.id === cable.id);
+      result.push({ component: `${cable.name} (⌀${cable.diameter} mm)`, count: 1, material: 'Cable', mass: 0, instances: [], ...(state ? { length: Math.round(state.length * 10) / 10 } : {}) });
+    }
     return result.sort((a, b) => a.component.localeCompare(b.component));
   }
 
@@ -845,7 +857,7 @@ class Session implements AssemblySession {
       jointFrames.set(joint.id, { origin: [m[12] as number, m[13] as number, m[14] as number], u: [m[0] as number, m[1] as number, m[2] as number], v: [m[4] as number, m[5] as number, m[6] as number] });
     }
     const { poses, copies } = withCopies(document, solution.poses);
-    return { poses, placed: solution.placed, values: solution.values, errors, copies, jointFrames, holds: solution.holds ?? [] };
+    return { poses, placed: solution.placed, values: solution.values, errors, copies, jointFrames, holds: solution.holds ?? [], cables: cablesAt(document, poses) };
   }
 
   /** A joint origin's frame in its component's coordinates, cached per component version. */
@@ -860,6 +872,39 @@ class Session implements AssemblySession {
     const picked = this.frames.get(key) ?? (await this.deps.modeling.frameOf(component.bodies, origin.ref));
     this.frames.set(key, picked);
     return picked.ok ? ok(offsetFrame(picked.value, origin.offset)) : picked;
+  }
+
+  /**
+   * Cables over a study's frames (CAD-192): where each first runs through a part (its centre line inside
+   * the part's solid, away from where it is fastened), and its longest and tightest moments.
+   */
+  private cableCheck(frames: readonly MotionFrame[]): { cableHits?: CableHit[]; cables?: CableReport[] } {
+    const cables = this.document.cables ?? [];
+    if (!cables.length) return {};
+    const hits = new Map<string, CableHit>();
+    const reports = new Map<string, CableReport>();
+    for (const frame of frames) {
+      const poses = new Map(Object.entries(frame.poses));
+      for (const cable of cables) {
+        const route = cableRoute(cable, poses);
+        if (!route) continue;
+        const was = reports.get(cable.id);
+        reports.set(cable.id, {
+          cable: cable.id,
+          longest: !was || route.length > was.longest.length ? { length: route.length, time: frame.time } : was.longest,
+          tightest: !was || route.bendRadius < was.tightest.radius ? { radius: route.bendRadius, time: frame.time } : was.tightest,
+        });
+        for (const { instance, component, transform } of this.readyInstances(poses)) {
+          const key = `${cable.id}|${instance.id}`;
+          if (hits.has(key) || instance.appearance?.hidden) continue;
+          const near = fastened(cable, route, poses, instance.id);
+          const back = invertRigid(transform);
+          const at = route.samples.find((sample) => !near(sample) && component.view.bodies.some((body) => insideMesh(body, transformPoint(back, sample))));
+          if (at) hits.set(key, { cable: cable.id, instance: instance.id, time: frame.time, at });
+        }
+      }
+    }
+    return { cableHits: [...hits.values()].sort((a, b) => a.time - b.time), cables: [...reports.values()] };
   }
 
   /** Instances and the copies of patterns whose components are ready, where they are (or at these poses). */
@@ -887,6 +932,16 @@ class Session implements AssemblySession {
 }
 
 /** The poses with the pattern copies added: each copy is its pattern's transform after its original's pose. */
+/** The cables where the poses put them (CAD-192). */
+function cablesAt(document: AssemblyDocument, poses: ReadonlyMap<string, Matrix4>): CableState[] {
+  return (document.cables ?? []).flatMap((cable) => {
+    const route = cableRoute(cable, poses);
+    if (!route) return [];
+    const tooTight = cable.minBendRadius !== undefined && route.bendRadius < cable.minBendRadius ? { tooTight: route.tightest } : {};
+    return [{ id: cable.id, length: route.length, bendRadius: route.bendRadius, ...tooTight, mesh: cableMesh(cable, route) }];
+  });
+}
+
 function withCopies(document: AssemblyDocument, originals: ReadonlyMap<string, Matrix4>): { poses: Map<string, Matrix4>; copies: Map<string, { instance: string; pattern: string }> } {
   const poses = new Map(originals);
   const copies = new Map<string, { instance: string; pattern: string }>();

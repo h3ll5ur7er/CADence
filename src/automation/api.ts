@@ -20,7 +20,7 @@ import type {
   Vec3,
 } from '@core/contracts';
 import { describeChange, isDimension, jointDofs, type MotionFrame, sourceKey } from '@core/contracts';
-import type { AssemblyCommand, AssemblyFormat, AssemblySession, AssemblyState, BomLine, CollisionOptions, CollisionReport, InstructionPicture, LoadOptions, PlacedRef } from '@core/managers/assembly';
+import { type AssemblyCommand, type AssemblyFormat, type AssemblySession, type AssemblyState, type BomLine, cableMesh, cableRoute, type CollisionOptions, type CollisionReport, type InstructionPicture, type LoadOptions, type PlacedRef } from '@core/managers/assembly';
 import type { BrokenReference, DesignSession, DesignState, DrawingFormat, ExportOptions, SketchView, SolidFormat } from '@core/managers/design';
 import type { ProjectManager } from '@core/managers/project';
 import { deflate, encodeGif, encodePng, type Pixels } from '@core/utilities/picture';
@@ -622,9 +622,11 @@ export interface AssemblySummary {
   readonly patterns: NonNullable<AssemblyDocument['patterns']>;
   readonly studies: AssemblyDocument['motionStudies'];
   readonly explodedViews: NonNullable<AssemblyDocument['explodedViews']>;
+  /** Cables (CAD-192), with how long and how tightly bent they are now (mm). */
+  readonly cables: readonly (NonNullable<AssemblyDocument['cables']>[number] & { readonly length?: number; readonly bendRadius?: number; readonly tooTight?: boolean })[];
 }
 
-type AssemblyKind = 'instances' | 'joints' | 'links' | 'patterns' | 'studies' | 'explodedViews';
+type AssemblyKind = 'instances' | 'joints' | 'links' | 'patterns' | 'studies' | 'explodedViews' | 'cables';
 
 /** What one edit changed in an assembly, short (CAD-111): get_assembly has the whole of it. */
 export interface AssemblyChanges {
@@ -754,13 +756,17 @@ export class AssemblyScript {
       patterns: document.patterns ?? [],
       studies: document.motionStudies,
       explodedViews: document.explodedViews ?? [],
+      cables: (document.cables ?? []).map((cable) => {
+        const now = this.session.state().cables.find((c) => c.id === cable.id);
+        return { ...cable, ...(now ? { length: round(now.length), bendRadius: Number.isFinite(now.bendRadius) ? round(now.bendRadius) : now.bendRadius, ...(now.tooTight ? { tooTight: true } : {}) } : {}) };
+      }),
     };
   }
 
   /** What changed since an earlier summary: the answer to an edit. */
   async changes(before: AssemblySummary): Promise<AssemblyChanges> {
     const after = await this.summary();
-    const kinds = ['instances', 'joints', 'links', 'patterns', 'studies', 'explodedViews'] as const;
+    const kinds = ['instances', 'joints', 'links', 'patterns', 'studies', 'explodedViews', 'cables'] as const;
     const created: Partial<Record<AssemblyKind, readonly unknown[]>> = {};
     const changed: Partial<Record<AssemblyKind, readonly string[]>> = {};
     const removed: string[] = [];
@@ -771,7 +777,7 @@ export class AssemblyScript {
       const added = is.filter((item) => !was.some((w) => w.id === item.id));
       if (added.length) created[kind] = added.map((item) => brief(item as unknown as Record<string, unknown>));
       // Instances move and joints change values all the time: those are reported apart, below.
-      const ignored = kind === 'instances' ? ['transform', 'origin', 'placed'] : kind === 'joints' ? ['values', 'error', 'frame'] : [];
+      const ignored = kind === 'instances' ? ['transform', 'origin', 'placed'] : kind === 'joints' ? ['values', 'error', 'frame'] : kind === 'cables' ? ['length', 'bendRadius', 'tooTight'] : [];
       const different = is.filter((item) => {
         const old = was.find((w) => w.id === item.id);
         return old && JSON.stringify(without(old, ...ignored)) !== JSON.stringify(without(item, ...ignored));
@@ -1008,7 +1014,7 @@ export class AssemblyScript {
         return original ? [{ ...original, id }] : [];
       }),
     ];
-    return instances.flatMap((instance) => {
+    const shown = instances.flatMap((instance) => {
       const component = state.components.get(sourceKey(instance.component, instance.configuration));
       const transform = poses.get(instance.id);
       if (!component || !transform || instance.appearance?.hidden) return [];
@@ -1017,6 +1023,14 @@ export class AssemblyScript {
         return component.appearances?.[b.body]?.hidden ? [] : [{ of: instance.id, positions: b.positions, normals: b.normals, indices: b.indices, edges: b.edgePositions, transform, ...(look ? { color: look } : {}) }];
       });
     });
+    // Cables, where these poses put them (CAD-192).
+    const cables = (state.document.cables ?? []).flatMap((cable): Shown[] => {
+      const route = cableRoute(cable, poses);
+      if (!route) return [];
+      const mesh = cableMesh(cable, route);
+      return [{ of: `cable:${cable.id}`, positions: mesh.positions, normals: mesh.normals, indices: mesh.indices, edges: mesh.edgePositions, transform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], color: '#2f3e46' }];
+    });
+    return [...shown, ...cables];
   }
 }
 

@@ -39,7 +39,8 @@ The toolbar above the view has buttons for the everyday features (extrude, revol
 | Draft | faces to taper; the neutral plane (a plane or a flat face) | angle: the faces lean away from the plane's normal, hinged where they cross it |
 | Construction plane | a flat face, or choose a plane; three vertices for *through three points* | offset; or an axis in the base plane and an angle; or a second, parallel plane (midway) |
 | **Create →** Loft | one profile in each of two or more sketches, in order | smooth or straight between the sections; operation. Sections are lined up first: each runs the same way round as the one before and starts where it matches it best, so a loft from a round shank into blade sections does not twist |
-| **Create →** Sweep | profiles; the path is the curves of another sketch, or a helix, starting at the profile | operation |
+| **Create →** Sweep | profiles; the path is the curves of another sketch, a helix, or a path in space, starting at the profile | operation |
+| **Create →** Path in space | points, x, y, z a line (mm or expressions) | straight between them or smooth through them: a path for sweeps that leave one plane, such as a cable through a part. It makes no body. Agents can also give points of sketches and the directions it leaves and arrives |
 | **Create →** Hole | (choose the sketch with the hole points) | simple, counterbored or countersunk; diameter; through all or to a depth, with a drill point; teardrop and bridge layer for printing |
 | **Create →** Rib | (choose the sketch with an open line or curve) | thickness; to a depth or up to the next face; direction |
 | **Create →** Wrap | profiles (letters, a scale, a logo), then **Pick the face** and click it | wrapped round or projected; depth; emboss or engrave |

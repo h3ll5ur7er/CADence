@@ -17,7 +17,8 @@ const referenceTopics = {
   features: ['src/core/contracts/feature.ts'],
   parts: ['src/core/contracts/parts.ts'],
   document: ['src/core/contracts/document.ts', 'src/core/contracts/analysis.ts', 'src/core/contracts/appearance.ts'],
-  assembly: ['src/core/managers/assembly/assembly-manager.ts', 'src/core/contracts/assembly.ts'],
+  assembly: ['src/core/managers/assembly/assembly-manager.ts'],
+  joints: ['src/core/contracts/assembly.ts'],
   drawing: ['src/core/managers/drawing/drawing-manager.ts', 'src/core/contracts/drawing.ts'],
 };
 const reference = Object.fromEntries(

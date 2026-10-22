@@ -75,4 +75,20 @@ test('a strength check: fixed face, a force, stresses, deflection and safety fac
   await panel.getByRole('checkbox', { name: /bent shape/ }).uncheck();
   await page.waitForTimeout(400);
   await evidence(page, '92-strength-unbent');
+
+  // The answer says how settled it is: the same check with coarser elements (CAD-190).
+  await expect(panel.getByTestId('sim-coarser')).toHaveText(/MPa$/);
+  // Its own weight and a moment on the end instead of the force (CAD-191).
+  await panel.getByRole('checkbox', { name: /own weight/ }).check();
+  await expect(panel.getByRole('checkbox', { name: /own weight/ })).toBeChecked();
+  await panel.locator('[data-load="0"]').getByRole('combobox', { name: 'Kind of load' }).selectOption('moment');
+  await expect(panel.locator('[data-load="0"]').getByRole('combobox', { name: 'Moment axis' })).toBeVisible();
+  await panel.locator('[data-load="0"]').getByRole('spinbutton', { name: 'Moment' }).fill('2');
+  await panel.locator('[data-load="0"]').getByRole('spinbutton', { name: 'Moment' }).press('Tab');
+  await panel.locator('[data-load="0"]').getByRole('combobox', { name: 'Moment axis' }).selectOption({ label: 'About +Y' });
+  await panel.getByRole('button', { name: 'Run' }).click();
+  await expect(panel.getByTestId('sim-stress')).toHaveText(/MPa$/, { timeout: 60_000 });
+  await expect(panel.getByRole('checkbox', { name: /own weight/ })).toBeChecked();
+  await page.waitForTimeout(600);
+  await evidence(page, '102-strength-moment');
 });

@@ -37,6 +37,7 @@ export interface Applied {
 
 const featureLabels: Readonly<Record<FeatureType, string>> = {
   plugin: 'Plugin feature',
+  path: 'Path in space',
   part: 'Part',
   insert: 'Insert body',
   extrude: 'Extrude',
@@ -715,11 +716,16 @@ export function applyCommand(document: ComponentDocument, command: DesignCommand
     case 'set-simulation': {
       const { setup } = command;
       if (setup.size !== undefined && !(setup.size > 0)) return invalid('The element size must be above zero.');
+      const vector = (v: unknown) => Array.isArray(v) && v.length === 3 && v.every((x) => Number.isFinite(x));
       for (const load of setup.loads) {
         if (load.kind === 'force' && !(Math.hypot(...load.direction) > 0)) return invalid('A force needs a direction.');
-        if (!Number.isFinite(load.kind === 'force' ? load.force : load.pressure)) return invalid('A load needs a size.');
+        if ((load.kind === 'force' || load.kind === 'pressure') && !Number.isFinite(load.kind === 'force' ? load.force : load.pressure)) return invalid('A load needs a size.');
+        // Remote loads and moments (CAD-191).
+        if (load.kind === 'remote' && (!vector(load.point) || !vector(load.force) || (load.moment !== undefined && !vector(load.moment)))) return invalid('A remote load needs a point, a force (N) and maybe a moment (N·m), each three numbers.');
+        if (load.kind === 'moment' && (!Number.isFinite(load.moment) || !vector(load.axis) || !(Math.hypot(...load.axis) > 0))) return invalid('A moment needs a size (N·m) and an axis.');
       }
-      const empty = !setup.fixed.length && !setup.loads.length;
+      if (setup.gravity !== undefined && !vector(setup.gravity)) return invalid('Gravity is three numbers (m/s²).');
+      const empty = !setup.fixed.length && !setup.loads.length && !setup.gravity;
       const { simulation: _old, ...rest } = document;
       return ok({ document: empty ? rest : { ...document, simulation: setup } });
     }

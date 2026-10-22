@@ -18,7 +18,8 @@ export const documentMigrations: Readonly<Record<number, Migration>> = {
   // blocks and wraps (phase 35); drill points, ribs up to the next face, nested folders, bodies' own materials
   // (CAD-156 to CAD-158); gear profile shifts, bevel gears, worms, springs, helices and their links (phase 37); hems,
   // miter flanges and corner reliefs (CAD-162, CAD-163); plugin features (CAD-174); universal, driven and
-  // cone-limited joints and offsets with expressions (phase 44); studies' targets and carried parts (phase 45).
+  // cone-limited joints and offsets with expressions (phase 44); studies' targets and carried parts (phase 45);
+  // strength checks' moments, remote loads and weight, paths in space and cables (phase 46).
   3: (document) => document,
 };
 

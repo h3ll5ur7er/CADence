@@ -57,30 +57,44 @@ const mpa = (value: number) => `${Number(value.toPrecision(3)).toLocaleString('e
             <span class="label">{{ faceLabel(load.face) }}</span>
             <button type="button" class="icon-btn" [attr.aria-label]="'Remove the load on ' + faceLabel(load.face)" (click)="removeLoad(i)">×</button>
           </div>
-          <div class="fields">
-            <select aria-label="Kind of load" (change)="setKind(i, value($event))">
-              <option value="force" [selected]="load.kind === 'force'">Force</option>
-              <option value="pressure" [selected]="load.kind === 'pressure'">Pressure</option>
-            </select>
-            <span class="input">
-              <input type="number" step="any" [value]="load.kind === 'force' ? load.force : load.pressure" [attr.aria-label]="load.kind === 'force' ? 'Force' : 'Pressure'" (change)="setSize(i, +value($event))" />
-              <span class="unit">{{ load.kind === 'force' ? 'N' : 'MPa' }}</span>
-            </span>
-            @if (load.kind === 'force') {
-              <select class="wide" aria-label="Direction" (change)="setDirection(i, value($event))">
-                <option [value]="into" [selected]="directionOf(load) === into">Into the face</option>
-                @for (axis of axes; track axis.label; let k = $index) {
-                  <option [value]="k" [selected]="directionOf(load) === '' + k">{{ axis.label }}</option>
-                }
+          @if (load.kind === 'remote') {
+            <p class="hint" data-testid="remote-load">A force of {{ newtons(load.force) }} N at ({{ load.point.join(', ') }}) mm, carried to this face rigidly.</p>
+          } @else {
+            <div class="fields">
+              <select aria-label="Kind of load" (change)="setKind(i, value($event))">
+                <option value="force" [selected]="load.kind === 'force'">Force</option>
+                <option value="pressure" [selected]="load.kind === 'pressure'">Pressure</option>
+                <option value="moment" [selected]="load.kind === 'moment'">Moment</option>
               </select>
-            }
-          </div>
+              <span class="input">
+                <input type="number" step="any" [value]="sizeOf(load)" [attr.aria-label]="kindLabel(load)" (change)="setSize(i, +value($event))" />
+                <span class="unit">{{ unitOf(load) }}</span>
+              </span>
+              @if (load.kind === 'force') {
+                <select class="wide" aria-label="Direction" (change)="setDirection(i, value($event))">
+                  <option [value]="into" [selected]="directionOf(load) === into">Into the face</option>
+                  @for (axis of axes; track axis.label; let k = $index) {
+                    <option [value]="k" [selected]="directionOf(load) === '' + k">{{ axis.label }}</option>
+                  }
+                </select>
+              } @else if (load.kind === 'moment') {
+                <select class="wide" aria-label="Moment axis" (change)="setDirection(i, value($event))">
+                  @for (axis of axes; track axis.label; let k = $index) {
+                    <option [value]="k" [selected]="directionOf(load) === '' + k">About {{ axis.label }}</option>
+                  }
+                </select>
+              }
+            </div>
+          }
         </div>
       } @empty {
         <p class="hint">No load yet: choose Load and click a face.</p>
       }
     </section>
 
+    <label class="check" title="The parts' own weight from their materials, straight down along −Z">
+      <input type="checkbox" [checked]="!!setup().gravity" (change)="setWeight($any($event.target).checked)" /> Their own weight (down along −Z)
+    </label>
     <label class="field">
       <span>Element size</span>
       <span class="input">
@@ -107,8 +121,15 @@ const mpa = (value: number) => `${Number(value.toPrecision(3)).toLocaleString('e
           <dd class="mono" data-testid="sim-safety" [attr.data-status]="r.safetyFactor < 1 ? 'fail' : r.safetyFactor < 2 ? 'warning' : 'pass'">{{ r.safetyFactor.toFixed(1) }}</dd>
         }
         <dt>Elements</dt>
-        <dd class="mono">{{ r.elements.toLocaleString('en-US') }}</dd>
+        <dd class="mono">{{ r.elements.toLocaleString('en-US') }} of {{ mm(r.size) }}</dd>
+        @if (r.coarser; as c) {
+          <dt>Coarser ({{ mm(c.size) }})</dt>
+          <dd class="mono" data-testid="sim-coarser">{{ mpa(c.maxStress) }}</dd>
+        }
       </dl>
+      @for (note of r.notes ?? []; track $index) {
+        <p class="warning" role="status">{{ note }}</p>
+      }
       <div class="legend" aria-hidden="true">
         <span class="bar"></span>
         <span class="mono">0</span>
@@ -125,6 +146,7 @@ const mpa = (value: number) => `${Number(value.toPrecision(3)).toLocaleString('e
     h3 { margin: 0 0 var(--space-1); color: var(--text-muted); font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
     section { display: grid; gap: var(--space-1); }
     .hint { margin: 0; color: var(--text-muted); font-size: 12px; }
+    .warning { margin: 0; color: var(--warning); font-size: 12px; }
     .segmented { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
     .segmented button { height: 28px; border: 0; background: var(--surface-raised); color: var(--text); font: 12px var(--font); cursor: pointer; }
     .segmented button[aria-pressed='true'] { background: var(--accent); color: var(--accent-contrast, #fff); }
@@ -186,10 +208,33 @@ export class SimulatePanel {
   }
 
   protected directionOf(load: SimulationLoad): string {
+    if (load.kind === 'moment') return String(Math.max(0, axes.findIndex((a) => same(a.direction, load.axis))));
     if (load.kind !== 'force') return into;
     if (same(load.direction, this.store.inward(load.face))) return into;
     const index = axes.findIndex((a) => same(a.direction, load.direction));
     return index < 0 ? into : String(index);
+  }
+
+  protected sizeOf(load: SimulationLoad): number {
+    return load.kind === 'force' ? load.force : load.kind === 'pressure' ? load.pressure : load.kind === 'moment' ? load.moment : 0;
+  }
+
+  protected kindLabel(load: SimulationLoad): string {
+    return load.kind === 'force' ? 'Force' : load.kind === 'pressure' ? 'Pressure' : 'Moment';
+  }
+
+  protected unitOf(load: SimulationLoad): string {
+    return load.kind === 'force' ? 'N' : load.kind === 'pressure' ? 'MPa' : 'N·m';
+  }
+
+  protected newtons(force: readonly number[]): string {
+    return (Math.round(Math.hypot(...force) * 100) / 100).toString();
+  }
+
+  /** The parts' weight (CAD-191), straight down. */
+  protected setWeight(on: boolean): void {
+    const { gravity: _old, ...rest } = this.setup();
+    void this.store.setSimulation(on ? { ...rest, gravity: [0, 0, -9.81] } : rest);
   }
 
   protected value(event: Event): string {
@@ -206,17 +251,27 @@ export class SimulatePanel {
 
   protected setKind(index: number, kind: string): void {
     this.replaceLoad(index, (load) =>
-      kind === 'pressure' ? { kind: 'pressure', face: load.face, pressure: 0.1 } : { kind: 'force', face: load.face, force: 100, direction: this.store.inward(load.face) },
+      kind === 'pressure'
+        ? { kind: 'pressure', face: load.face, pressure: 0.1 }
+        : kind === 'moment'
+          ? { kind: 'moment', face: load.face, moment: 1, axis: [0, 0, 1] }
+          : { kind: 'force', face: load.face, force: 100, direction: this.store.inward(load.face) },
     );
   }
 
   protected setSize(index: number, size: number): void {
-    this.replaceLoad(index, (load) => (load.kind === 'force' ? { ...load, force: size } : { ...load, pressure: size }));
+    this.replaceLoad(index, (load) =>
+      load.kind === 'force' ? { ...load, force: size } : load.kind === 'pressure' ? { ...load, pressure: size } : load.kind === 'moment' ? { ...load, moment: size } : load,
+    );
   }
 
   protected setDirection(index: number, choice: string): void {
     this.replaceLoad(index, (load) =>
-      load.kind === 'force' ? { ...load, direction: choice === into ? this.store.inward(load.face) : ((axes[Number(choice)] as (typeof axes)[number]).direction) } : load,
+      load.kind === 'force'
+        ? { ...load, direction: choice === into ? this.store.inward(load.face) : ((axes[Number(choice)] as (typeof axes)[number]).direction) }
+        : load.kind === 'moment'
+          ? { ...load, axis: (axes[Number(choice)] as (typeof axes)[number]).direction }
+          : load,
     );
   }
 

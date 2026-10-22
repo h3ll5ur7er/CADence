@@ -49,7 +49,7 @@ Draw:
 1. create_document with kind "drawing" (an A3 sheet at 1:1), then edit_drawing: set-sheet (size, orientation, scale), set-title-block, add-view {"id":"front","source":"<component or assembly id>","direction":"front","at":[x,y]} (front, back, top, bottom, left, right, iso; section (full, offset or half), detail, scale, label). Sheet coordinates are mm from the bottom left.
 2. get_drawing lists the views' boxes on the sheet and their anchors: points, circles and lines by persistent name, where they are on the sheet. Annotations attach to anchors: dimensions (linear, horizontal, vertical, radius, diameter, angle; with tolerances and ISO fits), center marks and lines, hole and thread callouts, surface finish symbols; notes, balloons and parts lists sit at sheet points.
 3. render_picture of a drawing shows the sheet as the PDF prints it (focus [view id] zooms onto a view); export_drawing writes PDF or DXF.
-Lengths are expressions ("6 mm", "2 * wall", "1 in"); plain numbers are millimetres. command_reference has every command, feature, part, assembly and drawing type as TypeScript, by topic (commands, sketch, features, parts, document, assembly, drawing); the same and the user guide are resources (cadence://reference/<topic>, cadence://guide/<page>).
+Lengths are expressions ("6 mm", "2 * wall", "1 in"); plain numbers are millimetres. command_reference has every command, feature, part, assembly and drawing type as TypeScript, by topic (commands, sketch, features, parts, document, assembly, joints, drawing); the same and the user guide are resources (cadence://reference/<topic>, cadence://guide/<page>).
 Many steps at once: run_script runs a whole script against the scripting API (loops, calculations, many parts or sheets) in a sandbox, and answers with what it returned, printed and changed (cadence://reference/scripts).`;
 
 /** The MCP server: CADence's scripting API as tools (docs/User-guide/Automation.md). */
@@ -600,7 +600,7 @@ Files (exports, animations) go to ${this.exportsFolder} unless a tool is given a
       {
         name: 'command_reference',
         description:
-          'The TypeScript types of the commands and contracts, with their documentation, by topic: commands (design commands and shorthands), sketch (entities and constraints), features (the features), parts (the parts features place: gears, ring gears, bevel gears, worms, springs, screws, bearings …), document (components, materials, checks, appearance), assembly (assembly commands, instances, joints, links, studies, exploded views), drawing (drawing commands, sheets, views, annotations). Without a topic, the list of topics.',
+          'The TypeScript types of the commands and contracts, with their documentation, by topic: commands (design commands and shorthands), sketch (entities and constraints), features (the features), parts (the parts features place: gears, ring gears, bevel gears, worms, springs, screws, bearings …), document (components, materials, checks, appearance), assembly (assembly commands and what sessions answer: states, collisions, loads), joints (instances, joints and their offsets, links, studies with targets and carried parts, patterns, exploded views, cables), drawing (drawing commands, sheets, views, annotations). Without a topic, the list of topics.',
         inputSchema: object({ topic: { type: 'string', enum: Object.keys(this.reference) } }),
         run: async (args) => {
           const topic = args['topic'] === undefined ? undefined : String(args['topic']);

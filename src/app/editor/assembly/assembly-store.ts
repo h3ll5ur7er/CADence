@@ -108,13 +108,16 @@ export class AssemblyStore {
       const original = state.document.instances.find((i) => i.id === copy.instance);
       return original ? [{ ...original, id }] : [];
     });
-    return [...state.document.instances, ...copies].flatMap((instance) => {
+    const parts = [...state.document.instances, ...copies].flatMap((instance) => {
       const component = state.components.get(sourceKey(instance.component, instance.configuration));
       const transform = preview?.get(instance.id) ?? state.poses.get(instance.id);
       if (!component || !transform) return [];
       const part: PartDisplay = { id: instance.id, bodies: component.bodies, transform, flagged: flagged.has(instance.id), bodyAppearances: component.appearances ?? {} };
       return [instance.appearance ? { ...part, appearance: instance.appearance } : part];
     });
+    // Cables as tubes where they run now (CAD-192); one bent tighter than it may be is flagged.
+    const cables = state.cables.map((c): PartDisplay => ({ id: `cable:${c.id}`, bodies: [c.mesh], transform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], flagged: !!c.tooTight, appearance: { color: '#2f3e46' } }));
+    return [...parts, ...cables];
   });
 
   /** Faces, edges and vertices picked with the measure tool, on any instance. */
@@ -399,7 +402,7 @@ export class AssemblyStore {
 
   /** A click in the view: fills the next side of the joint being drawn, or selects an instance. */
   pick(pick: Pick): void {
-    if (pick.kind === 'profile' || !pick.instance) return;
+    if (pick.kind === 'profile' || !pick.instance || pick.instance.startsWith('cable:')) return;
     if (this.panel() === 'measure') {
       const ref: PlacedRef = { instance: pick.instance, kind: pick.kind, body: pick.body, name: pick.name, hint: pick.hint };
       const same = (r: PlacedRef) => r.instance === ref.instance && r.kind === ref.kind && r.body === ref.body && r.name === ref.name;

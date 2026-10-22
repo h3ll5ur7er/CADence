@@ -112,6 +112,28 @@ describe('solveFea', () => {
     for (const i of nodeValues(out, (p) => p[0] < 1e-6)) expect(Math.hypot(...out.displacement.subarray(i * 3, i * 3 + 3))).toBe(0);
   });
 
+  const tipDeflection = (out: ReturnType<typeof solveFea>) => {
+    const tip = nodeValues(out, (p) => p[0] > 99.9);
+    return -tip.reduce((sum, i) => sum + (out.displacement[i * 3 + 2] as number), 0) / tip.length;
+  };
+
+  it('bends a cantilever under its own weight: δ = wL⁴/8EI (CAD-191)', { timeout: 30_000 }, () => {
+    const out = solveFea({ ...cantilever(2.5), loads: [], density: 7.85e-6, gravity: [0, 0, -9.81] });
+    // w = ρ A g = 7.85e-6 kg/mm³ · 100 mm² · 9.81 = 7.70e-3 N/mm: 5.78e-4 mm at the tip.
+    expect(tipDeflection(out)).toBeGreaterThan(5.78e-4 * 0.95);
+    expect(tipDeflection(out)).toBeLessThan(5.78e-4 * 1.15);
+  });
+
+  it('carries a force away from the face to it rigidly, and a moment on its own (CAD-191)', { timeout: 30_000 }, () => {
+    // 100 N down, 50 mm beyond the tip: the tip's 100 N (0.2 mm) and 5000 N·mm (ML²/2EI = 0.15 mm).
+    const remote = solveFea({ ...cantilever(2.5), loads: [{ face: 'x1', kind: 'remote', point: [150, 5, 5], force: [0, 0, -100] }] });
+    expect(tipDeflection(remote)).toBeGreaterThan(0.34);
+    expect(tipDeflection(remote)).toBeLessThan(0.38);
+    const moment = solveFea({ ...cantilever(2.5), loads: [{ face: 'x1', kind: 'moment', moment: [0, 5000, 0] }] });
+    expect(tipDeflection(moment)).toBeGreaterThan(0.14);
+    expect(tipDeflection(moment)).toBeLessThan(0.165);
+  });
+
   it('chooses an element size by itself and still bends about right', { timeout: 30_000 }, () => {
     const out = solveFea(cantilever());
     const tip = nodeValues(out, (p) => p[0] > 99.9);

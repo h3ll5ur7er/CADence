@@ -27,7 +27,19 @@ export interface FeaInput {
   readonly poisson: number;
   /** Names of the faces held fixed. */
   readonly fixed: ReadonlySet<string>;
-  readonly loads: readonly ({ readonly face: string } & ({ readonly kind: 'force'; readonly force: number; readonly direction: Vec3 } | { readonly kind: 'pressure'; readonly pressure: number }))[];
+  /**
+   * Forces in N, moments in N·mm: a force spread over a face, a pressure, a force and a moment at a
+   * point carried to a face rigidly (remote), a moment on a face.
+   */
+  readonly loads: readonly ({ readonly face: string } & (
+    | { readonly kind: 'force'; readonly force: number; readonly direction: Vec3 }
+    | { readonly kind: 'pressure'; readonly pressure: number }
+    | { readonly kind: 'remote'; readonly point: Vec3; readonly force: Vec3; readonly moment?: Vec3 }
+    | { readonly kind: 'moment'; readonly moment: Vec3 }
+  ))[];
+  /** The body's own weight (CAD-191): density in kg/mm³ along gravity in m/s². */
+  readonly density?: number;
+  readonly gravity?: Vec3;
 }
 
 export interface FeaOutput {
@@ -352,9 +364,11 @@ export function solveFea(input: FeaInput): FeaOutput {
   };
 
   const D = elasticity(input.modulus, input.poisson);
+  const volumes: number[] = [];
   for (const e of elements) {
     const x = e.map((id) => nodes[id] as Vec3);
     const Ke = new Float64Array(30 * 30);
+    let volume = 0;
     for (const L of gauss) {
       const { grad, det } = gradients(x, L);
       if (!(det > 0)) throw new FeaError('The mesh has a flat element: choose another size.');
@@ -367,12 +381,14 @@ export function solveFea(input: FeaInput): FeaOutput {
         for (let c = 0; c < 30; c++) DB[i * 30 + c] = (DB[i * 30 + c] as number) + d * (B[k * 30 + c] as number);
       }
       const weight = det / 24;
+      volume += weight;
       for (let r = 0; r < 30; r++) for (let i = 0; i < 6; i++) {
         const b = B[i * 30 + r] as number;
         if (b === 0) continue;
         for (let c = 0; c < 30; c++) Ke[r * 30 + c] = (Ke[r * 30 + c] as number) + b * (DB[i * 30 + c] as number) * weight;
       }
     }
+    volumes.push(volume);
     for (let a = 0; a < 10; a++) for (let b = 0; b < 10; b++) {
       const block = blockOf(e[a] as number, e[b] as number) * 9;
       for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) values[block + i * 3 + j] = (values[block + i * 3 + j] as number) + (Ke[(a * 3 + i) * 30 + b * 3 + j] as number);
@@ -411,7 +427,7 @@ export function solveFea(input: FeaInput): FeaOutput {
     if (!face.name) continue;
     if (input.fixed.has(face.name)) for (const id of face.nodes) fixed[id] = 1;
     for (const load of input.loads) {
-      if (load.face !== face.name) continue;
+      if (load.face !== face.name || load.kind === 'remote' || load.kind === 'moment') continue;
       // Uniform traction on a 6-node triangle: a third of it at each mid-edge node, none at the corners.
       const traction: Vec3 =
         load.kind === 'pressure'
@@ -419,6 +435,40 @@ export function solveFea(input: FeaInput): FeaOutput {
           : (load.direction.map((v) => (v / (length(load.direction) || 1)) * (load.force / (loadArea.get(face.name ?? '') ?? 1))) as unknown as Vec3);
       for (const id of face.nodes.slice(3)) for (let k = 0; k < 3; k++) forces[id * 3 + k] = (forces[id * 3 + k] as number) + ((traction[k] as number) * face.area) / 3;
     }
+  }
+  // Remote loads and moments (CAD-191): spread over the face's nodes as a rigid connection would.
+  for (const load of input.loads) {
+    if (load.kind !== 'remote' && load.kind !== 'moment') continue;
+    const shares = new Map<number, number>();
+    for (const face of boundary) if (face.name === load.face) for (const id of face.nodes.slice(3)) shares.set(id, (shares.get(id) ?? 0) + face.area / 3);
+    if (!shares.size) continue;
+    const total = [...shares.values()].reduce((a, b) => a + b, 0);
+    const centre = [0, 1, 2].map((k) => [...shares].reduce((sum, [id, w]) => sum + w * ((nodes[id] as Vec3)[k] as number), 0) / total) as unknown as Vec3;
+    const force: Vec3 = load.kind === 'remote' ? load.force : [0, 0, 0];
+    const lever = load.kind === 'remote' ? sub(load.point, centre) : ([0, 0, 0] as Vec3);
+    const moment = add3(load.kind === 'remote' ? (load.moment ?? [0, 0, 0]) : load.moment, cross(lever, force));
+    // The nodes turn with ω about the centre: J ω = M, with J the shares' polar moments.
+    const J = [0, 1, 2].map(() => [0, 0, 0]);
+    for (const [id, w] of shares) {
+      const r = sub(nodes[id] as Vec3, centre);
+      const rr = dot(r, r);
+      for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) (J[i] as number[])[j] = ((J[i] as number[])[j] as number) + w * ((i === j ? rr : 0) - (r[i] as number) * (r[j] as number));
+    }
+    const omega = solve3(J, moment);
+    for (const [id, w] of shares) {
+      const turn = cross(omega, sub(nodes[id] as Vec3, centre));
+      for (let k = 0; k < 3; k++) forces[id * 3 + k] = (forces[id * 3 + k] as number) + ((force[k] as number) * w) / total + w * (turn[k] as number);
+    }
+  }
+  // The body's weight: a 10-node tetrahedron takes −1/20 of its weight at each corner and 1/5 at each mid-edge node.
+  if (input.density && input.gravity) {
+    elements.forEach((e, n) => {
+      const weight = (volumes[n] as number) * (input.density as number);
+      e.forEach((id, i) => {
+        const share = i < 4 ? -1 / 20 : 1 / 5;
+        for (let k = 0; k < 3; k++) forces[id * 3 + k] = (forces[id * 3 + k] as number) + weight * share * ((input.gravity as Vec3)[k] as number);
+      });
+    });
   }
   if (!fixed.some((f) => f === 1)) throw new FeaError('Hold at least one face fixed.');
 
@@ -463,4 +513,20 @@ export function solveFea(input: FeaInput): FeaOutput {
     stress[id] = ((stress[p] as number) + (stress[q] as number)) / 2;
   }
   return { positions: Float32Array.from(nodes.flat()), displacement: Float32Array.from(displacement), stress, elements: elements.length, surface: Uint32Array.from(surface) };
+}
+
+const add3 = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+
+/** A 3 × 3 system, with a little regularisation for a face whose nodes lie on a line. */
+function solve3(m: number[][], b: Vec3): Vec3 {
+  const scale = Math.max(1e-12, ...m.flat().map(Math.abs));
+  const a = m.map((row, i) => row.map((v, j) => v + (i === j ? scale * 1e-9 : 0)));
+  const [r0, r1, r2] = a as [number[], number[], number[]];
+  const det = (r0[0] as number) * ((r1[1] as number) * (r2[2] as number) - (r1[2] as number) * (r2[1] as number)) - (r0[1] as number) * ((r1[0] as number) * (r2[2] as number) - (r1[2] as number) * (r2[0] as number)) + (r0[2] as number) * ((r1[0] as number) * (r2[1] as number) - (r1[1] as number) * (r2[0] as number));
+  const column = (k: number) => {
+    const c = a.map((row, i) => row.map((v, j) => (j === k ? (b[i] as number) : v))) as [number[], number[], number[]];
+    const [c0, c1, c2] = c;
+    return ((c0[0] as number) * ((c1[1] as number) * (c2[2] as number) - (c1[2] as number) * (c2[1] as number)) - (c0[1] as number) * ((c1[0] as number) * (c2[2] as number) - (c1[2] as number) * (c2[0] as number)) + (c0[2] as number) * ((c1[0] as number) * (c2[1] as number) - (c1[1] as number) * (c2[0] as number))) / det;
+  };
+  return [column(0), column(1), column(2)];
 }

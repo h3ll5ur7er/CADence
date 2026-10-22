@@ -2,7 +2,7 @@ import type { Appearance } from './appearance';
 import type { AssetId, DocumentId, ProjectId } from './ids';
 import type { Timestamp } from './project';
 import type { Material, ManufacturingProfile, SimulationSetup } from './analysis';
-import type { ExplodedView, Instance, InstancePattern, Joint, MotionLink, MotionStudy } from './assembly';
+import type { Cable, ExplodedView, Instance, InstancePattern, Joint, MotionLink, MotionStudy } from './assembly';
 import type { Feature } from './feature';
 import type { Sketch } from './sketch';
 import type { DrawingAnnotation, DrawingView, Sheet, TitleBlock } from './drawing';
@@ -177,6 +177,8 @@ export interface AssemblyDocument extends DocumentBase {
   /** Joints that drive other joints (gears, racks, belts). */
   readonly links?: readonly MotionLink[];
   readonly explodedViews?: readonly ExplodedView[];
+  /** Cables and hoses between instances (CAD-192). */
+  readonly cables?: readonly Cable[];
 }
 
 /** A technical drawing of components and assemblies of the project (docs/Architecture/Document-model.md#drawings). */
@@ -205,7 +207,8 @@ export type CadDocument = ComponentDocument | AssemblyDocument | DrawingDocument
  * dimensions, sketch blocks and wraps (phase 35); drill points, ribs up to the next face, nested folders and
  * bodies' own materials (phase 36); gear shifts, bevel gears, worms, springs and helices (phase 37); hems,
  * miter flanges and corner reliefs (phase 38); plugin features (phase 41); universal, driven and cone-limited
- * joints and offsets that follow expressions (phase 44); studies' targets and carried parts (phase 45). Raise it whenever a field is added that an older
+ * joints and offsets that follow expressions (phase 44); studies' targets and carried parts (phase 45);
+ * strength checks' moments, remote loads and weight, paths in space and cables (phase 46). Raise it whenever a field is added that an older
  * app must not ignore.
  */
 export const currentSchemaVersion = 4;

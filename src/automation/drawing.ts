@@ -232,7 +232,15 @@ export class DrawingScript {
             }),
           }
         : {}),
-      ...(part('annotations') ? { annotations } : {}),
+      // With where each is drawn (CAD-193), so a parts list's size is known once placed.
+      ...(part('annotations')
+        ? {
+            annotations: annotations.map((a) => {
+              const box = layout.boxes.find((b) => b.id === a.id);
+              return box ? { ...a, box: { min: roundPoint(box.min), max: roundPoint(box.max) } } : a;
+            }),
+          }
+        : {}),
       lost: layout.lost,
       ...(part('anchors')
         ? {
@@ -273,7 +281,9 @@ export class DrawingScript {
       ...(JSON.stringify(before.titleBlock) !== JSON.stringify(after.titleBlock) ? { titleBlock: true as const } : {}),
     });
     const removed = [...views.removed, ...annotations.removed];
-    const placed = Object.fromEntries(after.views.flatMap((v) => (v.box && (views.created.includes(v.id) || views.changed.includes(v.id)) ? [[v.id, v.box]] : [])));
+    const boxed = (list: readonly { readonly id: string; readonly box?: unknown }[], changes: { created: string[]; changed: string[] }) =>
+      list.flatMap((item) => (item.box && (changes.created.includes(item.id) || changes.changed.includes(item.id)) ? [[item.id, item.box]] : []));
+    const placed = Object.fromEntries([...boxed(after.views, views), ...boxed(after.annotations as readonly { readonly id: string; readonly box?: unknown }[], annotations)]);
     const viewErrors = Object.fromEntries(after.views.flatMap((v) => (v.error ? [[v.id, v.error]] : [])));
     return {
       id: after.id,

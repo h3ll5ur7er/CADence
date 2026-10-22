@@ -80,6 +80,8 @@ export interface DrawingView {
   readonly detail?: { readonly of: string; readonly center: Vec2; readonly radius: number };
   /** Shown under the view ("Section A-A", "Detail B"). */
   readonly label?: string;
+  /** Left out of the view (CAD-193): bodies of a component, instances of an assembly, by id. */
+  readonly hide?: readonly string[];
 }
 
 /**

@@ -70,7 +70,7 @@ export type Attachment =
   | { readonly id: string; readonly kind: 'file'; readonly name: string; readonly mediaType: string; readonly byteLength: number; readonly assetId: AssetId; readonly addedAt: Timestamp }
   | { readonly id: string; readonly kind: 'link'; readonly name: string; readonly url: string; readonly addedAt: Timestamp };
 
-/** The built-in library of standard parts (CAD-152): screws, nuts, washers, inserts and bearings in every size. */
+/** The built-in library of standard parts (CAD-152): screws, nuts, washers, inserts and bearings in every size, and stepper motors (CAD-194). */
 export const standardLibraryId = 'standard';
 
 /** A library other projects can use: a project marked as one, or the built-in standard parts. */

@@ -208,7 +208,8 @@ export type CadDocument = ComponentDocument | AssemblyDocument | DrawingDocument
  * bodies' own materials (phase 36); gear shifts, bevel gears, worms, springs and helices (phase 37); hems,
  * miter flanges and corner reliefs (phase 38); plugin features (phase 41); universal, driven and cone-limited
  * joints and offsets that follow expressions (phase 44); studies' targets and carried parts (phase 45);
- * strength checks' moments, remote loads and weight, paths in space and cables (phase 46). Raise it whenever a field is added that an older
+ * strength checks' moments, remote loads and weight, paths in space and cables (phase 46);
+ * views' hidden parts and stepper motors (phase 47). Raise it whenever a field is added that an older
  * app must not ignore.
  */
 export const currentSchemaVersion = 4;

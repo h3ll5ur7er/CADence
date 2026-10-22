@@ -16,7 +16,7 @@ Create an assembly with **Assembly** in the documents panel, then **Insert** a c
 
 ## Library parts and standard parts
 
-**Insert → From a library…** opens the libraries ([[User guide/Projects and versions#Libraries]]): **Standard parts** (screws, nuts, washers, inserts and bearings in every size) and the projects marked as libraries. **Find** narrows the list (`M3 12`, `nut`, `608`).
+**Insert → From a library…** opens the libraries ([[User guide/Projects and versions#Libraries]]): **Standard parts** (screws, nuts, washers, inserts and bearings in every size, and stepper motors NEMA 8 to 23 in their common lengths, as heavy as real ones) and the projects marked as libraries. **Find** narrows the list (`M3 12`, `nut`, `608`).
 
 1. Click a part, such as *ISO 4762 M3 × 12*.
 2. Click a hole's **edge** (or a round face) of an instance in the view: the part goes onto it with a revolute joint, its origin on the hole's axis. A screw's origin is the underside of its head, so it sits on the face with its shank in the hole; a nut's and a washer's is their bottom face. **Turn the part over** flips it.

@@ -547,6 +547,15 @@ describe('DesignManager', () => {
         expect(await part({ kind: 'bearing', size: '608' })).toBeCloseTo(ring(8, 22, 7), 0);
         unwrap(await session.execute({ type: 'delete-item', itemId: 'part' }));
         unwrap(await session.execute({ type: 'delete-item', itemId: 'sp' }));
+        expect(await part({ kind: 'bearing', size: '6805' })).toBeCloseTo(ring(25, 37, 7), 0);
+        unwrap(await session.execute({ type: 'delete-item', itemId: 'part' }));
+        unwrap(await session.execute({ type: 'delete-item', itemId: 'sp' }));
+        // A NEMA 17 × 40 (CAD-194): the case with its corners bevelled by a tenth of the face, four M3 holes
+        // 4 deep, the ⌀22 × 2 boss and the ⌀5 shaft 24 beyond the face.
+        const disc = (d: number, h: number) => (Math.PI / 4) * d ** 2 * h;
+        expect(await part({ kind: 'stepper', size: 'NEMA 17', length: '40 mm' })).toBeCloseTo(0.98 * 42.3 ** 2 * 40 - 4 * disc(3, 4) + disc(22, 2) + disc(5, 22), -1);
+        unwrap(await session.execute({ type: 'delete-item', itemId: 'part' }));
+        unwrap(await session.execute({ type: 'delete-item', itemId: 'sp' }));
         // Head 5.5 × 3 less a 2.5 mm hex socket 1.8 deep, and a ⌀3 × 10 shank.
         expect(await part({ kind: 'screw', size: 'M3', length: '10 mm' })).toBeCloseTo(Math.PI * 2.75 ** 2 * 3 - hexagon(2.5) * 1.8 + Math.PI * 1.5 ** 2 * 10, 0);
         expect(session.state().bodies[0]?.faces.length).toBeGreaterThan(6);

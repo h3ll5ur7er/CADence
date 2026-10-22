@@ -17,6 +17,8 @@ export type PartSolid =
   | { readonly kind: 'nut'; readonly diameter: number; readonly acrossFlats: number; readonly height: number }
   /** A ring (washer, bearing; an insert lies below the plane). */
   | { readonly kind: 'ring'; readonly inner: number; readonly outer: number; readonly height: number; readonly below: boolean }
+  /** A stepper motor (CAD-194): face on the plane, case below, boss and shaft above, four tapped holes in the face. */
+  | { readonly kind: 'stepper'; readonly face: number; readonly length: number; readonly boss: number; readonly bossHeight: number; readonly shaft: number; readonly shaftLength: number; readonly pitch: number; readonly screw: number }
   /** A round post (magnet, peg), chamfered at the top. */
   | { readonly kind: 'post'; readonly diameter: number; readonly height: number; readonly chamfer: number }
   /** `chamfer`: the teeth bevelled at both ends, that much at the tip (45°). */
@@ -94,6 +96,27 @@ function partShape(solid: PartSolid, origin: Vec3, x: Vec3, y: Vec3, n: Vec3): S
         .cut(drawCircle(positive(solid.inner, 'inside diameter') / 2))
         .sketchOnPlane(on(solid.below ? -height : 0))
         .extrude(height) as Shape3D;
+    }
+    case 'stepper': {
+      const half = positive(solid.face, 'face') / 2;
+      const corner = half * 0.2;
+      // The square case with its corners bevelled, below the face.
+      const outline = draw([-half + corner, -half])
+        .lineTo([half - corner, -half])
+        .lineTo([half, -half + corner])
+        .lineTo([half, half - corner])
+        .lineTo([half - corner, half])
+        .lineTo([-half + corner, half])
+        .lineTo([-half, half - corner])
+        .lineTo([-half, -half + corner])
+        .close();
+      const length = positive(solid.length, 'length');
+      let motor = outline.sketchOnPlane(on(-length)).extrude(length) as Shape3D;
+      const holes = [[1, 1], [-1, 1], [-1, -1], [1, -1]].map(([a, b]) => drawCircle(solid.screw / 2).translate((a as number) * (solid.pitch / 2), (b as number) * (solid.pitch / 2)));
+      for (const hole of holes) motor = motor.cut(hole.sketchOnPlane(on(-4)).extrude(4) as Shape3D);
+      const boss = drawCircle(solid.boss / 2).sketchOnPlane(on()).extrude(solid.bossHeight) as Shape3D;
+      const shaft = drawCircle(positive(solid.shaft, 'shaft') / 2).sketchOnPlane(on()).extrude(positive(solid.shaftLength, 'shaft length')) as Shape3D;
+      return motor.fuse(boss).fuse(shaft);
     }
     case 'post': {
       const [r, h] = [positive(solid.diameter, 'diameter') / 2, positive(solid.height, 'height')];

@@ -2,6 +2,7 @@ import {
   asDocumentId,
   type AxisRef,
   bearings,
+  steppers,
   bevelMesh,
   type BodyOperation,
   type ComponentDocument,
@@ -569,6 +570,11 @@ export class Regeneration {
       case 'bearing': {
         const { bore, outer, width } = bearings[part.size];
         return ok({ kind: 'ring', inner: bore, outer, height: width, below: false });
+      }
+      case 'stepper': {
+        const motor = steppers[part.size];
+        const v = lengths({ length: part.length });
+        return v.ok ? ok({ kind: 'stepper', face: motor.face, length: num(v.value, 'length'), boss: motor.boss, bossHeight: motor.bossHeight, shaft: motor.shaft, shaftLength: motor.shaftLength, pitch: motor.pitch, screw: motor.screw }) : v;
       }
       case 'magnet': {
         const v = lengths({ diameter: part.diameter, height: part.height });

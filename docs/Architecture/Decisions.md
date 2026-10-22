@@ -725,3 +725,15 @@ CADence has no server. Versions are a git repository per project, synced with an
 
 *Why:* the robot arm's upper arm read 2.75 MPa where finer meshes read 12.7, its weight and the forearm's lever could not be loaded, and its cables could neither leave a plane nor cross a joint ([[Robot arm]]).
 *Trade-off:* the default mesh is several times finer, so checks take longer (the upper arm 20 s instead of 2). A remote load makes the face rigid, which stiffens it more than a real connection. A cable's shape is a smooth guess, not a physical one: it does not sag, stretch or push on what it touches, and a centre line that grazes a part is not a hit.
+
+## ADR-66
+
+**Drawing tables that fit, views that leave parts out, the parts a machine is built from (CAD-193, CAD-194).**
+- *A table fits its texts, then its room:* a parts list's columns are as wide as their widest text (with a least width each); when the four together are wider than the room left of the corner it was placed by, the text shrinks to fit (not below 2 mm), then the name and material columns share what is left and their texts are shortened with an ellipsis. The title block keeps its cells and shrinks or shortens a long title or value in them. Text widths are estimated from the character count (0.62 × the size), as the layout measures texts everywhere.
+- *The layout tells where it drew:* each annotation's box comes from the lines, arrows and texts it drew, so get_drawing and the answers of edits report it without drawing the sheet twice.
+- *Leaving out is a filter on the restored bodies:* a view's `hide` names bodies or instances (an instance's bodies are `<instance>#k`); they are dropped before the exact or mesh drawing, and the view's cache key includes them.
+- *Stepper motors are parts, not imported models:* a `stepper` part is the case (a square with bevelled corners), the boss, the shaft and four tapped holes, from a table of the NEMA sizes, so its mounting face lies on a sketch point or a hole as a bearing does. A library motor is a component of its own material (density 4, a NEMA 17 × 40 about 280 g), so assemblies weigh right. The library's version stays `standard-1`: no part already in it changed.
+- *More bearings, one more name:* 6002–6005, 6202–6205 and 6800–6810 join the table; `61805` finds `6805`.
+
+*Why:* the robot arm's parts list ran past the frame, covered a view nobody could see coming, and its overview drew the 650 mm table at 1:5; its bearings and motors had to be made by hand ([[Robot arm]]).
+*Trade-off:* estimated text widths can be a little off for wide or narrow letters. A motor is a simplified shape: no connector, no flats on the shaft.

@@ -37,8 +37,15 @@ export const metric: Readonly<Record<MetricSize, MetricDimensions>> = {
   M10: { d: 10, head: { diameter: 16, height: 10, socket: 8 }, nut: { acrossFlats: 16, height: 8.4 }, washer: { inner: 10.5, outer: 20, thickness: 2 }, clearance: 11, tapDrill: 8.5, insert: { diameter: 12, length: 12.7, hole: 11.6 } },
 };
 
-export type BearingSize = '623' | '625' | '608' | '688' | '6000' | '6001' | '6200' | '6201';
-/** Deep groove ball bearings: bore, outside diameter and width (mm). */
+export type BearingSize =
+  | '623' | '625' | '608' | '688'
+  | '6000' | '6001' | '6002' | '6003' | '6004' | '6005'
+  | '6200' | '6201' | '6202' | '6203' | '6204' | '6205'
+  | '6800' | '6801' | '6802' | '6803' | '6804' | '6805' | '6806' | '6807' | '6808' | '6809' | '6810';
+/**
+ * Deep groove ball bearings: bore, outside diameter and width (mm). The thin series 68xx (also called
+ * 618xx) carry a robot joint's load round a hollow shaft for its cables (CAD-194).
+ */
 export const bearings: Readonly<Record<BearingSize, { readonly bore: number; readonly outer: number; readonly width: number }>> = {
   '623': { bore: 3, outer: 10, width: 4 },
   '625': { bore: 5, outer: 16, width: 5 },
@@ -46,8 +53,43 @@ export const bearings: Readonly<Record<BearingSize, { readonly bore: number; rea
   '688': { bore: 8, outer: 16, width: 5 },
   '6000': { bore: 10, outer: 26, width: 8 },
   '6001': { bore: 12, outer: 28, width: 8 },
+  '6002': { bore: 15, outer: 32, width: 9 },
+  '6003': { bore: 17, outer: 35, width: 10 },
+  '6004': { bore: 20, outer: 42, width: 12 },
+  '6005': { bore: 25, outer: 47, width: 12 },
   '6200': { bore: 10, outer: 30, width: 9 },
   '6201': { bore: 12, outer: 32, width: 10 },
+  '6202': { bore: 15, outer: 35, width: 11 },
+  '6203': { bore: 17, outer: 40, width: 12 },
+  '6204': { bore: 20, outer: 47, width: 14 },
+  '6205': { bore: 25, outer: 52, width: 15 },
+  '6800': { bore: 10, outer: 19, width: 5 },
+  '6801': { bore: 12, outer: 21, width: 5 },
+  '6802': { bore: 15, outer: 24, width: 5 },
+  '6803': { bore: 17, outer: 26, width: 5 },
+  '6804': { bore: 20, outer: 32, width: 7 },
+  '6805': { bore: 25, outer: 37, width: 7 },
+  '6806': { bore: 30, outer: 42, width: 7 },
+  '6807': { bore: 35, outer: 47, width: 7 },
+  '6808': { bore: 40, outer: 52, width: 7 },
+  '6809': { bore: 45, outer: 58, width: 7 },
+  '6810': { bore: 50, outer: 65, width: 7 },
+};
+
+export type StepperSize = 'NEMA 8' | 'NEMA 11' | 'NEMA 14' | 'NEMA 17' | 'NEMA 23';
+/**
+ * Hybrid stepper motors (CAD-194), mm: the square face, the centring boss (diameter, height), the
+ * shaft (diameter, length beyond the face), the screw holes' spacing and diameter (tapped), and the
+ * common case lengths.
+ */
+export const steppers: Readonly<
+  Record<StepperSize, { readonly face: number; readonly boss: number; readonly bossHeight: number; readonly shaft: number; readonly shaftLength: number; readonly pitch: number; readonly screw: number; readonly lengths: readonly number[] }>
+> = {
+  'NEMA 8': { face: 20.3, boss: 16, bossHeight: 1.5, shaft: 4, shaftLength: 15, pitch: 16, screw: 2, lengths: [30, 38] },
+  'NEMA 11': { face: 28.2, boss: 22, bossHeight: 2, shaft: 5, shaftLength: 20, pitch: 23, screw: 2.5, lengths: [32, 45, 51] },
+  'NEMA 14': { face: 35.2, boss: 22, bossHeight: 2, shaft: 5, shaftLength: 20, pitch: 26, screw: 3, lengths: [28, 34, 52] },
+  'NEMA 17': { face: 42.3, boss: 22, bossHeight: 2, shaft: 5, shaftLength: 24, pitch: 31, screw: 3, lengths: [34, 40, 48, 60] },
+  'NEMA 23': { face: 57.2, boss: 38.1, bossHeight: 1.6, shaft: 6.35, shaftLength: 21, pitch: 47.14, screw: 5, lengths: [41, 56, 76] },
 };
 
 /** What a part feature makes. */
@@ -64,6 +106,8 @@ export type PartSpec =
   | { readonly kind: 'magnet'; readonly diameter: string; readonly height: string }
   /** A deep groove ball bearing. */
   | { readonly kind: 'bearing'; readonly size: BearingSize }
+  /** A stepper motor (CAD-194): its mounting face on the plane, the case below it, the boss and shaft above. */
+  | { readonly kind: 'stepper'; readonly size: StepperSize; readonly length: string }
   /**
    * A spur gear (helical with a helix angle), involute teeth, centred on the point with a tooth along the
    * plane's u axis. `chamfer` bevels the teeth at both ends by that much at the tip (45°), so a helical
@@ -131,6 +175,7 @@ export const partLabels: Readonly<Record<PartKind, string>> = {
   insert: 'Heat-set insert',
   magnet: 'Magnet',
   bearing: 'Ball bearing',
+  stepper: 'Stepper motor',
   gear: 'Gear',
   'ring-gear': 'Ring gear (internal)',
   'bevel-gear': 'Bevel gear',
@@ -159,6 +204,8 @@ export function defaultPart(kind: PartKind): PartSpec {
       return { kind, diameter: '6 mm', height: '3 mm' };
     case 'bearing':
       return { kind, size: '608' };
+    case 'stepper':
+      return { kind, size: 'NEMA 17', length: '40 mm' };
     case 'gear':
       return { kind, module: '1 mm', teeth: '20', width: '6 mm', bore: '5 mm', pressureAngle: '20 deg', helixAngle: '0 deg' };
     case 'ring-gear':

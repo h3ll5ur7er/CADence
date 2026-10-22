@@ -34,6 +34,8 @@ export interface SheetLayout {
    * says how a view was drawn when not exactly (CAD-125).
    */
   readonly views: readonly { readonly id: string; readonly min: Vec2; readonly max: Vec2; readonly center?: Vec2; readonly scale?: number; readonly error?: string; readonly note?: string }[];
+  /** Where each annotation is drawn (CAD-193): its box on the sheet, texts included. */
+  readonly boxes: readonly { readonly id: string; readonly min: Vec2; readonly max: Vec2 }[];
   /** Assembly instances in views (for balloons), where they are on the sheet. */
   readonly instances: readonly { readonly view: string; readonly instance: string; readonly at: Vec2 }[];
   /** Annotations whose geometry is gone (the model changed). */

@@ -25,7 +25,7 @@ import { steppingClock } from '@core/utilities/clock';
 import { EventBus } from '@core/utilities/messaging';
 import { decodePicture } from '@core/utilities/picture';
 import { fontSource } from '@core/utilities/text';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { holeCallout } from './callouts';
 import { createDrawingManager, type DrawingSession } from './index';
 
@@ -187,6 +187,25 @@ describe('DrawingManager', () => {
     expect(texts()).toEqual(expect.arrayContaining(['Item', 'Plate', '2', 'PLA']));
     expect(session.state().layout.texts.filter((t) => t.owner === 'b1').map((t) => t.text)).toEqual(['1']);
     expect(session.state().layout.lost).toEqual([]);
+  });
+
+  it('fits the parts list and the title block to their texts, tells where annotations are, and leaves parts out of views (CAD-193)', async () => {
+    unwrap(await session.execute({ type: 'add-view', view: { id: 'iso', source: asDocumentId('stack'), direction: 'iso', at: [300, 200], hidden: false } }));
+    const paths = () => session.state().layout.paths.filter((p) => p.owner === 'iso').length;
+    const all = paths();
+    // Close to the frame's left edge (10 mm): the list stays inside it, and says where it is.
+    unwrap(await session.execute({ type: 'add-annotation', annotation: { kind: 'parts-list', id: 'parts', view: 'iso', at: [70, 280] } }));
+    const box = session.state().layout.boxes.find((b) => b.id === 'parts');
+    expect(box?.min[0]).toBeGreaterThanOrEqual(10);
+    expect(box?.max[0]).toBeCloseTo(70, 6);
+    // A long material in its cell: smaller, then shortened.
+    unwrap(await session.execute({ type: 'set-title-block', titleBlock: { title: 'Stack', number: 'S-1', drawnBy: 'me', material: 'Aluminium 6082-T6, anodised black, bead blasted before', revision: 'A' } }));
+    const material = session.state().layout.texts.find((t) => t.text.startsWith('Aluminium'));
+    expect(material?.size).toBeLessThan(3.5);
+    expect((material?.text.length ?? 0) * (material?.size ?? 0) * 0.62).toBeLessThanOrEqual(43 + 1e-6);
+    // One of the two plates left out: fewer lines.
+    unwrap(await session.execute({ type: 'edit-view', view: { id: 'iso', source: asDocumentId('stack'), direction: 'iso', at: [300, 200], hidden: false, hide: ['i2'] } }));
+    await vi.waitFor(() => expect(paths()).toBeLessThan(all), { timeout: 20_000 });
   });
 
   it('shows a configuration of a component (CAD-126)', async () => {

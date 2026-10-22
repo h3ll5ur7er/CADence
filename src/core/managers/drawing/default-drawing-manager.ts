@@ -400,7 +400,7 @@ class Session implements DrawingSession {
       key: `${this.document.id}|${key}`,
       wanted: () => this.closed || this.inUse(key),
       // A copy: the bytes go over to the kernel's worker, and the session keeps them.
-      run: async (engine) => engine.drawView(await engine.restore(bytes.slice(), `result:${sourceKey(view.source, view.configuration)}:${source.stamp}`), request),
+      run: async (engine) => engine.drawView(shownBy(view, await engine.restore(bytes.slice(), `result:${sourceKey(view.source, view.configuration)}:${source.stamp}`)), request),
       done: (geometry) => this.finished(key, geometry),
     });
   }
@@ -452,12 +452,12 @@ class Session implements DrawingSession {
     if (views && source.bytes) {
       try {
         // A copy: the bytes go over to the kernel's worker, and later views need them again.
-        drawn = await views.drawView(await views.restore(source.bytes.slice(), `result:${sourceKey(view.source, view.configuration)}:${source.stamp}`), request);
+        drawn = await views.drawView(shownBy(view, await views.restore(source.bytes.slice(), `result:${sourceKey(view.source, view.configuration)}:${source.stamp}`)), request);
       } catch (error) {
-        if ((error as Error).name === 'TimeoutError') drawn = await modeling.drawView(source.bodies, { ...request, method: 'mesh' });
+        if ((error as Error).name === 'TimeoutError') drawn = await modeling.drawView(shownBy(view, source.bodies), { ...request, method: 'mesh' });
       }
     }
-    drawn ??= await modeling.drawView(source.bodies, request);
+    drawn ??= await modeling.drawView(shownBy(view, source.bodies), request);
     return drawn.ok ? drawn.value : { error: drawn.error.message };
   }
 
@@ -539,7 +539,14 @@ class Session implements DrawingSession {
 function viewKey(view: DrawingView, stamp: string): string {
   const { section } = view;
   const cut = section ? `${section.offset}${section.steps?.length ? `;${section.along ?? 'u'}${section.steps.map((s) => `,${s.at}:${s.offset}`).join('')}` : ''}${section.half ? ';half' : ''}` : '';
-  return `${sourceKey(view.source, view.configuration)}:${stamp}|${view.direction}|${view.hidden}|${cut}`;
+  return `${sourceKey(view.source, view.configuration)}:${stamp}|${view.direction}|${view.hidden}|${cut}${view.hide?.length ? `|hide:${[...view.hide].sort().join(',')}` : ''}`;
+}
+
+/** The bodies a view shows (CAD-193): those it does not leave out, an assembly's by instance (`<instance>` or `<instance>#k`). */
+function shownBy(view: DrawingView, bodies: readonly BodyState[]): BodyState[] {
+  if (!view.hide?.length) return [...bodies];
+  const hidden = new Set(view.hide);
+  return bodies.filter((b) => !hidden.has(b.id) && !hidden.has(b.id.split('#')[0] as string));
 }
 
 /** The component with a configuration's parameter values, for texts computed from its features (callouts). */

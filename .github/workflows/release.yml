@@ -89,6 +89,8 @@ jobs:
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
+          # The Tauri CLI from node_modules: package.json has no `tauri` script for the action's default.
+          tauriScript: npx tauri
           args: --config src-tauri/tauri.release.conf.json
       - name: The command line on its own, in the release
         if: github.event_name == 'push'

@@ -488,6 +488,21 @@ export class ViewportScene {
     this.frameBox(new Box3(new Vector3(...min), new Vector3(...max)), viewDirections.home);
   }
 
+  /**
+   * Frames the model from the home direction when it is larger than the home view shows (a machine
+   * on its table, CAD-199); a smaller model keeps the home view. False while nothing is shown.
+   */
+  frameIfLarger(): boolean {
+    const box = new Box3().setFromObject(this.model);
+    if (box.isEmpty()) return false;
+    const vertical = (fov * Math.PI) / 360;
+    const horizontal = Math.atan(Math.tan(vertical) * (this.size.width / Math.max(this.size.height, 1)));
+    const shown = (homeDistance * Math.sin(Math.min(vertical, horizontal))) / 1.15;
+    const corners = [box.min, box.max].flatMap((a) => [box.min, box.max].flatMap((b) => [box.min, box.max].map((c) => new Vector3(a.x, b.y, c.z))));
+    if (corners.some((corner) => corner.distanceTo(homeTarget) > shown)) this.frameBox(box, viewDirections.home);
+    return true;
+  }
+
   /** Frames everything shown (bodies and parts, else sketches) from the current direction. */
   zoomToFit(): void {
     const box = new Box3().setFromObject(this.model);

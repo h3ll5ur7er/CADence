@@ -1,0 +1,26 @@
+[
+  {
+    "id": "radial-engine",
+    "name": "Magnum Opus R-9 radial engine",
+    "description": "A nine-cylinder radial engine: master and link rods, cams, a planetary reduction gear and a propeller, with a drawing of every part.",
+    "archive": "radial-engine.cadence",
+    "picture": "radial-engine.png",
+    "open": "Radial engine"
+  },
+  {
+    "id": "robot-arm",
+    "name": "Robot arm R6",
+    "description": "A six-axis arm with a gripper, driven by stepper motors: it picks up a workpiece and puts it down, and every part has its drawing.",
+    "archive": "robot-arm.cadence",
+    "picture": "robot-arm.png",
+    "open": "Robot arm"
+  },
+  {
+    "id": "stewart-platform",
+    "name": "Stewart platform S6",
+    "description": "A platform on six legs with ball joints, moved by the legs' lengths alone: six closed loops solved together.",
+    "archive": "stewart-platform.cadence",
+    "picture": "stewart-platform.png",
+    "open": "Stewart platform"
+  }
+]

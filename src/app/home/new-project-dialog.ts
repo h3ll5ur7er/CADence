@@ -9,6 +9,14 @@ export interface TemplateEntry {
   readonly description: string;
 }
 
+/** An example project as the app lists it (public/examples/index.json, CAD-199): an archive to import, with a picture. */
+export interface ExampleEntry extends TemplateEntry {
+  readonly archive: string;
+  readonly picture: string;
+  /** The document it opens at, by name. */
+  readonly open: string;
+}
+
 export interface NewProject {
   readonly name: string;
   /** Absent: an empty project. */

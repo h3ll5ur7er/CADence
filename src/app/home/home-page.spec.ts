@@ -3,12 +3,19 @@ import { join } from 'node:path';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter, Router } from '@angular/router';
 import { createInMemoryCore } from '@core/composition';
+import type { ProjectId } from '@core/contracts';
 import type { ProjectManager } from '@core/managers/project';
 import { PROJECT_MANAGER } from '../core.providers';
 import { HomePage } from './home-page';
 
 describe('HomePage', () => {
   let manager: ProjectManager;
+
+  /** The files the app ships, as fetch gives them. */
+  function serve() {
+    const folder = join(process.cwd(), 'public');
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => new Response(readFileSync(join(folder, new URL(String(url)).pathname))));
+  }
 
   async function render() {
     const fixture = TestBed.createComponent(HomePage);
@@ -44,17 +51,30 @@ describe('HomePage', () => {
   });
 
   it('lists the samples and makes a project of the one opened (CAD-181)', async () => {
-    const folder = join(process.cwd(), 'public', 'templates');
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => new Response(readFileSync(join(folder, String(url).split('/templates/')[1] as string))));
+    serve();
     const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
     const page = await render();
-    await vi.waitFor(() => expect(page.querySelectorAll('[aria-label="Samples"] .sample')).toHaveLength(3));
+    await vi.waitFor(() => expect(page.querySelectorAll('[aria-label="Samples"] .sample')).toHaveLength(6));
     expect(page.querySelector('[aria-label="Samples"]')?.textContent).toContain('Box with lid');
     page.querySelector<HTMLButtonElement>('button[aria-label="Open sample Wall bracket"]')?.click();
     await vi.waitFor(() => expect(navigate).toHaveBeenCalled());
     const [project] = await manager.listProjects();
     expect(project?.name).toBe('Wall bracket');
     expect(navigate.mock.calls[0]?.[0]).toEqual(['/projects', project?.id, 'documents', expect.any(String)]);
+    vi.restoreAllMocks();
+  });
+
+  it('opens an example as a project of its own, at its assembly (CAD-199)', async () => {
+    serve();
+    const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
+    const page = await render();
+    await vi.waitFor(() => expect(page.querySelector('button[aria-label="Open sample Stewart platform S6"] img')).not.toBeNull());
+    page.querySelector<HTMLButtonElement>('button[aria-label="Open sample Stewart platform S6"]')?.click();
+    await vi.waitFor(() => expect(navigate).toHaveBeenCalled());
+    const [project] = await manager.listProjects();
+    expect(project?.name).toBe('Stewart platform S6');
+    const assembly = (await manager.listDocuments(project?.id as ProjectId)).find((d) => d.kind === 'assembly');
+    expect(navigate.mock.calls[0]?.[0]).toEqual(['/projects', project?.id, 'documents', assembly?.id]);
     vi.restoreAllMocks();
   });
 

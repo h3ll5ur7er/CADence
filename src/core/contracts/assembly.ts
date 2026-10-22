@@ -232,6 +232,38 @@ export interface MotionDrive {
   readonly speed: number;
 }
 
+/**
+ * Where an instance should be (CAD-188): a point of it (its coordinates; its origin when absent) at a
+ * place in the assembly, and optionally which way its directions point. The joints leading to it are
+ * solved for (inverse kinematics), within their limits.
+ */
+export interface ReachTarget {
+  readonly instance: string;
+  readonly point?: Vec3;
+  readonly at: Vec3;
+  /** A direction of the instance (its coordinates) and the direction it should point in the assembly. */
+  readonly axis?: { readonly local: Vec3; readonly along: Vec3 };
+  /** A second direction, across the first: fixes the turn about it (a gripper's jaw). */
+  readonly xAxis?: { readonly local: Vec3; readonly along: Vec3 };
+}
+
+/** A target at a moment of a study: the instance moves in a straight line between its targets (evenly, or eased into this one). */
+export interface MotionTarget extends ReachTarget {
+  readonly time: number;
+  readonly ease?: boolean;
+}
+
+/**
+ * An instance carried by another from a moment on (CAD-187): it keeps where it was relative to its
+ * carrier, and is let go where it is at `until` (absent: carried to the end).
+ */
+export interface MotionCarry {
+  readonly instance: string;
+  readonly by: string;
+  readonly from: number;
+  readonly until?: number;
+}
+
 export interface MotionStudy {
   readonly id: string;
   readonly name: string;
@@ -240,6 +272,10 @@ export interface MotionStudy {
   readonly keys: readonly MotionKey[];
   /** Drives win over keys of the same joint. */
   readonly drives?: readonly MotionDrive[];
+  /** Where instances should be at moments; the joints leading to them follow (CAD-188). */
+  readonly targets?: readonly MotionTarget[];
+  /** Instances picked up and put down by others (CAD-187). */
+  readonly carries?: readonly MotionCarry[];
 }
 
 /** One freedom of a joint (its index in `jointDofs`). */
@@ -336,6 +372,8 @@ export type JointFrame = PlaneFrame;
 export interface MotionFrame {
   readonly time: number;
   readonly poses: Readonly<Record<string, Matrix4>>;
+  /** Every joint's values at this moment (CAD-196). */
+  readonly values?: Readonly<Record<string, readonly number[]>>;
 }
 
 /** Two instances whose solids overlap. */

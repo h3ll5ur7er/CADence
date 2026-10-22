@@ -14,6 +14,7 @@ import {
   type Interference,
   type ImportedDocument,
   isModelFormat,
+  jointDofs,
   type Joint,
   type JointOrigin,
   type LimitHold,
@@ -27,6 +28,7 @@ import {
   type OffsetField,
   ok,
   type PlaneFrame,
+  type ReachTarget,
   type Result,
   resultStamp,
   sourceKey,
@@ -34,7 +36,7 @@ import {
 } from '@core/contracts';
 import type { AnalysisEngine } from '@core/engines/analysis';
 import type { InterchangeEngine } from '@core/engines/interchange';
-import type { KinematicJoint, KinematicModel, KinematicsEngine } from '@core/engines/kinematics';
+import type { KinematicJoint, KinematicModel, KinematicsEngine, PointMass } from '@core/engines/kinematics';
 import type { ParameterEngine } from '@core/engines/parameter';
 import type { ModelingEngine } from '@core/engines/modeling';
 import type { Clock } from '@core/utilities/clock';
@@ -55,9 +57,14 @@ import type {
   CollisionReport,
   ComponentView,
   InstructionPicture,
+  LoadLine,
+  LoadOptions,
+  LoadReport,
   PlacedRef,
+  Reached,
+  StudyMoment,
 } from './assembly-manager';
-import { applyCommand } from './commands';
+import { applyCommand, reachProblem } from './commands';
 import { copyId, patternTransforms } from './patterns';
 
 export interface AssemblyManagerDependencies {
@@ -275,8 +282,78 @@ class Session implements AssemblySession {
     return ok({ frames: frames.map((frame) => ({ ...frame, poses: Object.fromEntries(withCopies(this.document, new Map(Object.entries(frame.poses))).poses) })), holds });
   }
 
-  async measure(refs: readonly PlacedRef[]): Promise<Result<Measurement>> {
-    return this.deps.analysis.measurePlaced(this.placedParts(), refs);
+  async measure(refs: readonly PlacedRef[], moment?: { readonly study: string; readonly time: number }): Promise<Result<Measurement>> {
+    if (!moment) return this.deps.analysis.measurePlaced(this.placedParts(), refs);
+    const then = await this.at(moment.study, moment.time);
+    return then.ok ? this.deps.analysis.measurePlaced(this.placedParts(then.value.poses), refs) : then;
+  }
+
+  async at(studyId: string, time: number): Promise<Result<StudyMoment>> {
+    const study = this.document.motionStudies.find((s) => s.id === studyId);
+    if (!study) return fail({ code: 'invalid-command', message: `Study ${studyId} does not exist.` });
+    if (!Number.isFinite(time) || time < 0 || time > study.duration) return fail({ code: 'invalid-command', message: `A moment of ${study.name} is from 0 to ${study.duration} s.` });
+    const { model } = await this.model(this.document);
+    // Played up to that moment, 50 frames a second, so the last frame is exactly then.
+    const { frames, error } = this.deps.kinematics.simulate(model, { ...study, duration: time }, time > 0 ? Math.ceil(time * 50) / time : 1);
+    if (error) return fail({ code: 'motion-failed', message: `At ${error.time.toFixed(2)} s, ${this.jointName(error.joint)}: ${error.message}` });
+    const frame = frames[frames.length - 1] as MotionFrame;
+    return ok({ time, poses: withCopies(this.document, new Map(Object.entries(frame.poses))).poses, values: new Map(Object.entries(frame.values ?? {})) });
+  }
+
+  async reach(targets: readonly ReachTarget[], hold: readonly string[] = []): Promise<Result<Reached>> {
+    const problem = targets.length ? targets.map((t) => reachProblem(this.document, t)).find(Boolean) : 'Give at least one target.';
+    if (problem) return fail({ code: 'invalid-command', message: problem });
+    const { model } = await this.model(this.document);
+    const solution = this.deps.kinematics.reach({ ...model, joints: model.joints.map((j) => ({ ...j, values: this.derived.values.get(j.id) ?? j.values })) }, targets, new Set(hold));
+    if (solution.error) return fail({ code: 'joint-failed', message: `${this.jointName(solution.error.joint)}: ${solution.error.message}` });
+    return ok({ values: solution.values, poses: withCopies(this.document, solution.poses).poses, miss: solution.miss ?? { distance: 0, angle: 0 } });
+  }
+
+  async loads(options: LoadOptions = {}): Promise<Result<LoadReport>> {
+    const gravity = options.gravity ?? [0, 0, -9.81];
+    const { model } = await this.model(this.document);
+    // Each part's mass at its centre (kg), and the payloads.
+    const masses: PointMass[] = [];
+    for (const { instance, component } of this.readyInstances()) {
+      if (instance.appearance?.hidden || !this.document.instances.some((i) => i.id === instance.id)) continue;
+      for (const body of await this.deps.analysis.properties(component.bodies, component.material.density, densities(component))) masses.push({ instance: instance.id, mass: body.mass / 1000, center: body.centerOfMass });
+    }
+    for (const payload of options.payloads ?? []) {
+      if (!this.document.instances.some((i) => i.id === payload.instance) || !Number.isFinite(payload.mass)) return fail({ code: 'invalid-command', message: 'A payload needs an instance of this assembly, a point and a mass (kg).' });
+      masses.push({ instance: payload.instance, mass: payload.mass, center: payload.point });
+    }
+    const unitOf = (line: { joint: string; dof: number }): 'N·m' | 'N' => {
+      const joint = this.document.joints.find((j) => j.id === line.joint);
+      return joint && jointDofs[joint.type][line.dof]?.kind === 'translate' ? 'N' : 'N·m';
+    };
+    const weigh = (values: ReadonlyMap<string, readonly number[]>, accelerated: readonly PointMass[]) =>
+      this.deps.kinematics.loads({ ...model, joints: model.joints.map((j) => ({ ...j, values: values.get(j.id) ?? j.values })) }, accelerated, gravity);
+    if (!options.study) {
+      const { loads, error } = weigh(this.derived.values, masses);
+      return error ? fail({ code: 'joint-failed', message: error }) : ok({ loads: loads.map((l) => ({ ...l, unit: unitOf(l) })) });
+    }
+    const played = await this.play(options.study, options.fps ?? 10);
+    if (!played.ok) return played;
+    const frames = played.value.frames;
+    const centre = (frame: MotionFrame | undefined, m: PointMass) => (frame?.poses[m.instance] ? transformPoint(frame.poses[m.instance] as Matrix4, m.center) : undefined);
+    const worst = new Map<string, LoadLine>();
+    for (const [k, frame] of frames.entries()) {
+      const dt = k > 0 && k < frames.length - 1 ? ((frames[k + 1] as MotionFrame).time - (frames[k - 1] as MotionFrame).time) / 2 : 0;
+      // Accelerations from the centres' second differences, mm/s² → m/s².
+      const accelerated = masses.map((m) => {
+        if (!options.dynamic || !dt) return m;
+        const [before, now, after] = [centre(frames[k - 1], m), centre(frame, m), centre(frames[k + 1], m)];
+        if (!before || !now || !after) return m;
+        return { ...m, acceleration: [0, 1, 2].map((n) => ((after[n] as number) - 2 * (now[n] as number) + (before[n] as number)) / (dt * dt) / 1000) as unknown as Vec3 };
+      });
+      const { loads, error } = weigh(new Map(Object.entries(frame.values ?? {})), accelerated);
+      if (error) return fail({ code: 'joint-failed', message: `At ${frame.time.toFixed(2)} s: ${error}` });
+      for (const line of loads) {
+        const key = `${line.joint}/${line.dof}`;
+        if (!worst.has(key) || Math.abs(line.load) > Math.abs((worst.get(key) as LoadLine).load)) worst.set(key, { ...line, unit: unitOf(line), time: frame.time });
+      }
+    }
+    return ok({ loads: [...worst.values()], moments: frames.length });
   }
 
   async properties(): Promise<AssemblyProperties> {
@@ -303,6 +380,10 @@ class Session implements AssemblySession {
     const played = await this.play(studyId, fps);
     if (!played.ok) return played;
     const frames = { value: played.value.frames };
+    // A part and what carries it touch on purpose while it is carried (CAD-187).
+    const carries = this.document.motionStudies.find((st) => st.id === studyId)?.carries ?? [];
+    const carried = (time: number, a: string, b: string) =>
+      carries.some((c) => ((c.instance === a && c.by === b) || (c.instance === b && c.by === a)) && time >= c.from - 1e-9 && (c.until === undefined || time <= c.until + 1e-9));
     const found = new Map<string, Collision>();
     // Pattern copies take part too (CAD-115).
     const ready = this.readyInstances();
@@ -321,7 +402,7 @@ class Session implements AssemblySession {
         for (let j = i + 1; j < parts.length; j++) {
           const [a, b] = [parts[i] as (typeof parts)[number], parts[j] as (typeof parts)[number]];
           const key = `${a.instance}|${b.instance}`;
-          if (found.has(key)) continue;
+          if (found.has(key) || carried(frame.time, a.instance, b.instance)) continue;
           const relative = compose(invertRigid(a.transform), b.transform);
           const before = tested.get(key);
           if (before && relative.every((v, k) => Math.abs(v - (before[k] as number)) < 1e-9 * (k >= 12 ? 1000 : 1))) continue;
@@ -429,8 +510,8 @@ class Session implements AssemblySession {
     return found;
   }
 
-  private placedParts() {
-    return this.readyInstances().map(({ instance, component, transform }) => ({ instance: instance.id, bodies: component.bodies, transform }));
+  private placedParts(poses?: ReadonlyMap<string, Matrix4>) {
+    return this.readyInstances(poses).map(({ instance, component, transform }) => ({ instance: instance.id, bodies: component.bodies, transform }));
   }
 
   async exportAssembly(format: AssemblyFormat): Promise<Result<void>> {
@@ -494,6 +575,25 @@ class Session implements AssemblySession {
     }
     if (command.type === 'move-instance' && this.derived.placed.has(command.instanceId)) {
       return fail({ code: 'placed-by-joint', message: 'A joint places this instance; change the joint’s values to move it.' });
+    }
+    if (command.type === 'reach') {
+      // The targets' joint values, set as one change that holds them (CAD-188).
+      const reached = await this.reach(command.targets, command.hold);
+      if (!reached.ok) return reached;
+      const changed = this.document.joints.filter((j) => JSON.stringify(reached.value.values.get(j.id)) !== JSON.stringify(j.values) && jointDofs[j.type].length);
+      const { distance, angle } = reached.value.miss;
+      const note = distance > 0.01 || angle > 0.01 ? [`The targets are out of reach: the nearest pose is ${Math.round(distance * 1000) / 1000} mm${angle > 0.01 ? ` and ${Math.round(angle * 1000) / 1000}°` : ''} off.`] : [];
+      if (!changed.length) {
+        this.notes = note;
+        this.notify();
+        return ok(undefined);
+      }
+      const result = await this.apply({ type: 'set-joints', joints: changed.map((j) => ({ jointId: j.id, values: reached.value.values.get(j.id) as readonly number[] })) });
+      if (result.ok && note.length) {
+        this.notes = note;
+        this.notify();
+      }
+      return result;
     }
     const applied = applyCommand(this.document, command, componentName);
     if (!applied.ok) return applied;
@@ -762,15 +862,15 @@ class Session implements AssemblySession {
     return picked.ok ? ok(offsetFrame(picked.value, origin.offset)) : picked;
   }
 
-  /** Instances and the copies of patterns whose components are ready, where they are. */
-  private readyInstances() {
+  /** Instances and the copies of patterns whose components are ready, where they are (or at these poses). */
+  private readyInstances(at: ReadonlyMap<string, Matrix4> = this.derived.poses) {
     const copies = [...this.derived.copies].flatMap(([id, copy]) => {
       const original = this.document.instances.find((i) => i.id === copy.instance);
       return original ? [{ ...original, id, name: `${original.name} (copy ${id.split('/').at(-1)})` }] : [];
     });
     return [...this.document.instances, ...copies].flatMap((instance) => {
       const component = this.components.get(sourceKey(instance.component, instance.configuration));
-      const transform = this.derived.poses.get(instance.id);
+      const transform = at.get(instance.id);
       return component?.view.status === 'ready' && transform ? [{ instance, component, transform }] : [];
     });
   }

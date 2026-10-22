@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, DestroyRef, inject, input, signal } from '@angular/core';
-import { jointDofs, type Matrix4, type MotionDrive, type MotionFrame, type MotionKey, type MotionStudy } from '@core/contracts';
+import { jointDofs, type Matrix4, type MotionCarry, type MotionDrive, type MotionFrame, type MotionKey, type MotionStudy } from '@core/contracts';
 import type { Collision } from '@core/managers/assembly';
 import { Icon } from '../../shared/icon';
 import { AssemblyStore } from './assembly-store';
@@ -84,6 +84,35 @@ const fps = 30;
         </div>
       </fieldset>
 
+      <fieldset>
+        <legend>Carried parts</legend>
+        @for (carry of study.carries ?? []; track $index) {
+          <div class="drive" data-testid="carry">
+            <span>{{ instanceName(carry.instance) }} by {{ instanceName(carry.by) }}, {{ carry.from }}–{{ carry.until ?? study.duration }} s</span>
+            <button type="button" class="icon-btn" [attr.aria-label]="'Stop carrying ' + instanceName(carry.instance)" (click)="removeCarry(study, carry)"><cad-icon name="trash" [size]="12" /></button>
+          </div>
+        }
+        @if (carriable().length && store.state()?.document?.instances?.length) {
+          <div class="grid">
+            <label class="field">Part<select aria-label="Part to carry" (change)="carryPart.set(text($event))">
+              @for (i of carriable(); track i.id) {
+                <option [value]="i.id" [selected]="i.id === carryPartId()">{{ i.name }}</option>
+              }
+            </select></label>
+            <label class="field">Carried by<select aria-label="Carried by" (change)="carryBy.set(text($event))">
+              @for (i of store.state()?.document?.instances ?? []; track i.id) {
+                <option [value]="i.id" [selected]="i.id === carryById()">{{ i.name }}</option>
+              }
+            </select></label>
+            <label class="field">From (s)<input type="number" min="0" [max]="study.duration" step="any" aria-label="Carried from" [value]="carryFrom()" (change)="carryFrom.set(number($event))" /></label>
+            <label class="field">Until (s)<input type="number" min="0" [max]="study.duration" step="any" aria-label="Carried until" placeholder="end" (change)="carryUntil.set(text($event))" /></label>
+          </div>
+          <button type="button" class="btn" (click)="addCarry(study)"><cad-icon name="plus" /> Carry</button>
+        } @else {
+          <p class="hint">A part no joint holds can be picked up by another: a workpiece by a gripper.</p>
+        }
+      </fieldset>
+
       <div class="transport">
         <button type="button" class="icon-btn" [attr.aria-label]="playing() ? 'Stop' : 'Play'" (click)="playing() ? stop() : play(study)">
           <cad-icon [name]="playing() ? 'stop' : 'play'" [size]="18" />
@@ -134,6 +163,30 @@ export class MotionPanel {
   protected readonly joints = computed(() => this.store.state()?.document.joints.filter((j) => j.values.length > 0) ?? []);
   protected readonly selectedJoint = computed(() => this.keyJoint() ?? this.joints()[0]?.id);
   protected readonly sortedKeys = computed(() => [...(this.study()?.keys ?? [])].sort((a, b) => a.time - b.time));
+
+  /** Parts no joint holds: those a study can carry (CAD-187). */
+  protected readonly carriable = computed(() => {
+    const document = this.store.state()?.document;
+    return (document?.instances ?? []).filter((i) => !document?.joints.some((j) => j.a.instance === i.id || j.b.instance === i.id));
+  });
+  protected readonly carryPart = signal<string | undefined>(undefined);
+  protected readonly carryBy = signal<string | undefined>(undefined);
+  protected readonly carryFrom = signal(0);
+  protected readonly carryUntil = signal('');
+  protected readonly carryPartId = computed(() => this.carryPart() ?? this.carriable()[0]?.id);
+  protected readonly carryById = computed(() => this.carryBy() ?? this.store.state()?.document.instances.find((i) => i.id !== this.carryPartId())?.id);
+
+  protected addCarry(study: MotionStudy): void {
+    const [instance, by] = [this.carryPartId(), this.carryById()];
+    if (!instance || !by) return;
+    const until = this.carryUntil().trim() === '' ? undefined : Number(this.carryUntil());
+    const carry: MotionCarry = { instance, by, from: this.carryFrom(), ...(until === undefined ? {} : { until }) };
+    this.save(study, { carries: [...(study.carries ?? []), carry] });
+  }
+
+  protected removeCarry(study: MotionStudy, carry: MotionCarry): void {
+    this.save(study, { carries: (study.carries ?? []).filter((c) => c !== carry) });
+  }
 
   /** Why a key cannot be reached: a value past its joint's limit, which holds it there (CAD-186). */
   protected pastLimit(key: MotionKey): string {

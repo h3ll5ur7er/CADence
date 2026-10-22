@@ -78,6 +78,8 @@ Choose the driving and the driven joint (and which of their freedoms), or type t
 - **Measure** (the ruler) measures faces, edges and corners of any instances where they are: one gives its size; two give the distance and the angle between them.
 - With nothing selected, the assembly's properties show its **mass**, **volume** and **centre of mass**, from each component's material (copies included, hidden instances left out).
 
+**What the joints hold:** for choosing motors and gearboxes, agents ask `joint_loads` for the torque (N·m) or force (N) each actuator must hold against the parts' weight and payloads, as the assembly stands or the largest over a study (with `dynamic`, the parts' accelerations too). Actuators are the joints marked driven; in an open chain without any, every joint.
+
 ## Motion studies
 
 Click **Motion** to start a study. It has a duration and *keys*: a joint's values at a moment.
@@ -92,6 +94,8 @@ Click **Motion** to start a study. It has a duration and *keys*: a joint's value
 - **Constant speeds** turn a joint at a speed (rpm) or slide it (mm/s) from where it is at the start, for the whole study; they win over keys of the same joint. Linked joints follow.
 - **Check collisions** plays the study (10 frames a second) and lists the parts that hit each other with the moment they first do, pattern copies included. Click one to see it, the parts in pink; **Stop playing at the first hit** ends playback there. Pairs that keep their position against each other are tested once, so large assemblies check quickly.
 - Pattern copies move with their originals while a study plays.
+- **Carried parts:** a part no joint holds can be picked up by another (a workpiece by a gripper's finger). Choose the part, what carries it, and from when until when; it keeps where it was on its carrier while carried, and stays where it was let go. Collision checks leave the part and its carrier out while it is carried.
+- **For agents:** a study can also key *targets* (where a point of an instance should be, and which way it points) instead of joint values: the joints leading to it follow, along a straight line between targets. `get_assembly` with a study and a time answers with every instance's place and every joint's values then, and `measure` measures at a moment.
 
 ## Exploded views and build instructions
 

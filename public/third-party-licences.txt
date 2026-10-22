@@ -1,4 +1,4 @@
-Third-party software in CADence 0.15.0
+Third-party software in CADence 0.47.0
 
 CADence ships the libraries and fonts below. Each is listed with its version, licence and source,
 followed by the text of its licence.

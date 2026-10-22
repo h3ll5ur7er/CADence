@@ -17,7 +17,7 @@ Choose the style under **Settings** (the gear at the top right, or press **?**).
 
 The buttons under the view cube:
 
-- **Home view** looks at the origin from the front right.
+- **Home view** looks at the origin from the front right. A model too large for it (a machine on its table) is framed from that direction when it opens.
 - **Zoom to fit** frames everything shown, from the direction you are looking.
 - **Perspective / orthographic**: in an orthographic view, parallel edges stay parallel, which makes sizes easy to compare. The choice is kept, like the control style.
 - **Section view** cuts the bodies (or the assembly's parts) with a plane, so you can see inside. Choose the plane (XY, XZ, YZ, or parallel to a selected flat face), move it with **Offset**, and **Flip** the side that is cut away. The cut is drawn in orange. The section only changes the view, never the model; measurements and picks ignore what is cut away.

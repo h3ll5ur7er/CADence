@@ -275,6 +275,12 @@
   stroke-linejoin: round;
 }
 
+/* Examples (CAD-199) show a picture of the machine instead, made at the card's 16:10. */
+.sample img {
+  width: 100%;
+  height: auto;
+}
+
 .sample .meta {
   line-height: 1.35;
 }

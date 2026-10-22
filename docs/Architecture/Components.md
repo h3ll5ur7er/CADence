@@ -8,7 +8,7 @@ The responsibilities and service contracts of every component in [[Architecture]
 
 | Client | Responsibility |
 | --- | --- |
-| **Home** | Lists projects with their documents and thumbnails; creates, renames, deletes and opens projects and documents; imports files; lists the samples (the shipped templates) and starts the tour of a first part ([[Architecture/Decisions#ADR-62]]). |
+| **Home** | Lists projects with their documents and thumbnails; creates, renames, deletes and opens projects and documents; imports files; lists the samples (the shipped example archives and templates) and starts the tour of a first part ([[Architecture/Decisions#ADR-62]]). |
 | **Editor shell** | Routes to the mode matching the document kind; hosts toolbars, the feature/document tree, the properties panel and the viewport. On small screens it is a viewer: the documents in a drawer, the modes' modelling tools left out, a bar of touch tools (fit, home, measure, augmented reality) instead ([[Architecture/Decisions#ADR-62]]). |
 | **Component editor** | Sketch tools, feature dialogs, timeline, parameters table, measure and validation panels. Translates user gestures into **Design commands**. |
 | **Assembly editor** | Instance tree, joint tools, motion-study timeline and playback. Translates gestures into **Assembly commands**. |

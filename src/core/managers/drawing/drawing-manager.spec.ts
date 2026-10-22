@@ -202,7 +202,12 @@ describe('DrawingManager', () => {
     unwrap(await session.execute({ type: 'set-title-block', titleBlock: { title: 'Stack', number: 'S-1', drawnBy: 'me', material: 'Aluminium 6082-T6, anodised black, bead blasted before', revision: 'A' } }));
     const material = session.state().layout.texts.find((t) => t.text.startsWith('Aluminium'));
     expect(material?.size).toBeLessThan(3.5);
-    expect((material?.text.length ?? 0) * (material?.size ?? 0) * 0.62).toBeLessThanOrEqual(43 + 1e-6);
+    // Measured with the font pictures draw it in (CAD-200): it fits its 43 mm.
+    const fonts = fontSource();
+    const [regular, bold] = await Promise.all([fonts('regular'), fonts('bold')]);
+    expect(regular.advance(material?.text ?? '', material?.size ?? 0)).toBeLessThanOrEqual(43 + 1e-6);
+    // So does every text of the parts list, inside its box.
+    for (const t of session.state().layout.texts.filter((t) => t.owner === 'parts')) expect(t.at[0] + (t.bold ? bold : regular).advance(t.text, t.size), t.text).toBeLessThanOrEqual((box?.max[0] ?? 0) + 1e-6);
     // One of the two plates left out: fewer lines.
     unwrap(await session.execute({ type: 'edit-view', view: { id: 'iso', source: asDocumentId('stack'), direction: 'iso', at: [300, 200], hidden: false, hide: ['i2'] } }));
     await vi.waitFor(() => expect(paths()).toBeLessThan(all), { timeout: 20_000 });

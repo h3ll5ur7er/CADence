@@ -229,7 +229,7 @@ export function layoutSheet(input: LayoutInput): SheetLayout {
   for (const path of paths) for (const p of path.points) grow(path.owner, p);
   for (const arrow of arrows) grow(arrow.owner, arrow.tip);
   for (const t of texts) {
-    const w = textWidth(t.text, t.size);
+    const w = textWidth(t.text, t.size, t.bold);
     const left = t.align === 'left' ? t.at[0] : t.align === 'center' ? t.at[0] - w / 2 : t.at[0] - w;
     grow(t.owner, [left, t.at[1] - t.size * 0.3]);
     grow(t.owner, [left + w, t.at[1] + t.size]);
@@ -469,7 +469,7 @@ function annotate(a: DrawingAnnotation, t: Tools): boolean {
       // Columns as wide as their texts (CAD-193); smaller text, then shortened texts, where the frame is too near.
       const room = a.at[0] - margin - 1;
       let size = 3;
-      const widthsAt = (s: number) => [12, 30, 16, 20].map((least, k) => Math.max(least, ...cells.map((c) => textWidth(c[k] as string, s) + 3)));
+      const widthsAt = (s: number) => [12, 30, 16, 20].map((least, k) => Math.max(least, ...cells.map((c, i) => textWidth(c[k] as string, s, i === 0) + 3)));
       let widths = widthsAt(size);
       if (widths.reduce((sum, w) => sum + w, 0) > room) {
         size = Math.max(2, (size * room) / widths.reduce((sum, w) => sum + w, 0));
@@ -489,7 +489,7 @@ function annotate(a: DrawingAnnotation, t: Tools): boolean {
         line([[left, top - rowHeight], [a.at[0], top - rowHeight]], 'thin', a.id);
         let x = left;
         row.forEach((value, k) => {
-          text([x + 1.5, top - rowHeight + rowHeight * 0.29], fitted(value, (widths[k] as number) - 3, size), size, 'left', a.id, i === 0);
+          text([x + 1.5, top - rowHeight + rowHeight * 0.29], fitted(value, (widths[k] as number) - 3, size, i === 0), size, 'left', a.id, i === 0);
           x += widths[k] as number;
         });
       });
@@ -561,20 +561,38 @@ function valueOf(a: Dimension, main: string, nominal: number): ValueText {
   }
 }
 
-/** About how wide a text is on the sheet (Helvetica averages 0.6 of its size). */
-const textWidth = (value: string, size: number) => value.length * size * 0.62;
+/**
+ * How wide the bundled font's characters are, space to tilde, per millimetre of text size (its
+ * capitals' height): Inter's advances, read from the font (CAD-199). Pictures draw texts in Inter and
+ * the PDF in Helvetica, which is narrower, so what fits here fits in both.
+ */
+const advances: Readonly<Record<'regular' | 'bold', readonly number[]>> = {
+  regular: [0.387, 0.395, 0.64, 0.87, 0.882, 1.35, 0.885, 0.412, 0.501, 0.501, 0.689, 0.909, 0.396, 0.632, 0.396, 0.495, 0.867, 0.559, 0.838, 0.849, 0.888, 0.815, 0.852, 0.778, 0.85, 0.852, 0.396, 0.415, 0.909, 0.909, 0.909, 0.703, 1.328, 0.948, 0.899, 1.004, 0.992, 0.826, 0.811, 1.026, 1.021, 0.369, 0.785, 0.923, 0.777, 1.242, 1.036, 1.051, 0.878, 1.051, 0.885, 0.882, 0.887, 1.023, 0.948, 1.354, 0.938, 0.933, 0.864, 0.501, 0.495, 0.501, 0.648, 0.627, 0.444, 0.772, 0.842, 0.785, 0.842, 0.801, 0.509, 0.843, 0.813, 0.333, 0.333, 0.754, 0.333, 1.204, 0.812, 0.824, 0.842, 0.842, 0.517, 0.726, 0.45, 0.813, 0.772, 1.125, 0.75, 0.772, 0.759, 0.586, 0.457, 0.586, 0.909],
+  bold: [0.326, 0.464, 0.758, 0.892, 0.9, 1.396, 0.923, 0.466, 0.518, 0.518, 0.768, 0.933, 0.459, 0.643, 0.459, 0.534, 0.927, 0.593, 0.866, 0.887, 0.93, 0.855, 0.893, 0.799, 0.895, 0.893, 0.459, 0.471, 0.933, 0.933, 0.933, 0.769, 1.397, 1.026, 0.909, 1.017, 0.993, 0.835, 0.807, 1.032, 1.027, 0.386, 0.803, 0.989, 0.777, 1.281, 1.048, 1.059, 0.891, 1.068, 0.903, 0.9, 0.917, 1.006, 1.026, 1.426, 1.015, 1.005, 0.913, 0.518, 0.534, 0.518, 0.669, 0.654, 0.502, 0.798, 0.866, 0.809, 0.866, 0.819, 0.547, 0.868, 0.856, 0.372, 0.372, 0.797, 0.372, 1.254, 0.856, 0.843, 0.866, 0.866, 0.56, 0.77, 0.503, 0.856, 0.824, 1.168, 0.797, 0.828, 0.787, 0.644, 0.511, 0.644, 0.933],
+};
+/** A character outside that range (×, ⌀, letters with accents): as wide as an n or wider. */
+const otherAdvance = 0.85;
+
+/** How wide a text is on the sheet. */
+function textWidth(value: string, size: number, bold = false): number {
+  const table = advances[bold ? 'bold' : 'regular'];
+  let width = 0;
+  for (const c of value) width += table[(c.codePointAt(0) as number) - 32] ?? otherAdvance;
+  return width * size;
+}
 
 /** The text shortened with an ellipsis until it fits the width at this size (CAD-193). */
-function fitted(value: string, width: number, size: number): string {
-  if (textWidth(value, size) <= width) return value;
-  const keep = Math.max(1, Math.floor(width / (size * 0.62)) - 1);
+function fitted(value: string, width: number, size: number, bold = false): string {
+  if (textWidth(value, size, bold) <= width) return value;
+  let keep = value.length - 1;
+  while (keep > 1 && textWidth(`${value.slice(0, keep)}…`, size, bold) > width) keep--;
   return `${value.slice(0, keep)}…`;
 }
 
 /** The size (down to 2 mm) at which a text fits a width, and the text, shortened if it still does not. */
-function fit(value: string, width: number, size: number): { text: string; size: number } {
-  const fits = Math.min(size, Math.max(2, width / Math.max(1, value.length * 0.62)));
-  return { text: fitted(value, width, fits), size: fits };
+function fit(value: string, width: number, size: number, bold = false): { text: string; size: number } {
+  const fits = Math.min(size, Math.max(2, width / Math.max(0.1, textWidth(value, 1, bold))));
+  return { text: fitted(value, width, fits, bold), size: fits };
 }
 
 function widthOf(value: ValueText): number {
@@ -686,7 +704,7 @@ function frameTitle(document: DrawingDocument, width: number, line: Tools['line'
   line([[left, bottom + 9], [right, bottom + 9]], 'thin');
   for (const x of [left + 60, left + 120]) line([[x, bottom], [x, bottom + 18]], 'thin');
   const block = document.titleBlock;
-  const title = fit(block.title || document.name, 174, 6);
+  const title = fit(block.title || document.name, 174, 6, true);
   text([left + 3, bottom + 22], title.text, title.size, 'left', undefined, true);
   const scale = document.sheet.scale >= 1 ? `${formatValue(document.sheet.scale)}:1` : `1:${formatValue(1 / document.sheet.scale)}`;
   const cells: [string, string][] = [

@@ -737,3 +737,13 @@ CADence has no server. Versions are a git repository per project, synced with an
 
 *Why:* the robot arm's parts list ran past the frame, covered a view nobody could see coming, and its overview drew the 650 mm table at 1:5; its bearings and motors had to be made by hand ([[Robot arm]]).
 *Trade-off:* estimated text widths can be a little off for wide or narrow letters. A motor is a simplified shape: no connector, no flats on the shaft.
+
+## ADR-67
+
+**Example machines as archives, texts measured with the font, large models framed (CAD-199, CAD-200).**
+- *Examples are archives, not scripts:* the robot arm and the Stewart platform were built over hundreds of MCP calls, so they ship as `.cadence` archives (190 and 60 KB) with a picture, unlike the templates, which a script builds. Opening one imports it as a project of one's own. A test opens each with every document regenerated, so they keep working as documents change.
+- *Texts are measured with Inter's advances:* the layout measured a text as 0.62 × its size per character, but the size is the capitals' height, and Inter is about 0.8 wide per character at that height. Parts lists, title blocks and tolerances after a value ran past what was measured. A table of Inter's advances for printable ASCII (regular and bold), read from the bundled font, now measures them. The PDF's Helvetica is narrower, so what fits in a picture fits in the PDF.
+- *Large models are framed when they open:* the view opens at a fixed home distance, which suits a part a few centimetres across. Once the model has stayed the same for 0.4 s after opening, a model with a corner outside what the home view shows is framed from the home direction; a smaller one keeps the home view, so what users and tests know stays the same.
+
+*Why:* new users should see what CADence can do. The arm opened looking at its base, and its parts list ran past the frame on its overview drawing.
+*Trade-off:* archives must be refreshed by hand when a machine should show something new. Characters outside ASCII are counted as wide as an n.

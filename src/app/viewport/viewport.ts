@@ -71,6 +71,8 @@ async function softwareWebGPU(): Promise<boolean> {
  */
 /** How long the model must stay unchanged before its picture is taken (ms). */
 const thumbnailDelay = 1500;
+/** How long the model must stay the same after opening before it is framed. */
+const frameDelay = 400;
 
 @Component({
   selector: 'cad-viewport',
@@ -305,6 +307,17 @@ export class Viewport {
       clearTimeout(pending);
       pending = setTimeout(() => void scene.snapshot().then((png) => png && this.thumbnail.emit(png)), thumbnailDelay);
       onCleanup(() => clearTimeout(pending));
+    });
+    // Once the model has settled after opening, a model larger than the home view is framed (CAD-199).
+    let framed = false;
+    let framing: ReturnType<typeof setTimeout> | undefined;
+    effect((onCleanup) => {
+      const scene = this.scene();
+      const content = [this.bodies(), this.parts()];
+      if (framed || !scene || !content.some((list) => list.length) || this.fit()) return;
+      clearTimeout(framing);
+      framing = setTimeout(() => (framed = scene.frameIfLarger()), frameDelay);
+      onCleanup(() => clearTimeout(framing));
     });
     effect(() => this.scene()?.setProjection(this.settings.projection()));
     effect(() => this.scene()?.setMouse(mouseBindings[this.settings.controls()]));

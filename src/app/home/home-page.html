@@ -147,13 +147,17 @@
           <h2 id="samples-heading">Samples</h2>
           <cad-help topic="new-project" />
         </div>
-        <p class="lead">Finished projects to look around in and change. Opening one makes a project of your own from it.</p>
+        <p class="lead">Finished projects to look around in and change, from whole machines to parts to start from. Opening one makes a project of your own from it.</p>
         <ul class="grid" aria-label="Samples">
           @for (sample of list; track sample.id) {
             <li class="card sample">
               <button type="button" class="card-link" [attr.aria-label]="'Open sample ' + sample.name" [disabled]="opening()" (click)="openSample(sample)">
                 <span class="thumb" aria-hidden="true">
-                  <svg viewBox="0 0 64 48"><path [attr.d]="picture(sample.id)" /></svg>
+                  @if (examplePicture(sample); as src) {
+                    <img [src]="src" alt="" />
+                  } @else {
+                    <svg viewBox="0 0 64 48"><path [attr.d]="picture(sample.id)" /></svg>
+                  }
                 </span>
                 <span class="name">{{ sample.name }}</span>
                 <span class="meta">{{ sample.description }}</span>

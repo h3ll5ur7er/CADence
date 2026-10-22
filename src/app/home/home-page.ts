@@ -13,7 +13,7 @@ import { AboutDialog } from '../about/about-dialog';
 import { HelpLink } from '../shared/help';
 import { Layout } from '../shared/layout';
 import { Tour } from '../shared/tour';
-import { NewProjectDialog, templatePicture, type TemplateEntry } from './new-project-dialog';
+import { type ExampleEntry, NewProjectDialog, templatePicture, type TemplateEntry } from './new-project-dialog';
 import { OpenRemoteDialog } from './open-remote-dialog';
 import { SharedProjectsDialog } from './shared-projects-dialog';
 
@@ -43,9 +43,11 @@ export class HomePage {
   protected readonly trashOpen = signal(false);
   protected readonly kinds = { component: 'component', assembly: 'assembly', drawing: 'drawing', imported: 'imported file' } as const;
 
-  /** The sample projects (the templates the app ships), to open as projects of one's own (CAD-181). */
-  protected readonly samples = resource({ loader: () => this.templates() });
+  /** The sample projects (the examples and templates the app ships), to open as projects of one's own (CAD-181, CAD-199). */
+  protected readonly samples = resource({ loader: async (): Promise<readonly (TemplateEntry | ExampleEntry)[]> => [...(await this.examples()), ...(await this.templates())] });
   protected readonly picture = templatePicture;
+  /** An example's picture, or undefined for a template (drawn as lines). */
+  protected readonly examplePicture = (sample: TemplateEntry | ExampleEntry): string | undefined => ('archive' in sample ? new URL(`examples/${sample.picture}`, document.baseURI).href : undefined);
   /** A sample is being made into a project. */
   protected readonly opening = signal(false);
   protected readonly tour = inject(Tour);
@@ -106,9 +108,10 @@ export class HomePage {
   }
 
   /** Makes a project of a sample, named after it, and opens it. */
-  protected async openSample(sample: TemplateEntry): Promise<void> {
+  protected async openSample(sample: TemplateEntry | ExampleEntry): Promise<void> {
     this.opening.set(true);
     try {
+      if ('archive' in sample) return await this.openExample(sample);
       const result = await this.projectManager.createFromTemplate({ ...(await this.fetchJson<ProjectTemplate>(`templates/${sample.id}.json`)), name: sample.name });
       if (!result.ok) return this.failed(result.error.message);
       const { project, firstDocument } = result.value;
@@ -117,6 +120,26 @@ export class HomePage {
       this.failed(error instanceof Error ? error.message : String(error));
     } finally {
       this.opening.set(false);
+    }
+  }
+
+  /** Imports an example's archive as a project of one's own and opens its main document (CAD-199). */
+  private async openExample(example: ExampleEntry): Promise<void> {
+    const response = await fetch(new URL(`examples/${example.archive}`, document.baseURI));
+    if (!response.ok) throw new Error(`${example.archive}: ${response.status}`);
+    const result = await this.projectManager.importProject({ name: example.archive, bytes: new Uint8Array(await response.arrayBuffer()) });
+    if (!result.ok) return this.failed(result.error.message);
+    const project = result.value;
+    const open = (await this.projectManager.listDocuments(project.id)).find((d) => d.name === example.open);
+    await this.router.navigate(open ? ['/projects', project.id, 'documents', open.id] : ['/projects', project.id]);
+  }
+
+  /** The examples the app ships (public/examples: the stress tests' machines, CAD-199). */
+  private async examples(): Promise<readonly ExampleEntry[]> {
+    try {
+      return await this.fetchJson<ExampleEntry[]>('examples/index.json');
+    } catch {
+      return [];
     }
   }
 

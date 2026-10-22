@@ -68,7 +68,7 @@ The published app keeps working offline once it has been used (see [[Architectur
 
 ## Releases
 
-The version is written in several places (package.json, the desktop app's configuration, Cargo); `node tools/release/version.mjs` prints it and `node tools/release/version.mjs 0.16.0` sets it everywhere, the About dialog's credits included. A test checks that all places agree. Versions follow the phases: `0.<phase>.<fix>`.
+The version is written in several places (package.json, the desktop app's configuration, Cargo); `node tools/release/version.mjs` prints it and `node tools/release/version.mjs 0.16.0` sets it everywhere, the About dialog's credits included. A test checks that all places agree. Versions follow the phases until 1.0.0: `0.<phase>.<fix>` (the first release, 0.47.0, came after phase 47). From 1.0.0 on, they follow semantic versioning: a major version for changes that break documents or the agents' tools, a minor one for features, a patch for fixes.
 
 To publish the desktop app:
 

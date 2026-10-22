@@ -1,6 +1,6 @@
 {
   "name": "cadence",
-  "version": "0.47.0",
+  "version": "0.47.1",
   "scripts": {
     "ng": "ng",
     "start": "ng serve",
